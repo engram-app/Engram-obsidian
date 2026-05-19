@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from "bun:test";
 import {
 	type ApiUrlSwitchTarget,
 	applyApiUrlChange,
+	cloudTabAction,
 	isBackendChange,
 	withClearedAuth,
 } from "../src/auth-state";
@@ -204,5 +205,55 @@ describe("applyApiUrlChange", () => {
 		const save = mock(async () => {});
 		await applyApiUrlChange(target, "http://engram.ax", save);
 		expect(target.settings).toBe(settingsRef);
+	});
+});
+
+describe("cloudTabAction", () => {
+	const CLOUD = "https://app.engram.page";
+
+	test("already on cloud: render normally — never switch", () => {
+		expect(cloudTabAction(fullSettings({ apiUrl: CLOUD }), CLOUD)).toBe("render");
+	});
+
+	test("self-hosted with apiKey: require explicit click (no auto-wipe)", () => {
+		const settings = fullSettings({
+			apiUrl: "http://localhost:8100",
+			apiKey: "engram_key",
+			refreshToken: undefined,
+		});
+		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
+	});
+
+	test("self-hosted with refreshToken: require explicit click", () => {
+		const settings = fullSettings({
+			apiUrl: "http://localhost:8100",
+			apiKey: "",
+			refreshToken: "rt_abc",
+		});
+		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
+	});
+
+	test("self-hosted with no creds: safe to silently switch to cloud", () => {
+		const settings = fullSettings({
+			apiUrl: "http://localhost:8100",
+			apiKey: "",
+			refreshToken: undefined,
+		});
+		expect(cloudTabAction(settings, CLOUD)).toBe("auto-switch");
+	});
+
+	test("fresh install (no apiUrl) with no creds: auto-switch to cloud", () => {
+		const settings = fullSettings({
+			apiUrl: "",
+			apiKey: "",
+			refreshToken: undefined,
+		});
+		expect(cloudTabAction(settings, CLOUD)).toBe("auto-switch");
+	});
+
+	test("self-hosted same origin as cloud (path differs only): treat as cloud", () => {
+		// applyApiUrlChange would not wipe in this case, so don't prompt either.
+		const settings = fullSettings({ apiUrl: "https://app.engram.page/api" });
+		expect(cloudTabAction(settings, CLOUD)).toBe("render");
 	});
 });

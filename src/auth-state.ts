@@ -53,6 +53,32 @@ export interface ApiUrlSwitchTarget {
 	noteStream: { disconnect: () => void } | null;
 }
 
+/** What renderAccountTab should do given the current settings and cloud URL.
+ *
+ *  - ``render``: already on cloud (or path-only difference) — just render the tab.
+ *  - ``prompt-switch``: on a different backend AND has stored credentials.
+ *    Render an explicit "Switch to Engram cloud" button; do NOT auto-wipe.
+ *  - ``auto-switch``: on a different backend with NO credentials to lose —
+ *    safe to silently apply the cloud URL.
+ *
+ *  Why this exists: ``renderAccountTab`` used to auto-call ``applyApiUrlChange``
+ *  on every tab activation. For self-hosted users with valid credentials,
+ *  simply navigating to the "Cloud" tab silently nuked their apiKey/refreshToken/
+ *  vaultId via ``withClearedAuth`` — destructive UX, surfaced by the e2e
+ *  apiKey-wipe diagnostic on PR #162 (test_65 → test_69 cascade). */
+export function cloudTabAction(
+	settings: EngramSyncSettings,
+	cloudUrl: string,
+): "render" | "prompt-switch" | "auto-switch" {
+	// Fresh install (apiUrl never set) — adopt cloud silently. No creds to
+	// preserve and no existing backend to migrate from.
+	if (!settings.apiUrl) return "auto-switch";
+	// Same-origin (even with /api path difference) — no apply needed.
+	if (!isBackendChange(settings.apiUrl, cloudUrl)) return "render";
+	const hasAuth = Boolean(settings.apiKey || settings.refreshToken);
+	return hasAuth ? "prompt-switch" : "auto-switch";
+}
+
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
  *  backend origin, wipe backend-scoped auth state, null out the API auth
  *  provider, and disconnect the live note stream — then persist via `save`.
