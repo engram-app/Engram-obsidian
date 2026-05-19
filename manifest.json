@@ -1,7 +1,7 @@
 {
 	"id": "engram-vault-sync",
 	"name": "Engram Vault Sync",
-	"version": "1.4.0",
+	"version": "1.4.1",
 	"minAppVersion": "1.7.2",
 	"description": "Sync your vault and search it by meaning with AI. Use the hosted service or self-host for free. Works with Claude, Cursor, and any tool that speaks MCP.",
 	"author": "Rasbandit",
