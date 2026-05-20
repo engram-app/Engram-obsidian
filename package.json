@@ -1,6 +1,6 @@
 {
   "name": "engram-obsidian",
-  "version": "1.4.2",
+  "version": "1.4.3",
   "description": "Sync your vault and search it by meaning with AI. Use the hosted service or self-host for free. Works with Claude, Cursor, and any tool that speaks MCP.",
   "main": "main.js",
   "type": "module",
