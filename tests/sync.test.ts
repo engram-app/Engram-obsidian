@@ -337,8 +337,16 @@ describe("SyncEngine.pull", () => {
 		const engine = createEngine();
 		engine.setLastSync("2026-01-01T00:00:00Z");
 
+		// Local file content matches its recorded syncedHash — no unsynced
+		// edits — so the remote delete should be honoured (clean delete sync).
 		const existingFile = new TFile("Notes/ToDelete.md");
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+		const syncedContent = "# stale\nclean copy\n";
+		mockApp.vault.cachedRead.mockResolvedValueOnce(syncedContent);
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(
+			"Notes/ToDelete.md",
+			{ hash: fnv1a(syncedContent) },
+		);
 
 		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
 			changes: [
@@ -359,6 +367,43 @@ describe("SyncEngine.pull", () => {
 		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+	});
+
+	test("skips tombstone when local file has unsynced edits (resurrection guard)", async () => {
+		const engine = createEngine();
+		engine.setLastSync("2026-01-01T00:00:00Z");
+
+		// Local file content differs from syncedHash (or no syncState entry) —
+		// user has unsaved edits or recreated the path after another device
+		// deleted it. Plugin must NOT trash the file; it pushes the resurrection.
+		const existingFile = new TFile("Notes/Resurrected.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValueOnce("# resurrected\nnew local edit\n");
+		// No syncState entry → first-write semantics, definitely unsynced.
+		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
+			note: { path: "Notes/Resurrected.md", version: 1 },
+		});
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [
+				{
+					path: "Notes/Resurrected.md",
+					title: "",
+					content: "",
+					folder: "",
+					tags: [],
+					mtime: 0,
+					updated_at: "2026-03-01T12:00:00Z",
+					deleted: true,
+				},
+			],
+			server_time: "2026-03-01T12:00:01Z",
+		});
+
+		await engine.pull();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
 });
 
@@ -1053,6 +1098,14 @@ describe("SyncEngine conflict resolution", () => {
 
 		const localFile = new TFile("Notes/Conflict.md", LOCAL_MTIME_MS);
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(localFile);
+		// Local content matches recorded syncedHash — no unsynced edits, so
+		// the resurrection guard allows the remote delete through.
+		const syncedContent = "# Clean local copy";
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValueOnce(syncedContent);
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(
+			"Notes/Conflict.md",
+			{ hash: fnv1a(syncedContent) },
+		);
 
 		let conflictCalled = false;
 		engine.onConflict = async () => {

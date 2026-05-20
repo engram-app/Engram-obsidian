@@ -1302,6 +1302,46 @@ export class SyncEngine {
 			// Delete local file if it exists
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
+				// Resurrection guard: if the local file has unsynced edits, the
+				// user has modified it since we last wrote a syncState entry —
+				// either they recreated the path after another device deleted it,
+				// or they edited a still-live file that another device has now
+				// tombstoned. Either way, honouring the tombstone here would
+				// destroy user work. Skip the delete and push the local file so
+				// the server records the resurrection over its own tombstone.
+				//
+				// Hash-based check (not mtime): mtime tolerance is unreliable on
+				// retest-fast paths where the local mtime is only ms ahead of the
+				// tombstone's recorded mtime. Comparing localHash to syncedHash
+				// captures user intent directly — "does what's on disk differ from
+				// what we last synced?"
+				const localContent = await this.app.vault.cachedRead(existing);
+				const localHash = fnv1a(localContent);
+				const lastSynced = this.syncState.get(normalized);
+				const hasUnsyncedEdits = !lastSynced || lastSynced.hash !== localHash;
+				if (hasUnsyncedEdits) {
+					rlog().info(
+						"pull",
+						`Tombstone skipped (resurrection): ${change.path}` +
+							` | localHash=${localHash}` +
+							` | syncedHash=${lastSynced?.hash ?? "none"}` +
+							` | localLen=${localContent.length}`,
+					);
+					devLog().log(
+						"pull",
+						`applyChange DELETE skipped (resurrection): ${change.path}` +
+							` (localHash=${localHash} !== syncedHash=${lastSynced?.hash ?? "none"})`,
+					);
+					try {
+						await this.pushFile(existing, true);
+					} catch (e) {
+						rlog().error(
+							"pull",
+							`Resurrection push failed: ${change.path} | err=${errMsg(e)}`,
+						);
+					}
+					return false;
+				}
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
