@@ -1302,27 +1302,35 @@ export class SyncEngine {
 			// Delete local file if it exists
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				// Resurrection guard: if the local file is meaningfully newer than
-				// the tombstone, the user re-created the path after another device
-				// deleted it. Honouring the tombstone here would destroy that fresh
-				// edit. Skip the delete and push the local file so the server
-				// records the resurrection (overwriting its tombstone).
+				// Resurrection guard: if the local file has unsynced edits, the
+				// user has modified it since we last wrote a syncState entry —
+				// either they recreated the path after another device deleted it,
+				// or they edited a still-live file that another device has now
+				// tombstoned. Either way, honouring the tombstone here would
+				// destroy user work. Skip the delete and push the local file so
+				// the server records the resurrection over its own tombstone.
 				//
-				// 2 s tolerance covers FS-mtime vs server-mtime rounding (Obsidian
-				// stores ms, server stores float seconds) without masking real
-				// "same edit, then deleted" cases.
-				const localMtimeS = existing.stat.mtime / 1000;
-				if (localMtimeS > change.mtime + 2) {
+				// Hash-based check (not mtime): mtime tolerance is unreliable on
+				// retest-fast paths where the local mtime is only ms ahead of the
+				// tombstone's recorded mtime. Comparing localHash to syncedHash
+				// captures user intent directly — "does what's on disk differ from
+				// what we last synced?"
+				const localContent = await this.app.vault.cachedRead(existing);
+				const localHash = fnv1a(localContent);
+				const lastSynced = this.syncState.get(normalized);
+				const hasUnsyncedEdits = !lastSynced || lastSynced.hash !== localHash;
+				if (hasUnsyncedEdits) {
 					rlog().info(
 						"pull",
 						`Tombstone skipped (resurrection): ${change.path}` +
-							` | localMtime=${new Date(existing.stat.mtime).toISOString()}` +
-							` | tombstoneMtime=${new Date(change.mtime * 1000).toISOString()}`,
+							` | localHash=${localHash}` +
+							` | syncedHash=${lastSynced?.hash ?? "none"}` +
+							` | localLen=${localContent.length}`,
 					);
 					devLog().log(
 						"pull",
 						`applyChange DELETE skipped (resurrection): ${change.path}` +
-							` (localMtime=${localMtimeS} > tombstone=${change.mtime} + 2)`,
+							` (localHash=${localHash} !== syncedHash=${lastSynced?.hash ?? "none"})`,
 					);
 					try {
 						await this.pushFile(existing, true);
