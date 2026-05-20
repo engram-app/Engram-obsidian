@@ -1302,6 +1302,38 @@ export class SyncEngine {
 			// Delete local file if it exists
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
+				// Resurrection guard: if the local file is meaningfully newer than
+				// the tombstone, the user re-created the path after another device
+				// deleted it. Honouring the tombstone here would destroy that fresh
+				// edit. Skip the delete and push the local file so the server
+				// records the resurrection (overwriting its tombstone).
+				//
+				// 2 s tolerance covers FS-mtime vs server-mtime rounding (Obsidian
+				// stores ms, server stores float seconds) without masking real
+				// "same edit, then deleted" cases.
+				const localMtimeS = existing.stat.mtime / 1000;
+				if (localMtimeS > change.mtime + 2) {
+					rlog().info(
+						"pull",
+						`Tombstone skipped (resurrection): ${change.path}` +
+							` | localMtime=${new Date(existing.stat.mtime).toISOString()}` +
+							` | tombstoneMtime=${new Date(change.mtime * 1000).toISOString()}`,
+					);
+					devLog().log(
+						"pull",
+						`applyChange DELETE skipped (resurrection): ${change.path}` +
+							` (localMtime=${localMtimeS} > tombstone=${change.mtime} + 2)`,
+					);
+					try {
+						await this.pushFile(existing, true);
+					} catch (e) {
+						rlog().error(
+							"pull",
+							`Resurrection push failed: ${change.path} | err=${errMsg(e)}`,
+						);
+					}
+					return false;
+				}
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);

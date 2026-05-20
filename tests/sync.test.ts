@@ -337,7 +337,11 @@ describe("SyncEngine.pull", () => {
 		const engine = createEngine();
 		engine.setLastSync("2026-01-01T00:00:00Z");
 
-		const existingFile = new TFile("Notes/ToDelete.md");
+		// Local file mtime ~now; tombstone mtime far enough in the future that
+		// the resurrection guard does NOT trigger (tombstone is "newer" than
+		// our local copy, the normal delete-from-other-device case).
+		const nowMs = Date.now();
+		const existingFile = new TFile("Notes/ToDelete.md", nowMs);
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
 
 		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
@@ -348,7 +352,7 @@ describe("SyncEngine.pull", () => {
 					content: "",
 					folder: "",
 					tags: [],
-					mtime: 0,
+					mtime: nowMs / 1000 + 60, // 60 s after local mtime → guard skipped
 					updated_at: "2026-03-01T12:00:00Z",
 					deleted: true,
 				},
@@ -359,6 +363,43 @@ describe("SyncEngine.pull", () => {
 		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+	});
+
+	test("skips tombstone when local file mtime is newer (resurrection guard)", async () => {
+		const engine = createEngine();
+		engine.setLastSync("2026-01-01T00:00:00Z");
+
+		// Local file written after the server tombstone — user recreated the
+		// path locally after another device deleted it. Plugin must NOT trash
+		// the fresh file; it should push the resurrection up to the server.
+		const nowMs = Date.now();
+		const existingFile = new TFile("Notes/Resurrected.md", nowMs);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValueOnce("# resurrected");
+		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
+			note: { path: "Notes/Resurrected.md", version: 1 },
+		});
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [
+				{
+					path: "Notes/Resurrected.md",
+					title: "",
+					content: "",
+					folder: "",
+					tags: [],
+					mtime: nowMs / 1000 - 60, // 60 s BEFORE local mtime → guard triggers
+					updated_at: "2026-03-01T12:00:00Z",
+					deleted: true,
+				},
+			],
+			server_time: "2026-03-01T12:00:01Z",
+		});
+
+		await engine.pull();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
 });
 
