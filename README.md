@@ -1,8 +1,8 @@
 # Engram Vault Sync
 
-> Your vault, queryable by AI. Synced everywhere.
+> Your notes are your AI's memory. This is the Obsidian half.
 
-Engram Vault Sync keeps your Obsidian notes in sync across every device and lets AI assistants — Claude, Cursor, ChatGPT desktop, and others — read and write directly into your vault. Inside Obsidian, you also get **semantic search**: type what you mean and find the right note even if you can't remember the exact words.
+Engram is an AI memory layer where your notes are the storage — markdown you and your AI assistants both read and write to. This plugin keeps your Obsidian vault synced across every device and lets Claude, Cursor, ChatGPT Desktop, and any MCP client read and write directly into it. Inside Obsidian, you also get **semantic search**: type what you mean and find the right note even if you can't remember the exact words.
 
 It works on desktop and mobile.
 
