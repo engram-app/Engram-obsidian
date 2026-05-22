@@ -7,6 +7,10 @@ project: engram-obsidian
 goal: income
 value: financial-freedom
 
+## Issue Tracker
+
+TODOs and open issues live in GitHub Issues for this repo — `gh issue list` to view, `gh issue create` to file. Don't track work in CLAUDE.md, docs/, or ad-hoc TODO.md files.
+
 > **Multi-repo project.** This plugin is one half of Engram. For cross-project work (API changes, debugging plugin↔backend, deploy), open `../engram-workspace/` instead. See `../engram-workspace/docs/workspace-pattern.md` for when to use what.
 
 For plugin internals (class map, sync algorithm, API endpoints, type definitions), read `docs/internals.md`.
