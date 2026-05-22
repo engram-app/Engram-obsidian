@@ -2,7 +2,11 @@
 # DO NOT EDIT IN-REPO; changes will be overwritten on next tf apply.
 version: 2
 updates:
-  - package-ecosystem: npm
+  # Obsidian plugin (bun.lock — bun ecosystem, not npm).
+  # `dependency-type: development` isn't valid for bun, so the
+  # dev-minor split from the old npm config is collapsed into the
+  # single patches group.
+  - package-ecosystem: bun
     directory: /
     schedule:
       interval: weekly
@@ -14,13 +18,9 @@ updates:
       semver-minor-days: 7
       semver-patch-days: 3
     groups:
-      npm-patches:
+      plugin-patches:
         applies-to: version-updates
         update-types: [patch]
-      npm-dev-minor:
-        applies-to: version-updates
-        dependency-type: development
-        update-types: [minor, patch]
 
   - package-ecosystem: github-actions
     directory: /
