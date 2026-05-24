@@ -7,8 +7,7 @@
 #   - All `github_actions` ecosystem bumps (patch + minor + major)
 #
 # Major bumps to runtime deps are intentionally NOT auto-merged — they
-# sit open for human review. CODEOWNERS bypass for the Dependabot App
-# is configured in the org-level branch ruleset (engram-infra rulesets.tf).
+# sit open for human review.
 #
 # Branch protection requires CI to be green before `gh pr merge --auto`
 # fires, so this is safe even if Dependabot proposes a bad bump — the
