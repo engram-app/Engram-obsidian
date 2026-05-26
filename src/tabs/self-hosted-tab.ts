@@ -21,7 +21,7 @@ export function renderSelfHostedTab(ctx: TabContext): void {
 
 	const repoSetting = new Setting(containerEl)
 		.setName("Run your own Engram server")
-		.setDesc("Engram is the backend that powers sync and semantic search. Get it here → ");
+		.setDesc("Engram is the backend that powers sync and semantic search.");
 	repoSetting.settingEl.addClass("engram-setup-cta");
 	repoSetting.descEl.addClass("engram-server-cta-desc");
 	repoSetting.descEl.createEl("a", {
@@ -49,9 +49,8 @@ export function renderSelfHostedTab(ctx: TabContext): void {
 function renderEngramUrlSetting(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay } = ctx;
 
-	const setting = new Setting(containerEl)
-		.setName("Engram URL")
-		.setDesc("Full URL to your Engram instance.");
+	const setting = new Setting(containerEl).setName("Engram URL");
+	setting.settingEl.addClass("engram-url-setting");
 
 	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
 	const STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"];

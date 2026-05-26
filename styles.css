@@ -564,6 +564,16 @@
 	margin-top: 4px;
 }
 
+/* Give the Engram URL field room — let the control fill the row and the input
+   span its full width instead of Obsidian's narrow default. */
+.engram-url-setting .setting-item-control {
+	flex-grow: 1;
+}
+.engram-url-setting .setting-item-control input[type="text"] {
+	flex-grow: 1;
+	width: auto;
+}
+
 /* Background preflight status under the Engram URL field. */
 .engram-url-preflight:empty {
 	display: none;
