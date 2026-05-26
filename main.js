@@ -2171,7 +2171,7 @@ async function applyVaultSwitch(plugin, value, name) {
 async function renderAccountTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
   if (action === "prompt-switch") {
-    new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading(), new import_obsidian8.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
+    new import_obsidian8.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
       `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`
     ).addButton(
       (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
@@ -2196,7 +2196,7 @@ async function renderAccountTab(ctx) {
     },
     ENGRAM_CLOUD_URL,
     () => plugin.saveSettings()
-  ), new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading();
+  );
   let aboutSetting = new import_obsidian8.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
   aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
     text: "engram.page",
