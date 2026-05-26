@@ -50,7 +50,7 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 
 	const setting = new Setting(containerEl)
 		.setName("Engram URL")
-		.setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000).");
+		.setDesc("Full URL to your Engram instance.");
 
 	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
 	const STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"];
@@ -97,7 +97,7 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 	};
 
 	setting.addText((text) => {
-		text.setPlaceholder("http://localhost:8000").setValue(plugin.settings.apiUrl);
+		text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
 		text.onChange((value) => {
 			buffered = value;
 			if (debounce !== null) window.clearTimeout(debounce);

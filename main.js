@@ -2057,7 +2057,7 @@ function renderSelfHostedTab(ctx) {
   }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
 }
 function renderEngramUrlSetting(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000)."), status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], buffered = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance."), status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], buffered = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
     switch (status.removeClasses(STATUS_CLASSES), result.kind) {
       case "engram":
         status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
@@ -2080,7 +2080,7 @@ function renderEngramUrlSetting(ctx) {
     });
   };
   setting.addText((text) => {
-    text.setPlaceholder("http://localhost:8000").setValue(plugin.settings.apiUrl), text.onChange((value) => {
+    text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl), text.onChange((value) => {
       buffered = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
     }), text.inputEl.addEventListener("blur", async () => {
       await applyApiUrlChange(
