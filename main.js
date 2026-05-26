@@ -2057,7 +2057,7 @@ function renderSelfHostedTab(ctx) {
   }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
 }
 function renderEngramUrlSetting(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance."), status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], buffered = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance."), status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
     switch (status.removeClasses(STATUS_CLASSES), result.kind) {
       case "engram":
         status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
@@ -2081,19 +2081,21 @@ function renderEngramUrlSetting(ctx) {
   };
   setting.addText((text) => {
     text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl), text.onChange((value) => {
-      buffered = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
-    }), text.inputEl.addEventListener("blur", async () => {
+      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+    });
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
       await applyApiUrlChange(
         {
           settings: plugin.settings,
           api: plugin.api,
           noteStream: plugin.noteStream
         },
-        buffered,
+        pendingUrl.trim(),
         () => plugin.saveSettings()
-      ) && (new import_obsidian7.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay());
-    });
-  }), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
+      ) && new import_obsidian7.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
+    })
+  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
 function renderCloudLockBanner(containerEl) {
   let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });

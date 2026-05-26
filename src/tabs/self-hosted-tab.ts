@@ -37,14 +37,15 @@ export function renderSelfHostedTab(ctx: TabContext): void {
 }
 
 /** Render the "Engram URL" field with a debounced background preflight that
- *  confirms the URL points at a real Engram server, plus a deferred commit.
+ *  confirms the URL points at a real Engram server, committed via an explicit
+ *  Save button (same buffered pattern as the API-key field).
  *
- *  Why the rewrite: the old handler called `applyApiUrlChange` on every
+ *  Why this shape: the original handler called `applyApiUrlChange` on every
  *  keystroke. Once a complete origin was typed it cleared auth and
  *  `redisplay()`'d the whole tab mid-edit — destroying the input and stealing
  *  focus on every character. Now keystrokes only buffer the value + schedule a
- *  read-only `/health` probe; the apiUrl is committed on blur, the single point
- *  that may clear auth and redisplay. */
+ *  read-only `/health` probe; the apiUrl is committed only when the user clicks
+ *  Save, the single point that may clear auth and redisplay. */
 function renderEngramUrlSetting(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay } = ctx;
 
@@ -55,7 +56,8 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
 	const STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"];
 
-	let buffered = plugin.settings.apiUrl;
+	// Buffer the typed value; only the Save button writes it to settings.
+	let pendingUrl = plugin.settings.apiUrl;
 	let debounce: number | null = null;
 	// Monotonic token: a slow probe that resolves after the user kept typing
 	// must not overwrite the status belonging to a newer value.
@@ -96,30 +98,35 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 		});
 	};
 
-	setting.addText((text) => {
-		text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
-		text.onChange((value) => {
-			buffered = value;
-			if (debounce !== null) window.clearTimeout(debounce);
-			debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
-		});
-		// Commit the URL only when the field loses focus — never mid-typing.
-		text.inputEl.addEventListener("blur", async () => {
-			const cleared = await applyApiUrlChange(
-				{
-					settings: plugin.settings,
-					api: plugin.api,
-					noteStream: plugin.noteStream,
-				},
-				buffered,
-				() => plugin.saveSettings(),
-			);
-			if (cleared) {
-				new Notice("Engram backend changed — sign in again to continue.");
-				redisplay();
-			}
-		});
-	});
+	setting
+		.addText((text) => {
+			text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
+			text.onChange((value) => {
+				pendingUrl = value;
+				if (debounce !== null) window.clearTimeout(debounce);
+				debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+			});
+		})
+		.addButton((btn) =>
+			btn
+				.setButtonText("Save")
+				.setCta()
+				.onClick(async () => {
+					const cleared = await applyApiUrlChange(
+						{
+							settings: plugin.settings,
+							api: plugin.api,
+							noteStream: plugin.noteStream,
+						},
+						pendingUrl.trim(),
+						() => plugin.saveSettings(),
+					);
+					if (cleared) {
+						new Notice("Engram backend changed — sign in again to continue.");
+					}
+					redisplay();
+				}),
+		);
 
 	// Surface the current backend's status immediately on open (no typing needed).
 	if (completeOrigin(plugin.settings.apiUrl)) runPreflight(plugin.settings.apiUrl);
