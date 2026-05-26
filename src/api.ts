@@ -4,8 +4,8 @@
  * Uses Obsidian's requestUrl() which bypasses CORS and works on mobile.
  */
 import { type RequestUrlResponse, requestUrl } from "obsidian";
-import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import type { AuthProvider } from "./auth";
+import { type PreflightResult, interpretHealthProbe } from "./auth-state";
 import type {
 	AttachmentChangesResponse,
 	AttachmentDetail,
