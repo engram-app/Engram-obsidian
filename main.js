@@ -728,7 +728,55 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian15 = require("obsidian");
 
 // src/api.ts
-var import_obsidian = require("obsidian"), EngramApi = class _EngramApi {
+var import_obsidian = require("obsidian");
+
+// src/auth-state.ts
+function completeOrigin(url) {
+  if (!url) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return null;
+  }
+  let host = parsed.hostname, isLocalhost = host === "localhost", isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host), hasTld = /\.[a-z]{2,}$/i.test(host);
+  return !isLocalhost && !isIPv4 && !hasTld ? null : `${parsed.protocol}//${parsed.host}`.toLowerCase();
+}
+function isBackendChange(oldUrl, newUrl) {
+  let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
+  return !oldO || !newO ? !1 : oldO !== newO;
+}
+function interpretHealthProbe(status, body) {
+  if (status === 0) return { kind: "unreachable" };
+  if (status === 200) {
+    let b = body;
+    if (b && b.status === "ok" && typeof b.version == "string")
+      return { kind: "engram", version: b.version };
+  }
+  return { kind: "reachable" };
+}
+function withClearedAuth(settings) {
+  return {
+    ...settings,
+    apiKey: "",
+    refreshToken: void 0,
+    userEmail: void 0,
+    authMethod: null,
+    vaultId: null
+  };
+}
+function cloudTabAction(settings, cloudUrl) {
+  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
+}
+async function applyApiUrlChange(target, newUrl, save) {
+  var _a;
+  if (target.settings.apiUrl === newUrl) return !1;
+  let cleared = isBackendChange(target.settings.apiUrl, newUrl);
+  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
+}
+
+// src/api.ts
+var EngramApi = class _EngramApi {
   constructor(baseUrl, apiKey) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
@@ -752,6 +800,24 @@ var import_obsidian = require("obsidian"), EngramApi = class _EngramApi {
   static normalizeBaseUrl(url) {
     let base = url.replace(/\/+$/, "");
     return base.endsWith("/api") ? base : `${base}/api`;
+  }
+  /** Probe an arbitrary candidate URL's `/api/health` WITHOUT committing it as
+   *  the active backend. Used by the self-hosted settings preflight so the user
+   *  gets background confirmation a URL points at a real Engram server before
+   *  they commit to it. No auth — `/health` is public. */
+  static async probeHealth(rawUrl) {
+    let base = _EngramApi.normalizeBaseUrl(rawUrl);
+    try {
+      let resp = await (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }), body = null;
+      try {
+        body = resp.json;
+      } catch (e) {
+        body = null;
+      }
+      return interpretHealthProbe(resp.status, body);
+    } catch (e) {
+      return { kind: "unreachable" };
+    }
   }
   updateConfig(baseUrl, apiKey) {
     this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
@@ -1970,39 +2036,6 @@ var import_obsidian6 = require("obsidian"), PHASE_LABELS = {
 // src/tabs/account-tab.ts
 var import_obsidian8 = require("obsidian");
 
-// src/auth-state.ts
-function completeOrigin(url) {
-  if (!url) return null;
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (e) {
-    return null;
-  }
-  let host = parsed.hostname, isLocalhost = host === "localhost", isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host), hasTld = /\.[a-z]{2,}$/i.test(host);
-  return !isLocalhost && !isIPv4 && !hasTld ? null : `${parsed.protocol}//${parsed.host}`.toLowerCase();
-}
-function isBackendChange(oldUrl, newUrl) {
-  let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
-  return !oldO || !newO ? !1 : oldO !== newO;
-}
-function withClearedAuth(settings) {
-  return {
-    ...settings,
-    apiKey: "",
-    refreshToken: void 0,
-    userEmail: void 0,
-    authMethod: null,
-    vaultId: null
-  };
-}
-async function applyApiUrlChange(target, newUrl, save) {
-  var _a;
-  if (target.settings.apiUrl === newUrl) return !1;
-  let cleared = isBackendChange(target.settings.apiUrl, newUrl);
-  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
-}
-
 // src/tabs/self-hosted-tab.ts
 var import_obsidian7 = require("obsidian");
 
@@ -2010,29 +2043,61 @@ var import_obsidian7 = require("obsidian");
 var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https://engram.page";
 
 // src/tabs/self-hosted-tab.ts
+var PREFLIGHT_DEBOUNCE_MS = 600;
 function renderSelfHostedTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
+  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
   if (isOnCloud && hasAuth) {
     renderCloudLockBanner(containerEl);
     return;
   }
-  let repoSetting = new import_obsidian7.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search. Get it here \u2192 ");
-  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.createEl("a", {
+  let repoSetting = new import_obsidian7.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
+  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
     text: "github.com/engram-app/engram",
     href: "https://github.com/engram-app/engram"
-  }), new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000).").addText(
-    (text) => text.setPlaceholder("http://localhost:8000").setValue(plugin.settings.apiUrl).onChange(async (value) => {
+  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+}
+function renderEngramUrlSetting(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL");
+  setting.settingEl.addClass("engram-url-setting");
+  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
+      case "engram":
+        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
+        break;
+      case "reachable":
+        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
+        break;
+      case "unreachable":
+        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
+        break;
+    }
+  }, runPreflight = (value) => {
+    if (!completeOrigin(value)) {
+      status.removeClasses(STATUS_CLASSES), status.setText("");
+      return;
+    }
+    let seq = ++probeSeq;
+    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
+      seq === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+    });
+  };
+  setting.addText((text) => {
+    text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl), text.onChange((value) => {
+      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+    });
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
       await applyApiUrlChange(
         {
           settings: plugin.settings,
           api: plugin.api,
           noteStream: plugin.noteStream
         },
-        value,
+        pendingUrl.trim(),
         () => plugin.saveSettings()
-      ) && (new import_obsidian7.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay());
+      ) && new import_obsidian7.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
     })
-  ), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
 function renderCloudLockBanner(containerEl) {
   let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
@@ -2166,8 +2231,26 @@ async function applyVaultSwitch(plugin, value, name) {
 
 // src/tabs/account-tab.ts
 async function renderAccountTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx;
-  if (plugin.settings.apiUrl !== ENGRAM_CLOUD_URL && await applyApiUrlChange(
+  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
+  if (action === "prompt-switch") {
+    new import_obsidian8.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
+        await applyApiUrlChange(
+          {
+            settings: plugin.settings,
+            api: plugin.api,
+            noteStream: plugin.noteStream
+          },
+          ENGRAM_CLOUD_URL,
+          () => plugin.saveSettings()
+        ), new import_obsidian8.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
+      })
+    );
+    return;
+  }
+  action === "auto-switch" && await applyApiUrlChange(
     {
       settings: plugin.settings,
       api: plugin.api,
@@ -2175,13 +2258,9 @@ async function renderAccountTab(ctx) {
     },
     ENGRAM_CLOUD_URL,
     () => plugin.saveSettings()
-  )) {
-    new import_obsidian8.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
-    return;
-  }
-  new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading();
+  );
   let aboutSetting = new import_obsidian8.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
-  aboutSetting.descEl.createEl("a", {
+  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
     text: "engram.page",
     href: ENGRAM_MARKETING_URL,
     attr: { target: "_blank", rel: "noopener" }
@@ -4087,14 +4166,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian13.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_a = this.baseStore) == null || _a.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0) : !1;
+      if (existing2) {
+        let localContent = await this.app.vault.cachedRead(existing2), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized);
+        if (!lastSynced || lastSynced.hash !== localHash) {
+          rlog().info(
+            "pull",
+            `Tombstone skipped (resurrection): ${change.path} | localHash=${localHash} | syncedHash=${(_a = lastSynced == null ? void 0 : lastSynced.hash) != null ? _a : "none"} | localLen=${localContent.length}`
+          ), devLog().log(
+            "pull",
+            `applyChange DELETE skipped (resurrection): ${change.path} (localHash=${localHash} !== syncedHash=${(_b = lastSynced == null ? void 0 : lastSynced.hash) != null ? _b : "none"})`
+          );
+          try {
+            await this.pushFile(existing2, !0);
+          } catch (e) {
+            rlog().error(
+              "pull",
+              `Resurrection push failed: ${change.path} | err=${errMsg(e)}`
+            );
+          }
+          return !1;
+        }
+        return await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0;
+      }
+      return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
@@ -4116,14 +4217,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${change.content.length}`
         );
-        let pullBase = (_b = this.baseStore) == null ? void 0 : _b.get(normalized);
+        let pullBase = (_d = this.baseStore) == null ? void 0 : _d.get(normalized);
         if (pullBase) {
           let merge = threeWayMerge(pullBase.content, localContent, change.content);
           if (merge.clean) {
             await this.modifyFile(existing, merge.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge.merged),
               version: change.version
-            }), change.version != null && ((_c = this.baseStore) == null || _c.set(normalized, merge.merged, change.version));
+            }), change.version != null && ((_e = this.baseStore) == null || _e.set(normalized, merge.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -4177,7 +4278,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, change.content), this.syncState.set((0, import_obsidian13.normalizePath)(conflictPath), {
               hash: fnv1a(change.content),
               version: change.version
-            }), change.version != null && ((_d = this.baseStore) == null || _d.set(
+            }), change.version != null && ((_f = this.baseStore) == null || _f.set(
               (0, import_obsidian13.normalizePath)(conflictPath),
               change.content,
               change.version
@@ -4199,7 +4300,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_e = this.baseStore) == null || _e.set(
+            }), change.version != null && ((_g = this.baseStore) == null || _g.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -4218,14 +4319,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
         rlog().info("conflict", `Resolved: ${change.path} \u2192 keep-remote`);
       } else if (localContent === change.content)
-        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, { hash: localHash, version: change.version }), change.version != null && ((_f = this.baseStore) == null || _f.set(normalized, change.content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, { hash: localHash, version: change.version }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, change.content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log(
         "pull",
         `applyChange OVERWRITE: ${change.path} (len=${change.content.length})`
       ), await this.modifyFile(existing, change.content), this.syncState.set(normalized, {
         hash: fnv1a(change.content),
         version: change.version
-      }), change.version != null && ((_g = this.baseStore) == null || _g.set(normalized, change.content, change.version)), rlog().info(
+      }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, change.content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${change.content.length}`
       ), !0;
@@ -4243,7 +4344,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncState.set(normalized, {
       hash: fnv1a(change.content),
       version: change.version
-    }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, change.content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`), !0;
+    }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, change.content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.

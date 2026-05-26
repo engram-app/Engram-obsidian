@@ -1,10 +1,13 @@
 import { Notice, Setting, setIcon } from "obsidian";
-import { applyApiUrlChange } from "../auth-state";
+import { EngramApi } from "../api";
+import { type PreflightResult, applyApiUrlChange, completeOrigin } from "../auth-state";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL } from "./urls";
 
+const PREFLIGHT_DEBOUNCE_MS = 600;
+
 export function renderSelfHostedTab(ctx: TabContext): void {
-	const { containerEl, plugin, redisplay } = ctx;
+	const { containerEl, plugin } = ctx;
 
 	// Lock the tab when the user is signed into Engram Cloud — both modes share
 	// the same auth fields, so showing the auth UI here would let them sign out
@@ -18,40 +21,114 @@ export function renderSelfHostedTab(ctx: TabContext): void {
 
 	const repoSetting = new Setting(containerEl)
 		.setName("Run your own Engram server")
-		.setDesc("Engram is the backend that powers sync and semantic search. Get it here → ");
+		.setDesc("Engram is the backend that powers sync and semantic search.");
 	repoSetting.settingEl.addClass("engram-setup-cta");
+	repoSetting.descEl.addClass("engram-server-cta-desc");
 	repoSetting.descEl.createEl("a", {
 		text: "github.com/engram-app/engram",
 		href: "https://github.com/engram-app/engram",
 	});
 
-	new Setting(containerEl)
-		.setName("Engram URL")
-		.setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000).")
-		.addText((text) =>
-			text
-				.setPlaceholder("http://localhost:8000")
-				.setValue(plugin.settings.apiUrl)
-				.onChange(async (value) => {
+	renderEngramUrlSetting(ctx);
+
+	renderAuthSection(ctx);
+	renderVaultSection(ctx);
+	renderSupportSection(ctx);
+}
+
+/** Render the "Engram URL" field with a debounced background preflight that
+ *  confirms the URL points at a real Engram server, committed via an explicit
+ *  Save button (same buffered pattern as the API-key field).
+ *
+ *  Why this shape: the original handler called `applyApiUrlChange` on every
+ *  keystroke. Once a complete origin was typed it cleared auth and
+ *  `redisplay()`'d the whole tab mid-edit — destroying the input and stealing
+ *  focus on every character. Now keystrokes only buffer the value + schedule a
+ *  read-only `/health` probe; the apiUrl is committed only when the user clicks
+ *  Save, the single point that may clear auth and redisplay. */
+function renderEngramUrlSetting(ctx: TabContext): void {
+	const { containerEl, plugin, redisplay } = ctx;
+
+	const setting = new Setting(containerEl).setName("Engram URL");
+	setting.settingEl.addClass("engram-url-setting");
+
+	const status = setting.descEl.createDiv({ cls: "engram-url-preflight" });
+	const STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"];
+
+	// Buffer the typed value; only the Save button writes it to settings.
+	let pendingUrl = plugin.settings.apiUrl;
+	let debounce: number | null = null;
+	// Monotonic token: a slow probe that resolves after the user kept typing
+	// must not overwrite the status belonging to a newer value.
+	let probeSeq = 0;
+
+	const renderStatus = (result: PreflightResult): void => {
+		status.removeClasses(STATUS_CLASSES);
+		switch (result.kind) {
+			case "engram":
+				status.addClass("is-engram");
+				status.setText(`✓ Engram server reachable (v${result.version})`);
+				break;
+			case "reachable":
+				status.addClass("is-reachable");
+				status.setText("✗ server responded but isn't an Engram backend");
+				break;
+			case "unreachable":
+				status.addClass("is-unreachable");
+				status.setText("✗ couldn't reach a server at this URL");
+				break;
+		}
+	};
+
+	const runPreflight = (value: string): void => {
+		if (!completeOrigin(value)) {
+			status.removeClasses(STATUS_CLASSES);
+			status.setText("");
+			return;
+		}
+		const seq = ++probeSeq;
+		status.removeClasses(STATUS_CLASSES);
+		status.addClass("is-checking");
+		status.setText("Checking server…");
+		void EngramApi.probeHealth(value).then((result) => {
+			if (seq !== probeSeq) return; // superseded by a newer probe
+			status.removeClass("is-checking");
+			renderStatus(result);
+		});
+	};
+
+	setting
+		.addText((text) => {
+			text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
+			text.onChange((value) => {
+				pendingUrl = value;
+				if (debounce !== null) window.clearTimeout(debounce);
+				debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+			});
+		})
+		.addButton((btn) =>
+			btn
+				.setButtonText("Save")
+				.setCta()
+				.onClick(async () => {
 					const cleared = await applyApiUrlChange(
 						{
 							settings: plugin.settings,
 							api: plugin.api,
 							noteStream: plugin.noteStream,
 						},
-						value,
+						pendingUrl.trim(),
 						() => plugin.saveSettings(),
 					);
 					if (cleared) {
 						new Notice("Engram backend changed — sign in again to continue.");
-						redisplay();
 					}
+					redisplay();
 				}),
 		);
 
-	renderAuthSection(ctx);
-	renderVaultSection(ctx);
-	renderSupportSection(ctx);
+	// Surface the current backend's status immediately on open (no typing needed).
+	if (completeOrigin(plugin.settings.apiUrl)) runPreflight(plugin.settings.apiUrl);
 }
 
 /** Render the "you're on Cloud" banner that replaces the entire Self-hosted

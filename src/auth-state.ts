@@ -4,7 +4,7 @@ import type { EngramSyncSettings } from "./types";
  *  (localhost, IPv4, or a domain with a real-looking TLD). Returns null for
  *  empty / unparseable / mid-typing URLs (e.g. `https://engr`). Returning null
  *  here is what stops `isBackendChange` from clearing auth on every keystroke. */
-function completeOrigin(url: string): string | null {
+export function completeOrigin(url: string): string | null {
 	if (!url) return null;
 	let parsed: URL;
 	try {
@@ -28,6 +28,31 @@ export function isBackendChange(oldUrl: string, newUrl: string): boolean {
 	const newO = completeOrigin(newUrl);
 	if (!oldO || !newO) return false;
 	return oldO !== newO;
+}
+
+/** Outcome of probing a candidate self-hosted URL's `/api/health`.
+ *  - ``engram``: a healthy Engram backend answered (carries its version).
+ *  - ``reachable``: something answered, but it isn't a healthy Engram server.
+ *  - ``unreachable``: no response at all (DNS / refused / timeout). */
+export type PreflightResult =
+	| { kind: "engram"; version: string }
+	| { kind: "reachable" }
+	| { kind: "unreachable" };
+
+/** Classify a `/api/health` probe response. Pure (no network) so it can be
+ *  unit-tested exhaustively. The Engram fingerprint is `status === "ok"` AND a
+ *  string `version` — a bare `{status:"ok"}` is a common generic health shape,
+ *  so we require the version field to avoid false positives on random servers.
+ *  A `status` of 0 means the request never got a response. */
+export function interpretHealthProbe(status: number, body: unknown): PreflightResult {
+	if (status === 0) return { kind: "unreachable" };
+	if (status === 200) {
+		const b = body as { status?: unknown; version?: unknown } | null;
+		if (b && b.status === "ok" && typeof b.version === "string") {
+			return { kind: "engram", version: b.version };
+		}
+	}
+	return { kind: "reachable" };
 }
 
 /** Returns a copy of settings with all backend-scoped auth state cleared.

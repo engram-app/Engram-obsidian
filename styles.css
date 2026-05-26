@@ -531,7 +531,7 @@
 	font-family: var(--font-monospace);
 }
 
-/* Prominent "how to set up Engram" CTA in the Self-hosted Setup section */
+/* Prominent CTA box — shared by Self-hosted Setup and Cloud "New to Engram?" */
 .engram-setup-cta {
 	padding: 16px;
 	background: var(--background-secondary);
@@ -555,6 +555,50 @@
 .engram-setup-cta .setting-item-description a {
 	font-weight: 600;
 	color: var(--text-accent);
+}
+
+/* Self-hosted "Get it here →" repo link drops to its own line so the long
+   GitHub URL never wraps mid-string. Scoped so the inline cloud link is unaffected. */
+.engram-server-cta-desc a {
+	display: block;
+	margin-top: 4px;
+}
+
+/* Give the Engram URL field room — let the control fill the row and the input
+   span its full width instead of Obsidian's narrow default. */
+.engram-url-setting .setting-item-control {
+	flex-grow: 1;
+}
+
+.engram-url-setting .setting-item-control input[type="text"] {
+	flex-grow: 1;
+	width: auto;
+}
+
+/* Background preflight status under the Engram URL field. */
+.engram-url-preflight:empty {
+	display: none;
+}
+
+.engram-url-preflight {
+	margin-top: 6px;
+	font-size: 0.85em;
+}
+
+.engram-url-preflight.is-checking {
+	color: var(--text-muted);
+}
+
+.engram-url-preflight.is-engram {
+	color: var(--text-success);
+}
+
+.engram-url-preflight.is-reachable {
+	color: var(--text-warning);
+}
+
+.engram-url-preflight.is-unreachable {
+	color: var(--text-error);
 }
 
 .engram-auth-divider {

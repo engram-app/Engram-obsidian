@@ -17,7 +17,6 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 	// self-hosted user merely navigated to the Cloud tab (e2e apiKey-wipe
 	// diagnostic on PR #162 caught this in CI).
 	if (action === "prompt-switch") {
-		new Setting(containerEl).setName("Engram cloud").setHeading();
 		new Setting(containerEl)
 			.setName("Currently signed in to a self-hosted instance")
 			.setDesc(
@@ -56,11 +55,10 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 		);
 	}
 
-	new Setting(containerEl).setName("Engram cloud").setHeading();
-
 	const aboutSetting = new Setting(containerEl)
 		.setName("New to Engram?")
 		.setDesc("Create an account, read the docs, and learn more at ");
+	aboutSetting.settingEl.addClass("engram-setup-cta");
 	aboutSetting.descEl.createEl("a", {
 		text: "engram.page",
 		href: ENGRAM_MARKETING_URL,
