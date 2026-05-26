@@ -713,7 +713,6 @@
 		align-items: stretch;
 	}
 
-	.engram-sponsor-button,
 	.engram-kofi-button {
 		justify-content: center;
 	}
@@ -832,38 +831,6 @@
 
 /* Scoped under `.engram-support-buttons a` for (0,2,1) specificity — beats
    Obsidian themes that style anchors at (0,1,1) without needing !important. */
-.engram-support-buttons a.engram-sponsor-button {
-	display: inline-flex;
-	align-items: center;
-	gap: 8px;
-	padding: 8px 16px;
-	background: linear-gradient(135deg, #db61a2 0%, #f178b6 100%);
-	color: #ffffff;
-	border-radius: 8px;
-	text-decoration: none;
-	font-weight: 600;
-	font-size: 0.95em;
-	box-shadow: 0 2px 6px rgba(219, 97, 162, 0.25);
-	transition: transform 0.15s ease, box-shadow 0.15s ease;
-}
-
-.engram-support-buttons a.engram-sponsor-button:hover {
-	transform: translateY(-1px);
-	box-shadow: 0 4px 14px rgba(219, 97, 162, 0.4);
-}
-
-.engram-support-buttons .engram-sponsor-button .engram-sponsor-icon {
-	display: inline-flex;
-	align-items: center;
-}
-
-.engram-support-buttons .engram-sponsor-button .engram-sponsor-icon svg {
-	width: 18px;
-	height: 18px;
-	fill: #ffffff;
-	stroke: #ffffff;
-}
-
 .engram-support-buttons a.engram-kofi-button {
 	display: inline-flex;
 	align-items: center;
