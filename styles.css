@@ -557,6 +557,13 @@
 	color: var(--text-accent);
 }
 
+/* Self-hosted "Get it here →" repo link drops to its own line so the long
+   GitHub URL never wraps mid-string. Scoped so the inline cloud link is unaffected. */
+.engram-server-cta-desc a {
+	display: block;
+	margin-top: 4px;
+}
+
 .engram-auth-divider {
 	display: flex;
 	align-items: center;

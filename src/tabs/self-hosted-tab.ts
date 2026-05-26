@@ -20,6 +20,7 @@ export function renderSelfHostedTab(ctx: TabContext): void {
 		.setName("Run your own Engram server")
 		.setDesc("Engram is the backend that powers sync and semantic search. Get it here → ");
 	repoSetting.settingEl.addClass("engram-setup-cta");
+	repoSetting.descEl.addClass("engram-server-cta-desc");
 	repoSetting.descEl.createEl("a", {
 		text: "github.com/engram-app/engram",
 		href: "https://github.com/engram-app/engram",
