@@ -7,7 +7,7 @@ import { ENGRAM_CLOUD_URL } from "./urls";
 const PREFLIGHT_DEBOUNCE_MS = 600;
 
 export function renderSelfHostedTab(ctx: TabContext): void {
-	const { containerEl, plugin, redisplay } = ctx;
+	const { containerEl, plugin } = ctx;
 
 	// Lock the tab when the user is signed into Engram Cloud — both modes share
 	// the same auth fields, so showing the auth UI here would let them sign out
@@ -71,11 +71,11 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 				break;
 			case "reachable":
 				status.addClass("is-reachable");
-				status.setText("✗ Server responded but isn't an Engram backend");
+				status.setText("✗ server responded but isn't an Engram backend");
 				break;
 			case "unreachable":
 				status.addClass("is-unreachable");
-				status.setText("✗ Couldn't reach a server at this URL");
+				status.setText("✗ couldn't reach a server at this URL");
 				break;
 		}
 	};

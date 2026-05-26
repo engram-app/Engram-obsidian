@@ -2045,7 +2045,7 @@ var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https:
 // src/tabs/self-hosted-tab.ts
 var PREFLIGHT_DEBOUNCE_MS = 600;
 function renderSelfHostedTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
+  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
   if (isOnCloud && hasAuth) {
     renderCloudLockBanner(containerEl);
     return;
@@ -2065,10 +2065,10 @@ function renderEngramUrlSetting(ctx) {
         status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
         break;
       case "reachable":
-        status.addClass("is-reachable"), status.setText("\u2717 Server responded but isn't an Engram backend");
+        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
         break;
       case "unreachable":
-        status.addClass("is-unreachable"), status.setText("\u2717 Couldn't reach a server at this URL");
+        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
         break;
     }
   }, runPreflight = (value) => {
