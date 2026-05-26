@@ -531,7 +531,7 @@
 	font-family: var(--font-monospace);
 }
 
-/* Prominent "how to set up Engram" CTA in the Self-hosted Setup section */
+/* Prominent CTA box — shared by Self-hosted Setup and Cloud "New to Engram?" */
 .engram-setup-cta {
 	padding: 16px;
 	background: var(--background-secondary);

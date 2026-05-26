@@ -61,6 +61,7 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 	const aboutSetting = new Setting(containerEl)
 		.setName("New to Engram?")
 		.setDesc("Create an account, read the docs, and learn more at ");
+	aboutSetting.settingEl.addClass("engram-setup-cta");
 	aboutSetting.descEl.createEl("a", {
 		text: "engram.page",
 		href: ENGRAM_MARKETING_URL,

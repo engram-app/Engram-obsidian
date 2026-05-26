@@ -1996,6 +1996,9 @@ function withClearedAuth(settings) {
     vaultId: null
   };
 }
+function cloudTabAction(settings, cloudUrl) {
+  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
+}
 async function applyApiUrlChange(target, newUrl, save) {
   var _a;
   if (target.settings.apiUrl === newUrl) return !1;
@@ -2166,8 +2169,26 @@ async function applyVaultSwitch(plugin, value, name) {
 
 // src/tabs/account-tab.ts
 async function renderAccountTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx;
-  if (plugin.settings.apiUrl !== ENGRAM_CLOUD_URL && await applyApiUrlChange(
+  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
+  if (action === "prompt-switch") {
+    new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading(), new import_obsidian8.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
+        await applyApiUrlChange(
+          {
+            settings: plugin.settings,
+            api: plugin.api,
+            noteStream: plugin.noteStream
+          },
+          ENGRAM_CLOUD_URL,
+          () => plugin.saveSettings()
+        ), new import_obsidian8.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
+      })
+    );
+    return;
+  }
+  action === "auto-switch" && await applyApiUrlChange(
     {
       settings: plugin.settings,
       api: plugin.api,
@@ -2175,13 +2196,9 @@ async function renderAccountTab(ctx) {
     },
     ENGRAM_CLOUD_URL,
     () => plugin.saveSettings()
-  )) {
-    new import_obsidian8.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
-    return;
-  }
-  new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading();
+  ), new import_obsidian8.Setting(containerEl).setName("Engram cloud").setHeading();
   let aboutSetting = new import_obsidian8.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
-  aboutSetting.descEl.createEl("a", {
+  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
     text: "engram.page",
     href: ENGRAM_MARKETING_URL,
     attr: { target: "_blank", rel: "noopener" }
@@ -4087,14 +4104,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian13.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_a = this.baseStore) == null || _a.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0) : !1;
+      if (existing2) {
+        let localContent = await this.app.vault.cachedRead(existing2), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized);
+        if (!lastSynced || lastSynced.hash !== localHash) {
+          rlog().info(
+            "pull",
+            `Tombstone skipped (resurrection): ${change.path} | localHash=${localHash} | syncedHash=${(_a = lastSynced == null ? void 0 : lastSynced.hash) != null ? _a : "none"} | localLen=${localContent.length}`
+          ), devLog().log(
+            "pull",
+            `applyChange DELETE skipped (resurrection): ${change.path} (localHash=${localHash} !== syncedHash=${(_b = lastSynced == null ? void 0 : lastSynced.hash) != null ? _b : "none"})`
+          );
+          try {
+            await this.pushFile(existing2, !0);
+          } catch (e) {
+            rlog().error(
+              "pull",
+              `Resurrection push failed: ${change.path} | err=${errMsg(e)}`
+            );
+          }
+          return !1;
+        }
+        return await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0;
+      }
+      return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
@@ -4116,14 +4155,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${change.content.length}`
         );
-        let pullBase = (_b = this.baseStore) == null ? void 0 : _b.get(normalized);
+        let pullBase = (_d = this.baseStore) == null ? void 0 : _d.get(normalized);
         if (pullBase) {
           let merge = threeWayMerge(pullBase.content, localContent, change.content);
           if (merge.clean) {
             await this.modifyFile(existing, merge.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge.merged),
               version: change.version
-            }), change.version != null && ((_c = this.baseStore) == null || _c.set(normalized, merge.merged, change.version));
+            }), change.version != null && ((_e = this.baseStore) == null || _e.set(normalized, merge.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -4177,7 +4216,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, change.content), this.syncState.set((0, import_obsidian13.normalizePath)(conflictPath), {
               hash: fnv1a(change.content),
               version: change.version
-            }), change.version != null && ((_d = this.baseStore) == null || _d.set(
+            }), change.version != null && ((_f = this.baseStore) == null || _f.set(
               (0, import_obsidian13.normalizePath)(conflictPath),
               change.content,
               change.version
@@ -4199,7 +4238,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_e = this.baseStore) == null || _e.set(
+            }), change.version != null && ((_g = this.baseStore) == null || _g.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -4218,14 +4257,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
         rlog().info("conflict", `Resolved: ${change.path} \u2192 keep-remote`);
       } else if (localContent === change.content)
-        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, { hash: localHash, version: change.version }), change.version != null && ((_f = this.baseStore) == null || _f.set(normalized, change.content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, { hash: localHash, version: change.version }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, change.content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log(
         "pull",
         `applyChange OVERWRITE: ${change.path} (len=${change.content.length})`
       ), await this.modifyFile(existing, change.content), this.syncState.set(normalized, {
         hash: fnv1a(change.content),
         version: change.version
-      }), change.version != null && ((_g = this.baseStore) == null || _g.set(normalized, change.content, change.version)), rlog().info(
+      }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, change.content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${change.content.length}`
       ), !0;
@@ -4243,7 +4282,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncState.set(normalized, {
       hash: fnv1a(change.content),
       version: change.version
-    }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, change.content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`), !0;
+    }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, change.content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
