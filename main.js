@@ -2082,7 +2082,7 @@ function renderEngramUrlSetting(ctx) {
     });
   };
   setting.addText((text) => {
-    text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl), text.onChange((value) => {
+    text.setPlaceholder("https://engram.example.com"), text.onChange((value) => {
       pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
     });
   }).addButton(

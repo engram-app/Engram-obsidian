@@ -99,7 +99,10 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 
 	setting
 		.addText((text) => {
-			text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
+			// Leave the input empty so the placeholder shows (same as the API-key
+			// field). `pendingUrl` still holds the saved apiUrl, so an untouched
+			// Save is a no-op rather than wiping the configured URL.
+			text.setPlaceholder("https://engram.example.com");
 			text.onChange((value) => {
 				pendingUrl = value;
 				if (debounce !== null) window.clearTimeout(debounce);
