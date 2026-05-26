@@ -728,7 +728,55 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian15 = require("obsidian");
 
 // src/api.ts
-var import_obsidian = require("obsidian"), EngramApi = class _EngramApi {
+var import_obsidian = require("obsidian");
+
+// src/auth-state.ts
+function completeOrigin(url) {
+  if (!url) return null;
+  let parsed;
+  try {
+    parsed = new URL(url);
+  } catch (e) {
+    return null;
+  }
+  let host = parsed.hostname, isLocalhost = host === "localhost", isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host), hasTld = /\.[a-z]{2,}$/i.test(host);
+  return !isLocalhost && !isIPv4 && !hasTld ? null : `${parsed.protocol}//${parsed.host}`.toLowerCase();
+}
+function isBackendChange(oldUrl, newUrl) {
+  let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
+  return !oldO || !newO ? !1 : oldO !== newO;
+}
+function interpretHealthProbe(status, body) {
+  if (status === 0) return { kind: "unreachable" };
+  if (status === 200) {
+    let b = body;
+    if (b && b.status === "ok" && typeof b.version == "string")
+      return { kind: "engram", version: b.version };
+  }
+  return { kind: "reachable" };
+}
+function withClearedAuth(settings) {
+  return {
+    ...settings,
+    apiKey: "",
+    refreshToken: void 0,
+    userEmail: void 0,
+    authMethod: null,
+    vaultId: null
+  };
+}
+function cloudTabAction(settings, cloudUrl) {
+  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
+}
+async function applyApiUrlChange(target, newUrl, save) {
+  var _a;
+  if (target.settings.apiUrl === newUrl) return !1;
+  let cleared = isBackendChange(target.settings.apiUrl, newUrl);
+  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
+}
+
+// src/api.ts
+var EngramApi = class _EngramApi {
   constructor(baseUrl, apiKey) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
@@ -752,6 +800,24 @@ var import_obsidian = require("obsidian"), EngramApi = class _EngramApi {
   static normalizeBaseUrl(url) {
     let base = url.replace(/\/+$/, "");
     return base.endsWith("/api") ? base : `${base}/api`;
+  }
+  /** Probe an arbitrary candidate URL's `/api/health` WITHOUT committing it as
+   *  the active backend. Used by the self-hosted settings preflight so the user
+   *  gets background confirmation a URL points at a real Engram server before
+   *  they commit to it. No auth — `/health` is public. */
+  static async probeHealth(rawUrl) {
+    let base = _EngramApi.normalizeBaseUrl(rawUrl);
+    try {
+      let resp = await (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }), body = null;
+      try {
+        body = resp.json;
+      } catch (e) {
+        body = null;
+      }
+      return interpretHealthProbe(resp.status, body);
+    } catch (e) {
+      return { kind: "unreachable" };
+    }
   }
   updateConfig(baseUrl, apiKey) {
     this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
@@ -1970,42 +2036,6 @@ var import_obsidian6 = require("obsidian"), PHASE_LABELS = {
 // src/tabs/account-tab.ts
 var import_obsidian8 = require("obsidian");
 
-// src/auth-state.ts
-function completeOrigin(url) {
-  if (!url) return null;
-  let parsed;
-  try {
-    parsed = new URL(url);
-  } catch (e) {
-    return null;
-  }
-  let host = parsed.hostname, isLocalhost = host === "localhost", isIPv4 = /^\d{1,3}(\.\d{1,3}){3}$/.test(host), hasTld = /\.[a-z]{2,}$/i.test(host);
-  return !isLocalhost && !isIPv4 && !hasTld ? null : `${parsed.protocol}//${parsed.host}`.toLowerCase();
-}
-function isBackendChange(oldUrl, newUrl) {
-  let oldO = completeOrigin(oldUrl), newO = completeOrigin(newUrl);
-  return !oldO || !newO ? !1 : oldO !== newO;
-}
-function withClearedAuth(settings) {
-  return {
-    ...settings,
-    apiKey: "",
-    refreshToken: void 0,
-    userEmail: void 0,
-    authMethod: null,
-    vaultId: null
-  };
-}
-function cloudTabAction(settings, cloudUrl) {
-  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
-}
-async function applyApiUrlChange(target, newUrl, save) {
-  var _a;
-  if (target.settings.apiUrl === newUrl) return !1;
-  let cleared = isBackendChange(target.settings.apiUrl, newUrl);
-  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
-}
-
 // src/tabs/self-hosted-tab.ts
 var import_obsidian7 = require("obsidian");
 
@@ -2013,6 +2043,7 @@ var import_obsidian7 = require("obsidian");
 var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https://engram.page";
 
 // src/tabs/self-hosted-tab.ts
+var PREFLIGHT_DEBOUNCE_MS = 600;
 function renderSelfHostedTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
   if (isOnCloud && hasAuth) {
@@ -2023,19 +2054,46 @@ function renderSelfHostedTab(ctx) {
   repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
     text: "github.com/engram-app/engram",
     href: "https://github.com/engram-app/engram"
-  }), new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000).").addText(
-    (text) => text.setPlaceholder("http://localhost:8000").setValue(plugin.settings.apiUrl).onChange(async (value) => {
+  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+}
+function renderEngramUrlSetting(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian7.Setting(containerEl).setName("Engram URL").setDesc("Full URL to your Engram instance (e.g. http://10.0.20.214:8000)."), status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], buffered = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
+      case "engram":
+        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
+        break;
+      case "reachable":
+        status.addClass("is-reachable"), status.setText("\u2717 Server responded but isn't an Engram backend");
+        break;
+      case "unreachable":
+        status.addClass("is-unreachable"), status.setText("\u2717 Couldn't reach a server at this URL");
+        break;
+    }
+  }, runPreflight = (value) => {
+    if (!completeOrigin(value)) {
+      status.removeClasses(STATUS_CLASSES), status.setText("");
+      return;
+    }
+    let seq = ++probeSeq;
+    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
+      seq === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+    });
+  };
+  setting.addText((text) => {
+    text.setPlaceholder("http://localhost:8000").setValue(plugin.settings.apiUrl), text.onChange((value) => {
+      buffered = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+    }), text.inputEl.addEventListener("blur", async () => {
       await applyApiUrlChange(
         {
           settings: plugin.settings,
           api: plugin.api,
           noteStream: plugin.noteStream
         },
-        value,
+        buffered,
         () => plugin.saveSettings()
       ) && (new import_obsidian7.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay());
-    })
-  ), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+    });
+  }), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
 function renderCloudLockBanner(containerEl) {
   let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });

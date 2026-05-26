@@ -564,6 +564,27 @@
 	margin-top: 4px;
 }
 
+/* Background preflight status under the Engram URL field. */
+.engram-url-preflight:empty {
+	display: none;
+}
+.engram-url-preflight {
+	margin-top: 6px;
+	font-size: 0.85em;
+}
+.engram-url-preflight.is-checking {
+	color: var(--text-muted);
+}
+.engram-url-preflight.is-engram {
+	color: var(--text-success);
+}
+.engram-url-preflight.is-reachable {
+	color: var(--text-warning);
+}
+.engram-url-preflight.is-unreachable {
+	color: var(--text-error);
+}
+
 .engram-auth-divider {
 	display: flex;
 	align-items: center;

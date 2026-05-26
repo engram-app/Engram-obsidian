@@ -3,6 +3,8 @@ import {
 	type ApiUrlSwitchTarget,
 	applyApiUrlChange,
 	cloudTabAction,
+	completeOrigin,
+	interpretHealthProbe,
 	isBackendChange,
 	withClearedAuth,
 } from "../src/auth-state";
@@ -87,6 +89,55 @@ describe("isBackendChange", () => {
 
 	test("false when new URL has no scheme (host-only paste)", () => {
 		expect(isBackendChange("https://engram.ras.band", "engram.ax")).toBe(false);
+	});
+});
+
+describe("completeOrigin", () => {
+	test("null for empty / partial / garbage / scheme-less", () => {
+		expect(completeOrigin("")).toBeNull();
+		expect(completeOrigin("https://engr")).toBeNull();
+		expect(completeOrigin("not a url")).toBeNull();
+		expect(completeOrigin("engram.ax")).toBeNull();
+	});
+
+	test("origin for localhost, IPv4, and real TLD", () => {
+		expect(completeOrigin("http://localhost:8000")).toBe("http://localhost:8000");
+		expect(completeOrigin("http://10.0.20.214:8000/api")).toBe("http://10.0.20.214:8000");
+		expect(completeOrigin("https://Engram.AX")).toBe("https://engram.ax");
+	});
+});
+
+describe("interpretHealthProbe", () => {
+	test("engram when 200 + status ok + version string", () => {
+		expect(interpretHealthProbe(200, { status: "ok", version: "0.5.42" })).toEqual({
+			kind: "engram",
+			version: "0.5.42",
+		});
+	});
+
+	test("reachable when 200 but no version (generic health endpoint)", () => {
+		expect(interpretHealthProbe(200, { status: "ok" })).toEqual({ kind: "reachable" });
+	});
+
+	test("reachable when version is not a string", () => {
+		expect(interpretHealthProbe(200, { status: "ok", version: 123 })).toEqual({
+			kind: "reachable",
+		});
+	});
+
+	test("reachable when 200 body is null / non-JSON / empty object", () => {
+		expect(interpretHealthProbe(200, null)).toEqual({ kind: "reachable" });
+		expect(interpretHealthProbe(200, "<html>")).toEqual({ kind: "reachable" });
+		expect(interpretHealthProbe(200, {})).toEqual({ kind: "reachable" });
+	});
+
+	test("reachable when server responds non-200 (there, but not healthy engram)", () => {
+		expect(interpretHealthProbe(404, {})).toEqual({ kind: "reachable" });
+		expect(interpretHealthProbe(500, null)).toEqual({ kind: "reachable" });
+	});
+
+	test("unreachable when status is 0 (no response)", () => {
+		expect(interpretHealthProbe(0, null)).toEqual({ kind: "unreachable" });
 	});
 });
 

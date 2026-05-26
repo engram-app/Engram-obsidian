@@ -4,6 +4,7 @@
  * Uses Obsidian's requestUrl() which bypasses CORS and works on mobile.
  */
 import { type RequestUrlResponse, requestUrl } from "obsidian";
+import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import type { AuthProvider } from "./auth";
 import type {
 	AttachmentChangesResponse,
@@ -57,6 +58,26 @@ export class EngramApi {
 	private static normalizeBaseUrl(url: string): string {
 		const base = url.replace(/\/+$/, "");
 		return base.endsWith("/api") ? base : `${base}/api`;
+	}
+
+	/** Probe an arbitrary candidate URL's `/api/health` WITHOUT committing it as
+	 *  the active backend. Used by the self-hosted settings preflight so the user
+	 *  gets background confirmation a URL points at a real Engram server before
+	 *  they commit to it. No auth — `/health` is public. */
+	static async probeHealth(rawUrl: string): Promise<PreflightResult> {
+		const base = EngramApi.normalizeBaseUrl(rawUrl);
+		try {
+			const resp = await requestUrl({ url: `${base}/health`, method: "GET", throw: false });
+			let body: unknown = null;
+			try {
+				body = resp.json;
+			} catch {
+				body = null;
+			}
+			return interpretHealthProbe(resp.status, body);
+		} catch {
+			return { kind: "unreachable" };
+		}
 	}
 
 	updateConfig(baseUrl: string, apiKey: string): void {
