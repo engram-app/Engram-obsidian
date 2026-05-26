@@ -99,7 +99,10 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 
 	setting
 		.addText((text) => {
-			text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl);
+			// Leave the input empty so the placeholder shows (same as the API-key
+			// field). `pendingUrl` still holds the saved apiUrl, so an untouched
+			// Save is a no-op rather than wiping the configured URL.
+			text.setPlaceholder("https://engram.example.com");
 			text.onChange((value) => {
 				pendingUrl = value;
 				if (debounce !== null) window.clearTimeout(debounce);
@@ -349,7 +352,7 @@ export function renderVaultSection(ctx: TabContext): void {
 		});
 }
 
-/** Render the GitHub Sponsors + Ko-fi support section. */
+/** Render the Ko-fi support section. */
 export function renderSupportSection(ctx: TabContext): void {
 	const { containerEl } = ctx;
 
@@ -361,15 +364,6 @@ export function renderSupportSection(ctx: TabContext): void {
 	supportSetting.settingEl.addClass("engram-setting-support");
 
 	const buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" });
-
-	const sponsorLink = buttonRow.createEl("a", {
-		cls: "engram-sponsor-button",
-		href: "https://github.com/sponsors/Rasbandit",
-		attr: { target: "_blank", rel: "noopener" },
-	});
-	const sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
-	setIcon(sponsorIcon, "heart");
-	sponsorLink.createSpan({ text: "Sponsor on GitHub" });
 
 	const kofiLink = buttonRow.createEl("a", {
 		cls: "engram-kofi-button",

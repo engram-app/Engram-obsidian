@@ -2082,7 +2082,7 @@ function renderEngramUrlSetting(ctx) {
     });
   };
   setting.addText((text) => {
-    text.setPlaceholder("https://engram.example.com").setValue(plugin.settings.apiUrl), text.onChange((value) => {
+    text.setPlaceholder("https://engram.example.com"), text.onChange((value) => {
       pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
     });
   }).addButton(
@@ -2208,13 +2208,7 @@ function renderSupportSection(ctx) {
     "If this plugin saves you time, consider supporting development."
   );
   supportSetting.settingEl.addClass("engram-setting-support");
-  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
-    cls: "engram-sponsor-button",
-    href: "https://github.com/sponsors/Rasbandit",
-    attr: { target: "_blank", rel: "noopener" }
-  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
-  (0, import_obsidian7.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "Sponsor on GitHub" });
-  let kofiLink = buttonRow.createEl("a", {
+  let kofiLink = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }).createEl("a", {
     cls: "engram-kofi-button",
     href: "https://ko-fi.com/rasbandit",
     attr: { target: "_blank", rel: "noopener" }
