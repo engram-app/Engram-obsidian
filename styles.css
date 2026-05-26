@@ -569,6 +569,7 @@
 .engram-url-setting .setting-item-control {
 	flex-grow: 1;
 }
+
 .engram-url-setting .setting-item-control input[type="text"] {
 	flex-grow: 1;
 	width: auto;
@@ -578,19 +579,24 @@
 .engram-url-preflight:empty {
 	display: none;
 }
+
 .engram-url-preflight {
 	margin-top: 6px;
 	font-size: 0.85em;
 }
+
 .engram-url-preflight.is-checking {
 	color: var(--text-muted);
 }
+
 .engram-url-preflight.is-engram {
 	color: var(--text-success);
 }
+
 .engram-url-preflight.is-reachable {
 	color: var(--text-warning);
 }
+
 .engram-url-preflight.is-unreachable {
 	color: var(--text-error);
 }
