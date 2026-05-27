@@ -28,6 +28,7 @@ PURPLE = "#b495f7"
 NODE_S = "#6b7c9c"
 NODE_F = "#141d2e"
 TXT    = "#eef3fb"
+SUB    = "#a6b4ce"
 MUTED  = "#8497b6"
 
 # --- diagram anchors (right half) ---
@@ -114,10 +115,11 @@ def build_svg(frame):
   <rect width="{W}" height="{H}" fill="url(#bg)"/>
   <rect width="{W}" height="{H}" fill="url(#grid)"/>
 
-  <text x="60" y="120" font-family="monospace" font-size="14" font-weight="bold" fill="{CYAN}" letter-spacing="4">AI MEMORY LAYER</text>
-  <text x="58" y="178" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">Your notes are</text>
-  <text x="58" y="230" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">your AI's <tspan fill="{CYAN}">memory.</tspan></text>
-  <text x="60" y="276" font-family="monospace" font-size="13" fill="{MUTED}" letter-spacing="1">Synced everywhere &#183; read &amp; written by your AI</text>
+  <text x="60" y="112" font-family="monospace" font-size="14" font-weight="bold" fill="{CYAN}" letter-spacing="4">AI MEMORY LAYER</text>
+  <text x="58" y="170" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">Your notes are</text>
+  <text x="58" y="222" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">your AI's <tspan fill="{CYAN}">memory.</tspan></text>
+  <text x="60" y="268" font-family="sans-serif" font-size="16.5" fill="{SUB}">Both you and your AI can read and edit</text>
+  <text x="60" y="291" font-family="sans-serif" font-size="16.5" fill="{SUB}">your notes &#8212; from anywhere.</text>
 
   {wa}{wb}{wc}{wd}{we}
   {source_node(*OBS, "OBSIDIAN")}
