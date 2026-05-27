@@ -50,6 +50,33 @@ bun run build               # tsc + esbuild
 ```
 Or via dashboard: "Run preview scan" on any branch/tag/commit.
 
+## Listing copy (Developer Dashboard)
+
+_Added 2026-05-27._ The dashboard listing has two description fields: a **short description (200 char max)** and a **long description (2000 char max)**. Keep both concise. The short description should also match `manifest.json` `description` (shown in-app).
+
+### Short description (185 / 200)
+```
+Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host — free to start.
+```
+
+### Long description (1013 / 2000)
+```
+Your notes are your AI's memory.
+
+Engram Vault Sync turns your Obsidian vault into a shared memory that both you and your AI assistants can read and edit — from anywhere.
+
+What you get:
+• Your notes on every device. Edit on your laptop, see it on your phone — and edits your AI makes show up too.
+• Search by meaning. Describe what you're after in plain language and the right note surfaces, no exact keywords needed.
+• An AI that knows your vault. Connect Claude, Cursor, ChatGPT, or any MCP-compatible app and ask questions about your own notes. It can add new ones, too.
+
+Nothing is ever silently overwritten, offline edits sync when you reconnect, and your notes only go to the Engram server you choose — no third parties, no tracking.
+
+Engram Vault Sync is the Obsidian half of Engram. The other half handles the sync, search, and AI connection: sign up at engram.page (free tier, nothing to install) or self-host the source-available, Docker-ready backend on your own hardware.
+
+Works on desktop and mobile.
+```
+
 ## Failed Approaches / Dead Ends
 
 ### Old GitHub PR flow (DEAD as of 2026-05-12)
