@@ -2,11 +2,11 @@
 """Generate assets/vault-banner.gif — the README banner.
 
 Self-contained dark "card" banner that reads on both light and dark README
-backgrounds. Hero split: the headline "Your notes are your AI's memory." on the
-left, a compact flow diagram on the right (sources -> VAULT -> AIs). Brand
-texture: soft purple/cyan glows, faint grid, wire-trace lines. Each frame is a
-static SVG (animation state computed per frame) so the loop is seamless and
-needs no browser.
+backgrounds. Hero split: the headline "Your notes are your AI's memory." plus a
+second-tier tagline on the left, a compact flow diagram on the right
+(sources -> VAULT -> AIs). Subtle diagonal gradient + grid for texture. Each
+frame is a static SVG (animation state computed per frame) so the loop is
+seamless and needs no browser.
 
 Deps:  pip install cairosvg Pillow
 Run:   python scripts/gen-banner.py
@@ -15,7 +15,7 @@ import io, os
 import cairosvg
 from PIL import Image
 
-W, H = 1200, 340
+W, H = 1200, 250
 N = 40            # frames
 D = 2.0           # loop seconds
 FPS_MS = int(1000 * D / N)
@@ -28,17 +28,17 @@ PURPLE = "#b495f7"
 NODE_S = "#6b7c9c"
 NODE_F = "#141d2e"
 TXT    = "#eef3fb"
-SUB    = "#a6b4ce"
+SUB    = "#b8c6dd"
 MUTED  = "#8497b6"
 
-# --- diagram anchors (right half) ---
-OBS = (650, 138)
-WEB = (650, 222)
-VAULT = (865, 180)
-AI_X = 1098
-CLAUDE  = (AI_X, 126)
-CURSOR  = (AI_X, 180)
-CHATGPT = (AI_X, 234)
+# --- diagram anchors (right half), vertically centered ~128 ---
+OBS = (648, 90)
+WEB = (648, 166)
+VAULT = (864, 128)
+BADGE_X = 1024
+CLAUDE  = (BADGE_X, 58)
+CURSOR  = (BADGE_X, 128)
+CHATGPT = (BADGE_X, 198)
 
 DASH = 12  # "6 6" pattern period
 
@@ -50,26 +50,49 @@ def wire(p1, p2, color, phase, frame):
             f'stroke-dasharray="6 6" stroke-dashoffset="{off:.2f}" stroke-linecap="round"/>')
 
 
-def source_node(cx, cy, label):
-    w, h = 112, 40
+def obsidian_icon(ix, iy):
+    """Stylized cut-diamond gem (Obsidian)."""
+    pts = f"{ix-8},{iy-4} {ix-3},{iy-9} {ix+3},{iy-9} {ix+8},{iy-4} {ix},{iy+10}"
+    return f'''<g stroke="{PURPLE}" stroke-width="1.4" fill="none" stroke-linejoin="round">
+      <polygon points="{pts}"/>
+      <line x1="{ix-8}" y1="{iy-4}" x2="{ix+8}" y2="{iy-4}"/>
+      <line x1="{ix-3}" y1="{iy-9}" x2="{ix}" y2="{iy-4}"/>
+      <line x1="{ix+3}" y1="{iy-9}" x2="{ix}" y2="{iy-4}"/>
+      <line x1="{ix}" y1="{iy-4}" x2="{ix}" y2="{iy+10}"/>
+    </g>'''
+
+
+def web_icon(ix, iy):
+    """Browser window glyph for the web portal."""
+    return f'''<g stroke="{PURPLE}" stroke-width="1.4" fill="none" stroke-linejoin="round">
+      <rect x="{ix-9}" y="{iy-7}" width="18" height="14" rx="2"/>
+      <line x1="{ix-9}" y1="{iy-2}" x2="{ix+9}" y2="{iy-2}"/>
+      <circle cx="{ix-6}" cy="{iy-4.5}" r="0.9" fill="{PURPLE}" stroke="none"/>
+      <circle cx="{ix-3}" cy="{iy-4.5}" r="0.9" fill="{PURPLE}" stroke="none"/>
+    </g>'''
+
+
+def source_node(cx, cy, label, icon):
+    w, h = 116, 40
     x, y = cx - w / 2, cy - h / 2
     return f'''<g>
-      <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{NODE_F}" stroke="{PURPLE}" stroke-width="1.4" stroke-opacity="0.8"/>
-      <circle cx="{x+19}" cy="{cy}" r="5" fill="none" stroke="{PURPLE}" stroke-width="1.8"/>
-      <text x="{x+36}" y="{cy+4}" font-family="monospace" font-size="12" font-weight="bold" fill="{TXT}">{label}</text>
+      <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{NODE_F}" stroke="{PURPLE}" stroke-width="1.4" stroke-opacity="0.85"/>
+      {icon(x + 22, cy)}
+      <text x="{x+42}" y="{cy+4}" font-family="monospace" font-size="12.5" font-weight="bold" fill="{TXT}">{label}</text>
     </g>'''
 
 
 def ai_node(cx, cy, label):
-    r = 27
+    r = 17
     return f'''<g>
-      <circle cx="{cx}" cy="{cy}" r="{r}" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.4" stroke-opacity="0.85"/>
-      <text x="{cx}" y="{cy+3}" text-anchor="middle" font-family="monospace" font-size="8.5" font-weight="bold" fill="{TXT}">{label}</text>
+      <circle cx="{cx}" cy="{cy}" r="{r}" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.5" stroke-opacity="0.9"/>
+      <circle cx="{cx}" cy="{cy}" r="3.2" fill="{CYAN}" fill-opacity="0.85"/>
+      <text x="{cx+27}" y="{cy+5}" font-family="monospace" font-size="13.5" font-weight="bold" fill="{TXT}">{label}</text>
     </g>'''
 
 
 def vault(cx, cy, frame):
-    bw, bh = 80, 104
+    bw, bh = 78, 118
     x, y = cx - bw / 2, cy - bh / 2
     cards = ""
     for i, op in ((2, 0.4), (1, 0.65)):
@@ -78,12 +101,12 @@ def vault(cx, cy, frame):
     body = f'''
       {cards}
       <rect x="{x}" y="{y}" width="{bw}" height="{bh}" rx="7" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.8"/>
-      <text x="{x+12}" y="{y+22}" font-family="monospace" font-size="13" font-weight="bold" fill="{CYAN}">#</text>
-      <line x1="{x+26}" y1="{y+18}" x2="{x+bw-12}" y2="{y+18}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.5"/>
-      <line x1="{x+12}" y1="{y+36}" x2="{x+bw-12}" y2="{y+36}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
-      <line x1="{x+12}" y1="{y+48}" x2="{x+bw-20}" y2="{y+48}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
-      <line x1="{x+12}" y1="{y+60}" x2="{x+bw-14}" y2="{y+60}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
-      <text x="{cx}" y="{y+bh-12}" text-anchor="middle" font-family="monospace" font-size="11.5" font-weight="bold" fill="{CYAN}" letter-spacing="1.5">VAULT</text>'''
+      <text x="{x+12}" y="{y+23}" font-family="monospace" font-size="13" font-weight="bold" fill="{CYAN}">#</text>
+      <line x1="{x+26}" y1="{y+19}" x2="{x+bw-12}" y2="{y+19}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.5"/>
+      <line x1="{x+12}" y1="{y+38}" x2="{x+bw-12}" y2="{y+38}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <line x1="{x+12}" y1="{y+51}" x2="{x+bw-20}" y2="{y+51}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <line x1="{x+12}" y1="{y+64}" x2="{x+bw-14}" y2="{y+64}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <text x="{cx}" y="{y+bh-13}" text-anchor="middle" font-family="monospace" font-size="11.5" font-weight="bold" fill="{CYAN}" letter-spacing="1.5">VAULT</text>'''
     ripples = ""
     for k in range(3):
         local = ((frame / N) + k / 3) % 1.0
@@ -95,13 +118,15 @@ def vault(cx, cy, frame):
 
 
 def build_svg(frame):
+    vlx, vrx = VAULT[0] - 39, VAULT[0] + 39
+    blx = BADGE_X - 17
     # input wires: sources -> vault (purple)
-    wa = wire((OBS[0] + 56, OBS[1]), (VAULT[0] - 46, 168), PURPLE, 0, frame)
-    wb = wire((WEB[0] + 56, WEB[1]), (VAULT[0] - 46, 192), PURPLE, 6, frame)
+    wa = wire((OBS[0] + 58, OBS[1]), (vlx, 116), PURPLE, 0, frame)
+    wb = wire((WEB[0] + 58, WEB[1]), (vlx, 140), PURPLE, 6, frame)
     # output wires: vault -> AIs (cyan)
-    wc = wire((VAULT[0] + 46, 172), (CLAUDE[0] - 27, CLAUDE[1]),  CYAN, 3, frame)
-    wd = wire((VAULT[0] + 46, 180), (CURSOR[0] - 27, CURSOR[1]),  CYAN, 9, frame)
-    we = wire((VAULT[0] + 46, 188), (CHATGPT[0] - 27, CHATGPT[1]),CYAN, 1, frame)
+    wc = wire((vrx, 118), (blx, CLAUDE[1]),  CYAN, 3, frame)
+    wd = wire((vrx, 128), (blx, CURSOR[1]),  CYAN, 9, frame)
+    we = wire((vrx, 138), (blx, CHATGPT[1]), CYAN, 1, frame)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="{W}" y2="{H}" gradientUnits="userSpaceOnUse">
@@ -115,15 +140,15 @@ def build_svg(frame):
   <rect width="{W}" height="{H}" fill="url(#bg)"/>
   <rect width="{W}" height="{H}" fill="url(#grid)"/>
 
-  <text x="60" y="112" font-family="monospace" font-size="14" font-weight="bold" fill="{CYAN}" letter-spacing="4">AI MEMORY LAYER</text>
-  <text x="58" y="170" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">Your notes are</text>
-  <text x="58" y="222" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">your AI's <tspan fill="{CYAN}">memory.</tspan></text>
-  <text x="60" y="268" font-family="sans-serif" font-size="16.5" fill="{SUB}">Both you and your AI can read and edit</text>
-  <text x="60" y="291" font-family="sans-serif" font-size="16.5" fill="{SUB}">your notes &#8212; from anywhere.</text>
+  <text x="60" y="50" font-family="monospace" font-size="13.5" font-weight="bold" fill="{CYAN}" letter-spacing="4">AI MEMORY LAYER</text>
+  <text x="58" y="104" font-family="sans-serif" font-size="44" font-weight="bold" fill="{TXT}">Your notes are</text>
+  <text x="58" y="152" font-family="sans-serif" font-size="44" font-weight="bold" fill="{TXT}">your AI's <tspan fill="{CYAN}">memory.</tspan></text>
+  <text x="60" y="194" font-family="sans-serif" font-size="17.5" fill="{SUB}">Both you and your AI can read and edit</text>
+  <text x="60" y="218" font-family="sans-serif" font-size="17.5" fill="{SUB}">your notes &#8212; from anywhere.</text>
 
   {wa}{wb}{wc}{wd}{we}
-  {source_node(*OBS, "OBSIDIAN")}
-  {source_node(*WEB, "WEB")}
+  {source_node(*OBS, "OBSIDIAN", obsidian_icon)}
+  {source_node(*WEB, "WEB", web_icon)}
   {vault(*VAULT, frame)}
   {ai_node(*CLAUDE, "CLAUDE")}
   {ai_node(*CURSOR, "CURSOR")}
