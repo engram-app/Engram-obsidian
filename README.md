@@ -1,8 +1,6 @@
 # Engram Vault Sync
 
-![Engram Vault Sync — one vault, synced everywhere and read by your AI](assets/vault-banner.gif)
-
-> Your notes are your AI's memory.
+![Engram Vault Sync — your notes are your AI's memory, synced everywhere and read by your AI](assets/vault-banner.gif)
 
 Your vault is full of things you've figured out, half-written ideas, and notes you'll never find again. This plugin turns it into something your AI assistant can actually use — and keeps it in sync everywhere you write.
 

@@ -2,9 +2,11 @@
 """Generate assets/vault-banner.gif — the README banner.
 
 Self-contained dark "card" banner that reads on both light and dark README
-backgrounds. Horizontal flow: sources (Obsidian/Web) -> VAULT -> AIs
-(Claude/Cursor/ChatGPT). Each frame is rendered as a static SVG (the animation
-state is computed per frame) so the loop is seamless and needs no browser.
+backgrounds. Hero split: the headline "Your notes are your AI's memory." on the
+left, a compact flow diagram on the right (sources -> VAULT -> AIs). Brand
+texture: soft purple/cyan glows, faint grid, wire-trace lines. Each frame is a
+static SVG (animation state computed per frame) so the loop is seamless and
+needs no browser.
 
 Deps:  pip install cairosvg Pillow
 Run:   python scripts/gen-banner.py
@@ -13,7 +15,7 @@ import io, os
 import cairosvg
 from PIL import Image
 
-W, H = 1200, 300
+W, H = 1200, 340
 N = 40            # frames
 D = 2.0           # loop seconds
 FPS_MS = int(1000 * D / N)
@@ -22,95 +24,102 @@ BG_TOP = "#0e1422"
 BG_BOT = "#1a2438"
 GRID   = "#9fb2d0"
 CYAN   = "#3ad4e0"
-PURPLE = "#ab8df6"
+PURPLE = "#b495f7"
 NODE_S = "#6b7c9c"
 NODE_F = "#141d2e"
-TXT    = "#cdd8ea"
+TXT    = "#eef3fb"
 MUTED  = "#8497b6"
 
-SRC_X = 215
-OBS = (SRC_X, 110)
-WEB = (SRC_X, 196)
-VAULT = (600, 150)
-AI_X = 1000
-CLAUDE  = (AI_X, 84)
-CURSOR  = (AI_X, 150)
-CHATGPT = (AI_X, 216)
+# --- diagram anchors (right half) ---
+OBS = (650, 138)
+WEB = (650, 222)
+VAULT = (865, 180)
+AI_X = 1098
+CLAUDE  = (AI_X, 126)
+CURSOR  = (AI_X, 180)
+CHATGPT = (AI_X, 234)
 
 DASH = 12  # "6 6" pattern period
 
 
-def wire(p1, p2, phase, frame):
+def wire(p1, p2, color, phase, frame):
     off = -DASH * (frame / N) - phase
     return (f'<line x1="{p1[0]}" y1="{p1[1]}" x2="{p2[0]}" y2="{p2[1]}" '
-            f'stroke="{CYAN}" stroke-width="2" stroke-opacity="0.85" '
+            f'stroke="{color}" stroke-width="2" stroke-opacity="0.9" '
             f'stroke-dasharray="6 6" stroke-dashoffset="{off:.2f}" stroke-linecap="round"/>')
 
 
 def source_node(cx, cy, label):
-    w, h = 128, 46
+    w, h = 112, 40
     x, y = cx - w / 2, cy - h / 2
     return f'''<g>
-      <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="9" fill="{NODE_F}" stroke="{NODE_S}" stroke-width="1.4"/>
-      <circle cx="{x+22}" cy="{cy}" r="6" fill="none" stroke="{PURPLE}" stroke-width="1.8"/>
-      <text x="{x+44}" y="{cy+4}" font-family="monospace" font-size="14" font-weight="bold" fill="{TXT}">{label}</text>
+      <rect x="{x}" y="{y}" width="{w}" height="{h}" rx="8" fill="{NODE_F}" stroke="{PURPLE}" stroke-width="1.4" stroke-opacity="0.8"/>
+      <circle cx="{x+19}" cy="{cy}" r="5" fill="none" stroke="{PURPLE}" stroke-width="1.8"/>
+      <text x="{x+36}" y="{cy+4}" font-family="monospace" font-size="12" font-weight="bold" fill="{TXT}">{label}</text>
     </g>'''
 
 
 def ai_node(cx, cy, label):
-    r = 31
+    r = 27
     return f'''<g>
-      <circle cx="{cx}" cy="{cy}" r="{r}" fill="{NODE_F}" stroke="{NODE_S}" stroke-width="1.4"/>
-      <text x="{cx}" y="{cy+3}" text-anchor="middle" font-family="monospace" font-size="9.5" font-weight="bold" fill="{TXT}">{label}</text>
+      <circle cx="{cx}" cy="{cy}" r="{r}" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.4" stroke-opacity="0.85"/>
+      <text x="{cx}" y="{cy+3}" text-anchor="middle" font-family="monospace" font-size="8.5" font-weight="bold" fill="{TXT}">{label}</text>
     </g>'''
 
 
 def vault(cx, cy, frame):
-    bw, bh = 96, 118
+    bw, bh = 80, 104
     x, y = cx - bw / 2, cy - bh / 2
     cards = ""
-    for i, op in ((2, 0.45), (1, 0.7)):
-        cards += (f'<rect x="{x - i*5 + 6}" y="{y - i*5 + 6}" width="{bw}" height="{bh}" rx="8" '
+    for i, op in ((2, 0.4), (1, 0.65)):
+        cards += (f'<rect x="{x - i*5 + 5}" y="{y - i*5 + 5}" width="{bw}" height="{bh}" rx="7" '
                   f'fill="{NODE_F}" stroke="{CYAN}" stroke-width="1" stroke-opacity="{op}"/>')
     body = f'''
       {cards}
-      <rect x="{x}" y="{y}" width="{bw}" height="{bh}" rx="8" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.8"/>
-      <text x="{x+14}" y="{y+24}" font-family="monospace" font-size="14" font-weight="bold" fill="{CYAN}">#</text>
-      <line x1="{x+30}" y1="{y+20}" x2="{x+bw-14}" y2="{y+20}" stroke="{MUTED}" stroke-width="1.2" stroke-opacity="0.55"/>
-      <line x1="{x+14}" y1="{y+40}" x2="{x+bw-14}" y2="{y+40}" stroke="{MUTED}" stroke-width="1.2" stroke-opacity="0.4"/>
-      <line x1="{x+14}" y1="{y+54}" x2="{x+bw-22}" y2="{y+54}" stroke="{MUTED}" stroke-width="1.2" stroke-opacity="0.4"/>
-      <line x1="{x+14}" y1="{y+68}" x2="{x+bw-16}" y2="{y+68}" stroke="{MUTED}" stroke-width="1.2" stroke-opacity="0.4"/>
-      <text x="{cx}" y="{y+bh-14}" text-anchor="middle" font-family="monospace" font-size="13" font-weight="bold" fill="{CYAN}" letter-spacing="2">VAULT</text>'''
+      <rect x="{x}" y="{y}" width="{bw}" height="{bh}" rx="7" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.8"/>
+      <text x="{x+12}" y="{y+22}" font-family="monospace" font-size="13" font-weight="bold" fill="{CYAN}">#</text>
+      <line x1="{x+26}" y1="{y+18}" x2="{x+bw-12}" y2="{y+18}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.5"/>
+      <line x1="{x+12}" y1="{y+36}" x2="{x+bw-12}" y2="{y+36}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <line x1="{x+12}" y1="{y+48}" x2="{x+bw-20}" y2="{y+48}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <line x1="{x+12}" y1="{y+60}" x2="{x+bw-14}" y2="{y+60}" stroke="{MUTED}" stroke-width="1.1" stroke-opacity="0.38"/>
+      <text x="{cx}" y="{y+bh-12}" text-anchor="middle" font-family="monospace" font-size="11.5" font-weight="bold" fill="{CYAN}" letter-spacing="1.5">VAULT</text>'''
     ripples = ""
     for k in range(3):
         local = ((frame / N) + k / 3) % 1.0
-        rr = 64 + 46 * local
-        op = 0.5 * (1 - local)
+        rr = 56 + 40 * local
+        op = 0.45 * (1 - local)
         ripples += (f'<circle cx="{cx}" cy="{cy}" r="{rr:.1f}" fill="none" '
-                    f'stroke="{CYAN}" stroke-width="1.4" stroke-opacity="{op:.3f}"/>')
+                    f'stroke="{CYAN}" stroke-width="1.3" stroke-opacity="{op:.3f}"/>')
     return f'<g>{ripples}{body}</g>'
 
 
 def build_svg(frame):
-    w1 = wire((OBS[0] + 64, OBS[1]), (552, 138), 0, frame)
-    w2 = wire((WEB[0] + 64, WEB[1]), (552, 162), 6, frame)
-    w3 = wire((648, 142), (CLAUDE[0] - 31, CLAUDE[1]), 3, frame)
-    w4 = wire((648, 150), (CURSOR[0] - 31, CURSOR[1]), 9, frame)
-    w5 = wire((648, 158), (CHATGPT[0] - 31, CHATGPT[1]), 1, frame)
+    # input wires: sources -> vault (purple)
+    wa = wire((OBS[0] + 56, OBS[1]), (VAULT[0] - 46, 168), PURPLE, 0, frame)
+    wb = wire((WEB[0] + 56, WEB[1]), (VAULT[0] - 46, 192), PURPLE, 6, frame)
+    # output wires: vault -> AIs (cyan)
+    wc = wire((VAULT[0] + 46, 172), (CLAUDE[0] - 27, CLAUDE[1]),  CYAN, 3, frame)
+    wd = wire((VAULT[0] + 46, 180), (CURSOR[0] - 27, CURSOR[1]),  CYAN, 9, frame)
+    we = wire((VAULT[0] + 46, 188), (CHATGPT[0] - 27, CHATGPT[1]),CYAN, 1, frame)
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {W} {H}" width="{W}" height="{H}">
   <defs>
-    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="{H}" gradientUnits="userSpaceOnUse">
+    <linearGradient id="bg" x1="0" y1="0" x2="{W}" y2="{H}" gradientUnits="userSpaceOnUse">
       <stop offset="0%" stop-color="{BG_TOP}"/>
       <stop offset="100%" stop-color="{BG_BOT}"/>
     </linearGradient>
-    <pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse">
-      <path d="M28 0 L0 0 0 28" fill="none" stroke="{GRID}" stroke-width="1" stroke-opacity="0.05"/>
+    <pattern id="grid" width="30" height="30" patternUnits="userSpaceOnUse">
+      <path d="M30 0 L0 0 0 30" fill="none" stroke="{GRID}" stroke-width="1" stroke-opacity="0.04"/>
     </pattern>
   </defs>
   <rect width="{W}" height="{H}" fill="url(#bg)"/>
   <rect width="{W}" height="{H}" fill="url(#grid)"/>
-  <text x="{W/2}" y="40" text-anchor="middle" font-family="monospace" font-size="13" fill="{MUTED}" letter-spacing="5">ONE VAULT &#183; EDITED FROM ANYWHERE</text>
-  {w1}{w2}{w3}{w4}{w5}
+
+  <text x="60" y="120" font-family="monospace" font-size="14" font-weight="bold" fill="{CYAN}" letter-spacing="4">AI MEMORY LAYER</text>
+  <text x="58" y="178" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">Your notes are</text>
+  <text x="58" y="230" font-family="sans-serif" font-size="46" font-weight="bold" fill="{TXT}">your AI's <tspan fill="{CYAN}">memory.</tspan></text>
+  <text x="60" y="276" font-family="monospace" font-size="13" fill="{MUTED}" letter-spacing="1">Synced everywhere &#183; read &amp; written by your AI</text>
+
+  {wa}{wb}{wc}{wd}{we}
   {source_node(*OBS, "OBSIDIAN")}
   {source_node(*WEB, "WEB")}
   {vault(*VAULT, frame)}
