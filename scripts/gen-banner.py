@@ -82,12 +82,24 @@ def source_node(cx, cy, label, icon):
     </g>'''
 
 
+def robot_icon(cx, cy):
+    """Small robot head glyph."""
+    return f'''<g stroke="{CYAN}" stroke-width="1.3" fill="none" stroke-linejoin="round" stroke-linecap="round">
+      <line x1="{cx}" y1="{cy-9}" x2="{cx}" y2="{cy-6}"/>
+      <circle cx="{cx}" cy="{cy-10}" r="1.2" fill="{CYAN}" stroke="none"/>
+      <rect x="{cx-7}" y="{cy-6}" width="14" height="12" rx="3"/>
+      <circle cx="{cx-3}" cy="{cy-1}" r="1.4" fill="{CYAN}" stroke="none"/>
+      <circle cx="{cx+3}" cy="{cy-1}" r="1.4" fill="{CYAN}" stroke="none"/>
+      <line x1="{cx-2.5}" y1="{cy+3}" x2="{cx+2.5}" y2="{cy+3}"/>
+    </g>'''
+
+
 def ai_node(cx, cy, label):
-    r = 17
+    r = 18
     return f'''<g>
       <circle cx="{cx}" cy="{cy}" r="{r}" fill="{NODE_F}" stroke="{CYAN}" stroke-width="1.5" stroke-opacity="0.9"/>
-      <circle cx="{cx}" cy="{cy}" r="3.2" fill="{CYAN}" fill-opacity="0.85"/>
-      <text x="{cx+27}" y="{cy+5}" font-family="monospace" font-size="13.5" font-weight="bold" fill="{TXT}">{label}</text>
+      {robot_icon(cx, cy)}
+      <text x="{cx+28}" y="{cy+5}" font-family="monospace" font-size="13.5" font-weight="bold" fill="{TXT}">{label}</text>
     </g>'''
 
 
@@ -119,7 +131,7 @@ def vault(cx, cy, frame):
 
 def build_svg(frame):
     vlx, vrx = VAULT[0] - 39, VAULT[0] + 39
-    blx = BADGE_X - 17
+    blx = BADGE_X - 18
     # input wires: sources -> vault (purple)
     wa = wire((OBS[0] + 58, OBS[1]), (vlx, 116), PURPLE, 0, frame)
     wb = wire((WEB[0] + 58, WEB[1]), (vlx, 140), PURPLE, 6, frame)
