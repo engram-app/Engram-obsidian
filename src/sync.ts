@@ -583,8 +583,19 @@ export class SyncEngine {
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
 				const base64 = arrayBufferToBase64(buffer);
+				// Track attachments in syncState the same way notes are. Without
+				// this, pushModifiedFiles sees every attachment as untracked and
+				// re-pushes it on every fullSync (the "pushed N every Merge" loop).
+				const hash = fnv1a(base64);
+				const existing = this.syncState.get(normalizePath(file.path));
+				if (!force && existing !== undefined && hash === existing.hash) {
+					devLog().log("push", `skip (echo): ${file.path}`);
+					rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`);
+					return false;
+				}
 				const mimeType = this.getMimeType(file);
 				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
+				this.syncState.set(normalizePath(file.path), { hash });
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 				// Echo suppression — skip pushing if content matches what the
@@ -1603,6 +1614,7 @@ export class SyncEngine {
 			if (existing) {
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
+				this.syncState.delete(normalized);
 				rlog().info("pull", `Attachment deleted: ${change.path}`);
 				return true;
 			}
@@ -1614,12 +1626,16 @@ export class SyncEngine {
 			contentBase64 ?? (await this.api.getAttachment(change.path)).content_base64;
 		const buffer = base64ToArrayBuffer(resolvedBase64);
 		const existing = this.app.vault.getFileByPath(normalized);
+		// Track the synced bytes so a later push echo-suppresses instead of
+		// re-uploading this attachment (keyed identically to the push side).
+		const hash = fnv1a(resolvedBase64);
 
 		if (existing) {
 			// Skip if content is identical — prevents modify event and push-back loop
 			if (existing.stat.size === buffer.byteLength) {
 				const localBuffer = await this.app.vault.readBinary(existing);
 				if (this.arrayBuffersEqual(localBuffer, buffer)) {
+					this.syncState.set(normalized, { hash });
 					rlog().info(
 						"pull",
 						`Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`,
@@ -1628,10 +1644,12 @@ export class SyncEngine {
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
+			this.syncState.set(normalized, { hash });
 			rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`);
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
+		this.syncState.set(normalized, { hash });
 		rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`);
 		return true;
 	}
