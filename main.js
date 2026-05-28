@@ -2061,11 +2061,28 @@ function renderAboutTab(ctx) {
   ai.descEl.appendText(
     "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
   ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
-  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, desc) => {
+  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
     let card = plans.createEl("li", { cls: "engram-plan" });
-    card.createEl("h4", { text: name }), card.createEl("p", { text: desc });
+    card.createEl("h4", { text: name });
+    let list = card.createEl("ul", { cls: "engram-plan-features" });
+    for (let feature of features) list.createEl("li", { text: feature });
   };
-  plan("Free", "One vault with core sync, semantic search, and MCP access to get started."), plan("Starter", "More vaults, real-time sync, and a higher daily AI query limit."), plan("Pro", "Unlimited notes, unlimited AI (fair use), and priority support.");
+  plan("Free", [
+    "1 vault, 1 device",
+    "Manual sync",
+    "Semantic search + MCP",
+    "Light daily AI usage"
+  ]), plan("Starter", [
+    "Multiple vaults, all devices",
+    "Real-time sync",
+    "Full API + MCP",
+    "Higher daily AI limit"
+  ]), plan("Pro", [
+    "Unlimited notes",
+    "Unlimited AI (fair use)",
+    "Bring your own model (coming)",
+    "Priority support"
+  ]);
   let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
   externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
   let links = containerEl.createEl("ul", { cls: "engram-about-links" });

@@ -63,14 +63,30 @@ export function renderAboutTab(ctx: TabContext): void {
 	heading(containerEl, "Plans");
 
 	const plans = containerEl.createEl("ul", { cls: "engram-plans" });
-	const plan = (name: string, desc: string): void => {
+	const plan = (name: string, features: string[]): void => {
 		const card = plans.createEl("li", { cls: "engram-plan" });
 		card.createEl("h4", { text: name });
-		card.createEl("p", { text: desc });
+		const list = card.createEl("ul", { cls: "engram-plan-features" });
+		for (const feature of features) list.createEl("li", { text: feature });
 	};
-	plan("Free", "One vault with core sync, semantic search, and MCP access to get started.");
-	plan("Starter", "More vaults, real-time sync, and a higher daily AI query limit.");
-	plan("Pro", "Unlimited notes, unlimited AI (fair use), and priority support.");
+	plan("Free", [
+		"1 vault, 1 device",
+		"Manual sync",
+		"Semantic search + MCP",
+		"Light daily AI usage",
+	]);
+	plan("Starter", [
+		"Multiple vaults, all devices",
+		"Real-time sync",
+		"Full API + MCP",
+		"Higher daily AI limit",
+	]);
+	plan("Pro", [
+		"Unlimited notes",
+		"Unlimited AI (fair use)",
+		"Bring your own model (coming)",
+		"Priority support",
+	]);
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
 	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);

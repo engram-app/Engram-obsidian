@@ -771,16 +771,22 @@
 }
 
 .engram-plan h4 {
-	margin: 0 0 6px;
+	margin: 0 0 8px;
 	font-size: var(--font-ui-medium);
 	color: var(--text-normal);
+	text-align: center;
 }
 
-.engram-plan p {
+.engram-plan-features {
 	margin: 0;
+	padding-left: 18px;
 	color: var(--text-muted);
 	font-size: var(--font-ui-smaller);
-	line-height: 1.45;
+	line-height: 1.5;
+}
+
+.engram-plan-features li {
+	margin-bottom: 4px;
 }
 
 /* Learn more — prominent link chips */
