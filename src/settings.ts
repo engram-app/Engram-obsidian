@@ -5,20 +5,23 @@ import { type App, PluginSettingTab } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import type EngramSyncPlugin from "./main";
 import { SyncProgressModal } from "./sync-progress-modal";
+import { renderAboutTab } from "./tabs/about-tab";
 import { renderAccountTab } from "./tabs/account-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
 import { renderSelfHostedTab } from "./tabs/self-hosted-tab";
+import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
 
 export class EngramSyncSettingTab extends PluginSettingTab {
 	plugin: EngramSyncPlugin;
-	private activeTab = "account";
+	private activeTab: string;
 	private statusContainerEl: HTMLElement | null = null;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+		this.activeTab = pickInitialTab(plugin.settings);
 	}
 
 	/** Pre-select a tab before the next display() call. */
@@ -72,6 +75,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 		// ── Tab bar ──
 		const tabs = [
+			{ id: "about" as const, label: "👋 Welcome", render: renderAboutTab },
 			{ id: "account" as const, label: "☁️ Cloud", render: renderAccountTab },
 			{ id: "self-hosted" as const, label: "🖥️ Self-hosted", render: renderSelfHostedTab },
 			{ id: "sync-center" as const, label: "🔄 Sync Center", render: renderSyncCenterTab },

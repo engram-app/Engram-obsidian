@@ -735,6 +735,18 @@
 	border-bottom-color: var(--interactive-accent);
 }
 
+/* ── Welcome (about) tab ─────────────────────────────────────── */
+
+.engram-about-intro {
+	margin: 0 0 16px;
+	color: var(--text-muted);
+	line-height: 1.5;
+}
+
+.engram-about-link {
+	margin: 4px 0 0;
+}
+
 /* ── Sync progress modal ─────────────────────────────────────── */
 
 .engram-progress-phase {
