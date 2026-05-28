@@ -743,8 +743,74 @@
 	line-height: 1.5;
 }
 
+.engram-about-heading .setting-item-name {
+	font-size: var(--font-ui-large);
+	font-weight: 800;
+	color: var(--text-normal);
+}
+
 .engram-about-link {
 	margin: 4px 0 0;
+}
+
+/* Plans — three side-by-side cards */
+.engram-plans {
+	display: flex;
+	gap: 12px;
+	margin: 12px 0;
+	padding: 0;
+	list-style: none;
+}
+
+.engram-plan {
+	flex: 1;
+	padding: 12px 14px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+}
+
+.engram-plan h4 {
+	margin: 0 0 6px;
+	font-size: var(--font-ui-medium);
+	color: var(--text-normal);
+}
+
+.engram-plan p {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.45;
+}
+
+/* Learn more — prominent link chips */
+.engram-about-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin: 8px 0 0;
+	padding: 0;
+	list-style: none;
+}
+
+.engram-about-links a {
+	display: inline-block;
+	padding: 6px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	color: var(--text-accent);
+	font-weight: 600;
+}
+
+.engram-about-links a:hover {
+	background: var(--background-modifier-hover);
+	text-decoration: none;
+}
+
+@media (max-width: 600px) {
+	.engram-plans {
+		flex-direction: column;
+	}
 }
 
 /* ── Sync progress modal ─────────────────────────────────────── */

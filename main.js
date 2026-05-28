@@ -2037,39 +2037,39 @@ var import_obsidian6 = require("obsidian"), PHASE_LABELS = {
 var import_obsidian7 = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/mcp", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/mcp", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/tabs/about-tab.ts
 function externalLink(parent, text, href) {
   parent.createEl("a", { text, href, attr: { target: "_blank", rel: "noopener" } });
 }
+function heading(containerEl, name) {
+  new import_obsidian7.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
+}
 function renderAboutTab(ctx) {
   let { containerEl, switchToTab } = ctx;
   containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
     "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
-  ), new import_obsidian7.Setting(containerEl).setName("Getting set up").setHeading(), new import_obsidian7.Setting(containerEl).setName("1. Connect your account").setDesc("Sign in to Engram cloud, or point the plugin at your own server.").addButton(
+  ), heading(containerEl, "Getting set up");
+  let account = new import_obsidian7.Setting(containerEl).setName("1. Make an account");
+  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian7.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
+    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
+  ).addButton(
     (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
-  ), new import_obsidian7.Setting(containerEl).setName("2. Run your first sync").setDesc("Push your vault to Engram \u2014 the plugin walks you through it, and nothing is sent until you confirm."), new import_obsidian7.Setting(containerEl).setName("3. Search by meaning").setDesc(
-    "Open the command palette and run \u201CEngram: Semantic search\u201D. Describe what you want in plain language \u2014 exact keywords aren't needed."
-  ), new import_obsidian7.Setting(containerEl).setName("Make the most of it").setHeading();
-  let tips = containerEl.createEl("ul", { cls: "engram-about-list" });
-  tips.createEl("li", {
-    text: "Keep a search sidebar open while you write \u2014 click the search icon in the left ribbon."
-  }), tips.createEl("li", {
-    text: "Watch sync status and fix any failures in the sync center (the sync icon in the ribbon)."
-  });
-  let aiTip = tips.createEl("li");
-  aiTip.appendText("Connect an AI assistant \u2014 Claude, Cursor, ChatGPT, and others. "), externalLink(aiTip, "Read the AI setup guide", ENGRAM_MCP_URL), tips.createEl("li", { text: "It works on mobile too, not just desktop." }), new import_obsidian7.Setting(containerEl).setName("Plans").setHeading();
-  let plans = containerEl.createEl("ul", { cls: "engram-about-list" });
-  plans.createEl("li", { text: "Free \u2014 get started with one vault and core sync, search, and AI." }), plans.createEl("li", { text: "Paid plans \u2014 more vaults and storage, real-time sync, and higher AI limits." });
+  );
+  let ai = new import_obsidian7.Setting(containerEl).setName("3. Connect your AI");
+  ai.descEl.appendText(
+    "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
+  ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
+  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, desc) => {
+    let card = plans.createEl("li", { cls: "engram-plan" });
+    card.createEl("h4", { text: name }), card.createEl("p", { text: desc });
+  };
+  plan("Free", "One vault with core sync, semantic search, and MCP access to get started."), plan("Starter", "More vaults, real-time sync, and a higher daily AI query limit."), plan("Pro", "Unlimited notes, unlimited AI (fair use), and priority support.");
   let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
-  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), new import_obsidian7.Setting(containerEl).setName("Learn more").setHeading();
-  let links = containerEl.createEl("ul", { cls: "engram-about-list" }), docs = links.createEl("li");
-  externalLink(docs, "Documentation", ENGRAM_DOCS_URL);
-  let mcp = links.createEl("li");
-  externalLink(mcp, "AI / MCP setup guide", ENGRAM_MCP_URL);
-  let issues = links.createEl("li");
-  externalLink(issues, "Report an issue", ENGRAM_ISSUES_URL);
+  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
+  let links = containerEl.createEl("ul", { cls: "engram-about-links" });
+  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
 }
 
 // src/tabs/account-tab.ts
@@ -2997,8 +2997,8 @@ var ACTIVITY_LIMIT = 50, ACTION_ICON = {
   skipped: "is-skipped"
 };
 function renderActivity(parent, plugin, refresh) {
-  let section = parent.createDiv({ cls: "engram-sync-center-section" }), all = plugin.syncLog.entries(), heading = sectionHeading(section, `Activity (${all.length})`);
-  all.length > 0 && heading.addButton(
+  let section = parent.createDiv({ cls: "engram-sync-center-section" }), all = plugin.syncLog.entries(), heading2 = sectionHeading(section, `Activity (${all.length})`);
+  all.length > 0 && heading2.addButton(
     (btn) => btn.setButtonText("Clear").onClick(() => {
       plugin.syncLog.clear(), refresh();
     })

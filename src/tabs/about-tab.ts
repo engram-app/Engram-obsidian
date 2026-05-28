@@ -1,15 +1,28 @@
 import { Setting } from "obsidian";
 import type { TabContext } from "./types";
-import { ENGRAM_DOCS_URL, ENGRAM_ISSUES_URL, ENGRAM_MCP_URL, ENGRAM_PRICING_URL } from "./urls";
+import {
+	ENGRAM_DOCS_URL,
+	ENGRAM_ISSUES_URL,
+	ENGRAM_MARKETING_URL,
+	ENGRAM_MCP_URL,
+	ENGRAM_PRICING_URL,
+	ENGRAM_SELFHOST_URL,
+} from "./urls";
 
 /** Append an external link (opens in the browser) to a parent element. */
 function externalLink(parent: HTMLElement, text: string, href: string): void {
 	parent.createEl("a", { text, href, attr: { target: "_blank", rel: "noopener" } });
 }
 
-/** Welcome / orientation tab — what the plugin does, how to get set up, what to
- *  try, the plans, and where to learn more. Static content (no plugin state),
- *  shown first and defaulted to for new users (see `pickInitialTab`). */
+/** A bold section heading for the Welcome tab. */
+function heading(containerEl: HTMLElement, name: string): void {
+	const setting = new Setting(containerEl).setName(name).setHeading();
+	setting.settingEl.addClass("engram-about-heading");
+}
+
+/** Welcome / orientation tab — what the plugin does, how to get set up, the
+ *  plans, and where to learn more. Static content (no plugin state), shown
+ *  first and defaulted to for new users (see `pickInitialTab`). */
 export function renderAboutTab(ctx: TabContext): void {
 	const { containerEl, switchToTab } = ctx;
 
@@ -19,11 +32,20 @@ export function renderAboutTab(ctx: TabContext): void {
 	);
 
 	// ── Getting set up ──
-	new Setting(containerEl).setName("Getting set up").setHeading();
+	heading(containerEl, "Getting set up");
+
+	const account = new Setting(containerEl).setName("1. Make an account");
+	account.descEl.appendText("Create a hosted account at ");
+	externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL);
+	account.descEl.appendText(", or self-host the backend (");
+	externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL);
+	account.descEl.appendText(").");
 
 	new Setting(containerEl)
-		.setName("1. Connect your account")
-		.setDesc("Sign in to Engram cloud, or point the plugin at your own server.")
+		.setName("2. Connect your vault to Engram")
+		.setDesc(
+			"Sign in (or enter your server URL and key) on the cloud tab, then run your first sync.",
+		)
 		.addButton((btn) =>
 			btn
 				.setButtonText("Open cloud tab")
@@ -31,54 +53,33 @@ export function renderAboutTab(ctx: TabContext): void {
 				.onClick(() => switchToTab("account")),
 		);
 
-	new Setting(containerEl)
-		.setName("2. Run your first sync")
-		.setDesc(
-			"Push your vault to Engram — the plugin walks you through it, and nothing is sent until you confirm.",
-		);
-
-	new Setting(containerEl)
-		.setName("3. Search by meaning")
-		.setDesc(
-			"Open the command palette and run “Engram: Semantic search”. Describe what you want in plain language — exact keywords aren't needed.",
-		);
-
-	// ── Make the most of it ──
-	new Setting(containerEl).setName("Make the most of it").setHeading();
-
-	const tips = containerEl.createEl("ul", { cls: "engram-about-list" });
-	tips.createEl("li", {
-		text: "Keep a search sidebar open while you write — click the search icon in the left ribbon.",
-	});
-	tips.createEl("li", {
-		text: "Watch sync status and fix any failures in the sync center (the sync icon in the ribbon).",
-	});
-	const aiTip = tips.createEl("li");
-	aiTip.appendText("Connect an AI assistant — Claude, Cursor, ChatGPT, and others. ");
-	externalLink(aiTip, "Read the AI setup guide", ENGRAM_MCP_URL);
-	tips.createEl("li", { text: "It works on mobile too, not just desktop." });
+	const ai = new Setting(containerEl).setName("3. Connect your AI");
+	ai.descEl.appendText(
+		"Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. ",
+	);
+	externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL);
 
 	// ── Plans ──
-	new Setting(containerEl).setName("Plans").setHeading();
+	heading(containerEl, "Plans");
 
-	const plans = containerEl.createEl("ul", { cls: "engram-about-list" });
-	plans.createEl("li", {
-		text: "Free — get started with one vault and core sync, search, and AI.",
-	});
-	plans.createEl("li", {
-		text: "Paid plans — more vaults and storage, real-time sync, and higher AI limits.",
-	});
+	const plans = containerEl.createEl("ul", { cls: "engram-plans" });
+	const plan = (name: string, desc: string): void => {
+		const card = plans.createEl("li", { cls: "engram-plan" });
+		card.createEl("h4", { text: name });
+		card.createEl("p", { text: desc });
+	};
+	plan("Free", "One vault with core sync, semantic search, and MCP access to get started.");
+	plan("Starter", "More vaults, real-time sync, and a higher daily AI query limit.");
+	plan("Pro", "Unlimited notes, unlimited AI (fair use), and priority support.");
+
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
 	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);
 
 	// ── Learn more ──
-	new Setting(containerEl).setName("Learn more").setHeading();
+	heading(containerEl, "Learn more");
 
-	const links = containerEl.createEl("ul", { cls: "engram-about-list" });
-	const docs = links.createEl("li");
-	externalLink(docs, "Documentation", ENGRAM_DOCS_URL);
-	const mcp = links.createEl("li");
-	externalLink(mcp, "AI / MCP setup guide", ENGRAM_MCP_URL);
-	const issues = links.createEl("li");
-	externalLink(issues, "Report an issue", ENGRAM_ISSUES_URL);
+	const links = containerEl.createEl("ul", { cls: "engram-about-links" });
+	externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL);
+	externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL);
+	externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
 }

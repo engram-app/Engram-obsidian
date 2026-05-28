@@ -15,5 +15,8 @@ export const ENGRAM_PRICING_URL = "https://engram.page/pricing";
 /** Guide for connecting AI assistants over MCP. */
 export const ENGRAM_MCP_URL = "https://engram.page/mcp";
 
+/** Self-hosted backend repo (setup instructions live here). */
+export const ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram";
+
 /** Plugin issue tracker. */
 export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
