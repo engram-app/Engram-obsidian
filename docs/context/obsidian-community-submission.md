@@ -54,9 +54,10 @@ Or via dashboard: "Run preview scan" on any branch/tag/commit.
 
 _Added 2026-05-27._ The dashboard listing has two description fields: a **short description (200 char max)** and a **long description (2000 char max)**. Keep both concise. The short description should also match `manifest.json` `description` (shown in-app).
 
-### Short description (185 / 200)
+### Short description (184 / 200)
+The manifest description must be ASCII-only (dashboard reviewer rule), so this uses a comma, not an em dash, and matches `manifest.json`.
 ```
-Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host — free to start.
+Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.
 ```
 
 ### Long description (980 / 2000)

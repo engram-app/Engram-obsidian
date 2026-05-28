@@ -51,6 +51,14 @@ Requires Obsidian 1.7.2 or newer.
 
 After that, syncing just happens as you work.
 
+## Privacy & network use
+
+- **Network use** — the plugin only talks to the Engram server you configure. Nothing else.
+- **Account required** — you connect with an Engram account, by signing in (OAuth) or pasting an API key.
+- **No telemetry, no analytics.** Optional remote logging (off by default) sends sync events only to your own Engram server, never to a third party.
+
+More detail is in the [user guide](docs/user-guide.md).
+
 ## Need more?
 
 - **[User guide](docs/user-guide.md)** — connecting AI assistants, what gets synced, handling conflicts, the Sync Center, privacy, and troubleshooting.
