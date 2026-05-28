@@ -1,7 +1,7 @@
 {
   "name": "engram-obsidian",
-  "version": "1.4.15",
-  "description": "Your notes are your AI's memory. Sync your vault, search by meaning, and let Claude, Cursor, and any MCP client read and write directly. Hosted or self-host free.",
+  "version": "1.4.16",
+  "description": "Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.",
   "main": "main.js",
   "type": "module",
   "scripts": {

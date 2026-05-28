@@ -50,6 +50,22 @@ bun run build               # tsc + esbuild
 ```
 Or via dashboard: "Run preview scan" on any branch/tag/commit.
 
+## Listing copy (Developer Dashboard)
+
+_Added 2026-05-27._ The dashboard listing has two description fields: a **short description (200 char max)** and a **long description (2000 char max)**. Keep both concise. The short description should also match `manifest.json` `description` (shown in-app).
+
+### Short description (184 / 200)
+The manifest description must be ASCII-only (dashboard reviewer rule), so this uses a comma, not an em dash, and matches `manifest.json`.
+```
+Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.
+```
+
+### Long description (980 / 2000)
+The long-description field is **plain text only — no markdown, line breaks, or bullets render**. Keep it one flowing blob. It shows alongside the short description, so it should *expand* rather than repeat the short's hook and feature list.
+```
+Stop pasting the same context into every chat. Engram Vault Sync keeps your Obsidian vault in lock-step across every device you write on and connects it to the AI tools you already use, so when you ask "what did we decide last quarter?" the answer comes from notes you actually wrote. Everything stays plain markdown in folders you own — no proprietary format, no lock-in. Find ideas by describing them in your own words instead of hunting for the exact title, and let your assistant pull the right notes itself or write new ones straight back into your vault. Conflicting edits are merged or saved side by side, never lost, and changes you make offline replay automatically once you reconnect. Your notes travel only to the Engram server you point at — nothing is sold, analyzed, or used to train a model. Start hosted at engram.page in minutes, or run the source-available, Docker-ready backend on your own hardware for a fully private, local setup. Works on desktop and mobile.
+```
+
 ## Failed Approaches / Dead Ends
 
 ### Old GitHub PR flow (DEAD as of 2026-05-12)
