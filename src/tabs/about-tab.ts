@@ -71,9 +71,9 @@ export function renderAboutTab(ctx: TabContext): void {
 	};
 	plan("Free", [
 		"1 vault, 1 device",
-		"Manual sync",
+		"Auto sync",
+		"Read-only AI access",
 		"Semantic search + MCP",
-		"Light daily AI usage",
 	]);
 	plan("Starter", [
 		"Multiple vaults, all devices",
@@ -81,12 +81,7 @@ export function renderAboutTab(ctx: TabContext): void {
 		"Full API + MCP",
 		"Higher daily AI limit",
 	]);
-	plan("Pro", [
-		"Unlimited notes",
-		"Unlimited AI (fair use)",
-		"Bring your own model (coming)",
-		"Priority support",
-	]);
+	plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
 
 	const pricing = containerEl.createEl("p", { cls: "engram-about-link" });
 	externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL);

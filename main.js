@@ -2069,20 +2069,15 @@ function renderAboutTab(ctx) {
   };
   plan("Free", [
     "1 vault, 1 device",
-    "Manual sync",
-    "Semantic search + MCP",
-    "Light daily AI usage"
+    "Auto sync",
+    "Read-only AI access",
+    "Semantic search + MCP"
   ]), plan("Starter", [
     "Multiple vaults, all devices",
     "Real-time sync",
     "Full API + MCP",
     "Higher daily AI limit"
-  ]), plan("Pro", [
-    "Unlimited notes",
-    "Unlimited AI (fair use)",
-    "Bring your own model (coming)",
-    "Priority support"
-  ]);
+  ]), plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
   let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
   externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
   let links = containerEl.createEl("ul", { cls: "engram-about-links" });
