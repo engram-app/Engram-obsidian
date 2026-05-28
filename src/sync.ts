@@ -1796,7 +1796,11 @@ export class SyncEngine {
 	 *  otherwise touch the push path because lastSync is empty and the
 	 *  mtime comparison short-circuits. */
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
-		const since = sinceTimestamp || this.lastSync;
+		// Use ?? not || so an empty-string prePullSync (first connect, never
+		// synced) is preserved and maps to epoch below — || would discard "" and
+		// fall back to this.lastSync, which pull() just advanced to server_time,
+		// gating every tracked file behind `mtime > now` and skipping them all.
+		const since = sinceTimestamp ?? this.lastSync;
 		const sinceMs = since ? new Date(since).getTime() : 0;
 		const files = this.app.vault.getFiles();
 		let pushed = 0;

@@ -1804,6 +1804,47 @@ describe("SyncEngine pull accuracy", () => {
 		);
 	});
 
+	test("fullSync on first connect pushes tracked files even with old mtime", async () => {
+		// First connect: no prior lastSync (empty string). syncState already has
+		// an entry for a local file (e.g. the remote vault already knew this path,
+		// or state was loaded from a prior session). The file was last modified
+		// long ago — well before the server_time pull will set lastSync to.
+		const engine = createEngine();
+		// Do NOT call setLastSync — lastSync is "" (first connect / fresh install)
+		engine.importSyncState({
+			"Notes/Tracked.md": { hash: 12345 },
+		});
+
+		// Pull returns no changes but advances lastSync to a recent server_time.
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+
+		// Tracked local file modified Feb 15 — BEFORE the post-pull server_time.
+		const trackedFile = new TFile(
+			"Notes/Tracked.md",
+			new Date("2026-02-15T00:00:00Z").getTime(),
+		);
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([trackedFile]);
+
+		await engine.fullSync();
+
+		// On first connect, prePullSync is "" which means "never synced" = epoch.
+		// The tracked file must still be pushed; it must NOT be gated by the
+		// post-pull server_time (which would skip every file modified before now).
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/Tracked.md",
+			expect.any(String),
+			expect.any(Number),
+			undefined,
+		);
+	});
+
 	test("applyAttachmentChange updates binary regardless of mtime", async () => {
 		const engine = createEngine();
 		engine.setLastSync("2024-04-01T00:00:00Z");

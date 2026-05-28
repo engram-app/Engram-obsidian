@@ -4497,7 +4497,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  otherwise touch the push path because lastSync is empty and the
    *  mtime comparison short-circuits. */
   async pushModifiedFiles(sinceTimestamp) {
-    let since = sinceTimestamp || this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
+    let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     for (let i = 0; i < toSync.length; i += 10) {
       let batch = toSync.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
