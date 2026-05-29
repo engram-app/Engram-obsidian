@@ -6,6 +6,7 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { type PreflightResult, interpretHealthProbe } from "./auth-state";
+import { rlog } from "./remote-log";
 import type {
 	AttachmentChangesResponse,
 	AttachmentDetail,
@@ -102,6 +103,13 @@ export class EngramApi {
 				this.authProvider.invalidateAccessToken();
 				return this.sendRequest(method, path, body);
 			}
+			// Log every non-2xx with method/status/vault so failures are legible
+			// (a 404 here meaning "token's user doesn't own this vault" is easy
+			// to misread as a missing note otherwise). Token itself is never logged.
+			rlog().warn(
+				"api",
+				`${method} ${path} failed — status=${status ?? "none"} vault=${this.vaultId ?? "none"}`,
+			);
 			throw e;
 		}
 	}
@@ -184,6 +192,12 @@ export class EngramApi {
 			const status = (e as { status?: number }).status;
 			if (status === 401 || status === 403) {
 				return { ok: false, error: "Invalid API key" };
+			}
+			// Surface the real HTTP status (e.g. a 404 from a stale token at the
+			// wrong vault) instead of a blanket "Connection failed" — the status
+			// is the difference between "server down" and "auth/vault mismatch".
+			if (typeof status === "number") {
+				return { ok: false, error: `HTTP ${status} from /folders` };
 			}
 			return { ok: false, error: "Connection failed" };
 		}

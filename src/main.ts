@@ -6,7 +6,13 @@
  */
 import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
-import { ApiKeyAuth, type AuthProvider, OAuthAuth, type RefreshFn } from "./auth";
+import {
+	ApiKeyAuth,
+	type AuthProvider,
+	OAuthAuth,
+	type RefreshFn,
+	seededAccessToken,
+} from "./auth";
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
@@ -565,6 +571,16 @@ export default class EngramSyncPlugin extends Plugin {
 					expires_in: number;
 				};
 			};
+			// Only reuse a persisted access token if it was minted for the
+			// active vault; otherwise it's a stale token from a prior account
+			// and would 404 against this vault. Drop it and let getToken refresh.
+			const seed = seededAccessToken(this.settings);
+			if (this.settings.accessToken && !seed.token) {
+				rlog().warn(
+					"auth",
+					`Discarding persisted access token — minted for vault ${this.settings.accessTokenVaultId ?? "unknown"}, active vault ${this.settings.vaultId ?? "none"}; will refresh`,
+				);
+			}
 			return new OAuthAuth(
 				this.settings.refreshToken,
 				this.settings.vaultId,
@@ -591,11 +607,14 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.refreshToken = refreshToken;
 					this.settings.accessToken = accessToken;
 					this.settings.accessTokenExpiresAt = expiresAt;
+					// Bind the cached token to the vault it was minted for, so a
+					// later account swap can't resurrect a stale token.
+					this.settings.accessTokenVaultId = this.settings.vaultId;
 					rlog().info("auth", "Tokens rotated — persisting refresh + access");
 					await this.savePluginData(this.syncEngine.getLastSync());
 				},
-				this.settings.accessToken ?? null,
-				this.settings.accessTokenExpiresAt ?? 0,
+				seed.token,
+				seed.expiresAt,
 			);
 		}
 
@@ -615,6 +634,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// request mints one against the new refresh token.
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
+		this.settings.accessTokenVaultId = undefined;
 		await this.saveSettings();
 
 		this.authProvider = this.createAuthProvider();
@@ -632,6 +652,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.authMethod = null;
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
+		this.settings.accessTokenVaultId = undefined;
 		await this.saveSettings();
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)

@@ -33,6 +33,11 @@ export interface EngramSyncSettings {
 	accessToken?: string;
 	/** Epoch ms when the cached access token expires. */
 	accessTokenExpiresAt?: number;
+	/** The vaultId the cached access token was minted for. Binds the token to
+	 *  its session: if the active vault changes (account swap) without the token
+	 *  being refreshed, the stale token must NOT be reused — it belongs to the
+	 *  old user and would 404 against the new vault. */
+	accessTokenVaultId?: string | null;
 	/** Email of the OAuth-authenticated user (for display). */
 	userEmail?: string;
 	/** Active auth method. */

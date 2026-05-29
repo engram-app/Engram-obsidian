@@ -125,10 +125,20 @@ describe("EngramApi", () => {
 			expect(result).toEqual({ ok: false, error: "Invalid API key" });
 		});
 
-		test("returns connection failed on other errors", async () => {
+		test("returns connection failed on errors with no HTTP status", async () => {
 			mockRequestUrl.mockRejectedValueOnce(new Error("timeout"));
 			const result = await api.ping();
 			expect(result).toEqual({ ok: false, error: "Connection failed" });
+		});
+
+		test("surfaces the HTTP status on other failures (e.g. 404 wrong vault)", async () => {
+			// A stale token hitting a vault it doesn't own returns 404, not 401.
+			// Collapsing it to "Connection failed" hid the real cause for hours —
+			// the status must reach the caller's error.
+			mockRequestUrl.mockRejectedValueOnce({ status: 404 });
+			const result = await api.ping();
+			expect(result.ok).toBe(false);
+			expect(result.error).toContain("404");
 		});
 	});
 

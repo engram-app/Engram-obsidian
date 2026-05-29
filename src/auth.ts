@@ -1,8 +1,33 @@
+import { rlog } from "./remote-log";
 /**
  * Auth providers for Engram plugin — abstracts API key vs OAuth token management.
  * The rest of the plugin calls getToken() and doesn't know which method is active.
  */
-import { rlog } from "./remote-log";
+import type { EngramSyncSettings } from "./types";
+
+/** Decide whether a persisted access token may be seeded into a fresh OAuth
+ *  provider. A cached token is only trustworthy if it was minted for the
+ *  vault that's still active — an account swap changes vaultId but may leave
+ *  the previous session's token behind, and reusing it sends an old-user JWT
+ *  at the new vault (a 404, not a 401, so it's easy to misdiagnose). Returns a
+ *  null token when the binding is missing or stale, forcing a refresh. */
+export function seededAccessToken(settings: EngramSyncSettings): {
+	token: string | null;
+	expiresAt: number;
+} {
+	const bound =
+		!!settings.accessToken &&
+		settings.accessTokenVaultId != null &&
+		settings.accessTokenVaultId === settings.vaultId;
+
+	if (bound) {
+		return {
+			token: settings.accessToken ?? null,
+			expiresAt: settings.accessTokenExpiresAt ?? 0,
+		};
+	}
+	return { token: null, expiresAt: 0 };
+}
 
 export interface AuthProvider {
 	getToken(): Promise<string>;

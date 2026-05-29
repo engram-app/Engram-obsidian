@@ -1,5 +1,65 @@
 import { beforeEach, describe, expect, it, mock } from "bun:test";
-import { ApiKeyAuth, OAuthAuth } from "../src/auth";
+import { ApiKeyAuth, OAuthAuth, seededAccessToken } from "../src/auth";
+import type { EngramSyncSettings } from "../src/types";
+import { DEFAULT_SETTINGS } from "../src/types";
+
+function settings(overrides: Partial<EngramSyncSettings> = {}): EngramSyncSettings {
+	return { ...DEFAULT_SETTINGS, ...overrides };
+}
+
+describe("seededAccessToken", () => {
+	const future = 9_999_999_999_999;
+
+	it("seeds a token minted for the currently-active vault", () => {
+		const r = seededAccessToken(
+			settings({
+				refreshToken: "rt",
+				accessToken: "good",
+				accessTokenExpiresAt: future,
+				accessTokenVaultId: "v1",
+				vaultId: "v1",
+			}),
+		);
+		expect(r.token).toBe("good");
+		expect(r.expiresAt).toBe(future);
+	});
+
+	it("does NOT seed a token minted for a different vault (stale after account swap)", () => {
+		// The bug: an account swap sets a new vaultId but leaves the previous
+		// session's access token in settings. Reusing it sends an old-user JWT
+		// at the new vault → 404, not 401. The token must be discarded so the
+		// provider refreshes against the new refresh token instead.
+		const r = seededAccessToken(
+			settings({
+				refreshToken: "rt-new",
+				accessToken: "stale",
+				accessTokenExpiresAt: future,
+				accessTokenVaultId: "v-old",
+				vaultId: "v-new",
+			}),
+		);
+		expect(r.token).toBeNull();
+		expect(r.expiresAt).toBe(0);
+	});
+
+	it("does NOT seed when no vault binding was recorded (pre-upgrade data)", () => {
+		const r = seededAccessToken(
+			settings({
+				refreshToken: "rt",
+				accessToken: "x",
+				accessTokenExpiresAt: future,
+				vaultId: "v1",
+			}),
+		);
+		expect(r.token).toBeNull();
+	});
+
+	it("seeds nothing when there is no access token", () => {
+		const r = seededAccessToken(settings({ refreshToken: "rt", vaultId: "v1" }));
+		expect(r.token).toBeNull();
+		expect(r.expiresAt).toBe(0);
+	});
+});
 
 describe("ApiKeyAuth", () => {
 	it("returns the API key as token", async () => {
