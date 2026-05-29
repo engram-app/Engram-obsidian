@@ -3497,6 +3497,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
      *  making mtime-based detection unreliable). */
     this.syncState = /* @__PURE__ */ new Map();
+    /** The server vaultId that the current syncState belongs to. lastSync and
+     *  per-file hashes are scoped to one server vault; if the active vault
+     *  changes out from under us, this stale bookkeeping must be invalidated
+     *  or fullSync compares against the wrong vault and pushes nothing / wrong
+     *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
+     *  data) and is adopted without wiping. */
+    this.syncStateVaultId = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
     /** Called whenever sync status changes (for status bar updates). */
@@ -3546,7 +3553,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
-    this.syncState.clear(), this.lastSync = "", await this.saveData({ lastSync: "" }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+    var _a;
+    this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "" }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+  }
+  getSyncStateVaultId() {
+    return this.syncStateVaultId;
+  }
+  setSyncStateVaultId(id) {
+    this.syncStateVaultId = id;
+  }
+  /** Invalidate stale per-vault bookkeeping if the active server vault no
+   *  longer matches the one syncState was recorded under. This is the
+   *  self-healing backstop for vault switches that bypass the SyncPreviewModal
+   *  picker (e.g. OAuth re-login, ensureVault) and so never call
+   *  resetForVaultChange. A `null` recorded id (fresh install / pre-upgrade
+   *  data) is adopted WITHOUT wiping, so upgrading doesn't drop valid state. */
+  async invalidateIfVaultChanged() {
+    var _a;
+    let current = (_a = this.settings.vaultId) != null ? _a : null;
+    if (current) {
+      if (this.syncStateVaultId === null) {
+        this.syncStateVaultId = current;
+        return;
+      }
+      this.syncStateVaultId !== current && (rlog().warn(
+        "lifecycle",
+        `Vault changed (${this.syncStateVaultId} \u2192 ${current}) \u2014 invalidating stale syncState`
+      ), devLog().log(
+        "lifecycle",
+        `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
+      ), this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = current, await this.saveData({ lastSync: "" }));
+    }
   }
   /** Export sync state for persistence across sessions. */
   exportSyncState() {
@@ -4489,7 +4526,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
-    await this.configureRateLimit();
+    await this.configureRateLimit(), await this.invalidateIfVaultChanged();
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
     return pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
@@ -4618,6 +4655,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
+    await this.invalidateIfVaultChanged();
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     for (let i = 0; i < toSync.length; i += 10) {
@@ -5035,7 +5073,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
     let saved = await this.loadData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -5222,6 +5260,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       lastSync,
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       syncState: this.syncEngine.exportSyncState(),
+      syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
       // Dual-write legacy format for rollback safety (remove after one release cycle)
       syncedHashes: this.syncEngine.exportHashes(),
       syncIssues: this.syncEngine.issues.serialize(),

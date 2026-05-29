@@ -149,6 +149,14 @@ export class SyncEngine {
 	 *  making mtime-based detection unreliable). */
 	private syncState: Map<string, FileSyncState> = new Map();
 
+	/** The server vaultId that the current syncState belongs to. lastSync and
+	 *  per-file hashes are scoped to one server vault; if the active vault
+	 *  changes out from under us, this stale bookkeeping must be invalidated
+	 *  or fullSync compares against the wrong vault and pushes nothing / wrong
+	 *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
+	 *  data) and is adopted without wiping. */
+	private syncStateVaultId: string | null = null;
+
 	/** Optional base content store for 3-way merge (Step 2+). */
 	baseStore: BaseStore | null = null;
 
@@ -220,8 +228,46 @@ export class SyncEngine {
 	async resetForVaultChange(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
+		this.syncStateVaultId = this.settings.vaultId ?? null;
 		await this.saveData({ lastSync: "" });
 		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+	}
+
+	getSyncStateVaultId(): string | null {
+		return this.syncStateVaultId;
+	}
+
+	setSyncStateVaultId(id: string | null): void {
+		this.syncStateVaultId = id;
+	}
+
+	/** Invalidate stale per-vault bookkeeping if the active server vault no
+	 *  longer matches the one syncState was recorded under. This is the
+	 *  self-healing backstop for vault switches that bypass the SyncPreviewModal
+	 *  picker (e.g. OAuth re-login, ensureVault) and so never call
+	 *  resetForVaultChange. A `null` recorded id (fresh install / pre-upgrade
+	 *  data) is adopted WITHOUT wiping, so upgrading doesn't drop valid state. */
+	private async invalidateIfVaultChanged(): Promise<void> {
+		const current = this.settings.vaultId ?? null;
+		if (!current) return; // no active vault to compare against
+		if (this.syncStateVaultId === null) {
+			this.syncStateVaultId = current; // adopt; migration-safe, no wipe
+			return;
+		}
+		if (this.syncStateVaultId === current) return;
+
+		rlog().warn(
+			"lifecycle",
+			`Vault changed (${this.syncStateVaultId} → ${current}) — invalidating stale syncState`,
+		);
+		devLog().log(
+			"lifecycle",
+			`vault changed ${this.syncStateVaultId} → ${current} — clearing syncState + lastSync`,
+		);
+		this.syncState.clear();
+		this.lastSync = "";
+		this.syncStateVaultId = current;
+		await this.saveData({ lastSync: "" });
 	}
 
 	/** Export sync state for persistence across sessions. */
@@ -1789,6 +1835,10 @@ export class SyncEngine {
 		// Configure request pacer from server-reported rate limit
 		await this.configureRateLimit();
 
+		// Drop stale per-vault bookkeeping if the active vault changed since
+		// syncState was recorded (must run before prePullSync is snapshotted).
+		await this.invalidateIfVaultChanged();
+
 		// Snapshot lastSync before pull — pull updates it to server_time,
 		// which would cause pushModifiedFiles to miss files modified between
 		// the old and new lastSync values.
@@ -2072,6 +2122,9 @@ export class SyncEngine {
 			this.emitStatus();
 			throw new Error(this.lastError);
 		}
+
+		// Drop stale per-vault bookkeeping if the active vault changed.
+		await this.invalidateIfVaultChanged();
 
 		const files = this.app.vault.getFiles();
 		const toSync = files.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path));

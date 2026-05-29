@@ -52,6 +52,9 @@ interface PluginData {
 	offlineQueue?: QueueEntry[];
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
+	/** The server vaultId that `syncState` was recorded under. Used to
+	 *  auto-invalidate stale state when the active vault changes. */
+	syncStateVaultId?: string | null;
 	/** Legacy hash-only format. Kept for rollback safety (dual-write). */
 	syncedHashes?: Record<string, number>;
 	/** Persistent failures surfaced in the Sync Center "Issues" panel. */
@@ -159,6 +162,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
+		}
+		if (saved?.syncStateVaultId !== undefined) {
+			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
 		}
 		if (saved?.syncState) {
 			// New format — hash + version per file
@@ -529,6 +535,7 @@ export default class EngramSyncPlugin extends Plugin {
 			lastSync,
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			syncState: this.syncEngine.exportSyncState(),
+			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
 			syncedHashes: this.syncEngine.exportHashes(),
 			syncIssues: this.syncEngine.issues.serialize(),
