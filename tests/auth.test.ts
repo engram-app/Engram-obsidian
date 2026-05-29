@@ -134,7 +134,8 @@ describe("OAuthAuth", () => {
 			refresh_token: "engram_rt_new",
 			expires_in: 3600,
 		});
-		let persisted: { refreshToken: string; accessToken: string; expiresAt: number } | null = null;
+		let persisted: { refreshToken: string; accessToken: string; expiresAt: number } | null =
+			null;
 		const auth = new OAuthAuth(
 			"engram_rt_old",
 			"vault-1",
