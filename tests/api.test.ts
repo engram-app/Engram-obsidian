@@ -359,6 +359,49 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("createVault", () => {
+		test("sends POST to /vaults with the name and returns the created vault", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 201,
+				json: {
+					vault: {
+						id: 9,
+						name: "Fresh",
+						slug: "fresh",
+						is_default: false,
+						created_at: "2026-01-01T00:00:00Z",
+					},
+				},
+			} as any);
+			const result = await api.createVault("Fresh");
+			expect(mockRequestUrl).toHaveBeenCalledWith(
+				expect.objectContaining({
+					url: `${TEST_API_BASE}/vaults`,
+					method: "POST",
+					body: JSON.stringify({ name: "Fresh" }),
+				}),
+			);
+			expect(result).toEqual({
+				id: 9,
+				name: "Fresh",
+				slug: "fresh",
+				is_default: false,
+				created_at: "2026-01-01T00:00:00Z",
+			});
+		});
+
+		test("throws vault_limit_reached on 402", async () => {
+			mockRequestUrl.mockRejectedValueOnce({
+				status: 402,
+				json: { error: "vault_limit_reached", limit: 1 },
+			});
+			await expect(api.createVault("Over limit")).rejects.toMatchObject({
+				status: 402,
+				json: { error: "vault_limit_reached", limit: 1 },
+			});
+		});
+	});
+
 	describe("getMe", () => {
 		test("sends GET /me and returns user object", async () => {
 			mockRequestUrl.mockResolvedValueOnce({

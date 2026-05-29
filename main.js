@@ -866,6 +866,13 @@ var EngramApi = class _EngramApi {
       client_id: clientId
     })).json;
   }
+  /** Create a brand-new, distinct vault for the current user. Unlike
+   *  registerVault (idempotent by client_id), this always makes a new vault.
+   *  Throws with status 402 if the user has reached their vault limit, or 422
+   *  on validation errors. */
+  async createVault(name) {
+    return (await this.request("POST", "/vaults", { name })).json.vault;
+  }
   /** Fetch all vaults accessible by the current user. Throws the underlying
    *  request error (with `.status` for HTTP responses) so callers can render
    *  401/timeout/5xx distinctly from "successful empty list". */
@@ -2525,6 +2532,9 @@ var SyncPreviewState = class {
     this.vaultsLoading = !1;
     this.vaults = null;
     this.vaultsError = null;
+    /** Within the vault-picker, true while the "make a new vault" form is shown
+     *  instead of the list of existing vaults. */
+    this.creatingVault = !1;
     this.resolved = !1;
     this.plan = initialPlan;
   }
@@ -2550,7 +2560,13 @@ var SyncPreviewState = class {
     this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
   }
   enterVaultPicker() {
-    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null);
+    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
+  }
+  enterCreateVault() {
+    this.resolved || (this.creatingVault = !0, this.vaultsError = null);
+  }
+  exitCreateVault() {
+    this.creatingVault = !1, this.vaultsError = null;
   }
   onVaultsLoaded(vaults) {
     this.vaultsLoading = !1, this.vaults = vaults, this.vaultsError = null;
@@ -2559,7 +2575,7 @@ var SyncPreviewState = class {
     this.vaultsLoading = !1, this.vaults = null, this.vaultsError = message;
   }
   exitVaultPicker() {
-    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null);
+    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
   }
   /** Swap in the SyncPlan that came back from applyVaultChange. Caller is
    *  responsible for re-rendering. */
@@ -2572,7 +2588,12 @@ var SyncPreviewState = class {
   resolve(choice) {
     this.resolved || (this.resolved = !0, this.view = "done", this.onResolve(choice));
   }
-}, MERGE_CARD = {
+};
+function describeCreateVaultError(e) {
+  let status = e == null ? void 0 : e.status;
+  return status === 402 ? "Vault limit reached \u2014 upgrade or remove a vault to create another." : status === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
+}
+var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
   label: "Merge",
@@ -2790,6 +2811,10 @@ var SyncPreviewState = class {
     }), input.focus();
   }
   renderVaultPicker() {
+    if (this.state.creatingVault) {
+      this.renderCreateVaultForm();
+      return;
+    }
     let { contentEl } = this;
     contentEl.createEl("h2", {
       text: "Switch vault",
@@ -2824,8 +2849,50 @@ var SyncPreviewState = class {
       }
     } else
       body.createEl("p", { text: "No other vaults available." });
-    contentEl.createDiv({ cls: "engram-sync-preview-footer" }).createEl("button", { text: "Back" }).addEventListener("click", () => {
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
       this.state.exitVaultPicker(), this.render();
+    }), this.opts.createVault && footer.createEl("button", {
+      text: "Make new vault",
+      cls: "mod-cta engram-sync-preview-new-vault-btn"
+    }).addEventListener("click", () => {
+      this.state.enterCreateVault(), this.render();
+    });
+  }
+  /** Render the "make a new vault" form: a name field pre-filled with the
+   *  Obsidian vault name, plus Create / Back. Submitting creates the vault and
+   *  immediately selects it (which recomputes the preview for the empty vault). */
+  renderCreateVaultForm() {
+    let { contentEl } = this;
+    contentEl.createEl("h2", {
+      text: "New vault",
+      cls: "engram-sync-preview-header"
+    }), contentEl.createEl("p", {
+      text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+      cls: "engram-sync-preview-picker-help"
+    });
+    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
+    this.state.vaultsError && body.createEl("p", {
+      text: this.state.vaultsError,
+      cls: "engram-sync-preview-picker-error"
+    });
+    let input = body.createEl("input", {
+      type: "text",
+      cls: "engram-sync-preview-new-vault-input"
+    });
+    input.value = this.app.vault.getName(), input.placeholder = "Vault name";
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.state.exitCreateVault(), this.render();
+    });
+    let createBtn = footer.createEl("button", {
+      text: "Create",
+      cls: "mod-cta"
+    }), submit = () => {
+      this.state.vaultsLoading || this.applyCreateVault(input.value);
+    };
+    createBtn.addEventListener("click", submit), input.addEventListener("keydown", (e) => {
+      e.key === "Enter" && submit();
     });
   }
   async openVaultPicker() {
@@ -2857,6 +2924,23 @@ var SyncPreviewState = class {
       let cls = "engram-sync-preview-tree-row";
       row.kind === "file" ? cls += " engram-sync-preview-tree-file" : row.deleted ? cls += " engram-sync-preview-tree-folder engram-sync-preview-tree-folder-deleted" : cls += " engram-sync-preview-tree-folder", code.createDiv({ cls }).setText(`${"  ".repeat(row.depth)}${row.label}`);
     }
+  }
+  async applyCreateVault(name) {
+    if (!this.opts.createVault) return;
+    let trimmed = name.trim();
+    if (!trimmed) {
+      this.state.onVaultsError("Enter a name for the new vault"), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.vaultsLoading = !0, this.render();
+    let created;
+    try {
+      created = await this.opts.createVault(trimmed);
+    } catch (e) {
+      this.state.vaultsLoading = !1, this.state.onVaultsError(describeCreateVaultError(e)), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.exitCreateVault(), await this.applyPickedVault(created);
   }
   async applyPickedVault(v) {
     if (this.opts.applyVaultChange) {
@@ -5439,6 +5523,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         context,
         initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
         listVaults: () => this.api.listVaults(),
+        createVault: (name) => this.api.createVault(name),
         applyVaultChange: async (id, name) => {
           var _a;
           return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a = this.settingTab) == null || _a.display(), this.syncEngine.computeSyncPlan("full");

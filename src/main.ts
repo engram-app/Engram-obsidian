@@ -822,6 +822,7 @@ export default class EngramSyncPlugin extends Plugin {
 				context,
 				initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
 				listVaults: () => this.api.listVaults(),
+				createVault: (name) => this.api.createVault(name),
 				applyVaultChange: async (id, name) => {
 					// Persist the new vault target without going through
 					// saveSettings — that path would re-fire
