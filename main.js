@@ -4520,6 +4520,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   // --- Full sync (startup) ---
   /** Full bidirectional sync: pull remote changes, then push local changes. */
   async fullSync() {
+    var _a;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "fullSync short-circuited \u2014 gate closed"), { pulled: 0, pushed: 0 };
     devLog().log("lifecycle", "fullSync start"), rlog().info("lifecycle", "FullSync started");
@@ -4528,7 +4529,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
     await this.configureRateLimit(), await this.invalidateIfVaultChanged();
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
-    return pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
+    return (_a = this.onSyncProgress) == null || _a.call(this, { phase: "complete", current: pushed, total: pushed, failed: 0 }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
   /** Push all files that have been modified since last sync, plus any
    *  syncable file that the engine has never seen (no syncState entry).
@@ -4537,11 +4538,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  otherwise touch the push path because lastSync is empty and the
    *  mtime comparison short-circuits. */
   async pushModifiedFiles(sinceTimestamp) {
+    var _a, _b;
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
+    let total = toSync.length;
+    total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
     for (let i = 0; i < toSync.length; i += 10) {
       let batch = toSync.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length;
+      pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
+        phase: "pushing",
+        current: Math.min(i + batch.length, total),
+        total,
+        failed: 0
+      });
     }
     return pushed;
   }

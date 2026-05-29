@@ -1845,6 +1845,29 @@ describe("SyncEngine pull accuracy", () => {
 		);
 	});
 
+	test("fullSync emits push progress events (so Merge shows the progress UI)", async () => {
+		const engine = createEngine(); // fresh — lastSync "" so all files push
+		const phases: string[] = [];
+		engine.onSyncProgress = (p) => phases.push(p.phase);
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		const a = new TFile("Notes/A.md", new Date("2026-02-15T00:00:00Z").getTime());
+		const b = new TFile("Notes/B.md", new Date("2026-02-15T00:00:00Z").getTime());
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([a, b]);
+
+		await engine.fullSync();
+
+		expect(phases).toContain("pushing");
+		expect(phases).toContain("complete");
+	});
+
 	test("fullSync does not re-push an unchanged attachment on the second run", async () => {
 		// Attachments must be recorded in syncState after a successful push, or
 		// pushModifiedFiles treats them as untracked and re-pushes them on every

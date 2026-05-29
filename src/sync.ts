@@ -1847,6 +1847,9 @@ export class SyncEngine {
 		const pulled = await this.pull();
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
+		// Close out the progress UI (mirrors pushAll's terminal "complete").
+		this.onSyncProgress?.({ phase: "complete", current: pushed, total: pushed, failed: 0 });
+
 		// Persist syncState updated during push (pull already saved its own)
 		if (pushed > 0) {
 			await this.saveData({ lastSync: this.lastSync });
@@ -1882,10 +1885,23 @@ export class SyncEngine {
 		devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`);
 		rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
 
+		// Drive the progress UI the same way pushAll does, so the Merge path
+		// shows progress too (the engine emits nothing otherwise).
+		const total = toSync.length;
+		if (total > 0) {
+			this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
+		}
+
 		for (let i = 0; i < toSync.length; i += 10) {
 			const batch = toSync.slice(i, i + 10);
 			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
 			pushed += results.filter(Boolean).length;
+			this.onSyncProgress?.({
+				phase: "pushing",
+				current: Math.min(i + batch.length, total),
+				total,
+				failed: 0,
+			});
 		}
 
 		return pushed;
