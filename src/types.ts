@@ -27,6 +27,17 @@ export interface EngramSyncSettings {
 	clientId: string;
 	/** OAuth refresh token (device flow). When set, OAuth takes precedence over apiKey. */
 	refreshToken?: string;
+	/** Cached OAuth access token, persisted so a reload within its lifetime can
+	 *  reuse it instead of refreshing (which would consume the single-use
+	 *  refresh token on every restart). */
+	accessToken?: string;
+	/** Epoch ms when the cached access token expires. */
+	accessTokenExpiresAt?: number;
+	/** The vaultId the cached access token was minted for. Binds the token to
+	 *  its session: if the active vault changes (account swap) without the token
+	 *  being refreshed, the stale token must NOT be reused — it belongs to the
+	 *  old user and would 404 against the new vault. */
+	accessTokenVaultId?: string | null;
 	/** Email of the OAuth-authenticated user (for display). */
 	userEmail?: string;
 	/** Active auth method. */

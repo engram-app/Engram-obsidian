@@ -21,6 +21,9 @@ export class SyncPreviewState {
 	vaultsLoading = false;
 	vaults: VaultInfo[] | null = null;
 	vaultsError: string | null = null;
+	/** Within the vault-picker, true while the "make a new vault" form is shown
+	 *  instead of the list of existing vaults. */
+	creatingVault = false;
 	private resolved = false;
 
 	constructor(
@@ -68,6 +71,18 @@ export class SyncPreviewState {
 		this.vaultsLoading = true;
 		this.vaults = null;
 		this.vaultsError = null;
+		this.creatingVault = false;
+	}
+
+	enterCreateVault(): void {
+		if (this.resolved) return;
+		this.creatingVault = true;
+		this.vaultsError = null;
+	}
+
+	exitCreateVault(): void {
+		this.creatingVault = false;
+		this.vaultsError = null;
 	}
 
 	onVaultsLoaded(vaults: VaultInfo[]): void {
@@ -88,6 +103,7 @@ export class SyncPreviewState {
 		this.vaultsLoading = false;
 		this.vaults = null;
 		this.vaultsError = null;
+		this.creatingVault = false;
 	}
 
 	/** Swap in the SyncPlan that came back from applyVaultChange. Caller is
@@ -106,6 +122,16 @@ export class SyncPreviewState {
 		this.view = "done";
 		this.onResolve(choice);
 	}
+}
+
+/** Map a createVault rejection to a short human label. 402 = vault limit,
+ *  422 = validation (e.g. duplicate/empty name), else a generic connection
+ *  message. Pure for testing. */
+export function describeCreateVaultError(e: unknown): string {
+	const status = (e as { status?: number })?.status;
+	if (status === 402) return "Vault limit reached — upgrade or remove a vault to create another.";
+	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
+	return "Could not create the vault — check your connection and try again.";
 }
 
 interface OptionCard {
@@ -184,6 +210,10 @@ export interface SyncPreviewOptions {
 	/** Persists a vault switch and returns the new SyncPlan so the modal can
 	 *  re-render in place. Required when showChangeVault is true. */
 	applyVaultChange?: (id: string, name: string) => Promise<SyncPlan>;
+	/** Creates a brand-new vault and returns it. When provided, the picker shows
+	 *  a "Make new vault" affordance. The created vault is then selected via
+	 *  applyVaultChange so the preview recalculates against the empty remote. */
+	createVault?: (name: string) => Promise<VaultInfo>;
 	/** Initial view the modal opens on. Defaults to "preview". Set to
 	 *  "vault-picker" when the user entered the modal via a "Change vault"
 	 *  affordance on the settings page. */
@@ -497,6 +527,11 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	private renderVaultPicker(): void {
+		if (this.state.creatingVault) {
+			this.renderCreateVaultForm();
+			return;
+		}
+
 		const { contentEl } = this;
 		contentEl.createEl("h2", {
 			text: "Switch vault",
@@ -545,6 +580,68 @@ export class SyncPreviewModal extends Modal {
 		backBtn.addEventListener("click", () => {
 			this.state.exitVaultPicker();
 			this.render();
+		});
+
+		if (this.opts.createVault) {
+			const newBtn = footer.createEl("button", {
+				text: "Make new vault",
+				cls: "mod-cta engram-sync-preview-new-vault-btn",
+			});
+			newBtn.addEventListener("click", () => {
+				this.state.enterCreateVault();
+				this.render();
+			});
+		}
+	}
+
+	/** Render the "make a new vault" form: a name field pre-filled with the
+	 *  Obsidian vault name, plus Create / Back. Submitting creates the vault and
+	 *  immediately selects it (which recomputes the preview for the empty vault). */
+	private renderCreateVaultForm(): void {
+		const { contentEl } = this;
+		contentEl.createEl("h2", {
+			text: "New vault",
+			cls: "engram-sync-preview-header",
+		});
+		contentEl.createEl("p", {
+			text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+			cls: "engram-sync-preview-picker-help",
+		});
+
+		const body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
+
+		if (this.state.vaultsError) {
+			body.createEl("p", {
+				text: this.state.vaultsError,
+				cls: "engram-sync-preview-picker-error",
+			});
+		}
+
+		const input = body.createEl("input", {
+			type: "text",
+			cls: "engram-sync-preview-new-vault-input",
+		});
+		input.value = this.app.vault.getName();
+		input.placeholder = "Vault name";
+
+		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+		const backBtn = footer.createEl("button", { text: "Back" });
+		backBtn.addEventListener("click", () => {
+			this.state.exitCreateVault();
+			this.render();
+		});
+
+		const createBtn = footer.createEl("button", {
+			text: "Create",
+			cls: "mod-cta",
+		});
+		const submit = () => {
+			if (this.state.vaultsLoading) return;
+			void this.applyCreateVault(input.value);
+		};
+		createBtn.addEventListener("click", submit);
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") submit();
 		});
 	}
 
@@ -603,6 +700,33 @@ export class SyncPreviewModal extends Modal {
 			const line = code.createDiv({ cls });
 			line.setText(`${"  ".repeat(row.depth)}${row.label}`);
 		}
+	}
+
+	private async applyCreateVault(name: string): Promise<void> {
+		if (!this.opts.createVault) return;
+		const trimmed = name.trim();
+		if (!trimmed) {
+			this.state.onVaultsError("Enter a name for the new vault");
+			this.state.creatingVault = true; // onVaultsError doesn't touch this flag; stay on the form
+			this.render();
+			return;
+		}
+		this.state.vaultsLoading = true;
+		this.render();
+		let created: VaultInfo;
+		try {
+			created = await this.opts.createVault(trimmed);
+		} catch (e: unknown) {
+			this.state.vaultsLoading = false;
+			this.state.onVaultsError(describeCreateVaultError(e));
+			this.state.creatingVault = true; // remain on the form so the user can retry
+			this.render();
+			return;
+		}
+		// Select the new (empty) vault — applyPickedVault switches and recomputes
+		// the preview, which will offer push-all against the empty remote.
+		this.state.exitCreateVault();
+		await this.applyPickedVault(created);
 	}
 
 	private async applyPickedVault(v: VaultInfo): Promise<void> {

@@ -1804,6 +1804,159 @@ describe("SyncEngine pull accuracy", () => {
 		);
 	});
 
+	test("fullSync on first connect pushes tracked files even with old mtime", async () => {
+		// First connect: no prior lastSync (empty string). syncState already has
+		// an entry for a local file (e.g. the remote vault already knew this path,
+		// or state was loaded from a prior session). The file was last modified
+		// long ago — well before the server_time pull will set lastSync to.
+		const engine = createEngine();
+		// Do NOT call setLastSync — lastSync is "" (first connect / fresh install)
+		engine.importSyncState({
+			"Notes/Tracked.md": { hash: 12345 },
+		});
+
+		// Pull returns no changes but advances lastSync to a recent server_time.
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+
+		// Tracked local file modified Feb 15 — BEFORE the post-pull server_time.
+		const trackedFile = new TFile(
+			"Notes/Tracked.md",
+			new Date("2026-02-15T00:00:00Z").getTime(),
+		);
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([trackedFile]);
+
+		await engine.fullSync();
+
+		// On first connect, prePullSync is "" which means "never synced" = epoch.
+		// The tracked file must still be pushed; it must NOT be gated by the
+		// post-pull server_time (which would skip every file modified before now).
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/Tracked.md",
+			expect.any(String),
+			expect.any(Number),
+			undefined,
+		);
+	});
+
+	test("fullSync emits push progress events (so Merge shows the progress UI)", async () => {
+		const engine = createEngine(); // fresh — lastSync "" so all files push
+		const phases: string[] = [];
+		engine.onSyncProgress = (p) => phases.push(p.phase);
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		const a = new TFile("Notes/A.md", new Date("2026-02-15T00:00:00Z").getTime());
+		const b = new TFile("Notes/B.md", new Date("2026-02-15T00:00:00Z").getTime());
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([a, b]);
+
+		await engine.fullSync();
+
+		expect(phases).toContain("pushing");
+		expect(phases).toContain("complete");
+	});
+
+	test("fullSync does not re-push an unchanged attachment on the second run", async () => {
+		// Attachments must be recorded in syncState after a successful push, or
+		// pushModifiedFiles treats them as untracked and re-pushes them on every
+		// Merge (the "pulled 0 pushed 10 every time" loop for binary files).
+		const engine = createEngine();
+
+		// Two pulls, both empty (new/empty remote), each advancing lastSync.
+		(mockApi.getChanges as jest.Mock)
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-02T00:00:00Z" })
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-03T00:00:00Z" });
+		(mockApi.getAttachmentChanges as jest.Mock)
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-02T00:00:00Z" })
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-03T00:00:00Z" });
+
+		// One attachment, last modified long ago (not edited between runs).
+		const png = new TFile("Assets/photo.png", new Date("2026-02-15T00:00:00Z").getTime());
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([png]);
+		(mockApp.vault.readBinary as jest.Mock).mockResolvedValue(new ArrayBuffer(3));
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		await engine.fullSync(); // first connect — pushes the attachment
+		await engine.fullSync(); // second run — must NOT re-push it
+
+		expect(mockApi.pushAttachment).toHaveBeenCalledTimes(1);
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([]); // avoid leak into next test
+	});
+
+	test("fullSync invalidates stale syncState when the active vault changed", async () => {
+		const engine = createEngine({ vaultId: "vault-new" });
+		engine.setSyncStateVaultId("vault-old"); // syncState belongs to a different vault
+		engine.importSyncState({ "Notes/Stale.md": { hash: 111 } });
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
+
+		await engine.fullSync();
+
+		expect(engine.exportSyncState()["Notes/Stale.md"]).toBeUndefined();
+		expect(engine.getSyncStateVaultId()).toBe("vault-new");
+	});
+
+	test("fullSync keeps syncState when the active vault is unchanged", async () => {
+		const engine = createEngine({ vaultId: "vault-1" });
+		engine.setSyncStateVaultId("vault-1");
+		engine.importSyncState({ "Notes/Keep.md": { hash: 222 } });
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
+
+		await engine.fullSync();
+
+		expect(engine.exportSyncState()["Notes/Keep.md"]).toBeDefined();
+	});
+
+	test("fullSync adopts the current vault without wiping when none recorded (migration)", async () => {
+		const engine = createEngine({ vaultId: "vault-1" });
+		// No setSyncStateVaultId — simulates pre-upgrade data with existing state.
+		engine.importSyncState({ "Notes/Legacy.md": { hash: 333 } });
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
+
+		await engine.fullSync();
+
+		expect(engine.exportSyncState()["Notes/Legacy.md"]).toBeDefined();
+		expect(engine.getSyncStateVaultId()).toBe("vault-1");
+	});
+
 	test("applyAttachmentChange updates binary regardless of mtime", async () => {
 		const engine = createEngine();
 		engine.setLastSync("2024-04-01T00:00:00Z");
@@ -1826,6 +1979,27 @@ describe("SyncEngine pull accuracy", () => {
 
 		expect(result).toBe(true);
 		expect(mockApp.vault.modifyBinary).toHaveBeenCalledWith(localFile, expect.any(ArrayBuffer));
+	});
+
+	test("applyAttachmentChange records syncState so it is not pushed back", async () => {
+		// A pulled attachment must be tracked in syncState; otherwise the
+		// post-pull modify event re-pushes it to the server (pull→push churn).
+		const engine = createEngine();
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null); // new file
+
+		await engine.applyAttachmentChange(
+			{
+				path: "Assets/new.png",
+				mime_type: "image/png",
+				size_bytes: 3,
+				mtime: 1709345678,
+				updated_at: "2026-03-01T12:00:00Z",
+				deleted: false,
+			},
+			"AQID",
+		);
+
+		expect(engine.exportSyncState()["Assets/new.png"]).toBeDefined();
 	});
 });
 

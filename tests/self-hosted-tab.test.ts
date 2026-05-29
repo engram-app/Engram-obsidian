@@ -1,9 +1,35 @@
 import { describe, expect, mock, test } from "bun:test";
+import { __settingCapture } from "obsidian";
 import {
 	type VaultSwitchTarget,
 	applyVaultSwitch,
 	describeListVaultsError,
+	renderEngramUrlSetting,
 } from "../src/tabs/self-hosted-tab";
+
+describe("renderEngramUrlSetting", () => {
+	function render(apiUrl: string) {
+		__settingCapture.texts.length = 0;
+		__settingCapture.buttons.length = 0;
+		const plugin: any = {
+			settings: { apiUrl, apiKey: "", refreshToken: "" },
+			api: {},
+			noteStream: {},
+			saveSettings: async () => {},
+		};
+		renderEngramUrlSetting({ containerEl: {}, app: {}, plugin, redisplay: () => {} } as any);
+	}
+
+	test("pre-fills the field with the saved apiUrl so it stays visible", () => {
+		render("https://staging.engram.page");
+		expect(__settingCapture.texts[0]?.getValue()).toBe("https://staging.engram.page");
+	});
+
+	test("leaves the field empty on a fresh install (no apiUrl) so the placeholder shows", () => {
+		render("");
+		expect(__settingCapture.texts[0]?.getValue()).toBe("");
+	});
+});
 
 function makePlugin(initial: string | null): VaultSwitchTarget & {
 	api: { setVaultId: ReturnType<typeof mock> };

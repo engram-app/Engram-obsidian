@@ -58,7 +58,73 @@ export class PluginSettingTab {
 	constructor(_app: any, _plugin: any) {}
 }
 
+/** Chainable DOM-element stub used by the Setting mock. */
+function makeEl(): any {
+	const el: any = {
+		addClass: () => el,
+		removeClass: () => el,
+		removeClasses: () => el,
+		setText: (t: string) => {
+			el.textContent = t;
+			return el;
+		},
+		setAttribute: () => el,
+		textContent: "",
+		createDiv: () => makeEl(),
+		createSpan: () => makeEl(),
+		createEl: () => makeEl(),
+	};
+	return el;
+}
+
+class TextComponent {
+	value = "";
+	changeCb: ((v: string) => void) | null = null;
+	inputEl: any = { type: "text", addClass: () => {} };
+	setPlaceholder(_p: string): this {
+		return this;
+	}
+	setValue(v: string): this {
+		this.value = v;
+		return this;
+	}
+	getValue(): string {
+		return this.value;
+	}
+	onChange(cb: (v: string) => void): this {
+		this.changeCb = cb;
+		return this;
+	}
+}
+
+class ButtonComponent {
+	clickCb: (() => void) | null = null;
+	setButtonText(_t: string): this {
+		return this;
+	}
+	setCta(): this {
+		return this;
+	}
+	setWarning(): this {
+		return this;
+	}
+	onClick(cb: () => void): this {
+		this.clickCb = cb;
+		return this;
+	}
+}
+
+/** Components created during the last render, for assertions in tests.
+ *  Reset it in a beforeEach when rendering Settings. */
+export const __settingCapture: { texts: TextComponent[]; buttons: ButtonComponent[] } = {
+	texts: [],
+	buttons: [],
+};
+
 export class Setting {
+	settingEl: any = makeEl();
+	descEl: any = makeEl();
+	controlEl: any = makeEl();
 	constructor(_containerEl: any) {}
 	setName(_name: string): this {
 		return this;
@@ -66,13 +132,25 @@ export class Setting {
 	setDesc(_desc: string): this {
 		return this;
 	}
-	addText(_cb: any): this {
+	setHeading(): this {
+		return this;
+	}
+	addText(cb: (t: TextComponent) => void): this {
+		const t = new TextComponent();
+		cb(t);
+		__settingCapture.texts.push(t);
 		return this;
 	}
 	addTextArea(_cb: any): this {
 		return this;
 	}
-	addButton(_cb: any): this {
+	addButton(cb: (b: ButtonComponent) => void): this {
+		const b = new ButtonComponent();
+		cb(b);
+		__settingCapture.buttons.push(b);
+		return this;
+	}
+	addDropdown(_cb: any): this {
 		return this;
 	}
 }

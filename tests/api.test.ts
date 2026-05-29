@@ -125,10 +125,20 @@ describe("EngramApi", () => {
 			expect(result).toEqual({ ok: false, error: "Invalid API key" });
 		});
 
-		test("returns connection failed on other errors", async () => {
+		test("returns connection failed on errors with no HTTP status", async () => {
 			mockRequestUrl.mockRejectedValueOnce(new Error("timeout"));
 			const result = await api.ping();
 			expect(result).toEqual({ ok: false, error: "Connection failed" });
+		});
+
+		test("surfaces the HTTP status on other failures (e.g. 404 wrong vault)", async () => {
+			// A stale token hitting a vault it doesn't own returns 404, not 401.
+			// Collapsing it to "Connection failed" hid the real cause for hours —
+			// the status must reach the caller's error.
+			mockRequestUrl.mockRejectedValueOnce({ status: 404 });
+			const result = await api.ping();
+			expect(result.ok).toBe(false);
+			expect(result.error).toContain("404");
 		});
 	});
 
@@ -353,6 +363,49 @@ describe("EngramApi", () => {
 			const error = { status: 402, json: { error: "vault_limit_reached", limit: 1 } };
 			mockRequestUrl.mockRejectedValueOnce(error);
 			await expect(api.registerVault("Third Vault", "ghi789hash")).rejects.toMatchObject({
+				status: 402,
+				json: { error: "vault_limit_reached", limit: 1 },
+			});
+		});
+	});
+
+	describe("createVault", () => {
+		test("sends POST to /vaults with the name and returns the created vault", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 201,
+				json: {
+					vault: {
+						id: 9,
+						name: "Fresh",
+						slug: "fresh",
+						is_default: false,
+						created_at: "2026-01-01T00:00:00Z",
+					},
+				},
+			} as any);
+			const result = await api.createVault("Fresh");
+			expect(mockRequestUrl).toHaveBeenCalledWith(
+				expect.objectContaining({
+					url: `${TEST_API_BASE}/vaults`,
+					method: "POST",
+					body: JSON.stringify({ name: "Fresh" }),
+				}),
+			);
+			expect(result).toEqual({
+				id: 9,
+				name: "Fresh",
+				slug: "fresh",
+				is_default: false,
+				created_at: "2026-01-01T00:00:00Z",
+			});
+		});
+
+		test("throws vault_limit_reached on 402", async () => {
+			mockRequestUrl.mockRejectedValueOnce({
+				status: 402,
+				json: { error: "vault_limit_reached", limit: 1 },
+			});
+			await expect(api.createVault("Over limit")).rejects.toMatchObject({
 				status: 402,
 				json: { error: "vault_limit_reached", limit: 1 },
 			});

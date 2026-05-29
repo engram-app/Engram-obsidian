@@ -1,8 +1,33 @@
+import { rlog } from "./remote-log";
 /**
  * Auth providers for Engram plugin — abstracts API key vs OAuth token management.
  * The rest of the plugin calls getToken() and doesn't know which method is active.
  */
-import { rlog } from "./remote-log";
+import type { EngramSyncSettings } from "./types";
+
+/** Decide whether a persisted access token may be seeded into a fresh OAuth
+ *  provider. A cached token is only trustworthy if it was minted for the
+ *  vault that's still active — an account swap changes vaultId but may leave
+ *  the previous session's token behind, and reusing it sends an old-user JWT
+ *  at the new vault (a 404, not a 401, so it's easy to misdiagnose). Returns a
+ *  null token when the binding is missing or stale, forcing a refresh. */
+export function seededAccessToken(settings: EngramSyncSettings): {
+	token: string | null;
+	expiresAt: number;
+} {
+	const bound =
+		!!settings.accessToken &&
+		settings.accessTokenVaultId != null &&
+		settings.accessTokenVaultId === settings.vaultId;
+
+	if (bound) {
+		return {
+			token: settings.accessToken ?? null,
+			expiresAt: settings.accessTokenExpiresAt ?? 0,
+		};
+	}
+	return { token: null, expiresAt: 0 };
+}
 
 export interface AuthProvider {
 	getToken(): Promise<string>;
@@ -22,6 +47,13 @@ export type RefreshFn = (refreshToken: string) => Promise<{
 	refresh_token: string;
 	expires_in: number;
 }>;
+
+/** The token state persisted after each refresh so a reload can restore it. */
+export interface PersistedTokens {
+	refreshToken: string;
+	accessToken: string;
+	expiresAt: number;
+}
 
 /** Simple wrapper around a static API key. No refresh logic. */
 export class ApiKeyAuth implements AuthProvider {
@@ -59,12 +91,14 @@ export class OAuthAuth implements AuthProvider {
 	private accessToken: string | null = null;
 	private expiresAt = 0;
 	private refreshFn: RefreshFn;
-	// Rotation callback can return a Promise — doRefresh awaits it so the
-	// rotated refresh token is durable BEFORE the new access token is handed
-	// back to the caller. Closes the 1.3.0 race where a plugin reload between
-	// the in-memory rotation and a fire-and-forget disk write left the on-disk
-	// token stale, forcing a manual re-login.
-	private onTokenRotated?: (newRefreshToken: string) => void | Promise<void>;
+	// Persistence callback can return a Promise — doRefresh awaits it so the
+	// rotated tokens are durable BEFORE the new access token is handed back to
+	// the caller. Closes the 1.3.0 race where a plugin reload between the
+	// in-memory rotation and a fire-and-forget disk write left the on-disk token
+	// stale, forcing a manual re-login. Carries the access token + expiry too so
+	// a reload within the access-token lifetime can skip the refresh entirely —
+	// which avoids consuming the single-use refresh token on every restart.
+	private onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>;
 	private authenticated = true;
 	private inflightRefresh: Promise<string> | null = null;
 
@@ -76,13 +110,17 @@ export class OAuthAuth implements AuthProvider {
 		vaultId: string | null,
 		userEmail: string | null,
 		refreshFn: RefreshFn,
-		onTokenRotated?: (newRefreshToken: string) => void | Promise<void>,
+		onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>,
+		initialAccessToken: string | null = null,
+		initialExpiresAt = 0,
 	) {
 		this.refreshToken = refreshToken;
 		this.vaultId = vaultId;
 		this.userEmail = userEmail;
 		this.refreshFn = refreshFn;
 		this.onTokenRotated = onTokenRotated;
+		this.accessToken = initialAccessToken;
+		this.expiresAt = initialExpiresAt;
 	}
 
 	async getToken(): Promise<string> {
@@ -117,7 +155,11 @@ export class OAuthAuth implements AuthProvider {
 			this.authenticated = true;
 			// Await persistence so callers can't act on the new access token
 			// before the rotated refresh token reaches disk.
-			await this.onTokenRotated?.(result.refresh_token);
+			await this.onTokenRotated?.({
+				refreshToken: result.refresh_token,
+				accessToken: result.access_token,
+				expiresAt: this.expiresAt,
+			});
 			rlog().info(
 				"auth",
 				`OAuth refresh ok — accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`,

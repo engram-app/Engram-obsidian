@@ -24,14 +24,40 @@ describe("computeSyncFingerprint", () => {
 		expect(a).not.toBe(b);
 	});
 
-	test("prefers refreshToken over apiKey when both present", async () => {
-		const withApiOnly = await computeSyncFingerprint(
+	test("OAuth fingerprint differs from a static-key fingerprint for the same vault", async () => {
+		const apiKeyFp = await computeSyncFingerprint(
 			makeSettings({ apiKey: "static", vaultId: "v1" }),
 		);
-		const withRefresh = await computeSyncFingerprint(
-			makeSettings({ apiKey: "static", refreshToken: "rt", vaultId: "v1" }),
+		const oauthFp = await computeSyncFingerprint(
+			makeSettings({ refreshToken: "rt", userEmail: "u@e.com", vaultId: "v1" }),
 		);
-		expect(withApiOnly).not.toBe(withRefresh);
+		expect(apiKeyFp).not.toBe(oauthFp);
+	});
+
+	test("stable across refresh-token rotation (the single-use token rotates every refresh)", async () => {
+		// The sync gate is keyed on this fingerprint. OAuth refresh tokens are
+		// single-use and rotate on every refresh, so keying on the token would
+		// slam the gate shut after the first refresh — fullSync/WS then no-op.
+		// Identity must be the account (userEmail), not the rotating token.
+		const before = makeSettings({ refreshToken: "RT0", userEmail: "u@e.com", vaultId: "v1" });
+		const afterRotation = makeSettings({
+			refreshToken: "RT1",
+			userEmail: "u@e.com",
+			vaultId: "v1",
+		});
+		expect(await computeSyncFingerprint(afterRotation)).toBe(
+			await computeSyncFingerprint(before),
+		);
+	});
+
+	test("changes when the OAuth account (userEmail) changes", async () => {
+		const a = await computeSyncFingerprint(
+			makeSettings({ refreshToken: "RT", userEmail: "a@e.com", vaultId: "v1" }),
+		);
+		const b = await computeSyncFingerprint(
+			makeSettings({ refreshToken: "RT", userEmail: "b@e.com", vaultId: "v1" }),
+		);
+		expect(a).not.toBe(b);
 	});
 
 	test("stable across calls with same input", async () => {

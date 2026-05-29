@@ -46,7 +46,7 @@ export function renderSelfHostedTab(ctx: TabContext): void {
  *  focus on every character. Now keystrokes only buffer the value + schedule a
  *  read-only `/health` probe; the apiUrl is committed only when the user clicks
  *  Save, the single point that may clear auth and redisplay. */
-function renderEngramUrlSetting(ctx: TabContext): void {
+export function renderEngramUrlSetting(ctx: TabContext): void {
 	const { containerEl, plugin, redisplay } = ctx;
 
 	const setting = new Setting(containerEl).setName("Engram URL");
@@ -99,10 +99,13 @@ function renderEngramUrlSetting(ctx: TabContext): void {
 
 	setting
 		.addText((text) => {
-			// Leave the input empty so the placeholder shows (same as the API-key
-			// field). `pendingUrl` still holds the saved apiUrl, so an untouched
-			// Save is a no-op rather than wiping the configured URL.
+			// Pre-fill the saved URL so the configured backend is always visible
+			// (unlike the API-key field, the URL isn't a secret and the user needs
+			// to confirm it's correct). `pendingUrl` already mirrors this value, so
+			// an untouched Save stays a no-op — applyApiUrlChange short-circuits
+			// when the URL is unchanged — and never wipes the configured URL.
 			text.setPlaceholder("https://engram.example.com");
+			text.setValue(plugin.settings.apiUrl);
 			text.onChange((value) => {
 				pendingUrl = value;
 				if (debounce !== null) window.clearTimeout(debounce);

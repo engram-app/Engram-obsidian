@@ -1,6 +1,64 @@
 import { describe, expect, test } from "bun:test";
-import { SyncPreviewState } from "../src/sync-preview-modal";
+import { SyncPreviewState, describeCreateVaultError } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
+
+describe("SyncPreviewState — create-vault sub-view", () => {
+	function picker() {
+		const state = new SyncPreviewState(
+			{
+				vaultName: "T",
+				serverNoteCount: 0,
+				serverAttachmentCount: 0,
+				serverFolderCount: 0,
+				localNoteCount: 0,
+				localAttachmentCount: 0,
+				localFolderCount: 0,
+				localPaths: [],
+				serverPaths: [],
+				toPush: { notes: [], attachments: [] },
+				toPull: { notes: [], attachments: [] },
+				conflicts: [],
+				toDeleteLocal: [],
+				toDeleteRemote: [],
+			},
+			() => {},
+		);
+		state.enterVaultPicker();
+		return state;
+	}
+
+	test("enterCreateVault toggles the create form on", () => {
+		const state = picker();
+		state.enterCreateVault();
+		expect(state.creatingVault).toBe(true);
+	});
+
+	test("exitCreateVault returns to the vault list", () => {
+		const state = picker();
+		state.enterCreateVault();
+		state.exitCreateVault();
+		expect(state.creatingVault).toBe(false);
+	});
+
+	test("exitVaultPicker clears the create sub-view", () => {
+		const state = picker();
+		state.enterCreateVault();
+		state.exitVaultPicker();
+		expect(state.creatingVault).toBe(false);
+	});
+});
+
+describe("describeCreateVaultError", () => {
+	test("402 → vault limit message", () => {
+		expect(describeCreateVaultError({ status: 402 })).toMatch(/limit/i);
+	});
+	test("422 → validation message", () => {
+		expect(describeCreateVaultError({ status: 422 })).toMatch(/name|valid|use/i);
+	});
+	test("other → generic connection message", () => {
+		expect(describeCreateVaultError(new Error("boom"))).toMatch(/could not|connection/i);
+	});
+});
 
 function makePlan(overrides: Partial<SyncPlan> = {}): SyncPlan {
 	return {

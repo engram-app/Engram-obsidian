@@ -866,6 +866,13 @@ var EngramApi = class _EngramApi {
       client_id: clientId
     })).json;
   }
+  /** Create a brand-new, distinct vault for the current user. Unlike
+   *  registerVault (idempotent by client_id), this always makes a new vault.
+   *  Throws with status 402 if the user has reached their vault limit, or 422
+   *  on validation errors. */
+  async createVault(name) {
+    return (await this.request("POST", "/vaults", { name })).json.vault;
+  }
   /** Fetch all vaults accessible by the current user. Throws the underlying
    *  request error (with `.status` for HTTP responses) so callers can render
    *  401/timeout/5xx distinctly from "successful empty list". */
@@ -1086,12 +1093,12 @@ var ApiKeyAuth = class {
     this.apiKey = "", this.vaultId = null;
   }
 }, _OAuthAuth = class _OAuthAuth {
-  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated) {
+  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0) {
     this.accessToken = null;
     this.expiresAt = 0;
     this.authenticated = !0;
     this.inflightRefresh = null;
-    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated;
+    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt;
   }
   async getToken() {
     if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
@@ -1112,7 +1119,11 @@ var ApiKeyAuth = class {
     var _a;
     try {
       let result = await this.refreshFn(this.refreshToken);
-      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, result.refresh_token)), rlog().info(
+      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
+        refreshToken: result.refresh_token,
+        accessToken: result.access_token,
+        expiresAt: this.expiresAt
+      })), rlog().info(
         "auth",
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
       ), this.accessToken;
@@ -2128,7 +2139,7 @@ function renderEngramUrlSetting(ctx) {
     });
   };
   setting.addText((text) => {
-    text.setPlaceholder("https://engram.example.com"), text.onChange((value) => {
+    text.setPlaceholder("https://engram.example.com"), text.setValue(plugin.settings.apiUrl), text.onChange((value) => {
       pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
     });
   }).addButton(
@@ -2525,6 +2536,9 @@ var SyncPreviewState = class {
     this.vaultsLoading = !1;
     this.vaults = null;
     this.vaultsError = null;
+    /** Within the vault-picker, true while the "make a new vault" form is shown
+     *  instead of the list of existing vaults. */
+    this.creatingVault = !1;
     this.resolved = !1;
     this.plan = initialPlan;
   }
@@ -2550,7 +2564,13 @@ var SyncPreviewState = class {
     this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
   }
   enterVaultPicker() {
-    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null);
+    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
+  }
+  enterCreateVault() {
+    this.resolved || (this.creatingVault = !0, this.vaultsError = null);
+  }
+  exitCreateVault() {
+    this.creatingVault = !1, this.vaultsError = null;
   }
   onVaultsLoaded(vaults) {
     this.vaultsLoading = !1, this.vaults = vaults, this.vaultsError = null;
@@ -2559,7 +2579,7 @@ var SyncPreviewState = class {
     this.vaultsLoading = !1, this.vaults = null, this.vaultsError = message;
   }
   exitVaultPicker() {
-    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null);
+    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
   }
   /** Swap in the SyncPlan that came back from applyVaultChange. Caller is
    *  responsible for re-rendering. */
@@ -2572,7 +2592,12 @@ var SyncPreviewState = class {
   resolve(choice) {
     this.resolved || (this.resolved = !0, this.view = "done", this.onResolve(choice));
   }
-}, MERGE_CARD = {
+};
+function describeCreateVaultError(e) {
+  let status = e == null ? void 0 : e.status;
+  return status === 402 ? "Vault limit reached \u2014 upgrade or remove a vault to create another." : status === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
+}
+var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
   label: "Merge",
@@ -2790,6 +2815,10 @@ var SyncPreviewState = class {
     }), input.focus();
   }
   renderVaultPicker() {
+    if (this.state.creatingVault) {
+      this.renderCreateVaultForm();
+      return;
+    }
     let { contentEl } = this;
     contentEl.createEl("h2", {
       text: "Switch vault",
@@ -2824,8 +2853,50 @@ var SyncPreviewState = class {
       }
     } else
       body.createEl("p", { text: "No other vaults available." });
-    contentEl.createDiv({ cls: "engram-sync-preview-footer" }).createEl("button", { text: "Back" }).addEventListener("click", () => {
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
       this.state.exitVaultPicker(), this.render();
+    }), this.opts.createVault && footer.createEl("button", {
+      text: "Make new vault",
+      cls: "mod-cta engram-sync-preview-new-vault-btn"
+    }).addEventListener("click", () => {
+      this.state.enterCreateVault(), this.render();
+    });
+  }
+  /** Render the "make a new vault" form: a name field pre-filled with the
+   *  Obsidian vault name, plus Create / Back. Submitting creates the vault and
+   *  immediately selects it (which recomputes the preview for the empty vault). */
+  renderCreateVaultForm() {
+    let { contentEl } = this;
+    contentEl.createEl("h2", {
+      text: "New vault",
+      cls: "engram-sync-preview-header"
+    }), contentEl.createEl("p", {
+      text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+      cls: "engram-sync-preview-picker-help"
+    });
+    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
+    this.state.vaultsError && body.createEl("p", {
+      text: this.state.vaultsError,
+      cls: "engram-sync-preview-picker-error"
+    });
+    let input = body.createEl("input", {
+      type: "text",
+      cls: "engram-sync-preview-new-vault-input"
+    });
+    input.value = this.app.vault.getName(), input.placeholder = "Vault name";
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.state.exitCreateVault(), this.render();
+    });
+    let createBtn = footer.createEl("button", {
+      text: "Create",
+      cls: "mod-cta"
+    }), submit = () => {
+      this.state.vaultsLoading || this.applyCreateVault(input.value);
+    };
+    createBtn.addEventListener("click", submit), input.addEventListener("keydown", (e) => {
+      e.key === "Enter" && submit();
     });
   }
   async openVaultPicker() {
@@ -2857,6 +2928,23 @@ var SyncPreviewState = class {
       let cls = "engram-sync-preview-tree-row";
       row.kind === "file" ? cls += " engram-sync-preview-tree-file" : row.deleted ? cls += " engram-sync-preview-tree-folder engram-sync-preview-tree-folder-deleted" : cls += " engram-sync-preview-tree-folder", code.createDiv({ cls }).setText(`${"  ".repeat(row.depth)}${row.label}`);
     }
+  }
+  async applyCreateVault(name) {
+    if (!this.opts.createVault) return;
+    let trimmed = name.trim();
+    if (!trimmed) {
+      this.state.onVaultsError("Enter a name for the new vault"), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.vaultsLoading = !0, this.render();
+    let created;
+    try {
+      created = await this.opts.createVault(trimmed);
+    } catch (e) {
+      this.state.vaultsLoading = !1, this.state.onVaultsError(describeCreateVaultError(e)), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.exitCreateVault(), await this.applyPickedVault(created);
   }
   async applyPickedVault(v) {
     if (this.opts.applyVaultChange) {
@@ -3497,6 +3585,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  the last sync (Obsidian sets mtime to "now" on vault.modify(),
      *  making mtime-based detection unreliable). */
     this.syncState = /* @__PURE__ */ new Map();
+    /** The server vaultId that the current syncState belongs to. lastSync and
+     *  per-file hashes are scoped to one server vault; if the active vault
+     *  changes out from under us, this stale bookkeeping must be invalidated
+     *  or fullSync compares against the wrong vault and pushes nothing / wrong
+     *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
+     *  data) and is adopted without wiping. */
+    this.syncStateVaultId = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
     /** Called whenever sync status changes (for status bar updates). */
@@ -3546,7 +3641,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
-    this.syncState.clear(), this.lastSync = "", await this.saveData({ lastSync: "" }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+    var _a;
+    this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "" }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+  }
+  getSyncStateVaultId() {
+    return this.syncStateVaultId;
+  }
+  setSyncStateVaultId(id) {
+    this.syncStateVaultId = id;
+  }
+  /** Invalidate stale per-vault bookkeeping if the active server vault no
+   *  longer matches the one syncState was recorded under. This is the
+   *  self-healing backstop for vault switches that bypass the SyncPreviewModal
+   *  picker (e.g. OAuth re-login, ensureVault) and so never call
+   *  resetForVaultChange. A `null` recorded id (fresh install / pre-upgrade
+   *  data) is adopted WITHOUT wiping, so upgrading doesn't drop valid state. */
+  async invalidateIfVaultChanged() {
+    var _a;
+    let current = (_a = this.settings.vaultId) != null ? _a : null;
+    if (current) {
+      if (this.syncStateVaultId === null) {
+        this.syncStateVaultId = current;
+        return;
+      }
+      this.syncStateVaultId !== current && (rlog().warn(
+        "lifecycle",
+        `Vault changed (${this.syncStateVaultId} \u2192 ${current}) \u2014 invalidating stale syncState`
+      ), devLog().log(
+        "lifecycle",
+        `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
+      ), this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = current, await this.saveData({ lastSync: "" }));
+    }
   }
   /** Export sync state for persistence across sessions. */
   exportSyncState() {
@@ -3758,8 +3883,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       await this.paceRequest();
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
-        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), mimeType = this.getMimeType(file);
-        await this.api.pushAttachment(file.path, base64, mimeType, mtime);
+        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian14.normalizePath)(file.path));
+        if (!force && existing !== void 0 && hash === existing.hash)
+          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`), !1;
+        let mimeType = this.getMimeType(file);
+        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian14.normalizePath)(file.path), { hash });
       } else {
         let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian14.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
@@ -4399,21 +4527,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let normalized = (0, import_obsidian14.normalizePath)(change.path);
     if (change.deleted) {
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
+      return existing2 ? (await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
     }
-    let resolvedBase64 = contentBase64 != null ? contentBase64 : (await this.api.getAttachment(change.path)).content_base64, buffer = base64ToArrayBuffer(resolvedBase64), existing = this.app.vault.getFileByPath(normalized);
+    let resolvedBase64 = contentBase64 != null ? contentBase64 : (await this.api.getAttachment(change.path)).content_base64, buffer = base64ToArrayBuffer(resolvedBase64), existing = this.app.vault.getFileByPath(normalized), hash = fnv1a(resolvedBase64);
     if (existing) {
       if (existing.stat.size === buffer.byteLength) {
         let localBuffer = await this.app.vault.readBinary(existing);
         if (this.arrayBuffersEqual(localBuffer, buffer))
-          return rlog().info(
+          return this.syncState.set(normalized, { hash }), rlog().info(
             "pull",
             `Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`
           ), !1;
       }
-      return await this.app.vault.modifyBinary(existing, buffer), rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`), !0;
+      return await this.app.vault.modifyBinary(existing, buffer), this.syncState.set(normalized, { hash }), rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`), !0;
     }
-    return await this.createBinaryFileWithFolders(normalized, buffer), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
+    return await this.createBinaryFileWithFolders(normalized, buffer), this.syncState.set(normalized, { hash }), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
   }
   /** Resolve a conflict via callback or auto-resolve as keep-remote. */
   async resolveConflict(info) {
@@ -4480,15 +4608,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   // --- Full sync (startup) ---
   /** Full bidirectional sync: pull remote changes, then push local changes. */
   async fullSync() {
+    var _a;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "fullSync short-circuited \u2014 gate closed"), { pulled: 0, pushed: 0 };
     devLog().log("lifecycle", "fullSync start"), rlog().info("lifecycle", "FullSync started");
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
-    await this.configureRateLimit();
+    await this.configureRateLimit(), await this.invalidateIfVaultChanged();
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
-    return pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
+    return (_a = this.onSyncProgress) == null || _a.call(this, { phase: "complete", current: pushed, total: pushed, failed: 0 }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
   /** Push all files that have been modified since last sync, plus any
    *  syncable file that the engine has never seen (no syncState entry).
@@ -4497,11 +4626,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  otherwise touch the push path because lastSync is empty and the
    *  mtime comparison short-circuits. */
   async pushModifiedFiles(sinceTimestamp) {
-    let since = sinceTimestamp || this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
+    var _a, _b;
+    let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
+    let total = toSync.length;
+    total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
     for (let i = 0; i < toSync.length; i += 10) {
       let batch = toSync.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length;
+      pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
+        phase: "pushing",
+        current: Math.min(i + batch.length, total),
+        total,
+        failed: 0
+      });
     }
     return pushed;
   }
@@ -4615,6 +4752,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
+    await this.invalidateIfVaultChanged();
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     for (let i = 0; i < toSync.length; i += 10) {
@@ -5032,7 +5170,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
     let saved = await this.loadData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -5219,6 +5357,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       lastSync,
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       syncState: this.syncEngine.exportSyncState(),
+      syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
       // Dual-write legacy format for rollback safety (remove after one release cycle)
       syncedHashes: this.syncEngine.exportHashes(),
       syncIssues: this.syncEngine.issues.serialize(),
@@ -5227,7 +5366,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
     });
   }
   createAuthProvider() {
-    var _a;
+    var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
         let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian16.requestUrl)({
@@ -5246,18 +5385,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         this.settings.vaultId,
         (_a = this.settings.userEmail) != null ? _a : null,
         refreshFn,
-        async (newToken) => {
-          this.settings.refreshToken = newToken, rlog().info("auth", "Refresh token rotated \u2014 persisting only"), await this.savePluginData(this.syncEngine.getLastSync());
-        }
+        async ({ refreshToken, accessToken, expiresAt }) => {
+          this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
+        },
+        (_b = this.settings.accessToken) != null ? _b : null,
+        (_c = this.settings.accessTokenExpiresAt) != null ? _c : 0
       );
     }
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
+    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
   }
   async clearOAuthTokens() {
-    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
+    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
     var _a;
@@ -5388,6 +5529,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         context,
         initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
         listVaults: () => this.api.listVaults(),
+        createVault: (name) => this.api.createVault(name),
         applyVaultChange: async (id, name) => {
           var _a;
           return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a = this.settingTab) == null || _a.display(), this.syncEngine.computeSyncPlan("full");

@@ -1550,3 +1550,8 @@
 	padding: 0.4em;
 	font-family: monospace;
 }
+
+.engram-sync-preview-new-vault-input {
+	width: 100%;
+	padding: 0.4em;
+}

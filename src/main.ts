@@ -6,7 +6,13 @@
  */
 import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
-import { ApiKeyAuth, type AuthProvider, OAuthAuth, type RefreshFn } from "./auth";
+import {
+	ApiKeyAuth,
+	type AuthProvider,
+	OAuthAuth,
+	type RefreshFn,
+	seededAccessToken,
+} from "./auth";
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
@@ -52,6 +58,9 @@ interface PluginData {
 	offlineQueue?: QueueEntry[];
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
+	/** The server vaultId that `syncState` was recorded under. Used to
+	 *  auto-invalidate stale state when the active vault changes. */
+	syncStateVaultId?: string | null;
 	/** Legacy hash-only format. Kept for rollback safety (dual-write). */
 	syncedHashes?: Record<string, number>;
 	/** Persistent failures surfaced in the Sync Center "Issues" panel. */
@@ -159,6 +168,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
+		}
+		if (saved?.syncStateVaultId !== undefined) {
+			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
 		}
 		if (saved?.syncState) {
 			// New format — hash + version per file
@@ -529,6 +541,7 @@ export default class EngramSyncPlugin extends Plugin {
 			lastSync,
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			syncState: this.syncEngine.exportSyncState(),
+			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
 			syncedHashes: this.syncEngine.exportHashes(),
 			syncIssues: this.syncEngine.issues.serialize(),
@@ -558,17 +571,27 @@ export default class EngramSyncPlugin extends Plugin {
 					expires_in: number;
 				};
 			};
+			// Only reuse a persisted access token if it was minted for the
+			// active vault; otherwise it's a stale token from a prior account
+			// and would 404 against this vault. Drop it and let getToken refresh.
+			const seed = seededAccessToken(this.settings);
+			if (this.settings.accessToken && !seed.token) {
+				rlog().warn(
+					"auth",
+					`Discarding persisted access token — minted for vault ${this.settings.accessTokenVaultId ?? "unknown"}, active vault ${this.settings.vaultId ?? "none"}; will refresh`,
+				);
+			}
 			return new OAuthAuth(
 				this.settings.refreshToken,
 				this.settings.vaultId,
 				this.settings.userEmail ?? null,
 				refreshFn,
-				async (newToken) => {
+				async ({ refreshToken, accessToken, expiresAt }) => {
 					// Token rotation must NOT call saveSettings — that path
 					// disconnects + reconnects the WebSocket, which triggers a
 					// fresh refresh, which rotates again, which... loops forever.
-					// Persist the new refresh token in place and write to disk
-					// without reconfiguring the api/channel.
+					// Persist the new tokens in place and write to disk without
+					// reconfiguring the api/channel.
 					//
 					// Await the save: OAuthAuth.doRefresh awaits this callback
 					// before resolving the access token, so the rotated refresh
@@ -576,10 +599,22 @@ export default class EngramSyncPlugin extends Plugin {
 					// plugin update — can race against it. Without the await,
 					// a BRAT update between rotation and flush left the disk
 					// holding a server-invalidated token (forced re-login).
-					this.settings.refreshToken = newToken;
-					rlog().info("auth", "Refresh token rotated — persisting only");
+					//
+					// Persisting the access token + expiry too lets a reload
+					// within the access-token lifetime skip the refresh entirely,
+					// so a restart/update no longer consumes the single-use
+					// refresh token (the cause of the load-time 401 loop).
+					this.settings.refreshToken = refreshToken;
+					this.settings.accessToken = accessToken;
+					this.settings.accessTokenExpiresAt = expiresAt;
+					// Bind the cached token to the vault it was minted for, so a
+					// later account swap can't resurrect a stale token.
+					this.settings.accessTokenVaultId = this.settings.vaultId;
+					rlog().info("auth", "Tokens rotated — persisting refresh + access");
 					await this.savePluginData(this.syncEngine.getLastSync());
 				},
+				seed.token,
+				seed.expiresAt,
 			);
 		}
 
@@ -595,6 +630,11 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.userEmail = userEmail;
 		this.settings.authMethod = "oauth";
 		this.settings.vaultId = vaultId;
+		// Fresh login — discard any stale persisted access token so the next
+		// request mints one against the new refresh token.
+		this.settings.accessToken = undefined;
+		this.settings.accessTokenExpiresAt = undefined;
+		this.settings.accessTokenVaultId = undefined;
 		await this.saveSettings();
 
 		this.authProvider = this.createAuthProvider();
@@ -610,6 +650,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.refreshToken = undefined;
 		this.settings.userEmail = undefined;
 		this.settings.authMethod = null;
+		this.settings.accessToken = undefined;
+		this.settings.accessTokenExpiresAt = undefined;
+		this.settings.accessTokenVaultId = undefined;
 		await this.saveSettings();
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
@@ -815,6 +858,7 @@ export default class EngramSyncPlugin extends Plugin {
 				context,
 				initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
 				listVaults: () => this.api.listVaults(),
+				createVault: (name) => this.api.createVault(name),
 				applyVaultChange: async (id, name) => {
 					// Persist the new vault target without going through
 					// saveSettings — that path would re-fire
