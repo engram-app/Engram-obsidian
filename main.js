@@ -1093,12 +1093,12 @@ var ApiKeyAuth = class {
     this.apiKey = "", this.vaultId = null;
   }
 }, _OAuthAuth = class _OAuthAuth {
-  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated) {
+  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0) {
     this.accessToken = null;
     this.expiresAt = 0;
     this.authenticated = !0;
     this.inflightRefresh = null;
-    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated;
+    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt;
   }
   async getToken() {
     if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
@@ -1119,7 +1119,11 @@ var ApiKeyAuth = class {
     var _a;
     try {
       let result = await this.refreshFn(this.refreshToken);
-      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, result.refresh_token)), rlog().info(
+      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
+        refreshToken: result.refresh_token,
+        accessToken: result.access_token,
+        expiresAt: this.expiresAt
+      })), rlog().info(
         "auth",
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
       ), this.accessToken;
@@ -5362,7 +5366,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
     });
   }
   createAuthProvider() {
-    var _a;
+    var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
         let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian16.requestUrl)({
@@ -5381,18 +5385,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         this.settings.vaultId,
         (_a = this.settings.userEmail) != null ? _a : null,
         refreshFn,
-        async (newToken) => {
-          this.settings.refreshToken = newToken, rlog().info("auth", "Refresh token rotated \u2014 persisting only"), await this.savePluginData(this.syncEngine.getLastSync());
-        }
+        async ({ refreshToken, accessToken, expiresAt }) => {
+          this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
+        },
+        (_b = this.settings.accessToken) != null ? _b : null,
+        (_c = this.settings.accessTokenExpiresAt) != null ? _c : 0
       );
     }
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
+    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
   }
   async clearOAuthTokens() {
-    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
+    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
     var _a;

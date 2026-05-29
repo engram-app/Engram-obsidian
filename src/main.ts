@@ -570,12 +570,12 @@ export default class EngramSyncPlugin extends Plugin {
 				this.settings.vaultId,
 				this.settings.userEmail ?? null,
 				refreshFn,
-				async (newToken) => {
+				async ({ refreshToken, accessToken, expiresAt }) => {
 					// Token rotation must NOT call saveSettings — that path
 					// disconnects + reconnects the WebSocket, which triggers a
 					// fresh refresh, which rotates again, which... loops forever.
-					// Persist the new refresh token in place and write to disk
-					// without reconfiguring the api/channel.
+					// Persist the new tokens in place and write to disk without
+					// reconfiguring the api/channel.
 					//
 					// Await the save: OAuthAuth.doRefresh awaits this callback
 					// before resolving the access token, so the rotated refresh
@@ -583,10 +583,19 @@ export default class EngramSyncPlugin extends Plugin {
 					// plugin update — can race against it. Without the await,
 					// a BRAT update between rotation and flush left the disk
 					// holding a server-invalidated token (forced re-login).
-					this.settings.refreshToken = newToken;
-					rlog().info("auth", "Refresh token rotated — persisting only");
+					//
+					// Persisting the access token + expiry too lets a reload
+					// within the access-token lifetime skip the refresh entirely,
+					// so a restart/update no longer consumes the single-use
+					// refresh token (the cause of the load-time 401 loop).
+					this.settings.refreshToken = refreshToken;
+					this.settings.accessToken = accessToken;
+					this.settings.accessTokenExpiresAt = expiresAt;
+					rlog().info("auth", "Tokens rotated — persisting refresh + access");
 					await this.savePluginData(this.syncEngine.getLastSync());
 				},
+				this.settings.accessToken ?? null,
+				this.settings.accessTokenExpiresAt ?? 0,
 			);
 		}
 
@@ -602,6 +611,10 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.userEmail = userEmail;
 		this.settings.authMethod = "oauth";
 		this.settings.vaultId = vaultId;
+		// Fresh login — discard any stale persisted access token so the next
+		// request mints one against the new refresh token.
+		this.settings.accessToken = undefined;
+		this.settings.accessTokenExpiresAt = undefined;
 		await this.saveSettings();
 
 		this.authProvider = this.createAuthProvider();
@@ -617,6 +630,8 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.refreshToken = undefined;
 		this.settings.userEmail = undefined;
 		this.settings.authMethod = null;
+		this.settings.accessToken = undefined;
+		this.settings.accessTokenExpiresAt = undefined;
 		await this.saveSettings();
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)

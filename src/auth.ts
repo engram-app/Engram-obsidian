@@ -23,6 +23,13 @@ export type RefreshFn = (refreshToken: string) => Promise<{
 	expires_in: number;
 }>;
 
+/** The token state persisted after each refresh so a reload can restore it. */
+export interface PersistedTokens {
+	refreshToken: string;
+	accessToken: string;
+	expiresAt: number;
+}
+
 /** Simple wrapper around a static API key. No refresh logic. */
 export class ApiKeyAuth implements AuthProvider {
 	private apiKey: string;
@@ -59,12 +66,14 @@ export class OAuthAuth implements AuthProvider {
 	private accessToken: string | null = null;
 	private expiresAt = 0;
 	private refreshFn: RefreshFn;
-	// Rotation callback can return a Promise — doRefresh awaits it so the
-	// rotated refresh token is durable BEFORE the new access token is handed
-	// back to the caller. Closes the 1.3.0 race where a plugin reload between
-	// the in-memory rotation and a fire-and-forget disk write left the on-disk
-	// token stale, forcing a manual re-login.
-	private onTokenRotated?: (newRefreshToken: string) => void | Promise<void>;
+	// Persistence callback can return a Promise — doRefresh awaits it so the
+	// rotated tokens are durable BEFORE the new access token is handed back to
+	// the caller. Closes the 1.3.0 race where a plugin reload between the
+	// in-memory rotation and a fire-and-forget disk write left the on-disk token
+	// stale, forcing a manual re-login. Carries the access token + expiry too so
+	// a reload within the access-token lifetime can skip the refresh entirely —
+	// which avoids consuming the single-use refresh token on every restart.
+	private onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>;
 	private authenticated = true;
 	private inflightRefresh: Promise<string> | null = null;
 
@@ -76,13 +85,17 @@ export class OAuthAuth implements AuthProvider {
 		vaultId: string | null,
 		userEmail: string | null,
 		refreshFn: RefreshFn,
-		onTokenRotated?: (newRefreshToken: string) => void | Promise<void>,
+		onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>,
+		initialAccessToken: string | null = null,
+		initialExpiresAt = 0,
 	) {
 		this.refreshToken = refreshToken;
 		this.vaultId = vaultId;
 		this.userEmail = userEmail;
 		this.refreshFn = refreshFn;
 		this.onTokenRotated = onTokenRotated;
+		this.accessToken = initialAccessToken;
+		this.expiresAt = initialExpiresAt;
 	}
 
 	async getToken(): Promise<string> {
@@ -117,7 +130,11 @@ export class OAuthAuth implements AuthProvider {
 			this.authenticated = true;
 			// Await persistence so callers can't act on the new access token
 			// before the rotated refresh token reaches disk.
-			await this.onTokenRotated?.(result.refresh_token);
+			await this.onTokenRotated?.({
+				refreshToken: result.refresh_token,
+				accessToken: result.access_token,
+				expiresAt: this.expiresAt,
+			});
 			rlog().info(
 				"auth",
 				`OAuth refresh ok — accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`,

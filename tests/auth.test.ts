@@ -87,6 +87,71 @@ describe("OAuthAuth", () => {
 		expect(mockRefreshFn).toHaveBeenCalledTimes(2);
 	});
 
+	it("reuses a seeded access token on load without refreshing", async () => {
+		mockRefreshFn.mockResolvedValue({
+			access_token: "should_not_be_used",
+			refresh_token: "engram_rt_new",
+			expires_in: 3600,
+		});
+		// Seed a still-valid access token (10 min out), as restored from disk.
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn,
+			undefined,
+			"seeded_access",
+			Date.now() + 10 * 60 * 1000,
+		);
+		const token = await auth.getToken();
+		expect(token).toBe("seeded_access");
+		expect(mockRefreshFn).not.toHaveBeenCalled();
+	});
+
+	it("refreshes when the seeded access token is already expired", async () => {
+		mockRefreshFn.mockResolvedValue({
+			access_token: "jwt_fresh",
+			refresh_token: "engram_rt_new",
+			expires_in: 3600,
+		});
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn,
+			undefined,
+			"stale_access",
+			Date.now() - 1000, // already expired
+		);
+		const token = await auth.getToken();
+		expect(token).toBe("jwt_fresh");
+		expect(mockRefreshFn).toHaveBeenCalledTimes(1);
+	});
+
+	it("hands the rotated refresh + access token and expiry to onTokenRotated", async () => {
+		mockRefreshFn.mockResolvedValue({
+			access_token: "jwt_123",
+			refresh_token: "engram_rt_new",
+			expires_in: 3600,
+		});
+		let persisted: { refreshToken: string; accessToken: string; expiresAt: number } | null = null;
+		const auth = new OAuthAuth(
+			"engram_rt_old",
+			"vault-1",
+			"user@test.com",
+			mockRefreshFn,
+			(t) => {
+				persisted = t;
+			},
+		);
+		await auth.getToken();
+		expect(persisted).toMatchObject({
+			refreshToken: "engram_rt_new",
+			accessToken: "jwt_123",
+		});
+		expect(persisted?.expiresAt).toBeGreaterThan(Date.now());
+	});
+
 	it("sets isAuthenticated to false on refresh failure", async () => {
 		mockRefreshFn.mockRejectedValue(new Error("401"));
 
@@ -171,7 +236,9 @@ describe("OAuthAuth", () => {
 		);
 		await auth.getToken();
 
-		expect(onRotated).toHaveBeenCalledWith("engram_rt_new");
+		expect(onRotated).toHaveBeenCalledWith(
+			expect.objectContaining({ refreshToken: "engram_rt_new", accessToken: "jwt_123" }),
+		);
 	});
 
 	it("awaits onTokenRotated before resolving getToken", async () => {
