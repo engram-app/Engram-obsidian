@@ -4,9 +4,12 @@ import type { EngramSyncSettings } from "./types";
  *  decide whether the SyncPreviewModal must fire. Order matters — keep it
  *  stable across releases or the gate will incorrectly re-fire for everyone. */
 export async function computeSyncFingerprint(settings: EngramSyncSettings): Promise<string> {
-	// Use refreshToken when present (OAuth) — it survives access-token rotation.
-	// Fall back to apiKey for self-hosted / static-key auth.
-	const authPart = settings.refreshToken || settings.apiKey || "";
+	// Identify the account, NOT the credential. OAuth refresh tokens are
+	// single-use and rotate on every refresh, so keying on the token would
+	// change the fingerprint each refresh and slam the sync gate shut
+	// (fullSync/WS then silently no-op). Use the stable userEmail for OAuth;
+	// fall back to the (static) apiKey for self-hosted / api-key auth.
+	const authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "";
 	const vaultPart = settings.vaultId || "";
 	const input = `${authPart}|${vaultPart}`;
 	if (input === "|") return ""; // Both empty = no fingerprint yet
