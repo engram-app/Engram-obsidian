@@ -55,7 +55,9 @@ After that, syncing just happens as you work.
 
 - **Network use** — the plugin only talks to the Engram server you configure. Nothing else.
 - **Account required** — you connect with an Engram account, by signing in (OAuth) or pasting an API key.
-- **No telemetry, no analytics.** Optional remote logging (off by default) sends sync events only to your own Engram server, never to a third party.
+- **Payment required for full access** — on the hosted service ([engram.page](https://engram.page)), a free tier is available; paid tiers raise storage and search limits. See [engram.page](https://engram.page) for current pricing. Self-hosting is free for the plugin and the open-source backend.
+- **No telemetry, no analytics.** Optional remote logging (off by default) sends error and lifecycle events only to the Engram server you configure, never to a third party.
+- **Hosted-service privacy policy** — [engram.page/privacy](https://engram.page/privacy) covers what the hosted backend stores and how. Self-hosted deployments are governed by whoever runs the server.
 
 More detail is in the [user guide](docs/user-guide.md).
 
