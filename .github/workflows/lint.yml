@@ -8,7 +8,7 @@ on:
 jobs:
   todo-drift:
     name: TODO drift
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, isolated]
     steps:
       - uses: actions/checkout@v6
 
@@ -49,7 +49,7 @@ jobs:
 
   claude-md-staleness:
     name: CLAUDE.md staleness
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, linux, x64, isolated]
     steps:
       - uses: actions/checkout@v6
 
