@@ -1,30 +1,34 @@
-# CodeQL — managed by engram-infra/main/github/codeql.tf.
-# DO NOT EDIT IN-REPO; changes will be overwritten on next tf apply.
-name: codeql
+    # CodeQL — managed by engram-infra/main/github/codeql.tf.
+    # DO NOT EDIT IN-REPO; changes will be overwritten on next tf apply.
+    name: codeql
 
-on:
-  push:
-    branches: [main]
-  pull_request:
-    branches: [main]
-  schedule:
-    # Weekly scan against unchanged code — catches newly-published
-    # advisories that match dependencies already on main.
-    - cron: "0 8 * * 1"
+    on:
+      push:
+        branches: [main]
+      pull_request:
+        branches: [main]
+      schedule:
+        # Weekly scan against unchanged code — catches newly-published
+        # advisories that match dependencies already on main.
+        - cron: "0 8 * * 1"
 
-permissions:
-  actions: read
-  contents: read
-  security-events: write
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
 
-jobs:
-  analyze:
-    name: analyze (javascript-typescript)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - uses: github/codeql-action/init@v4
-        with:
-          languages: javascript-typescript
-      - uses: github/codeql-action/autobuild@v4
-      - uses: github/codeql-action/analyze@v4
+    jobs:
+      analyze:
+        name: analyze (javascript-typescript)
+        # Self-hosted runner pool (engram-runners VM, runner-1..7). Switched from
+        # ubuntu-latest 2026-06-01 to cut billable Linux minutes — language
+        # toolchains are either preinstalled (bun + node 22 for js/ts) or set up
+        # in-job (setup-go below for go).
+        runs-on: [self-hosted, linux, x64, isolated]
+        steps:
+          - uses: actions/checkout@v6
+          - uses: github/codeql-action/init@v4
+            with:
+              languages: javascript-typescript
+          - uses: github/codeql-action/autobuild@v4
+          - uses: github/codeql-action/analyze@v4
