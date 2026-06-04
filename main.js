@@ -1182,7 +1182,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null) {
     this.ws = null;
     this.ref = 0;
@@ -1249,7 +1249,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
     );
-    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`;
+    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`, openedAt = Date.now(), opened = !1;
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
@@ -1257,13 +1257,19 @@ var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
       return;
     }
     this.ws.onopen = () => {
-      this.reconnectMs = 1e3, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+      opened = !0, this.reconnectMs = 1e3, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
     }, this.ws.onclose = () => {
-      this.clearTimers(), this.ws = null, this.setConnected(!1), rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
+      var _a2;
+      this.clearTimers(), this.ws = null, this.setConnected(!1);
+      let sinceOpen = Date.now() - openedAt;
+      !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
+        "channel",
+        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating`
+      ), this.authProvider.invalidateAccessToken()), rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
     };
   }
   joinChannel() {

@@ -197,4 +197,48 @@ describe("NoteChannel.setAuthProvider", () => {
 
 		channel.disconnect();
 	});
+
+	test("invalidates the cached access token when WS closes before open (stale token)", async () => {
+		const invalidate = mock(() => {});
+		const provider: AuthProvider = {
+			getToken: mock(() => Promise.resolve("stale-token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+			invalidateAccessToken: invalidate,
+		};
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider(provider);
+		await channel.connect();
+
+		// Simulate Phoenix UserSocket rejecting the upgrade — onclose fires
+		// without an intervening onopen, surfacing as the browser's
+		// "WebSocket connection failed" with no HTTP status.
+		lastWsInstance.onclose?.();
+
+		expect(invalidate).toHaveBeenCalledTimes(1);
+
+		channel.disconnect();
+	});
+
+	test("does NOT invalidate when WS closes AFTER a successful open (normal disconnect)", async () => {
+		const invalidate = mock(() => {});
+		const provider: AuthProvider = {
+			getToken: mock(() => Promise.resolve("good-token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+			invalidateAccessToken: invalidate,
+		};
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider(provider);
+		await channel.connect();
+
+		simulateOpen(lastWsInstance);
+		lastWsInstance.onclose?.();
+
+		expect(invalidate).not.toHaveBeenCalled();
+
+		channel.disconnect();
+	});
 });
