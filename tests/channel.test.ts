@@ -241,4 +241,37 @@ describe("NoteChannel.setAuthProvider", () => {
 
 		channel.disconnect();
 	});
+
+	test("close-before-open with no auth provider is a no-op (ApiKey fallback path)", async () => {
+		// Channel without setAuthProvider — only the api-key fallback string
+		// drives the WS URL. The onclose handler must NOT crash on the
+		// optional-method access (`this.authProvider?.invalidateAccessToken`).
+		const channel = new NoteChannel("http://localhost:4000", "my-api-key", "42", "7");
+		await channel.connect();
+
+		// Should not throw.
+		expect(() => lastWsInstance.onclose?.()).not.toThrow();
+
+		channel.disconnect();
+	});
+
+	test("ApiKey-shaped provider without invalidateAccessToken doesn't crash on close-before-open", async () => {
+		// Some providers (e.g. ApiKeyAuth) don't implement the optional
+		// invalidateAccessToken method. The guard in channel.ts must skip
+		// invalidation gracefully rather than calling undefined.
+		const provider: AuthProvider = {
+			getToken: mock(() => Promise.resolve("api-key-as-token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+			// invalidateAccessToken intentionally omitted
+		};
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider(provider);
+		await channel.connect();
+
+		expect(() => lastWsInstance.onclose?.()).not.toThrow();
+
+		channel.disconnect();
+	});
 });

@@ -1900,14 +1900,15 @@ var import_obsidian5 = require("obsidian"), DeviceFlowModal = class extends impo
     });
   }
   async startDeviceFlow() {
-    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, resp = await (0, import_obsidian5.requestUrl)({
+    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, vaultName = this.app.vault.getName().trim(), body = {
+      client_id: this.plugin.settings.clientId
+    };
+    vaultName && (body.vault_name = vaultName);
+    let resp = await (0, import_obsidian5.requestUrl)({
       url: `${apiUrl}/auth/device`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        client_id: this.plugin.settings.clientId,
-        vault_name: this.app.vault.getName()
-      }),
+      body: JSON.stringify(body),
       throw: !1
     });
     if (resp.status < 200 || resp.status >= 300)

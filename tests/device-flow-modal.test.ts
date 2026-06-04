@@ -74,6 +74,49 @@ describe("DeviceFlowModal.startDeviceFlow", () => {
 		expect(call.url).toBe("https://example.test/api/auth/device");
 	});
 
+	test("trims surrounding whitespace from vault name before sending", async () => {
+		mockRequestUrl.mockResolvedValue({
+			status: 200,
+			json: {
+				device_code: "abc",
+				user_code: "AAAA-BBBB",
+				verification_url: "https://example.test/link",
+				expires_in: 300,
+			},
+		});
+
+		const modal = new DeviceFlowModal(
+			makeApp("  Padded Vault \n"),
+			makePlugin("https://example.test", "cid-3"),
+		);
+
+		await (modal as any).startDeviceFlow();
+		const body = JSON.parse((mockRequestUrl.mock.calls[0][0] as { body: string }).body);
+		expect(body.vault_name).toBe("Padded Vault");
+	});
+
+	test("omits vault_name when the vault name is empty (or only whitespace)", async () => {
+		mockRequestUrl.mockResolvedValue({
+			status: 200,
+			json: {
+				device_code: "abc",
+				user_code: "AAAA-BBBB",
+				verification_url: "https://example.test/link",
+				expires_in: 300,
+			},
+		});
+
+		const modal = new DeviceFlowModal(
+			makeApp("   "),
+			makePlugin("https://example.test", "cid-4"),
+		);
+
+		await (modal as any).startDeviceFlow();
+		const body = JSON.parse((mockRequestUrl.mock.calls[0][0] as { body: string }).body);
+		expect(body).toEqual({ client_id: "cid-4" });
+		expect("vault_name" in body).toBe(false);
+	});
+
 	test("throws on non-2xx", async () => {
 		mockRequestUrl.mockResolvedValue({ status: 500, json: {} });
 
