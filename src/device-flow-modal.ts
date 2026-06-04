@@ -68,7 +68,10 @@ export class DeviceFlowModal extends Modal {
 			url: `${apiUrl}/auth/device`,
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ client_id: this.plugin.settings.clientId }),
+			body: JSON.stringify({
+				client_id: this.plugin.settings.clientId,
+				vault_name: this.app.vault.getName(),
+			}),
 			throw: false,
 		});
 		if (resp.status < 200 || resp.status >= 300) {
