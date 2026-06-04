@@ -7,6 +7,15 @@ import { rlog } from "./remote-log";
  *  Long enough to avoid console spam, short enough that re-auth catches up
  *  within a reasonable user-perceived window. */
 const NO_AUTH_RECONNECT_MS = 30_000;
+
+/** If a WS close lands within this window after open, treat it as a probable
+ *  auth-failure handshake reject (Phoenix's UserSocket returns 403 at upgrade
+ *  for expired/invalid JWTs, manifesting client-side as an immediate close
+ *  rather than an HTTP status). We invalidate the cached access token so the
+ *  next reconnect forces a refresh. Wider than any legitimate network blip,
+ *  narrower than a real session.
+ */
+const AUTH_FAIL_WINDOW_MS = 5_000;
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -137,6 +146,9 @@ export class NoteChannel {
 		const wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss");
 		const url = `${wsBase}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`;
 
+		const openedAt = Date.now();
+		let opened = false;
+
 		try {
 			this.ws = new WebSocket(url);
 		} catch (e) {
@@ -146,6 +158,7 @@ export class NoteChannel {
 		}
 
 		this.ws.onopen = () => {
+			opened = true;
 			this.reconnectMs = 1000;
 			this.joinChannel();
 			this.startHeartbeat();
@@ -164,6 +177,27 @@ export class NoteChannel {
 			this.clearTimers();
 			this.ws = null;
 			this.setConnected(false);
+
+			// Phoenix UserSocket rejects expired/invalid JWTs at the WS upgrade,
+			// which the browser surfaces as an immediate close without ever
+			// firing `onopen`. Treat any close that lands inside the fail window
+			// without a successful open as an auth handshake reject and force
+			// the next reconnect to mint a fresh access token. (A real network
+			// blip won't fire onclose without an onopen — the WebSocket would
+			// stay in CONNECTING and eventually error out instead.)
+			const sinceOpen = Date.now() - openedAt;
+			if (
+				!opened &&
+				sinceOpen < AUTH_FAIL_WINDOW_MS &&
+				this.authProvider?.invalidateAccessToken
+			) {
+				rlog().warn(
+					"channel",
+					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating`,
+				);
+				this.authProvider.invalidateAccessToken();
+			}
+
 			rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`);
 			this.scheduleReconnect();
 		};

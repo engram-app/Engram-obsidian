@@ -64,11 +64,20 @@ export class DeviceFlowModal extends Modal {
 	}> {
 		const baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, "");
 		const apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`;
+		// Trim before sending so we don't ship trailing whitespace from a
+		// corrupted Obsidian config; omit the field entirely when empty so the
+		// backend doesn't store a useless empty hint. (Backend also clamps the
+		// value, but normalizing client-side keeps logs and DB rows clean.)
+		const vaultName = this.app.vault.getName().trim();
+		const body: { client_id: string; vault_name?: string } = {
+			client_id: this.plugin.settings.clientId,
+		};
+		if (vaultName) body.vault_name = vaultName;
 		const resp = await requestUrl({
 			url: `${apiUrl}/auth/device`,
 			method: "POST",
 			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ client_id: this.plugin.settings.clientId }),
+			body: JSON.stringify(body),
 			throw: false,
 		});
 		if (resp.status < 200 || resp.status >= 300) {

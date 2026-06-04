@@ -29,9 +29,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 )), __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: !0 }), mod);
 
-// node_modules/diff-match-patch/index.js
+// ../../node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
-  "node_modules/diff-match-patch/index.js"(exports, module2) {
+  "../../node_modules/diff-match-patch/index.js"(exports, module2) {
     var diff_match_patch2 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
@@ -775,6 +775,94 @@ async function applyApiUrlChange(target, newUrl, save) {
   return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
 }
 
+// src/remote-log.ts
+var RemoteLogger = class {
+  constructor() {
+    this.buffer = [];
+    this.flushTimer = null;
+    this.pushFn = null;
+    this.enabled = !1;
+    this.pluginVersion = "";
+    this.platform = "";
+    this.flushing = !1;
+  }
+  configure(pushFn, pluginVersion, platform) {
+    this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
+  }
+  setEnabled(enabled) {
+    this.enabled = enabled, enabled ? this.startTimer() : (this.stopTimer(), this.flush());
+  }
+  error(category, message, stack) {
+    this.addEntry("error", category, message, stack);
+  }
+  warn(category, message) {
+    this.addEntry("warn", category, message);
+  }
+  info(category, message) {
+    this.addEntry("info", category, message);
+  }
+  async flush() {
+    if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
+    let batch = this.buffer.splice(0, this.buffer.length);
+    this.flushing = !0;
+    try {
+      await this.pushFn(batch);
+    } catch (e) {
+      let space = 200 - this.buffer.length;
+      space > 0 && this.buffer.unshift(...batch.slice(0, space));
+    } finally {
+      this.flushing = !1;
+    }
+  }
+  async destroy() {
+    this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
+  }
+  addEntry(level, category, message, stack) {
+    if (!this.enabled || !this.pushFn) return;
+    let entry = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      level,
+      category,
+      message,
+      plugin_version: this.pluginVersion,
+      platform: this.platform
+    };
+    stack && (entry.stack = stack), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
+  }
+  startTimer() {
+    this.stopTimer(), this.flushTimer = window.setInterval(() => {
+      this.flush();
+    }, 3e4);
+  }
+  stopTimer() {
+    this.flushTimer && (window.clearInterval(this.flushTimer), this.flushTimer = null);
+  }
+}, _noop = {
+  error() {
+  },
+  warn() {
+  },
+  info() {
+  },
+  async flush() {
+  },
+  async destroy() {
+  },
+  setEnabled() {
+  },
+  configure() {
+  }
+}, _instance = null;
+function initRemoteLog() {
+  return _instance = new RemoteLogger(), _instance;
+}
+function rlog() {
+  return _instance != null ? _instance : _noop;
+}
+async function destroyRemoteLog() {
+  await (_instance == null ? void 0 : _instance.destroy()), _instance = null;
+}
+
 // src/api.ts
 var EngramApi = class _EngramApi {
   constructor(baseUrl, apiKey) {
@@ -823,13 +911,17 @@ var EngramApi = class _EngramApi {
     this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
   }
   async request(method, path, body) {
-    var _a;
+    var _a, _b;
     try {
       return await this.sendRequest(method, path, body);
     } catch (e) {
-      if (e.status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
+      let status = e.status;
+      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
         return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body);
-      throw e;
+      throw rlog().warn(
+        "api",
+        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+      ), e;
     }
   }
   async sendRequest(method, path, body) {
@@ -885,7 +977,7 @@ var EngramApi = class _EngramApi {
       return await this.request("GET", "/folders"), { ok: !0 };
     } catch (e) {
       let status = e.status;
-      return status === 401 || status === 403 ? { ok: !1, error: "Invalid API key" } : { ok: !1, error: "Connection failed" };
+      return status === 401 || status === 403 ? { ok: !1, error: "Invalid API key" } : typeof status == "number" ? { ok: !1, error: `HTTP ${status} from /folders` } : { ok: !1, error: "Connection failed" };
     }
   }
   /** Push a note to Engram.
@@ -987,95 +1079,14 @@ function base64ToArrayBuffer(base64) {
   return bytes.buffer;
 }
 
-// src/remote-log.ts
-var RemoteLogger = class {
-  constructor() {
-    this.buffer = [];
-    this.flushTimer = null;
-    this.pushFn = null;
-    this.enabled = !1;
-    this.pluginVersion = "";
-    this.platform = "";
-    this.flushing = !1;
-  }
-  configure(pushFn, pluginVersion, platform) {
-    this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
-  }
-  setEnabled(enabled) {
-    this.enabled = enabled, enabled ? this.startTimer() : (this.stopTimer(), this.flush());
-  }
-  error(category, message, stack) {
-    this.addEntry("error", category, message, stack);
-  }
-  warn(category, message) {
-    this.addEntry("warn", category, message);
-  }
-  info(category, message) {
-    this.addEntry("info", category, message);
-  }
-  async flush() {
-    if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
-    let batch = this.buffer.splice(0, this.buffer.length);
-    this.flushing = !0;
-    try {
-      await this.pushFn(batch);
-    } catch (e) {
-      let space = 200 - this.buffer.length;
-      space > 0 && this.buffer.unshift(...batch.slice(0, space));
-    } finally {
-      this.flushing = !1;
-    }
-  }
-  async destroy() {
-    this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
-  }
-  addEntry(level, category, message, stack) {
-    if (!this.enabled || !this.pushFn) return;
-    let entry = {
-      ts: (/* @__PURE__ */ new Date()).toISOString(),
-      level,
-      category,
-      message,
-      plugin_version: this.pluginVersion,
-      platform: this.platform
-    };
-    stack && (entry.stack = stack), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
-  }
-  startTimer() {
-    this.stopTimer(), this.flushTimer = window.setInterval(() => {
-      this.flush();
-    }, 3e4);
-  }
-  stopTimer() {
-    this.flushTimer && (window.clearInterval(this.flushTimer), this.flushTimer = null);
-  }
-}, _noop = {
-  error() {
-  },
-  warn() {
-  },
-  info() {
-  },
-  async flush() {
-  },
-  async destroy() {
-  },
-  setEnabled() {
-  },
-  configure() {
-  }
-}, _instance = null;
-function initRemoteLog() {
-  return _instance = new RemoteLogger(), _instance;
-}
-function rlog() {
-  return _instance != null ? _instance : _noop;
-}
-async function destroyRemoteLog() {
-  await (_instance == null ? void 0 : _instance.destroy()), _instance = null;
-}
-
 // src/auth.ts
+function seededAccessToken(settings) {
+  var _a, _b;
+  return !!settings.accessToken && settings.accessTokenVaultId != null && settings.accessTokenVaultId === settings.vaultId ? {
+    token: (_a = settings.accessToken) != null ? _a : null,
+    expiresAt: (_b = settings.accessTokenExpiresAt) != null ? _b : 0
+  } : { token: null, expiresAt: 0 };
+}
 var ApiKeyAuth = class {
   constructor(apiKey, vaultId) {
     this.apiKey = apiKey, this.vaultId = vaultId;
@@ -1171,7 +1182,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null) {
     this.ws = null;
     this.ref = 0;
@@ -1238,7 +1249,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
     );
-    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`;
+    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`, openedAt = Date.now(), opened = !1;
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
@@ -1246,13 +1257,19 @@ var NO_AUTH_RECONNECT_MS = 3e4, NoteChannel = class {
       return;
     }
     this.ws.onopen = () => {
-      this.reconnectMs = 1e3, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+      opened = !0, this.reconnectMs = 1e3, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
     }, this.ws.onclose = () => {
-      this.clearTimers(), this.ws = null, this.setConnected(!1), rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
+      var _a2;
+      this.clearTimers(), this.ws = null, this.setConnected(!1);
+      let sinceOpen = Date.now() - openedAt;
+      !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
+        "channel",
+        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating`
+      ), this.authProvider.invalidateAccessToken()), rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
     };
   }
   joinChannel() {
@@ -1883,11 +1900,15 @@ var import_obsidian5 = require("obsidian"), DeviceFlowModal = class extends impo
     });
   }
   async startDeviceFlow() {
-    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, resp = await (0, import_obsidian5.requestUrl)({
+    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, vaultName = this.app.vault.getName().trim(), body = {
+      client_id: this.plugin.settings.clientId
+    };
+    vaultName && (body.vault_name = vaultName);
+    let resp = await (0, import_obsidian5.requestUrl)({
       url: `${apiUrl}/auth/device`,
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ client_id: this.plugin.settings.clientId }),
+      body: JSON.stringify(body),
       throw: !1
     });
     if (resp.status < 200 || resp.status >= 300)
@@ -5035,7 +5056,7 @@ var BaseStore = class {
 
 // src/sync-fingerprint.ts
 async function computeSyncFingerprint(settings) {
-  let authPart = settings.refreshToken || settings.apiKey || "", vaultPart = settings.vaultId || "", input = `${authPart}|${vaultPart}`;
+  let authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "", vaultPart = settings.vaultId || "", input = `${authPart}|${vaultPart}`;
   if (input === "|") return "";
   let data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data);
   return Array.from(new Uint8Array(hashBuffer)).map((b) => b.toString(16).padStart(2, "0")).join("");
@@ -5379,26 +5400,29 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         if (resp.status < 200 || resp.status >= 300)
           throw new Error(`Refresh failed: ${resp.status}`);
         return resp.json;
-      };
-      return new OAuthAuth(
+      }, seed = seededAccessToken(this.settings);
+      return this.settings.accessToken && !seed.token && rlog().warn(
+        "auth",
+        `Discarding persisted access token \u2014 minted for vault ${(_a = this.settings.accessTokenVaultId) != null ? _a : "unknown"}, active vault ${(_b = this.settings.vaultId) != null ? _b : "none"}; will refresh`
+      ), new OAuthAuth(
         this.settings.refreshToken,
         this.settings.vaultId,
-        (_a = this.settings.userEmail) != null ? _a : null,
+        (_c = this.settings.userEmail) != null ? _c : null,
         refreshFn,
         async ({ refreshToken, accessToken, expiresAt }) => {
-          this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
+          this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, this.settings.accessTokenVaultId = this.settings.vaultId, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
         },
-        (_b = this.settings.accessToken) != null ? _b : null,
-        (_c = this.settings.accessTokenExpiresAt) != null ? _c : 0
+        seed.token,
+        seed.expiresAt
       );
     }
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
+    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
   }
   async clearOAuthTokens() {
-    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
+    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
     var _a;
