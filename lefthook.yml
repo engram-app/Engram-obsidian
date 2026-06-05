@@ -4,6 +4,17 @@
 # Manual install: `bunx lefthook install`.
 # Bypass once:    `git commit --no-verify` or `git push --no-verify`.
 
+# post-checkout fires on every branch checkout, including `git worktree add`.
+# The hook hardlinks node_modules from the canonical checkout into the new
+# worktree so the first build doesn't take ~30sec re-downloading ~500MB of
+# Obsidian/jest/esbuild deps. Script handles its own no-op cases (same dir,
+# already populated, cross-filesystem). Args {0} {1} {2} = git's
+# (prev-HEAD, new-HEAD, branch-flag).
+post-checkout:
+  jobs:
+    - name: hardlink-node-modules
+      run: bash .githooks/post-checkout {0} {1} {2}
+
 pre-commit:
   parallel: true
   jobs:
