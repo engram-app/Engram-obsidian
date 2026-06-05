@@ -4,7 +4,7 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl } from "obsidian";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFolder, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -206,7 +206,11 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
-				void this.syncEngine.handleDelete(file);
+				if (file instanceof TFolder) {
+					void this.syncEngine.handleFolderDelete(file);
+				} else {
+					void this.syncEngine.handleDelete(file);
+				}
 			}),
 		);
 		this.registerEvent(
@@ -387,7 +391,11 @@ export default class EngramSyncPlugin extends Plugin {
 			// to avoid processing thousands of no-op events on startup.
 			this.registerEvent(
 				this.app.vault.on("create", (file) => {
-					this.syncEngine.handleModify(file);
+					if (file instanceof TFolder) {
+						void this.syncEngine.handleFolderCreate(file);
+					} else {
+						this.syncEngine.handleModify(file);
+					}
 				}),
 			);
 

@@ -526,6 +526,49 @@ export class SyncEngine {
 		}
 	}
 
+	/** Push a folder-create from the vault to the server's explicit-folder
+	 *  table. Idempotent client-side (skips folders already in the set) and
+	 *  best-effort on the wire (server errors are warn-logged but don't fail
+	 *  the user's vault op). */
+	async handleFolderCreate(folder: TFolder): Promise<void> {
+		if (this.syncBlocked) return;
+		if (!this.ready) return;
+		if (!this.explicitFolders) return;
+		const path = folder.path;
+		if (this.shouldIgnore(path)) return;
+		if (this.explicitFolders.has(path)) return;
+
+		try {
+			await this.api.createFolder(path);
+			await this.explicitFolders.add(path);
+		} catch (e) {
+			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+		}
+	}
+
+	/** Push a folder-delete to the server. Only fires for folders we believe
+	 *  the server tracks (in the explicit set) — unknown folders are no-ops
+	 *  since the server has nothing to clean. Even on server error we drop the
+	 *  local marker; the next pull will reconcile. */
+	async handleFolderDelete(folder: TFolder): Promise<void> {
+		if (this.syncBlocked) return;
+		if (!this.ready) return;
+		if (this.suppressDeletes) return;
+		if (!this.explicitFolders) return;
+		const path = folder.path;
+		if (!this.explicitFolders.has(path)) return;
+
+		try {
+			await this.api.deleteFolder(path);
+		} catch (e) {
+			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+			rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+		} finally {
+			await this.explicitFolders.delete(path);
+		}
+	}
+
 	/** Acquire a push slot, blocking if at max concurrency. */
 	private async acquirePushSlot(): Promise<void> {
 		if (this.activePushCount < this.maxConcurrentPushes) {
@@ -1836,7 +1879,9 @@ export class SyncEngine {
 		}
 	}
 
-	/** Remove empty parent folders after a file deletion, walking up the tree. */
+	/** Remove empty parent folders after a file deletion, walking up the tree.
+	 *  Stops on any folder marked explicit (kind='folder' on the server) — the
+	 *  user-intended empty stays. */
 	private async removeEmptyFolders(filePath: string): Promise<void> {
 		let folder = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/")) : "";
 
@@ -1844,6 +1889,11 @@ export class SyncEngine {
 			const existing = this.app.vault.getAbstractFileByPath(folder);
 			if (!(existing instanceof TFolder)) break;
 			if (existing.children.length > 0) break;
+
+			// User has marked this folder as intentionally empty (created in the
+			// web app or via Obsidian's New folder). Don't strip it; the marker
+			// would just come back on the next pull.
+			if (this.explicitFolders?.has(folder)) break;
 
 			await this.app.fileManager.trashFile(existing);
 
