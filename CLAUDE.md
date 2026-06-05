@@ -58,6 +58,8 @@ Workflow for any change, including doc updates:
 
 The previous "doc-only changes can land on main" carve-out is rescinded — it drifted into code commits and bypassed the test gate that caught the missing README disclosure.
 
+**Worktrees**: `git worktree add` fires a `post-checkout` hook (wired via `lefthook.yml`) that hardlinks `node_modules/` from the canonical checkout into the new tree — first build / lint runs without re-fetching ~500MB of deps. Just `git worktree add <path> -b <branch> origin/main`, no `bun install` needed on the fresh tree unless `mix.lock`/`bun.lock` is being edited.
+
 ## Testing
 
 **Tests are the spec. If a test fails, fix the app — not the test.**

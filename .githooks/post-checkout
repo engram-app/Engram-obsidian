@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Post-checkout hook: when a fresh worktree is created via `git worktree add`,
+# hardlink `node_modules/` from the canonical checkout so the first `bun
+# install` / build doesn't take ~30sec re-resolving and re-downloading 500MB
+# of deps. Wired via lefthook.yml's post-checkout job — running through
+# lefthook keeps a single hook manager rather than mixing native + lefthook.
+#
+# Hardlinks share inodes (zero disk overhead). Bun creates new files when it
+# writes rather than mutating in-place, so the hardlink chain detaches
+# naturally on first write — no cross-worktree corruption risk.
+#
+# post-checkout args: $1 = previous HEAD, $2 = new HEAD, $3 = branch-flag
+# (1 = branch checkout incl. worktree add, 0 = file checkout). Act only on
+# branch checkouts.
+set -euo pipefail
+
+[ "${3:-0}" = "1" ] || exit 0
+
+GIT_COMMON_DIR=$(git rev-parse --git-common-dir)
+CANONICAL=$(cd "$(dirname "$GIT_COMMON_DIR")" && pwd)
+THIS_DIR=$(git rev-parse --show-toplevel)
+
+[ "$CANONICAL" = "$THIS_DIR" ] && exit 0
+
+link_if_missing() {
+  local rel="$1"
+  local src="$CANONICAL/$rel"
+  local dst="$THIS_DIR/$rel"
+  if [ -e "$dst" ] || [ ! -d "$src" ]; then
+    return 0
+  fi
+  if cp -al "$src" "$dst" 2>/dev/null; then
+    echo "post-checkout: hardlinked $rel from $CANONICAL"
+  else
+    echo "post-checkout: skipped $rel (cp -al failed — likely cross-filesystem)" >&2
+  fi
+}
+
+link_if_missing node_modules
