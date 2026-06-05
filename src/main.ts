@@ -30,8 +30,8 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
-import { ExplicitFolders } from "./explicit-folders";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
