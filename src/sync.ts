@@ -949,6 +949,12 @@ export class SyncEngine {
 				}
 			}
 
+			// Pull explicit empty-folder markers and materialize on disk. Runs
+			// after note/attachment apply so empty-folder ensures don't race
+			// with note creates that may also produce the same folder. Failures
+			// don't abort the pull — folder sync is eventually consistent.
+			await this.syncExplicitFolders();
+
 			// Use the later server_time
 			const serverTime =
 				noteResp.server_time > attachResp.server_time
@@ -1800,6 +1806,34 @@ export class SyncEngine {
 		}
 
 		await this.app.vault.createFolder(path);
+	}
+
+	/** Pull the server's explicit empty-folder markers, persist them, and
+	 *  materialize each on disk. Skips ignored paths (so we never recreate
+	 *  .obsidian/, .trash/, .git/, or user-ignored folders). Failures are
+	 *  warn-logged and swallowed — folder sync is best-effort, doesn't fail
+	 *  the broader pull. */
+	private async syncExplicitFolders(): Promise<void> {
+		if (!this.explicitFolders) return;
+		let names: string[];
+		try {
+			names = await this.api.listExplicitFolders();
+		} catch (e) {
+			devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`);
+			rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
+			return;
+		}
+
+		await this.explicitFolders.replaceAll(names);
+
+		for (const name of names) {
+			if (this.shouldIgnore(name)) continue;
+			try {
+				await this.ensureFolder(name);
+			} catch (e) {
+				devLog().log("pull", `ensureFolder(${name}) failed: ${errMsg(e)}`);
+			}
+		}
 	}
 
 	/** Remove empty parent folders after a file deletion, walking up the tree. */
