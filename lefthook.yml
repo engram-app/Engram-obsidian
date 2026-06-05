@@ -31,7 +31,29 @@ pre-push:
           exit 0
         fi
 
-        bun test
+        # Fast path: skip `bun test` if no test-affecting files changed vs
+        # origin/main. Doc-only / YAML-only PRs (which still must bump
+        # package.json + manifest.json for the version check below) finish
+        # the hook in seconds instead of ~8s of jest warm-up + run.
+        #
+        # Trigger set: TS source/tests, bun.lock (deps), tsconfig*.json,
+        # esbuild.config.mjs, .githooks/*, and package.json *unless* the
+        # only edit is its version line (mirrors the backend mix.exs strip).
+        TEST_AFFECTING_REGEX='\.(ts|tsx)$|^bun\.lock$|^tsconfig.*\.json$|^esbuild\.config\.mjs$|^\.githooks/|^package\.json$'
+        AFFECTING="$(git diff --name-only origin/main...HEAD 2>/dev/null | grep -E "$TEST_AFFECTING_REGEX" || true)"
+        if [ "$(echo "$AFFECTING" | tr -d '\n ')" = "package.json" ]; then
+          NON_VERSION_DIFF="$(git diff --unified=0 origin/main...HEAD -- package.json 2>/dev/null \
+            | grep -E '^[+-]' \
+            | grep -vE '^(\+\+\+|---) ' \
+            | grep -vE '^[+-][[:space:]]*"version":[[:space:]]*"[0-9]+\.[0-9]+\.[0-9]+",?[[:space:]]*$' \
+            || true)"
+          [ -z "$NON_VERSION_DIFF" ] && AFFECTING=""
+        fi
+        if [ -z "$AFFECTING" ]; then
+          echo "▸ Fast path: no test-affecting files changed vs origin/main — skipping bun test"
+        else
+          bun test
+        fi
 
         current_branch=$(git rev-parse --abbrev-ref HEAD)
         if [ "$current_branch" = "main" ] || [ "$current_branch" = "HEAD" ]; then
