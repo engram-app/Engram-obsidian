@@ -171,7 +171,9 @@ describe("SyncEngine.handleFolderCreate", () => {
 		const { engine, explicit } = await createEngine();
 		(mockApi.createFolder as jest.Mock).mockRejectedValueOnce({ status: 500 });
 
-		await expect(engine.handleFolderCreate(new TFolder("Brittle", []))).resolves.toBeUndefined();
+		await expect(
+			engine.handleFolderCreate(new TFolder("Brittle", [])),
+		).resolves.toBeUndefined();
 		expect(explicit.has("Brittle")).toBe(false);
 	});
 });
