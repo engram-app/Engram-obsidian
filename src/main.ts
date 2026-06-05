@@ -4,7 +4,7 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, requestUrl } from "obsidian";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFolder, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -31,6 +31,7 @@ import {
 
 import { BaseStore } from "./base-store";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
@@ -96,6 +97,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	private baseStore: BaseStore | null = null;
+	private explicitFolders: ExplicitFolders | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -143,6 +145,13 @@ export default class EngramSyncPlugin extends Plugin {
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
 		this.syncEngine.baseStore = this.baseStore;
+
+		// Persisted explicit-folders set (server's kind='folder' markers).
+		// Loaded alongside baseStore; consulted by removeEmptyFolders + the
+		// vault folder-create/delete handlers.
+		const explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
+		this.explicitFolders = new ExplicitFolders(this.app.vault.adapter, explicitFoldersPath);
+		this.syncEngine.explicitFolders = this.explicitFolders;
 
 		this.syncEngine.onStatusChange = (status) => {
 			this.updateStatusBar(status);
@@ -197,7 +206,11 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 		this.registerEvent(
 			this.app.vault.on("delete", (file) => {
-				void this.syncEngine.handleDelete(file);
+				if (file instanceof TFolder) {
+					void this.syncEngine.handleFolderDelete(file);
+				} else {
+					void this.syncEngine.handleDelete(file);
+				}
 			}),
 		);
 		this.registerEvent(
@@ -378,11 +391,16 @@ export default class EngramSyncPlugin extends Plugin {
 			// to avoid processing thousands of no-op events on startup.
 			this.registerEvent(
 				this.app.vault.on("create", (file) => {
-					this.syncEngine.handleModify(file);
+					if (file instanceof TFolder) {
+						void this.syncEngine.handleFolderCreate(file);
+					} else {
+						this.syncEngine.handleModify(file);
+					}
 				}),
 			);
 
 			await this.baseStore?.load();
+			await this.explicitFolders?.load();
 
 			let registered = false;
 			let gateOpen = false;

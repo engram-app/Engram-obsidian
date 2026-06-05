@@ -341,6 +341,31 @@ export class EngramApi {
 		const resp = await this.request("GET", `/attachments/changes?since=${encoded}`);
 		return resp.json as AttachmentChangesResponse;
 	}
+
+	// --- Explicit folder markers (kind='folder' rows) ---
+
+	/** Create an explicit empty folder marker. Server is idempotent — repeated
+	 *  calls return 200 instead of 201 but the same shape. */
+	async createFolder(folder: string): Promise<{ folder: { name: string; count: number } }> {
+		const resp = await this.request("POST", "/folders", { folder });
+		return resp.json as { folder: { name: string; count: number } };
+	}
+
+	/** Delete an explicit empty folder marker. Server always 204 — idempotent.
+	 *  Slashes are preserved as path separators; each segment is URL-encoded so
+	 *  spaces and other reserved characters survive routing. */
+	async deleteFolder(path: string): Promise<void> {
+		const segments = path.split("/").map(encodeURIComponent).join("/");
+		await this.request("DELETE", `/folders/${segments}`);
+	}
+
+	/** Fetch the list of explicit folder marker names. Plugin-only endpoint
+	 *  (the frontend lists folders through a different surface). */
+	async listExplicitFolders(): Promise<string[]> {
+		const resp = await this.request("GET", "/folders/explicit");
+		const body = resp.json as { folders?: { name: string }[] };
+		return (body.folders ?? []).map((f) => f.name);
+	}
 }
 
 /** Convert an ArrayBuffer to a base64 string. */
