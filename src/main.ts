@@ -30,6 +30,7 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
+import { ExplicitFolders } from "./explicit-folders";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
@@ -96,6 +97,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	private baseStore: BaseStore | null = null;
+	private explicitFolders: ExplicitFolders | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -143,6 +145,13 @@ export default class EngramSyncPlugin extends Plugin {
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
 		this.syncEngine.baseStore = this.baseStore;
+
+		// Persisted explicit-folders set (server's kind='folder' markers).
+		// Loaded alongside baseStore; consulted by removeEmptyFolders + the
+		// vault folder-create/delete handlers.
+		const explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
+		this.explicitFolders = new ExplicitFolders(this.app.vault.adapter, explicitFoldersPath);
+		this.syncEngine.explicitFolders = this.explicitFolders;
 
 		this.syncEngine.onStatusChange = (status) => {
 			this.updateStatusBar(status);
@@ -383,6 +392,7 @@ export default class EngramSyncPlugin extends Plugin {
 			);
 
 			await this.baseStore?.load();
+			await this.explicitFolders?.load();
 
 			let registered = false;
 			let gateOpen = false;

@@ -6,6 +6,7 @@ import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api"
 import type { BaseStore } from "./base-store";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
+import type { ExplicitFolders } from "./explicit-folders";
 import { IgnoredFiles } from "./ignored-files";
 import { IssueStore, categorizeError } from "./issue-store";
 import { OfflineQueue } from "./offline-queue";
@@ -159,6 +160,11 @@ export class SyncEngine {
 
 	/** Optional base content store for 3-way merge (Step 2+). */
 	baseStore: BaseStore | null = null;
+
+	/** Persisted set of server-side "explicit empty folder" markers. Owned by
+	 *  the plugin layer (main.ts) and assigned after construction, matching the
+	 *  baseStore pattern. */
+	explicitFolders: ExplicitFolders | null = null;
 
 	/** Called whenever sync status changes (for status bar updates). */
 	onStatusChange: ((status: SyncStatus) => void) | null = null;
