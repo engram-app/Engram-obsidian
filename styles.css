@@ -906,6 +906,16 @@
 	justify-content: center;
 }
 
+/* Stack vertically on Obsidian mobile so the labels don't truncate */
+body.is-mobile .engram-support-buttons {
+	flex-direction: column;
+}
+
+body.is-mobile .engram-support-buttons > a {
+	flex: 0 0 auto;
+	width: 100%;
+}
+
 /* Let the support row use the full Setting width instead of hugging the right side */
 .engram-setting-support {
 	flex-direction: column;
