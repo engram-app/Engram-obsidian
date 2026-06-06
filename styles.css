@@ -946,6 +946,39 @@
 	stroke: #ffffff;
 }
 
+/* GitHub Sponsors brand pink, paired with the Ko-fi button above */
+.engram-support-buttons a.engram-sponsor-button {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	padding: 8px 16px;
+	background: linear-gradient(135deg, #ea4aaa 0%, #bf3989 100%);
+	color: #ffffff;
+	border-radius: 8px;
+	text-decoration: none;
+	font-weight: 600;
+	font-size: 0.95em;
+	box-shadow: 0 2px 6px rgba(234, 74, 170, 0.25);
+	transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.engram-support-buttons a.engram-sponsor-button:hover {
+	transform: translateY(-1px);
+	box-shadow: 0 4px 14px rgba(234, 74, 170, 0.4);
+}
+
+.engram-support-buttons .engram-sponsor-button .engram-sponsor-icon {
+	display: inline-flex;
+	align-items: center;
+}
+
+.engram-support-buttons .engram-sponsor-button .engram-sponsor-icon svg {
+	width: 18px;
+	height: 18px;
+	fill: #ffffff;
+	stroke: #ffffff;
+}
+
 /* ───────────── Sync Center pane ───────────── */
 
 /* Workspace leaf content defaults to --background-secondary, which would
