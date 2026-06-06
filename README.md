@@ -1,5 +1,16 @@
 # Engram Vault Sync
 
+[![CI](https://github.com/engram-app/Engram-obsidian/actions/workflows/ci.yml/badge.svg)](https://github.com/engram-app/Engram-obsidian/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/engram-app/Engram-obsidian/actions/workflows/codeql.yml/badge.svg)](https://github.com/engram-app/Engram-obsidian/actions/workflows/codeql.yml)
+[![Latest Release](https://img.shields.io/github/v/release/engram-app/Engram-obsidian?label=release)](https://github.com/engram-app/Engram-obsidian/releases/latest)
+[![Obsidian Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=8b6cb1&label=downloads&query=%24%5B%22engram-vault-sync%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=engram-vault-sync)
+
+[![Last commit](https://img.shields.io/github/last-commit/engram-app/Engram-obsidian)](https://github.com/engram-app/Engram-obsidian/commits/main)
+[![Stars](https://img.shields.io/github/stars/engram-app/Engram-obsidian?style=flat)](https://github.com/engram-app/Engram-obsidian/stargazers)
+[![License](https://img.shields.io/badge/license-PolyForm_SB_1.0-blue)](LICENSE)
+[![Sponsor](https://img.shields.io/github/sponsors/engram-app?label=Sponsor&logo=GitHub&color=ea4aaa)](https://github.com/sponsors/engram-app)
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_a_coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/engrams_sync)
+
 ![Engram Vault Sync — your notes are your AI's memory, synced everywhere and read by your AI](assets/vault-banner.gif)
 
 Your vault is full of things you've figured out, half-written ideas, and notes you'll never find again. This plugin turns it into something your AI assistant can actually use — and keeps it in sync everywhere you write.
