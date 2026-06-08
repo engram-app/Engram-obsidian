@@ -16,6 +16,8 @@ import {
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
+import { LimitExceededError } from "./limit-error";
+import { notifyLimitExceeded } from "./limit-toast";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
@@ -367,6 +369,14 @@ export default class EngramSyncPlugin extends Plugin {
 					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 				})
 				.catch((e) => {
+					if (e instanceof LimitExceededError) {
+						notifyLimitExceeded(e);
+						rlog().info(
+							"lifecycle",
+							`Manual sync blocked — limit reached (${e.reason})`,
+						);
+						return;
+					}
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: manual sync failed", e);
 					rlog().error(
@@ -437,6 +447,14 @@ export default class EngramSyncPlugin extends Plugin {
 						new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 					}
 				} catch (e) {
+					if (e instanceof LimitExceededError) {
+						notifyLimitExceeded(e);
+						rlog().info(
+							"lifecycle",
+							`Startup sync blocked — limit reached (${e.reason})`,
+						);
+						return;
+					}
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: startup sync failed", e);
 					rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
@@ -504,6 +522,14 @@ export default class EngramSyncPlugin extends Plugin {
 							new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 						}
 					} catch (e) {
+						if (e instanceof LimitExceededError) {
+							notifyLimitExceeded(e);
+							rlog().info(
+								"lifecycle",
+								`Sync after settings change blocked — limit reached (${e.reason})`,
+							);
+							return;
+						}
 						// biome-ignore lint/suspicious/noConsole: error boundary
 						console.error("Engram Sync: sync after settings change failed", e);
 						rlog().error(
@@ -541,9 +567,12 @@ export default class EngramSyncPlugin extends Plugin {
 			rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`);
 			return true;
 		} catch (e: unknown) {
-			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 402) {
-				new Notice("Engram: Upgrade to pro for multi-vault sync.");
-				rlog().info("lifecycle", "Vault registration blocked — vault limit reached (402)");
+			if (e instanceof LimitExceededError) {
+				notifyLimitExceeded(e);
+				rlog().info(
+					"lifecycle",
+					`Vault registration blocked — limit reached (${e.reason})`,
+				);
 				return false;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary

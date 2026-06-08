@@ -484,6 +484,11 @@
 	margin-left: 8px;
 }
 
+/* Upgrade button appended to limit-exceeded Notice toasts (limit-toast.ts). */
+.engram-limit-upgrade-btn {
+	margin-left: 8px;
+}
+
 /* ── Sync log modal ──────────────────────────────────────────── */
 
 .engram-sync-log-list {
