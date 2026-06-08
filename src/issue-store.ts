@@ -1,3 +1,4 @@
+import { LimitExceededError } from "./limit-error";
 import type { SyncIssue, SyncIssueCategory } from "./types";
 
 /** Persistent store of sync failures keyed by file path.
@@ -83,6 +84,18 @@ interface CategorizedError {
 
 /** Classify a thrown error from a push/pull call. */
 export function categorizeError(err: unknown): CategorizedError {
+	// LimitExceededError from a 402 attachments_disabled is terminal — re-pushing
+	// will keep failing until the user's tier changes. Mark as `needs_pro` so the
+	// Sync Center renders the "Upgrade to sync attachments" group, and so the
+	// push loop knows not to enqueue the file for retry.
+	if (err instanceof LimitExceededError && err.reason === "attachments_disabled") {
+		return {
+			category: "needs_pro",
+			status: 402,
+			message: err.message,
+			terminal: true,
+		};
+	}
 	const status =
 		typeof err === "object" && err !== null
 			? ((err as { status?: number }).status ?? undefined)

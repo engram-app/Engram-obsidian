@@ -1184,6 +1184,12 @@ body.is-mobile .engram-support-buttons > a {
 	white-space: nowrap;
 }
 
+.engram-needs-pro-icon {
+	display: inline-block;
+	margin-right: 4px;
+	opacity: 0.8;
+}
+
 .engram-sync-center-issue-meta {
 	color: var(--text-muted);
 	font-size: 11px;
