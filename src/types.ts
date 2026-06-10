@@ -59,7 +59,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 /** A note as returned by POST /notes */
 export interface NoteResponse {
 	note: {
-		id: number;
+		id: string;
 		user_id: string;
 		path: string;
 		title: string;
@@ -215,7 +215,7 @@ export interface NoteDetail {
 /** Attachment metadata as returned by POST /attachments */
 export interface AttachmentResponse {
 	attachment: {
-		id: number;
+		id: string;
 		user_id: string;
 		path: string;
 		mime_type: string;
@@ -228,7 +228,7 @@ export interface AttachmentResponse {
 
 /** Full attachment as returned by GET /attachments/{path} */
 export interface AttachmentDetail {
-	id: number;
+	id: string;
 	path: string;
 	content_base64: string;
 	mime_type: string;
@@ -300,7 +300,7 @@ export interface SyncIssue {
 
 /** Vault information returned by GET /vaults */
 export interface VaultInfo {
-	id: number;
+	id: string;
 	name: string;
 	slug: string;
 	is_default: boolean;
@@ -342,7 +342,7 @@ export interface SyncProgress {
 export interface VersionConflictResponse {
 	conflict: true;
 	server_note: {
-		id: number;
+		id: string;
 		path: string;
 		title: string;
 		content: string;
@@ -365,7 +365,7 @@ export interface ManifestResponse {
 
 /** Response from POST /api/vaults/register */
 export interface VaultRegistrationResponse {
-	id: number;
+	id: string;
 	name: string;
 	slug: string;
 	is_default: boolean;

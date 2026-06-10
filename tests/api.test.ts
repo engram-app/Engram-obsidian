@@ -332,7 +332,7 @@ describe("EngramApi", () => {
 		test("sends POST to /vaults/register with name and client_id", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 201,
-				json: { id: 7, name: "My Vault", slug: "my-vault", is_default: true },
+				json: { id: "vault-7", name: "My Vault", slug: "my-vault", is_default: true },
 			} as any);
 			const result = await api.registerVault("My Vault", "abc123hash");
 			expect(mockRequestUrl).toHaveBeenCalledWith(
@@ -342,17 +342,22 @@ describe("EngramApi", () => {
 					body: JSON.stringify({ name: "My Vault", client_id: "abc123hash" }),
 				}),
 			);
-			expect(result).toEqual({ id: 7, name: "My Vault", slug: "my-vault", is_default: true });
+			expect(result).toEqual({
+				id: "vault-7",
+				name: "My Vault",
+				slug: "my-vault",
+				is_default: true,
+			});
 		});
 
 		test("returns existing vault on 200", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { id: 5, name: "Existing", slug: "existing", is_default: false },
+				json: { id: "vault-5", name: "Existing", slug: "existing", is_default: false },
 			} as any);
 			const result = await api.registerVault("Existing", "def456hash");
 			expect(result).toEqual({
-				id: 5,
+				id: "vault-5",
 				name: "Existing",
 				slug: "existing",
 				is_default: false,
@@ -375,7 +380,7 @@ describe("EngramApi", () => {
 				status: 201,
 				json: {
 					vault: {
-						id: 9,
+						id: "vault-9",
 						name: "Fresh",
 						slug: "fresh",
 						is_default: false,
@@ -392,7 +397,7 @@ describe("EngramApi", () => {
 				}),
 			);
 			expect(result).toEqual({
-				id: 9,
+				id: "vault-9",
 				name: "Fresh",
 				slug: "fresh",
 				is_default: false,
@@ -416,13 +421,13 @@ describe("EngramApi", () => {
 		test("sends GET /me and returns user object", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { user: { id: 1, email: "test@example.com" } },
+				json: { user: { id: "user-1", email: "test@example.com" } },
 			} as any);
 			const result = await api.getMe();
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("GET");
 			expect(opts.url).toBe(`${TEST_API_BASE}/me`);
-			expect(result).toEqual({ id: 1, email: "test@example.com" });
+			expect(result).toEqual({ id: "user-1", email: "test@example.com" });
 		});
 	});
 
@@ -564,7 +569,7 @@ describe("EngramApi", () => {
 			api.setAuthProvider(provider);
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { user: { id: 1, email: "test@example.com" } },
+				json: { user: { id: "user-1", email: "test@example.com" } },
 			} as any);
 			await api.getMe();
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
@@ -575,7 +580,7 @@ describe("EngramApi", () => {
 			// No provider set — should use the constructor apiKey
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { user: { id: 1, email: "test@example.com" } },
+				json: { user: { id: "user-1", email: "test@example.com" } },
 			} as any);
 			await api.getMe();
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
@@ -596,11 +601,11 @@ describe("EngramApi", () => {
 
 			mockRequestUrl.mockRejectedValueOnce({ status: 401 }).mockResolvedValueOnce({
 				status: 200,
-				json: { user: { id: 1, email: "test@example.com" } },
+				json: { user: { id: "user-1", email: "test@example.com" } },
 			} as any);
 
 			const result = await api.getMe();
-			expect(result.id).toBe(1);
+			expect(result.id).toBe("user-1");
 			expect(invalidate).toHaveBeenCalledTimes(1);
 			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
 			const firstAuth = (mockRequestUrl.mock.calls[0][0] as any).headers.Authorization;
