@@ -301,7 +301,7 @@ export function renderVaultSection(ctx: TabContext): void {
 				return;
 			}
 
-			const current = currentId ? vaults.find((v) => String(v.id) === currentId) : undefined;
+			const current = currentId ? vaults.find((v) => v.id === currentId) : undefined;
 
 			// First-time picker: render the dropdown directly so the user can
 			// choose without going through the warning modal.
@@ -320,10 +320,10 @@ export function renderVaultSection(ctx: TabContext): void {
 					}
 					for (const v of vaults) {
 						const label = v.is_default ? `${v.name} (default)` : v.name;
-						dropdown.addOption(String(v.id), label);
+						dropdown.addOption(v.id, label);
 					}
 					dropdown.onChange(async (value) => {
-						const picked = vaults.find((v) => String(v.id) === value);
+						const picked = vaults.find((v) => v.id === value);
 						if (await applyVaultSwitch(plugin, value, picked?.name)) redisplay();
 					});
 				});

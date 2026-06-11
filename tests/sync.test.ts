@@ -39,7 +39,7 @@ const mockApi = {
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: jest
 		.fn()
-		.mockResolvedValue({ id: 1, name: "Test", slug: "test", is_default: true }),
+		.mockResolvedValue({ id: "vault-1", name: "Test", slug: "test", is_default: true }),
 } as unknown as EngramApi;
 
 // Mock the Obsidian App
@@ -2605,8 +2605,8 @@ describe("Path sanitization on push", () => {
 		// Server sanitizes "test?.md" → "test.md"
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {
-				id: 1,
-				user_id: "1",
+				id: "note-1",
+				user_id: "user-1",
 				path: "Notes/test.md",
 				title: "test",
 				folder: "Notes",
@@ -2636,8 +2636,8 @@ describe("Path sanitization on push", () => {
 	test("does not rename when server path matches original", async () => {
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {
-				id: 1,
-				user_id: "1",
+				id: "note-1",
+				user_id: "user-1",
 				path: "Notes/Normal.md",
 				title: "Normal",
 				folder: "Notes",
@@ -2661,8 +2661,8 @@ describe("Path sanitization on push", () => {
 	test("handles multiple illegal chars in filename", async () => {
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {
-				id: 1,
-				user_id: "1",
+				id: "note-1",
+				user_id: "user-1",
 				path: "Notes/What Why How.md",
 				title: "What Why How",
 				folder: "Notes",

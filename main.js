@@ -29,9 +29,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   mod
 )), __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: !0 }), mod);
 
-// ../../node_modules/diff-match-patch/index.js
+// node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
-  "../../node_modules/diff-match-patch/index.js"(exports, module2) {
+  "node_modules/diff-match-patch/index.js"(exports, module2) {
     var diff_match_patch2 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
@@ -1064,6 +1064,25 @@ var EngramApi = class _EngramApi {
   async getAttachmentChanges(since) {
     let encoded = encodeURIComponent(since);
     return (await this.request("GET", `/attachments/changes?since=${encoded}`)).json;
+  }
+  // --- Explicit folder markers (kind='folder' rows) ---
+  /** Create an explicit empty folder marker. Server is idempotent — repeated
+   *  calls return 200 instead of 201 but the same shape. */
+  async createFolder(folder) {
+    return (await this.request("POST", "/folders", { folder })).json;
+  }
+  /** Delete an explicit empty folder marker. Server always 204 — idempotent.
+   *  Slashes are preserved as path separators; each segment is URL-encoded so
+   *  spaces and other reserved characters survive routing. */
+  async deleteFolder(path) {
+    let segments = path.split("/").map(encodeURIComponent).join("/");
+    await this.request("DELETE", `/folders/${segments}`);
+  }
+  /** Fetch the list of explicit folder marker names. Plugin-only endpoint
+   *  (the frontend lists folders through a different surface). */
+  async listExplicitFolders() {
+    var _a;
+    return ((_a = (await this.request("GET", "/folders/explicit")).json.folders) != null ? _a : []).map((f) => f.name);
   }
 };
 function arrayBufferToBase64(buffer) {
@@ -2249,7 +2268,7 @@ function renderVaultSection(ctx) {
       });
       return;
     }
-    let current = currentId ? vaults.find((v) => String(v.id) === currentId) : void 0;
+    let current = currentId ? vaults.find((v) => v.id === currentId) : void 0;
     if (!current) {
       setting.addDropdown((dropdown) => {
         currentId ? dropdown.addOption(
@@ -2258,10 +2277,10 @@ function renderVaultSection(ctx) {
         ) : dropdown.addOption("", "Pick a vault");
         for (let v of vaults) {
           let label = v.is_default ? `${v.name} (default)` : v.name;
-          dropdown.addOption(String(v.id), label);
+          dropdown.addOption(v.id, label);
         }
         dropdown.onChange(async (value) => {
-          let picked = vaults.find((v) => String(v.id) === value);
+          let picked = vaults.find((v) => v.id === value);
           await applyVaultSwitch(plugin, value, picked == null ? void 0 : picked.name) && redisplay();
         });
       });
@@ -2286,12 +2305,18 @@ function renderSupportSection(ctx) {
     "If this plugin saves you time, consider supporting development."
   );
   supportSetting.settingEl.addClass("engram-setting-support");
-  let kofiLink = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }).createEl("a", {
+  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
+    cls: "engram-sponsor-button",
+    href: "https://github.com/sponsors/engram-app",
+    attr: { target: "_blank", rel: "noopener" }
+  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
+  (0, import_obsidian8.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
+  let kofiLink = buttonRow.createEl("a", {
     cls: "engram-kofi-button",
-    href: "https://ko-fi.com/rasbandit",
+    href: "https://ko-fi.com/engrams_sync",
     attr: { target: "_blank", rel: "noopener" }
   }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
-  (0, import_obsidian8.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Support on Ko-fi" });
+  (0, import_obsidian8.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
 }
 function describeListVaultsError(e) {
   let err = e, status = err == null ? void 0 : err.status;
@@ -2971,7 +2996,7 @@ var MERGE_CARD = {
     if (this.opts.applyVaultChange) {
       this.state.vaultsLoading = !0, this.render();
       try {
-        let newPlan = await this.opts.applyVaultChange(String(v.id), v.name);
+        let newPlan = await this.opts.applyVaultChange(v.id, v.name);
         this.state.replacePlan(newPlan), this.remoteVaultName = v.name, this.state.exitVaultPicker();
       } catch (e) {
         let msg = e instanceof Error ? e.message : "Failed to switch vault";
@@ -3251,7 +3276,7 @@ var EngramSyncSettingTab = class extends import_obsidian13.PluginSettingTab {
     let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
     result && (await this.plugin.saveOAuthTokens(
       result.refresh_token,
-      String(result.vault_id),
+      result.vault_id,
       result.user_email
     ), this.display());
   }
@@ -3615,6 +3640,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.syncStateVaultId = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
+    /** Persisted set of server-side "explicit empty folder" markers. Owned by
+     *  the plugin layer (main.ts) and assigned after construction, matching the
+     *  baseStore pattern. */
+    this.explicitFolders = null;
     /** Called whenever sync status changes (for status bar updates). */
     this.onStatusChange = null;
     /** Called when a conflict is detected. Return the user's resolution.
@@ -3836,6 +3865,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }));
       }
     isBinary || (_b = this.baseStore) == null || _b.rename((0, import_obsidian14.normalizePath)(oldPath), (0, import_obsidian14.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
+  }
+  /** Push a folder-create from the vault to the server's explicit-folder
+   *  table. Idempotent client-side (skips folders already in the set) and
+   *  best-effort on the wire (server errors are warn-logged but don't fail
+   *  the user's vault op). */
+  async handleFolderCreate(folder) {
+    if (this.syncBlocked || !this.ready || !this.explicitFolders) return;
+    let path = folder.path;
+    if (!this.shouldIgnore(path) && !this.explicitFolders.has(path))
+      try {
+        await this.api.createFolder(path), await this.explicitFolders.add(path);
+      } catch (e) {
+        devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+      }
+  }
+  /** Push a folder-delete to the server. Only fires for folders we believe
+   *  the server tracks (in the explicit set) — unknown folders are no-ops
+   *  since the server has nothing to clean. Even on server error we drop the
+   *  local marker; the next pull will reconcile. */
+  async handleFolderDelete(folder) {
+    if (this.syncBlocked || !this.ready || this.suppressDeletes || !this.explicitFolders) return;
+    let path = folder.path;
+    if (this.explicitFolders.has(path))
+      try {
+        await this.api.deleteFolder(path);
+      } catch (e) {
+        devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+      } finally {
+        await this.explicitFolders.delete(path);
+      }
   }
   /** Acquire a push slot, blocking if at max concurrency. */
   async acquirePushSlot() {
@@ -4097,6 +4156,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             e instanceof Error ? e.stack : void 0
           );
         }
+      await this.syncExplicitFolders();
       let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
       return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
         "pull",
@@ -4617,12 +4677,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       await this.app.vault.createFolder(path);
     }
   }
-  /** Remove empty parent folders after a file deletion, walking up the tree. */
+  /** Pull the server's explicit empty-folder markers, persist them, and
+   *  materialize each on disk. Skips ignored paths (so we never recreate
+   *  .obsidian/, .trash/, .git/, or user-ignored folders). Failures are
+   *  warn-logged and swallowed — folder sync is best-effort, doesn't fail
+   *  the broader pull. */
+  async syncExplicitFolders() {
+    if (!this.explicitFolders) return;
+    let names;
+    try {
+      names = await this.api.listExplicitFolders();
+    } catch (e) {
+      devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`), rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
+      return;
+    }
+    await this.explicitFolders.replaceAll(names);
+    for (let name of names)
+      if (!this.shouldIgnore(name))
+        try {
+          await this.ensureFolder(name);
+        } catch (e) {
+          devLog().log("pull", `ensureFolder(${name}) failed: ${errMsg(e)}`);
+        }
+  }
+  /** Remove empty parent folders after a file deletion, walking up the tree.
+   *  Stops on any folder marked explicit (kind='folder' on the server) — the
+   *  user-intended empty stays. */
   async removeEmptyFolders(filePath) {
+    var _a;
     let folder = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/")) : "";
     for (; folder; ) {
       let existing = this.app.vault.getAbstractFileByPath(folder);
-      if (!(existing instanceof import_obsidian14.TFolder) || existing.children.length > 0) break;
+      if (!(existing instanceof import_obsidian14.TFolder) || existing.children.length > 0 || (_a = this.explicitFolders) != null && _a.has(folder)) break;
       await this.app.fileManager.trashFile(existing), folder = folder.includes("/") ? folder.substring(0, folder.lastIndexOf("/")) : "";
     }
   }
@@ -5054,6 +5140,45 @@ var BaseStore = class {
   }
 };
 
+// src/explicit-folders.ts
+var ExplicitFolders = class {
+  constructor(adapter, path) {
+    this.adapter = adapter;
+    this.path = path;
+    this.set = /* @__PURE__ */ new Set();
+  }
+  /** Load from disk. Tolerates missing file or malformed JSON. */
+  async load() {
+    try {
+      let raw = await this.adapter.read(this.path), parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.every((x) => typeof x == "string")) {
+        this.set = new Set(parsed);
+        return;
+      }
+    } catch (e) {
+    }
+    this.set = /* @__PURE__ */ new Set();
+  }
+  has(path) {
+    return this.set.has(path);
+  }
+  all() {
+    return Array.from(this.set);
+  }
+  async add(path) {
+    this.set.add(path), await this.persist();
+  }
+  async delete(path) {
+    this.set.delete(path), await this.persist();
+  }
+  async replaceAll(paths) {
+    this.set = new Set(paths), await this.persist();
+  }
+  async persist() {
+    await this.adapter.write(this.path, JSON.stringify(Array.from(this.set)));
+  }
+};
+
 // src/sync-fingerprint.ts
 async function computeSyncFingerprint(settings) {
   let authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "", vaultPart = settings.vaultId || "", input = `${authPart}|${vaultPart}`;
@@ -5159,6 +5284,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
      *  connection state without requiring tab navigation. Single-slot. */
     this.onStatusBarChange = null;
     this.baseStore = null;
+    this.explicitFolders = null;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -5183,7 +5309,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       await this.savePluginData(data.lastSync);
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
-    this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore, this.syncEngine.onStatusChange = (status) => {
+    this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
+    let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
+    this.explicitFolders = new ExplicitFolders(this.app.vault.adapter, explicitFoldersPath), this.syncEngine.explicitFolders = this.explicitFolders, this.syncEngine.onStatusChange = (status) => {
       this.updateStatusBar(status);
     }, this.syncEngine.onConflict = async (info) => new ConflictModal(this.app, info, this.settings, (mode) => {
       this.settings.conflictViewMode = mode, this.saveSettings();
@@ -5197,7 +5325,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian16.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -5304,12 +5432,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         });
       }
     }), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
-      var _a2;
+      var _a2, _b;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          this.syncEngine.handleModify(file);
+          file instanceof import_obsidian16.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
-      ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load());
+      ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b = this.explicitFolders) == null ? void 0 : _b.load());
       let registered = !1, gateOpen = !1;
       if (this.hasAuthConfigured())
         try {
@@ -5367,7 +5495,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
         this.app.vault.getName(),
         this.settings.clientId
       );
-      return this.settings.vaultId = String(result.id), this.settings.remoteVaultName = result.name, this.api.setVaultId(this.settings.vaultId), await this.saveSettings(), rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`), !0;
+      return this.settings.vaultId = result.id, this.settings.remoteVaultName = result.name, this.api.setVaultId(this.settings.vaultId), await this.saveSettings(), rlog().info("lifecycle", `Vault registered: id=${result.id} slug=${result.slug}`), !0;
     } catch (e) {
       return typeof e == "object" && e !== null && e.status === 402 ? (new import_obsidian16.Notice("Engram: Upgrade to pro for multi-vault sync."), rlog().info("lifecycle", "Vault registration blocked \u2014 vault limit reached (402)"), !1) : (console.error("Engram Sync: vault registration failed", e), rlog().error("lifecycle", `Vault registration failed: ${errMsg(e)}`), !1);
     }
@@ -5444,7 +5572,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian16.Plugin
       let channel = new NoteChannel(
         this.settings.apiUrl,
         this.settings.apiKey,
-        String(user.id),
+        user.id,
         this.settings.vaultId
       );
       channel.onEvent = (event) => {
