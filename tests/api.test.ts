@@ -5,6 +5,7 @@ import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "../src/api";
 import type { AuthProvider } from "../src/auth";
+import { LimitExceededError } from "../src/limit-error";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -364,13 +365,22 @@ describe("EngramApi", () => {
 			});
 		});
 
-		test("throws vault_limit_reached on 402", async () => {
-			const error = { status: 402, json: { error: "vault_limit_reached", limit: 1 } };
-			mockRequestUrl.mockRejectedValueOnce(error);
-			await expect(api.registerVault("Third Vault", "ghi789hash")).rejects.toMatchObject({
+		test("throws LimitExceededError on 402", async () => {
+			const error = {
 				status: 402,
-				json: { error: "vault_limit_reached", limit: 1 },
-			});
+				json: {
+					error: "limit_exceeded",
+					reason: "vaults_cap_exceeded",
+					limit_key: "vaults_cap",
+					limit: 1,
+					current: 1,
+					upgrade_url: "https://app.engram.page/settings/billing",
+				},
+			};
+			mockRequestUrl.mockRejectedValueOnce(error);
+			await expect(api.registerVault("Third Vault", "ghi789hash")).rejects.toBeInstanceOf(
+				LimitExceededError,
+			);
 		});
 	});
 
@@ -405,15 +415,113 @@ describe("EngramApi", () => {
 			});
 		});
 
-		test("throws vault_limit_reached on 402", async () => {
+		test("throws LimitExceededError on 402", async () => {
 			mockRequestUrl.mockRejectedValueOnce({
 				status: 402,
-				json: { error: "vault_limit_reached", limit: 1 },
+				json: {
+					error: "limit_exceeded",
+					reason: "vaults_cap_exceeded",
+					limit_key: "vaults_cap",
+					limit: 1,
+					current: 1,
+					upgrade_url: "https://app.engram.page/settings/billing",
+				},
 			});
-			await expect(api.createVault("Over limit")).rejects.toMatchObject({
+			await expect(api.createVault("Over limit")).rejects.toBeInstanceOf(LimitExceededError);
+		});
+	});
+
+	// -------------------------------------------------------------------------
+	// 402 standardization — see spec §4.6
+	// All write paths returning 402 must surface a LimitExceededError carrying
+	// the structured body (reason / limit_key / limit / current / upgrade_url)
+	// so callers (toast handler, Sync Center) can route on `reason` without
+	// re-parsing JSON.
+	// -------------------------------------------------------------------------
+	describe("402 LimitExceededError parsing", () => {
+		const STANDARD_BODY = {
+			error: "limit_exceeded",
+			reason: "notes_cap_exceeded",
+			limit_key: "notes_cap",
+			limit: 10000,
+			current: 10000,
+			upgrade_url: "https://app.engram.page/settings/billing",
+		};
+
+		test("pushNote throws LimitExceededError carrying all fields", async () => {
+			mockRequestUrl.mockRejectedValueOnce({ status: 402, json: STANDARD_BODY });
+			try {
+				await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect(err).toBeInstanceOf(LimitExceededError);
+				const limitErr = err as LimitExceededError;
+				expect(limitErr.reason).toBe("notes_cap_exceeded");
+				expect(limitErr.upgradeUrl).toBe("https://app.engram.page/settings/billing");
+				expect(limitErr.limitKey).toBe("notes_cap");
+				expect(limitErr.limit).toBe(10000);
+				expect(limitErr.current).toBe(10000);
+			}
+		});
+
+		test("pushAttachment throws LimitExceededError (file_too_large now 402)", async () => {
+			// Backend standardization moved file_too_large from 413 → 402; the
+			// plugin's 402 path is the new home for that case too.
+			mockRequestUrl.mockRejectedValueOnce({
 				status: 402,
-				json: { error: "vault_limit_reached", limit: 1 },
+				json: {
+					error: "limit_exceeded",
+					reason: "file_too_large",
+					limit_key: "attachment_max_size_bytes",
+					limit: 26214400,
+					current: 52428800,
+					upgrade_url: "https://app.engram.page/settings/billing",
+				},
 			});
+			try {
+				await api.pushAttachment("images/big.png", "aGVsbG8=", "image/png", 100);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect(err).toBeInstanceOf(LimitExceededError);
+				expect((err as LimitExceededError).reason).toBe("file_too_large");
+			}
+		});
+
+		test("falls back to 'unknown' reason when body has no reason field", async () => {
+			mockRequestUrl.mockRejectedValueOnce({ status: 402, json: {} });
+			try {
+				await api.pushNote("test.md", "x", 100);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect(err).toBeInstanceOf(LimitExceededError);
+				expect((err as LimitExceededError).reason).toBe("unknown");
+				expect((err as LimitExceededError).upgradeUrl).toBeNull();
+				expect((err as LimitExceededError).limitKey).toBeNull();
+				expect((err as LimitExceededError).limit).toBeNull();
+				expect((err as LimitExceededError).current).toBeNull();
+			}
+		});
+
+		test("parses 402 body from text when json is unavailable", async () => {
+			// Obsidian requestUrl may throw with `text` only on some platforms.
+			mockRequestUrl.mockRejectedValueOnce({
+				status: 402,
+				text: JSON.stringify(STANDARD_BODY),
+			});
+			try {
+				await api.pushNote("test.md", "x", 100);
+				expect.unreachable("should have thrown");
+			} catch (err) {
+				expect(err).toBeInstanceOf(LimitExceededError);
+				expect((err as LimitExceededError).reason).toBe("notes_cap_exceeded");
+			}
+		});
+
+		test("non-402 errors flow through unchanged", async () => {
+			mockRequestUrl.mockRejectedValueOnce({ status: 500 });
+			await expect(api.pushNote("test.md", "x", 100)).rejects.not.toBeInstanceOf(
+				LimitExceededError,
+			);
 		});
 	});
 

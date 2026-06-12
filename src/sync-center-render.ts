@@ -21,10 +21,12 @@ const CATEGORY_LABEL: Record<SyncIssueCategory, string> = {
 	server: "Server error",
 	network: "Network failure",
 	conflict: "Unresolved conflict",
+	needs_pro: "Needs Pro — upgrade to sync attachments",
 	other: "Other failure",
 };
 
 const CATEGORY_ORDER: SyncIssueCategory[] = [
+	"needs_pro",
 	"too_large",
 	"conflict",
 	"auth",
@@ -161,7 +163,15 @@ function renderIssueRow(
 	const row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
 
 	const main = row.createDiv({ cls: "engram-sync-center-issue-main" });
-	main.createEl("div", { cls: "engram-sync-center-issue-path", text: issue.path });
+	const pathRow = main.createDiv({ cls: "engram-sync-center-issue-path" });
+	if (issue.category === "needs_pro") {
+		// Compact lock marker matches the spec §4.6 "Needs Pro" surface.
+		const icon = pathRow.createSpan({ cls: "engram-needs-pro-icon" });
+		icon.setText("🔒");
+		icon.setAttribute("aria-label", "Upgrade to sync attachments");
+		icon.setAttribute("title", "Upgrade to sync attachments");
+	}
+	pathRow.createSpan({ text: issue.path });
 
 	const meta = main.createDiv({ cls: "engram-sync-center-issue-meta" });
 	const parts: string[] = [];

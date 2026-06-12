@@ -32,8 +32,55 @@ export class TFolder {
 	}
 }
 
+interface CapturedButton {
+	text: string;
+	style: Record<string, string>;
+	click: () => void;
+}
+
+interface CapturedNotice {
+	message: string;
+	duration?: number;
+	buttons: CapturedButton[];
+}
+
+/** Records every Notice constructed during a test. Reset in beforeEach when
+ *  asserting against it. Each entry captures the message, duration, and the
+ *  list of buttons appended to noticeEl (text + click handlers), so tests can
+ *  verify the central limit-toast handler wires the Upgrade button correctly. */
+export const __noticeCapture: { notices: CapturedNotice[] } = { notices: [] };
+
 export class Notice {
-	constructor(_message: string, _timeout?: number) {}
+	noticeEl: {
+		createEl: (
+			tag: string,
+			opts?: { text?: string; cls?: string },
+		) => {
+			style: Record<string, string>;
+			addEventListener: (e: string, cb: () => void) => void;
+		};
+	};
+
+	constructor(message: string, timeout?: number) {
+		const entry: CapturedNotice = { message, duration: timeout, buttons: [] };
+		__noticeCapture.notices.push(entry);
+		this.noticeEl = {
+			createEl: (_tag, opts) => {
+				const btn: CapturedButton = {
+					text: opts?.text ?? "",
+					style: {},
+					click: () => {},
+				};
+				entry.buttons.push(btn);
+				return {
+					style: btn.style,
+					addEventListener: (_evt: string, cb: () => void) => {
+						btn.click = cb;
+					},
+				};
+			},
+		};
+	}
 }
 
 export class Plugin {

@@ -1,4 +1,6 @@
 import { type App, Modal } from "obsidian";
+import { toastFor } from "./limit-copy";
+import { LimitExceededError } from "./limit-error";
 import {
 	type OptionBreakdown,
 	buildDeletionTree,
@@ -124,12 +126,13 @@ export class SyncPreviewState {
 	}
 }
 
-/** Map a createVault rejection to a short human label. 402 = vault limit,
- *  422 = validation (e.g. duplicate/empty name), else a generic connection
- *  message. Pure for testing. */
+/** Map a createVault rejection to a short human label. LimitExceededError =
+ *  402 from the standardized backend body (spec §4.6), 422 = validation
+ *  (e.g. duplicate/empty name), else a generic connection message. Pure
+ *  for testing. */
 export function describeCreateVaultError(e: unknown): string {
+	if (e instanceof LimitExceededError) return toastFor(e.reason);
 	const status = (e as { status?: number })?.status;
-	if (status === 402) return "Vault limit reached — upgrade or remove a vault to create another.";
 	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
 	return "Could not create the vault — check your connection and try again.";
 }

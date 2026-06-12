@@ -6,6 +6,7 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { type PreflightResult, interpretHealthProbe } from "./auth-state";
+import { LimitExceededError } from "./limit-error";
 import { rlog } from "./remote-log";
 import type {
 	AttachmentChangesResponse,
@@ -94,11 +95,19 @@ export class EngramApi {
 		try {
 			return await this.sendRequest(method, path, body);
 		} catch (e) {
+			const status = (e as { status?: number }).status;
+			// 402 = tier limit exceeded. Convert to a typed error carrying the
+			// structured body (reason / limit_key / limit / current / upgrade_url)
+			// so callers can route on reason (toast handler, Sync Center) without
+			// re-parsing JSON. Placed BEFORE the 401 retry and generic-throw paths
+			// so 402 always gets the rich error — see spec §4.6.
+			if (status === 402) {
+				throw parseLimitExceededError(e);
+			}
 			// On 401, the cached access token may be stale (e.g. server-side TTL
 			// shorter than the expires_in we trusted). Invalidate and retry once
 			// with a freshly-refreshed token. Static-key providers have no
 			// recovery path, so retry only when invalidateAccessToken is supported.
-			const status = (e as { status?: number }).status;
 			if (status === 401 && this.authProvider?.invalidateAccessToken) {
 				this.authProvider.invalidateAccessToken();
 				return this.sendRequest(method, path, body);
@@ -366,6 +375,34 @@ export class EngramApi {
 		const body = resp.json as { folders?: { name: string }[] };
 		return (body.folders ?? []).map((f) => f.name);
 	}
+}
+
+/** Build a LimitExceededError from an Obsidian requestUrl rejection at status
+ *  402. The body may arrive as `.json` (parsed) or `.text` (raw) depending on
+ *  platform; we try both, defaulting safe values when either is missing so the
+ *  caller always gets a typed error rather than a confusing decode crash. */
+function parseLimitExceededError(e: unknown): LimitExceededError {
+	const err = e as { json?: unknown; text?: string };
+	let body: Record<string, unknown> = {};
+	if (err.json && typeof err.json === "object") {
+		body = err.json as Record<string, unknown>;
+	} else if (typeof err.text === "string") {
+		try {
+			const parsed: unknown = JSON.parse(err.text);
+			if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+		} catch {
+			// Malformed text — fall through with empty body; "unknown" reason
+			// still routes to the generic toast.
+		}
+	}
+	const pick = <T>(key: string): T | null => (body[key] !== undefined ? (body[key] as T) : null);
+	return new LimitExceededError(
+		typeof body.reason === "string" ? body.reason : "unknown",
+		pick<string>("upgrade_url"),
+		pick<string>("limit_key"),
+		pick<number | boolean>("limit"),
+		pick<number>("current"),
+	);
 }
 
 /** Convert an ArrayBuffer to a base64 string. */

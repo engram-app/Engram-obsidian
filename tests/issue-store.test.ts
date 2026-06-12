@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { IssueStore, categorizeError } from "../src/issue-store";
+import { LimitExceededError } from "../src/limit-error";
 import type { SyncIssue } from "../src/types";
 
 function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
@@ -171,5 +172,33 @@ describe("categorizeError", () => {
 	test("status code is preserved on result", () => {
 		const result = categorizeError(Object.assign(new Error("x"), { status: 413 }));
 		expect(result.status).toBe(413);
+	});
+
+	test("LimitExceededError attachments_disabled → needs_pro + terminal", () => {
+		const err = new LimitExceededError(
+			"attachments_disabled",
+			"https://app.engram.page/settings/billing",
+			"attachments_enabled",
+			false,
+			null,
+		);
+		const result = categorizeError(err);
+		expect(result.category).toBe("needs_pro");
+		expect(result.terminal).toBe(true);
+		expect(result.status).toBe(402);
+	});
+
+	test("LimitExceededError for other reasons does NOT map to needs_pro", () => {
+		// notes_cap and vaults_cap have their own handling (toast + bail) and
+		// should not pollute the Sync Center "Needs Pro" surface.
+		const err = new LimitExceededError(
+			"notes_cap_exceeded",
+			"https://app.engram.page/settings/billing",
+			"notes_cap",
+			10000,
+			10000,
+		);
+		const result = categorizeError(err);
+		expect(result.category).not.toBe("needs_pro");
 	});
 });

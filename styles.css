@@ -484,6 +484,11 @@
 	margin-left: 8px;
 }
 
+/* Upgrade button appended to limit-exceeded Notice toasts (limit-toast.ts). */
+.engram-limit-upgrade-btn {
+	margin-left: 8px;
+}
+
 /* ── Sync log modal ──────────────────────────────────────────── */
 
 .engram-sync-log-list {
@@ -1177,6 +1182,12 @@ body.is-mobile .engram-support-buttons > a {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
+}
+
+.engram-needs-pro-icon {
+	display: inline-block;
+	margin-right: 4px;
+	opacity: 0.8;
 }
 
 .engram-sync-center-issue-meta {

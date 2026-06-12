@@ -1,8 +1,10 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+import { __noticeCapture } from "./__mocks__/obsidian";
 
 // Mock the API
 const mockApi = {
@@ -3318,5 +3320,166 @@ describe("SyncEngine sync-blocked gate", () => {
 		// debounces and may not flush within 50ms. The key assertion is that
 		// the early-return is gone (no exception, state changed).
 		expect(engine.isSyncBlocked()).toBe(false);
+	});
+});
+
+describe("SyncEngine attachment 402 (Free tier) handling", () => {
+	function makeAttachmentLimitedError(): LimitExceededError {
+		return new LimitExceededError(
+			"attachments_disabled",
+			"https://app.engram.page/settings/billing",
+			"attachments_enabled",
+			false,
+			null,
+		);
+	}
+
+	beforeEach(() => {
+		__noticeCapture.notices.length = 0;
+	});
+
+	test("single attachment 402 → file skipped, marked needs_pro, NOT re-queued", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/logo.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+
+		await (engine as any).pushFile(file, true);
+
+		const issues = engine.issues.all();
+		expect(issues).toHaveLength(1);
+		expect(issues[0].path).toBe("Assets/logo.png");
+		expect(issues[0].category).toBe("needs_pro");
+		expect(issues[0].status).toBe(402);
+		expect(issues[0].kind).toBe("attachment");
+		// Terminal — must NOT be re-queued for retry
+		expect(engine.queue.size).toBe(0);
+		// The batched toast is NOT yet fired by pushFile alone — it's drained
+		// by the batch driver (pushModifiedFiles / pushAll). Confirm pending count.
+		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test("multiple attachment 402s in one batch → SINGLE batched toast (count = N)", async () => {
+		const engine = createEngine();
+		const files = [
+			new TFile("Assets/a.png", Date.now()),
+			new TFile("Assets/b.jpg", Date.now()),
+			new TFile("Assets/c.pdf", Date.now()),
+		];
+		for (const f of files) (f as any).stat = { mtime: Date.now(), size: 1024 };
+
+		mockApp.vault.getFiles.mockReturnValue(files);
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock)
+			.mockRejectedValueOnce(makeAttachmentLimitedError())
+			.mockRejectedValueOnce(makeAttachmentLimitedError())
+			.mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		await engine.pushAll();
+
+		// Three issues recorded, all needs_pro
+		expect(engine.issues.count("needs_pro")).toBe(3);
+		// Single batched toast — message includes the count "3"
+		const proNotices = __noticeCapture.notices.filter((n) =>
+			/attachments? skipped/.test(n.message),
+		);
+		expect(proNotices).toHaveLength(1);
+		expect(proNotices[0].message).toContain("3 attachments");
+		// Counter drained after flush
+		expect((engine as any).getAttachmentLimitedCount()).toBe(0);
+		// Session flag set so subsequent batches don't re-toast
+		expect((engine as any).hasShownAttachmentLimitToast()).toBe(true);
+	});
+
+	test("markdown push still completes in the same batch where attachments fail", async () => {
+		const engine = createEngine();
+		const note = new TFile("Notes/Hello.md", Date.now());
+		const attach = new TFile("Assets/logo.png", Date.now());
+		(note as any).stat = { mtime: Date.now(), size: 100 };
+		(attach as any).stat = { mtime: Date.now(), size: 1024 };
+
+		mockApp.vault.getFiles.mockReturnValue([note, attach]);
+		mockApp.vault.cachedRead.mockResolvedValue("# Hello");
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({
+			note: { path: "Notes/Hello.md", version: 1 },
+			chunks_indexed: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		const pushed = await engine.pushAll();
+
+		// Markdown went through; attachment was skipped
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(pushed).toBe(1); // note pushed, attachment failed
+		expect(engine.issues.count("needs_pro")).toBe(1);
+		expect(engine.issues.all()[0].path).toBe("Assets/logo.png");
+	});
+
+	test("second push attempt does NOT re-fire the file (persistence via IssueStore)", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/logo.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+
+		// First push hits 402, records the issue
+		await (engine as any).pushFile(file, true);
+		expect(engine.issues.count("needs_pro")).toBe(1);
+		const callCountAfterFirst = (mockApi.pushAttachment as jest.Mock).mock.calls.length;
+
+		// Second push must short-circuit BEFORE hitting the API
+		await (engine as any).pushFile(file, true);
+		const callCountAfterSecond = (mockApi.pushAttachment as jest.Mock).mock.calls.length;
+		expect(callCountAfterSecond).toBe(callCountAfterFirst);
+		// Issue is unchanged (no extra attempt recorded)
+		expect(engine.issues.all()[0].attempts).toBe(1);
+	});
+
+	test("batched toast suppressed on a subsequent batch in the same session", async () => {
+		const engine = createEngine();
+		const fileA = new TFile("Assets/a.png", Date.now());
+		const fileB = new TFile("Assets/b.png", Date.now());
+		(fileA as any).stat = { mtime: Date.now(), size: 1024 };
+		(fileB as any).stat = { mtime: Date.now(), size: 1024 };
+
+		mockApp.vault.getFiles.mockReturnValue([fileA]);
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		await engine.pushAll();
+		const firstToastCount = __noticeCapture.notices.filter((n) =>
+			/attachments? skipped/.test(n.message),
+		).length;
+		expect(firstToastCount).toBe(1);
+
+		// Second batch — even if a NEW attachment hits 402, no second toast.
+		mockApp.vault.getFiles.mockReturnValue([fileB]);
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		await engine.pushAll();
+
+		const totalToasts = __noticeCapture.notices.filter((n) =>
+			/attachments? skipped/.test(n.message),
+		).length;
+		expect(totalToasts).toBe(1);
+	});
+
+	test("toast uses singular noun when exactly one attachment was skipped", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/only.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
+		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
+
+		await engine.pushAll();
+		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
+		expect(toast).toBeDefined();
+		expect(toast?.message).toContain("1 attachment skipped");
 	});
 });

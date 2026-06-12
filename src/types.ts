@@ -279,7 +279,14 @@ export interface SyncLogEntry {
 	details?: string;
 }
 
-export type SyncIssueCategory = "too_large" | "auth" | "server" | "network" | "conflict" | "other";
+export type SyncIssueCategory =
+	| "too_large"
+	| "auth"
+	| "server"
+	| "network"
+	| "conflict"
+	| "needs_pro"
+	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads
  *  so the user has a stable list of "what's broken and why" instead of

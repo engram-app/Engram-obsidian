@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { LimitExceededError } from "../src/limit-error";
 import { SyncPreviewState, describeCreateVaultError } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
 
@@ -49,8 +50,15 @@ describe("SyncPreviewState — create-vault sub-view", () => {
 });
 
 describe("describeCreateVaultError", () => {
-	test("402 → vault limit message", () => {
-		expect(describeCreateVaultError({ status: 402 })).toMatch(/limit/i);
+	test("LimitExceededError → reason-mapped vault limit message", () => {
+		const err = new LimitExceededError(
+			"vaults_cap_exceeded",
+			"https://app.engram.page/settings/billing",
+			"vaults_cap",
+			1,
+			1,
+		);
+		expect(describeCreateVaultError(err)).toMatch(/vault|upgrade/i);
 	});
 	test("422 → validation message", () => {
 		expect(describeCreateVaultError({ status: 422 })).toMatch(/name|valid|use/i);

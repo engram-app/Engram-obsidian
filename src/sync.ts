@@ -189,6 +189,17 @@ export class SyncEngine {
 	 *  or the Issues list. Distinct from settings.ignorePatterns (regex textarea). */
 	readonly ignoredFiles: IgnoredFiles = new IgnoredFiles();
 
+	/** Count of attachments skipped this session because the backend returned
+	 *  402 attachments_disabled (Free tier). Reset on each batch via
+	 *  drainAttachmentLimitedCount() so a single batched toast can be fired
+	 *  per push cycle (spec §4.6). */
+	private attachmentLimitedThisBatch = 0;
+
+	/** Suppresses re-toasting once we've already shown the "N attachments
+	 *  skipped" notice in this plugin session. Re-armed only when the engine
+	 *  is destroyed/reloaded so the user isn't nagged on every fullSync. */
+	private attachmentLimitToastShown = false;
+
 	constructor(
 		private app: App,
 		private api: EngramApi,
@@ -656,6 +667,17 @@ export class SyncEngine {
 	 *  When force is true, skip echo suppression (used by pushAll). */
 	private async pushFile(file: TFile, force = false): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
+
+		// Persistence shortcut: if this attachment was already marked needs_pro
+		// (Free-tier 402 on a previous push), skip it without re-hitting the
+		// backend. The issue stays in the Sync Center until the user upgrades or
+		// dismisses it. This is what makes the batched toast quiet on the next
+		// sync — there's nothing left to fail, so the count is 0.
+		if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path)) {
+			devLog().log("push", `skip (needs_pro): ${file.path}`);
+			return false;
+		}
+
 		await this.acquirePushSlot();
 		this.pushing.add(file.path);
 		this.lastError = "";
@@ -857,10 +879,15 @@ export class SyncEngine {
 			rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`);
 			this.goOnline();
 		} catch (e) {
-			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error(`Engram Sync: failed to push ${file.path}`, e);
 			const msg = errMsg(e);
 			const classified = categorizeError(e);
+			// 402 attachments_disabled is an expected Free-tier outcome, not a
+			// programming error — don't pollute the dev console. (Other categories
+			// keep the existing error log for triage.)
+			if (classified.category !== "needs_pro") {
+				// biome-ignore lint/suspicious/noConsole: error boundary
+				console.error(`Engram Sync: failed to push ${file.path}`, e);
+			}
 			const now = Date.now();
 			this.issues.record({
 				path: file.path,
@@ -873,6 +900,10 @@ export class SyncEngine {
 				lastFailedAt: now,
 				attempts: 1,
 			});
+			if (classified.category === "needs_pro") {
+				// Tally for the batched session toast (drained by pushAll / pushModifiedFiles).
+				this.attachmentLimitedThisBatch += 1;
+			}
 			devLog().log("error", `push failed: ${file.path} — ${msg} (${classified.category})`);
 			rlog().error(
 				"push",
@@ -880,9 +911,10 @@ export class SyncEngine {
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.logEntry("push", file.path, "error", msg, classified.category);
-			// Terminal failures (e.g. 413) skip the offline queue — retrying will
-			// just hit the same error. The user must take action via the Sync
-			// Center (ignore, shrink the file, or wait for the server limit to rise).
+			// Terminal failures (e.g. 413, 402 attachments_disabled) skip the
+			// offline queue — retrying will just hit the same error. The user
+			// must take action via the Sync Center (ignore, shrink the file, or
+			// upgrade their tier) or wait for the server limit to rise.
 			if (!classified.terminal) {
 				// Queue for retry — content-free to avoid O(n²) serialization.
 				// Content will be re-read from vault when flushing.
@@ -905,6 +937,47 @@ export class SyncEngine {
 			this.emitStatus();
 		}
 		return success;
+	}
+
+	/** True iff the issue store already has a `needs_pro` entry for this path
+	 *  (i.e. backend returned 402 attachments_disabled on a prior push). Used to
+	 *  short-circuit re-push attempts without hitting the network — survives
+	 *  plugin reloads because the issue store is persisted. */
+	private hasNeedsProIssue(path: string): boolean {
+		for (const issue of this.issues.all()) {
+			if (issue.path === path && issue.category === "needs_pro") return true;
+		}
+		return false;
+	}
+
+	/** Emit a single batched toast covering all attachments skipped this batch
+	 *  with `needs_pro`. Called once at the end of pushModifiedFiles / pushAll.
+	 *  The toast fires at most once per session (subsequent batches stay
+	 *  silent) so the user isn't repeatedly nagged on every sync interval.
+	 *  Spec §4.6 — Free tier batched skip handling. */
+	private flushAttachmentLimitedToast(): void {
+		const count = this.attachmentLimitedThisBatch;
+		this.attachmentLimitedThisBatch = 0;
+		if (count <= 0) return;
+		if (this.attachmentLimitToastShown) return;
+		this.attachmentLimitToastShown = true;
+		const noun = count === 1 ? "attachment" : "attachments";
+		new Notice(`Engram: ${count} ${noun} skipped — upgrade to sync images & PDFs.`, 10_000);
+		rlog().info(
+			"push",
+			`Skipped ${count} ${noun} (attachments_disabled) — batched toast emitted`,
+		);
+	}
+
+	/** Test hook: how many attachments were marked needs_pro since the last
+	 *  flush. Drained when the toast fires. */
+	getAttachmentLimitedCount(): number {
+		return this.attachmentLimitedThisBatch;
+	}
+
+	/** Test hook: whether the session has already shown the batched toast. */
+	hasShownAttachmentLimitToast(): boolean {
+		return this.attachmentLimitToastShown;
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
@@ -1994,6 +2067,7 @@ export class SyncEngine {
 			});
 		}
 
+		this.flushAttachmentLimitedToast();
 		return pushed;
 	}
 
@@ -2275,6 +2349,8 @@ export class SyncEngine {
 		}
 
 		this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
+
+		this.flushAttachmentLimitedToast();
 
 		const skipped = total - pushed - failed;
 		devLog().log(
