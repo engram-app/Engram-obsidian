@@ -146,7 +146,7 @@ describe("SyncPreviewState — non-destructive choices", () => {
 		const { state } = newState();
 		state.enterVaultPicker();
 		state.onVaultsLoaded([
-			{ id: 7, name: "Alt", slug: "alt", is_default: false, created_at: "" },
+			{ id: "vault-7", name: "Alt", slug: "alt", is_default: false, created_at: "" },
 		]);
 		expect(state.vaultsLoading).toBe(false);
 		expect(state.vaults?.length).toBe(1);

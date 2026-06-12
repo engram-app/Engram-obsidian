@@ -24,7 +24,7 @@ const mockApi = {
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: jest
 		.fn()
-		.mockResolvedValue({ id: 1, name: "Test", slug: "test", is_default: true }),
+		.mockResolvedValue({ id: "vault-1", name: "Test", slug: "test", is_default: true }),
 } as unknown as EngramApi;
 
 // Mock the Obsidian App

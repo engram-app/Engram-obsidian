@@ -142,7 +142,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		if (result) {
 			await this.plugin.saveOAuthTokens(
 				result.refresh_token,
-				String(result.vault_id),
+				result.vault_id,
 				result.user_email,
 			);
 			this.display();

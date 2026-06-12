@@ -4,7 +4,7 @@ import type EngramSyncPlugin from "./main";
 export interface DeviceFlowResult {
 	access_token: string;
 	refresh_token: string;
-	vault_id: number;
+	vault_id: string;
 	user_email: string;
 	expires_in: number;
 }

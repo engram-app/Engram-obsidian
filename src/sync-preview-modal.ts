@@ -737,7 +737,7 @@ export class SyncPreviewModal extends Modal {
 		this.state.vaultsLoading = true;
 		this.render();
 		try {
-			const newPlan = await this.opts.applyVaultChange(String(v.id), v.name);
+			const newPlan = await this.opts.applyVaultChange(v.id, v.name);
 			this.state.replacePlan(newPlan);
 			this.remoteVaultName = v.name;
 			this.state.exitVaultPicker();

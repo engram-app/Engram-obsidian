@@ -560,7 +560,7 @@ export default class EngramSyncPlugin extends Plugin {
 				this.app.vault.getName(),
 				this.settings.clientId,
 			);
-			this.settings.vaultId = String(result.id);
+			this.settings.vaultId = result.id;
 			this.settings.remoteVaultName = result.name;
 			this.api.setVaultId(this.settings.vaultId);
 			await this.saveSettings();
@@ -740,7 +740,7 @@ export default class EngramSyncPlugin extends Plugin {
 				const channel = new NoteChannel(
 					this.settings.apiUrl,
 					this.settings.apiKey,
-					String(user.id),
+					user.id,
 					this.settings.vaultId,
 				);
 

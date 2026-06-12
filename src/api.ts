@@ -160,9 +160,9 @@ export class EngramApi {
 	}
 
 	/** Get the current authenticated user (id + email). Used to determine channel topic. */
-	async getMe(): Promise<{ id: number; email: string }> {
+	async getMe(): Promise<{ id: string; email: string }> {
 		const resp = await this.request("GET", "/me");
-		return (resp.json as { user: { id: number; email: string } }).user;
+		return (resp.json as { user: { id: string; email: string } }).user;
 	}
 
 	/** Register this vault with the backend. Returns existing vault if client_id matches.

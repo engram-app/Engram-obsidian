@@ -4,13 +4,19 @@ import type { VaultInfo } from "../src/types";
 
 const mockVaults: VaultInfo[] = [
 	{
-		id: 1,
+		id: "vault-1",
 		name: "Personal",
 		slug: "personal",
 		is_default: true,
 		created_at: "2026-01-01T00:00:00Z",
 	},
-	{ id: 2, name: "Work", slug: "work", is_default: false, created_at: "2026-02-01T00:00:00Z" },
+	{
+		id: "vault-2",
+		name: "Work",
+		slug: "work",
+		is_default: false,
+		created_at: "2026-02-01T00:00:00Z",
+	},
 ];
 
 const mockRequest = mock().mockResolvedValue({
