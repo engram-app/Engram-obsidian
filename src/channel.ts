@@ -257,6 +257,7 @@ export class NoteChannel {
 				timestamp: Date.now(),
 				kind: (p.kind as "note" | "attachment") ?? "note",
 				content: p.content as string | undefined,
+				content_hash: p.content_hash as string | undefined,
 				title: p.title as string | undefined,
 				folder: p.folder as string | undefined,
 				tags: p.tags as string[] | undefined,
@@ -266,6 +267,31 @@ export class NoteChannel {
 			};
 			rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`);
 			this.onEvent?.(streamEvent);
+		}
+
+		// Protocol rev: bulk pushes broadcast ONE notes.batch digest
+		// (op "upsert", metadata-only entries) instead of N note_changed
+		// events. Translate each entry to a hash-only stream event — the
+		// engine's hash-compare decides per path whether to fetch the body.
+		if (event === "notes.batch" && payload && payload.op === "upsert") {
+			const notes = (payload.notes as Array<Record<string, unknown>> | undefined) ?? [];
+			rlog().info("channel", `Batch digest: ${notes.length} notes`);
+			for (const n of notes) {
+				const streamEvent: NoteStreamEvent = {
+					event_type: "upsert",
+					path: n.path as string,
+					timestamp: Date.now(),
+					kind: "note",
+					content_hash: n.content_hash as string | undefined,
+					title: n.title as string | undefined,
+					folder: n.folder as string | undefined,
+					tags: n.tags as string[] | undefined,
+					mtime: n.mtime as number | undefined,
+					updated_at: n.updated_at as string | undefined,
+					version: n.version as number | undefined,
+				};
+				this.onEvent?.(streamEvent);
+			}
 		}
 	}
 

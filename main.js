@@ -9,11 +9,7 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -927,25 +923,26 @@ var EngramApi = class _EngramApi {
   updateConfig(baseUrl, apiKey) {
     this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
   }
-  async request(method, path, body) {
+  async request(method, path, body, extraHeaders) {
     var _a, _b;
     try {
-      return await this.sendRequest(method, path, body);
+      return await this.sendRequest(method, path, body, extraHeaders);
     } catch (e) {
       let status = e.status;
       if (status === 402)
         throw parseLimitExceededError(e);
       if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
-        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body);
+        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body, extraHeaders);
       throw rlog().warn(
         "api",
         `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
       ), e;
     }
   }
-  async sendRequest(method, path, body) {
+  async sendRequest(method, path, body, extraHeaders) {
     let headers = {
-      Authorization: `Bearer ${await this.getAuthToken()}`
+      Authorization: `Bearer ${await this.getAuthToken()}`,
+      ...extraHeaders
     };
     return this.vaultId && (headers["X-Vault-ID"] = this.vaultId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
       url: `${this.baseUrl}${path}`,
@@ -1016,10 +1013,26 @@ var EngramApi = class _EngramApi {
       throw e;
     }
   }
-  /** Get changes since a timestamp. */
-  async getChanges(since) {
-    let encoded = encodeURIComponent(since);
-    return (await this.request("GET", `/notes/changes?since=${encoded}`)).json;
+  /** Get changes since a timestamp.
+   *  Protocol rev: pass limit/cursor to page through large vaults and
+   *  fields:"meta" to receive content_hash instead of content. Pre-rev
+   *  backends ignore the extra params and return the legacy full response. */
+  async getChanges(since, opts) {
+    let params = new URLSearchParams({ since });
+    return (opts == null ? void 0 : opts.limit) !== void 0 && params.set("limit", String(opts.limit)), opts != null && opts.cursor && params.set("cursor", opts.cursor), opts != null && opts.fields && params.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params.toString()}`)).json;
+  }
+  /** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).
+   *  Sends a fresh idempotency key per call — the server replays the cached
+   *  response on retry instead of re-executing the batch. Throws with
+   *  status 404/405 on pre-rev backends; callers fall back to per-note
+   *  pushes. */
+  async pushNotesBatch(notes) {
+    return (await this.request(
+      "POST",
+      "/notes/batch",
+      { notes },
+      { "X-Idempotency-Key": crypto.randomUUID() }
+    )).json;
   }
   /** Get full note by path. */
   async getNote(path) {
@@ -1339,7 +1352,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     }, 3e4);
   }
   handleMessage(raw) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1364,6 +1377,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         timestamp: Date.now(),
         kind: (_b = p.kind) != null ? _b : "note",
         content: p.content,
+        content_hash: p.content_hash,
         title: p.title,
         folder: p.folder,
         tags: p.tags,
@@ -1372,6 +1386,26 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         version: p.version
       };
       rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_c = this.onEvent) == null || _c.call(this, streamEvent);
+    }
+    if (event === "notes.batch" && payload && payload.op === "upsert") {
+      let notes = (_d = payload.notes) != null ? _d : [];
+      rlog().info("channel", `Batch digest: ${notes.length} notes`);
+      for (let n of notes) {
+        let streamEvent = {
+          event_type: "upsert",
+          path: n.path,
+          timestamp: Date.now(),
+          kind: "note",
+          content_hash: n.content_hash,
+          title: n.title,
+          folder: n.folder,
+          tags: n.tags,
+          mtime: n.mtime,
+          updated_at: n.updated_at,
+          version: n.version
+        };
+        (_e = this.onEvent) == null || _e.call(this, streamEvent);
+      }
     }
   }
   send(msg) {
@@ -3764,6 +3798,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
+    /** Push all files that have been modified since last sync, plus any
+     *  syncable file that the engine has never seen (no syncState entry).
+     *  The untracked branch covers the first-sync case and the post
+     *  vault-change case where we cleared sync state — neither would
+     *  otherwise touch the push path because lastSync is empty and the
+     *  mtime comparison short-circuits. */
+    /** Sticky "server has no POST /notes/batch" flag — set on the first
+     *  404/405 so later bulk syncs skip the probe entirely. */
+    this.batchPushUnsupported = !1;
     this.parseIgnorePatterns();
   }
   updateSettings(settings) {
@@ -4096,7 +4139,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 let np = (0, import_obsidian15.normalizePath)(file.path);
                 this.syncState.set(np, {
                   hash: fnv1a(merge.merged),
-                  version: mergeResp.note.version
+                  version: mergeResp.note.version,
+                  serverHash: mergeResp.note.content_hash
                 }), mergeResp.note.version != null && ((_b = this.baseStore) == null || _b.set(np, merge.merged, mergeResp.note.version));
               }
               return rlog().info(
@@ -4122,7 +4166,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let forceResp = await this.api.pushNote(file.path, content, mtime);
             if (!("conflict" in forceResp)) {
               let np = (0, import_obsidian15.normalizePath)(file.path);
-              this.syncState.set(np, { hash, version: forceResp.note.version }), forceResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, forceResp.note.version));
+              this.syncState.set(np, {
+                hash,
+                version: forceResp.note.version,
+                serverHash: forceResp.note.content_hash
+              }), forceResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, forceResp.note.version));
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -4131,7 +4179,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               let np = (0, import_obsidian15.normalizePath)(file.path);
               this.syncState.set(np, {
                 hash: fnv1a(serverNote.content),
-                version: serverNote.version
+                version: serverNote.version,
+                serverHash: serverNote.content_hash
               }), (_d = this.baseStore) == null || _d.set(np, serverNote.content, serverNote.version);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
@@ -4144,7 +4193,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               let np = (0, import_obsidian15.normalizePath)(file.path);
               this.syncState.set(np, {
                 hash: fnv1a(resolution.mergedContent),
-                version: mergeResp.note.version
+                version: mergeResp.note.version,
+                serverHash: mergeResp.note.content_hash
               }), mergeResp.note.version != null && ((_e = this.baseStore) == null || _e.set(
                 np,
                 resolution.mergedContent,
@@ -4165,9 +4215,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             `Renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`
           ), new import_obsidian15.Notice(
             `Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian15.normalizePath)(file.path)), this.syncState.set((0, import_obsidian15.normalizePath)(serverPath), { hash, version: serverVersion }), (_f = this.baseStore) == null || _f.delete((0, import_obsidian15.normalizePath)(file.path)), serverVersion != null && ((_g = this.baseStore) == null || _g.set((0, import_obsidian15.normalizePath)(serverPath), content, serverVersion));
+          )), this.syncState.delete((0, import_obsidian15.normalizePath)(file.path)), this.syncState.set((0, import_obsidian15.normalizePath)(serverPath), {
+            hash,
+            version: serverVersion,
+            serverHash: resp.note.content_hash
+          }), (_f = this.baseStore) == null || _f.delete((0, import_obsidian15.normalizePath)(file.path)), serverVersion != null && ((_g = this.baseStore) == null || _g.set((0, import_obsidian15.normalizePath)(serverPath), content, serverVersion));
         } else
-          this.syncState.set((0, import_obsidian15.normalizePath)(file.path), { hash, version: serverVersion }), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian15.normalizePath)(file.path), content, serverVersion));
+          this.syncState.set((0, import_obsidian15.normalizePath)(file.path), {
+            hash,
+            version: serverVersion,
+            serverHash: resp.note.content_hash
+          }), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian15.normalizePath)(file.path), content, serverVersion));
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -4249,6 +4307,43 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   // --- Pull: Engram → local vault ---
   /** Pull remote changes and apply to vault. */
+  /** Page through GET /notes/changes until has_more=false (protocol rev).
+   *  Pre-rev backends return no has_more — the loop exits after one page,
+   *  preserving legacy behavior. fields:"meta" requests hash-only pages. */
+  async fetchAllNoteChanges(since, fields) {
+    let all = [], cursor, serverTime = "";
+    for (let page = 0; page < 1e4; page++) {
+      let resp = await this.api.getChanges(since, { limit: 500, cursor, fields });
+      if (all.push(...resp.changes), serverTime = resp.server_time, !resp.has_more || !resp.next_cursor) break;
+      cursor = resp.next_cursor;
+    }
+    return { changes: all, server_time: serverTime };
+  }
+  /** Resolve a (possibly meta-only) change to one that carries content.
+   *  Returns null when the change needs no work: the server hash matches the
+   *  stored serverHash AND the local file still exists — only the version is
+   *  advanced so the next push doesn't 409. */
+  async resolveChangeBody(change, opts = { skipUnchanged: !0 }) {
+    var _a, _b, _c;
+    if (change.deleted) return change;
+    let normalized = (0, import_obsidian15.normalizePath)(change.path);
+    if (opts.skipUnchanged && change.content_hash !== void 0) {
+      let stored = this.syncState.get(normalized);
+      if (this.app.vault.getFileByPath(normalized) !== null && (stored == null ? void 0 : stored.serverHash) === change.content_hash)
+        return this.syncState.set(normalized, {
+          ...stored,
+          version: (_a = change.version) != null ? _a : stored.version
+        }), devLog().log("pull", `skip (hash match): ${change.path}`), null;
+    }
+    if (change.content !== void 0) return change;
+    let note = await this.api.getNote(change.path);
+    return {
+      ...change,
+      content: note.content,
+      content_hash: (_b = note.content_hash) != null ? _b : change.content_hash,
+      version: (_c = note.version) != null ? _c : change.version
+    };
+  }
   async pull() {
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
@@ -4256,7 +4351,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.lastSync || (this.lastSync = "1970-01-01T00:00:00Z"), this.pulling = !0, this.lastError = "", this.emitStatus(), devLog().log("pull", `start since=${this.lastSync}`), rlog().info("pull", `Pull started since=${this.lastSync}`);
     try {
       let [noteResp, attachResp] = await Promise.all([
-        this.api.getChanges(this.lastSync),
+        this.fetchAllNoteChanges(this.lastSync, "meta"),
         this.api.getAttachmentChanges(this.lastSync)
       ]);
       devLog().log(
@@ -4269,7 +4364,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let applied = 0, skipped = 0;
       for (let change of noteResp.changes)
         try {
-          await this.applyChange(change) && applied++;
+          let resolved = await this.resolveChangeBody(change);
+          resolved && await this.applyChange(resolved) && applied++;
         } catch (e) {
           skipped++;
           let msg = errMsg(e);
@@ -4328,7 +4424,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncBlocked ? (devLog().log("sync-blocked", "pullAll short-circuited \u2014 gate closed"), 0) : this._pullAll((_a = opts.deleteLocalExtras) != null ? _a : !1);
   }
   async _pullAll(wipe) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     if (this.pulling) return 0;
     if ((_a = this.syncLog) == null || _a.clear(), this.pulling = !0, this.lastError = "", this.emitStatus(), wipe) {
       this.suppressDeletes = !0, devLog().log("pull", "pullAll(deleteLocalExtras): deleting all local syncable files"), rlog().info("pull", "pullAll(deleteLocalExtras) started \u2014 deleting local files");
@@ -4369,7 +4465,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
     try {
       let epoch = "1970-01-01T00:00:00Z", [noteResp, attachResp] = await Promise.all([
-        this.api.getChanges(epoch),
+        this.fetchAllNoteChanges(epoch, "meta"),
         this.api.getAttachmentChanges(epoch)
       ]);
       devLog().log(
@@ -4389,15 +4485,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             noteChanges.push(change);
             continue;
           }
-          let existing = this.app.vault.getFileByPath((0, import_obsidian15.normalizePath)(change.path));
+          let normalized = (0, import_obsidian15.normalizePath)(change.path), existing = this.app.vault.getFileByPath(normalized);
           if (existing) {
-            let localContent = await this.app.vault.cachedRead(existing);
-            if (localContent === change.content) {
-              let normalized = (0, import_obsidian15.normalizePath)(change.path);
+            let localContent = await this.app.vault.cachedRead(existing), stored = this.syncState.get(normalized), localUnchanged = stored !== void 0 && stored.hash === fnv1a(localContent);
+            if (change.content_hash !== void 0 && (stored == null ? void 0 : stored.serverHash) === change.content_hash && localUnchanged) {
+              this.syncState.set(normalized, {
+                ...stored,
+                version: (_d = change.version) != null ? _d : stored.version
+              });
+              continue;
+            }
+            if (change.content !== void 0 && localContent === change.content) {
               this.syncState.set(normalized, {
                 hash: fnv1a(localContent),
-                version: change.version
-              }), change.version != null && ((_d = this.baseStore) == null || _d.set(normalized, change.content, change.version));
+                version: change.version,
+                serverHash: change.content_hash
+              }), change.version != null && ((_e = this.baseStore) == null || _e.set(normalized, change.content, change.version));
               continue;
             }
           }
@@ -4412,12 +4515,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), devLog().log(
         "pull",
         `pullAll: after filter: ${noteCount} notes, ${attachCount} attachments to apply (wipe=${wipe})`
-      ), (_e = this.onSyncProgress) == null || _e.call(this, { phase: "pulling", current: 0, total, failed: 0 });
+      ), (_f = this.onSyncProgress) == null || _f.call(this, { phase: "pulling", current: 0, total, failed: 0 });
       for (let i = 0; i < noteChanges.length; i += 10) {
         let batch = noteChanges.slice(i, i + 10), lastPath = batch[batch.length - 1].path, results = await Promise.all(
           batch.map(async (change) => {
             try {
-              let ok = await this.applyChange(change, !0);
+              let resolved = await this.resolveChangeBody(change, {
+                skipUnchanged: !1
+              }), ok = resolved ? await this.applyChange(resolved, !0) : !1;
               return ok ? this.logEntry("pull", change.path, "ok") : this.logEntry(
                 "skip",
                 change.path,
@@ -4433,7 +4538,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
         for (let r of results)
           r === "ok" ? applied++ : r === "error" && failed++;
-        (_f = this.onSyncProgress) == null || _f.call(this, {
+        (_g = this.onSyncProgress) == null || _g.call(this, {
           phase: "pulling",
           current: Math.min(i + batch.length, noteChanges.length),
           total,
@@ -4461,7 +4566,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
         for (let r of results)
           r === "ok" ? applied++ : r === "error" && failed++;
-        (_g = this.onSyncProgress) == null || _g.call(this, {
+        (_h = this.onSyncProgress) == null || _h.call(this, {
           phase: "pulling",
           current: noteCount + Math.min(i + batch.length, attachChanges.length),
           total,
@@ -4469,7 +4574,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           currentPath: lastPath
         });
       }
-      (_h = this.onSyncProgress) == null || _h.call(this, { phase: "complete", current: total, total, failed });
+      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: total, total, failed });
       let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
       return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
         "pull",
@@ -4487,7 +4592,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -4502,6 +4607,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let isAttachment = event.kind === "attachment";
+    if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
+      let stored = this.syncState.get((0, import_obsidian15.normalizePath)(event.path));
+      if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
+        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian15.normalizePath)(event.path), {
+          ...stored,
+          version: event.version
+        }), rlog().info("ws", `Hash skip: ${event.path}`);
+        return;
+      }
+    }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian15.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
       existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized));
@@ -4527,6 +4642,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: event.path,
             title: (_c = event.title) != null ? _c : "",
             content: event.content,
+            content_hash: event.content_hash,
             folder: (_d = event.folder) != null ? _d : "",
             tags: (_e = event.tags) != null ? _e : [],
             mtime: (_f = event.mtime) != null ? _f : Date.now(),
@@ -4540,11 +4656,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
+            content_hash: (_h = note.content_hash) != null ? _h : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
-            deleted: !1
+            deleted: !1,
+            version: (_i = note.version) != null ? _i : event.version
           });
         }
       } catch (e) {
@@ -4586,6 +4704,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       return !1;
     }
+    let content = change.content;
+    if (content === void 0)
+      throw new Error(`applyChange: missing content for ${change.path}`);
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
@@ -4593,9 +4714,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         localModified = localHash !== lastSyncedHash;
       else {
         let localMtimeS = existing.stat.mtime / 1e3;
-        localModified = change.mtime - localMtimeS > STALE_THRESHOLD_S ? !1 : localContent !== change.content;
+        localModified = change.mtime - localMtimeS > STALE_THRESHOLD_S ? !1 : localContent !== content;
       }
-      if (!forceOverwrite && localModified && localContent !== change.content) {
+      if (!forceOverwrite && localModified && localContent !== content) {
         let localMtime = existing.stat.mtime / 1e3;
         devLog().log(
           "pull",
@@ -4604,11 +4725,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let firstSync = lastSyncedHash === void 0;
         rlog().warn(
           "conflict",
-          `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${change.content.length}`
+          `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
         let pullBase = (_d = this.baseStore) == null ? void 0 : _d.get(normalized);
         if (pullBase) {
-          let merge = threeWayMerge(pullBase.content, localContent, change.content);
+          let merge = threeWayMerge(pullBase.content, localContent, content);
           if (merge.clean) {
             await this.modifyFile(existing, merge.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge.merged),
@@ -4624,19 +4745,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             return rlog().info(
               "conflict",
-              `Auto-merged (pull): ${change.path} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${change.content.length} | mergedLen=${merge.merged.length}`
+              `Auto-merged (pull): ${change.path} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${content.length} | mergedLen=${merge.merged.length}`
             ), !0;
           }
           rlog().info(
             "conflict",
-            `Auto-merge failed (pull): ${change.path} | conflicts=${merge.conflicts.length} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${change.content.length}`
+            `Auto-merge failed (pull): ${change.path} | conflicts=${merge.conflicts.length} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${content.length}`
           );
         }
         let resolution = await this.resolveConflict({
           path: change.path,
           localContent,
           localMtime,
-          remoteContent: change.content,
+          remoteContent: content,
           remoteMtime: change.mtime,
           baseContent: pullBase == null ? void 0 : pullBase.content,
           vaultName: this.app.vault.getName()
@@ -4664,12 +4785,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (resolution.choice === "keep-both") {
           let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
           try {
-            await this.createFileWithFolders(conflictPath, change.content), this.syncState.set((0, import_obsidian15.normalizePath)(conflictPath), {
-              hash: fnv1a(change.content),
+            await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian15.normalizePath)(conflictPath), {
+              hash: fnv1a(content),
               version: change.version
             }), change.version != null && ((_f = this.baseStore) == null || _f.set(
               (0, import_obsidian15.normalizePath)(conflictPath),
-              change.content,
+              content,
               change.version
             )), rlog().info(
               "conflict",
@@ -4707,22 +4828,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return !0;
         }
         rlog().info("conflict", `Resolved: ${change.path} \u2192 keep-remote`);
-      } else if (localContent === change.content)
-        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, { hash: localHash, version: change.version }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, change.content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
-      return devLog().log(
+      } else if (localContent === content)
+        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
+          hash: localHash,
+          version: change.version,
+          serverHash: change.content_hash
+        }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+      return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
+        hash: fnv1a(content),
+        version: change.version,
+        serverHash: change.content_hash
+      }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, content, change.version)), rlog().info(
         "pull",
-        `applyChange OVERWRITE: ${change.path} (len=${change.content.length})`
-      ), await this.modifyFile(existing, change.content), this.syncState.set(normalized, {
-        hash: fnv1a(change.content),
-        version: change.version
-      }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, change.content, change.version)), rlog().info(
-        "pull",
-        `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${change.content.length}`
+        `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
     }
-    devLog().log("pull", `applyChange CREATE: ${normalized} (len=${change.content.length})`);
+    devLog().log("pull", `applyChange CREATE: ${normalized} (len=${content.length})`);
     try {
-      await this.createFileWithFolders(normalized, change.content);
+      await this.createFileWithFolders(normalized, content);
     } catch (createErr) {
       throw rlog().error(
         "pull",
@@ -4731,9 +4854,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), createErr;
     }
     return this.syncState.set(normalized, {
-      hash: fnv1a(change.content),
-      version: change.version
-    }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, change.content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`), !0;
+      hash: fnv1a(content),
+      version: change.version,
+      serverHash: change.content_hash
+    }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -4861,23 +4985,143 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
     return (_a = this.onSyncProgress) == null || _a.call(this, { phase: "complete", current: pushed, total: pushed, failed: 0 }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
-  /** Push all files that have been modified since last sync, plus any
-   *  syncable file that the engine has never seen (no syncState entry).
-   *  The untracked branch covers the first-sync case and the post
-   *  vault-change case where we cleared sync state — neither would
-   *  otherwise touch the push path because lastSync is empty and the
-   *  mtime comparison short-circuits. */
+  /** Bulk-push note files via POST /notes/batch in chunks of 100.
+   *
+   *  Returns null when the server lacks the endpoint (pre-rev backend) —
+   *  the caller falls back to per-file pushes. Per-result handling:
+   *  ok → record state (incl. server-sanitized renames); conflict → re-route
+   *  through pushFile so the existing 3-way merge / interactive flow stays
+   *  the single conflict path; error → record an issue. A transport error
+   *  mid-bulk enqueues the remaining files and goes offline, mirroring the
+   *  single-push error path. */
+  async pushNotesViaBatch(files, force, onProgress) {
+    var _a, _b;
+    if (this.batchPushUnsupported) return null;
+    let pushed = 0, failed = 0, done = 0;
+    for (let i = 0; i < files.length; i += 100) {
+      let chunk = files.slice(i, i + 100), entries = [];
+      for (let file of chunk) {
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian15.normalizePath)(file.path));
+        if (!force && existing !== void 0 && hash === existing.hash) {
+          done++, this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
+          continue;
+        }
+        entries.push({ file, content, hash, version: existing == null ? void 0 : existing.version });
+      }
+      if (entries.length === 0) {
+        onProgress == null || onProgress(done, failed);
+        continue;
+      }
+      for (let e of entries) this.pushing.add(e.file.path);
+      try {
+        await this.paceRequest();
+        let resp = await this.api.pushNotesBatch(
+          entries.map((e) => ({
+            path: e.file.path,
+            content: e.content,
+            mtime: e.file.stat.mtime / 1e3,
+            version: e.version
+          }))
+        ), byPath = new Map(resp.results.map((r) => [r.path, r]));
+        for (let e of entries) {
+          let r = byPath.get(e.file.path);
+          if (done++, !r) {
+            failed++, this.logEntry("push", e.file.path, "error", "missing batch result");
+            continue;
+          }
+          if (r.status === "ok")
+            await this.recordBatchPushOk(e.file, e.content, e.hash, r), pushed++, this.logEntry("push", e.file.path, "ok");
+          else if (r.status === "conflict")
+            this.pushing.delete(e.file.path), await this.pushFile(e.file, !0) && pushed++;
+          else {
+            failed++;
+            let msg = JSON.stringify((_a = r.errors) != null ? _a : "batch error");
+            this.issues.record({
+              path: e.file.path,
+              kind: "note",
+              category: "other",
+              message: msg,
+              firstFailedAt: Date.now(),
+              lastFailedAt: Date.now(),
+              attempts: 1
+            }), this.logEntry("push", e.file.path, "error", msg);
+          }
+        }
+        this.goOnline();
+      } catch (err) {
+        let status = err.status;
+        if (status === 404 || status === 405)
+          return this.batchPushUnsupported = !0, rlog().info("push", "Batch endpoint unsupported \u2014 falling back to per-note"), null;
+        let remaining = [...entries.map((e) => e.file), ...files.slice(i + 100)];
+        rlog().error(
+          "push",
+          `Batch push failed (${errMsg(err)}) \u2014 queueing ${remaining.length} files`
+        );
+        for (let file of remaining)
+          failed++, await this.enqueueChange({
+            path: file.path,
+            action: "upsert",
+            kind: "note",
+            mtime: file.stat.mtime / 1e3,
+            timestamp: Date.now(),
+            vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
+          });
+        return onProgress == null || onProgress(done, failed), { pushed, failed };
+      } finally {
+        for (let e of entries)
+          this.pushing.delete(e.file.path), this.markRecentlyPushed(e.file.path);
+      }
+      onProgress == null || onProgress(done, failed);
+    }
+    return { pushed, failed };
+  }
+  /** Record a successful batch-push result: sync state, base store, issue
+   *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
+  async recordBatchPushOk(file, content, hash, result) {
+    var _a, _b, _c;
+    let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
+    if (serverPath) {
+      let localFile = this.app.vault.getFileByPath(file.path);
+      localFile && (await this.app.vault.rename(localFile, serverPath), rlog().info("push", `Renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`), new import_obsidian15.Notice(
+        `Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`
+      )), this.syncState.delete((0, import_obsidian15.normalizePath)(file.path)), (_a = this.baseStore) == null || _a.delete((0, import_obsidian15.normalizePath)(file.path));
+      let np = (0, import_obsidian15.normalizePath)(serverPath);
+      this.syncState.set(np, {
+        hash,
+        version: result.version,
+        serverHash: result.content_hash
+      }), result.version != null && ((_b = this.baseStore) == null || _b.set(np, content, result.version));
+    } else {
+      let np = (0, import_obsidian15.normalizePath)(file.path);
+      this.syncState.set(np, {
+        hash,
+        version: result.version,
+        serverHash: result.content_hash
+      }), result.version != null && ((_c = this.baseStore) == null || _c.set(np, content, result.version));
+    }
+    this.issues.clear(file.path);
+  }
   async pushModifiedFiles(sinceTimestamp) {
     var _a, _b;
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
     total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
-    for (let i = 0; i < toSync.length; i += 10) {
-      let batch = toSync.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !1, (done, failedSoFar) => {
+      var _a2;
+      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
+        phase: "pushing",
+        current: Math.min(done, total),
+        total,
+        failed: failedSoFar
+      });
+    }), perFile, doneOffset = 0;
+    batchOutcome ? (pushed += batchOutcome.pushed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    for (let i = 0; i < perFile.length; i += 10) {
+      let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
       pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
         phase: "pushing",
-        current: Math.min(i + batch.length, total),
+        current: Math.min(doneOffset + i + batch.length, total),
         total,
         failed: 0
       });
@@ -4898,7 +5142,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       manifest && (manifestNotePaths = new Set(manifest.notes.map((n) => n.path)), manifestAttachPaths = new Set(manifest.attachments.map((a) => a.path)), manifestNoteCount = manifest.notes.length, manifestAttachCount = manifest.attachments.length);
     }
     let needsDeltaAsInventory = mode === "full" && this.lastSync !== "" && manifestNotePaths === null, since = mode !== "full" || needsDeltaAsInventory ? epoch : this.lastSync || epoch, [noteResp, attachResp] = await Promise.all([
-      this.api.getChanges(since),
+      this.fetchAllNoteChanges(since),
       this.api.getAttachmentChanges(since)
     ]), serverNotes = /* @__PURE__ */ new Map();
     for (let c of noteResp.changes)
@@ -4918,7 +5162,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (localNoteSet.has(path)) {
         let file = this.app.vault.getFileByPath(path);
         if (file) {
-          let content = await this.app.vault.cachedRead(file), localHash = fnv1a(content), serverChange = noteResp.changes.find((c) => c.path === path), serverHash = serverChange ? fnv1a(serverChange.content) : void 0;
+          let content = await this.app.vault.cachedRead(file), localHash = fnv1a(content), serverChange = noteResp.changes.find((c) => c.path === path), serverHash = (serverChange == null ? void 0 : serverChange.content) !== void 0 ? fnv1a(serverChange.content) : void 0;
           if (serverHash !== void 0 && localHash === serverHash)
             continue;
           let synced = this.syncState.get(path);
@@ -4997,8 +5241,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.invalidateIfVaultChanged();
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
-    for (let i = 0; i < toSync.length; i += 10) {
-      let batch = toSync.slice(i, i + 10), results = await Promise.all(
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
+      var _a2;
+      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
+        phase: "pushing",
+        current: done,
+        total,
+        failed: failedSoFar
+      });
+    }), perFile, doneOffset = 0;
+    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    for (let i = 0; i < perFile.length; i += 10) {
+      let batch = perFile.slice(i, i + 10), results = await Promise.all(
         batch.map(async (f) => {
           try {
             let ok2 = await this.pushFile(f, !0);
@@ -5012,7 +5266,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       pushed += results.filter(Boolean).length, (_c = this.onSyncProgress) == null || _c.call(this, {
         phase: "pushing",
-        current: i + batch.length,
+        current: doneOffset + i + batch.length,
         total,
         failed,
         currentPath: batch[batch.length - 1].path
@@ -5076,13 +5330,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.logEntry("delete", path, "error", errMsg(e));
       }
   }
-  /** Compute MD5 hex hash of a UTF-8 string using Web Crypto API. */
-  async md5(content) {
-    let data = new TextEncoder().encode(content), hashBuffer = await crypto.subtle.digest("MD5", data), hashArray = new Uint8Array(hashBuffer);
-    return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
-  }
   /** Reconcile local vault against server manifest.
-   *  Returns null if server doesn't support the manifest endpoint. */
+   *  Returns null if server doesn't support the manifest endpoint.
+   *
+   *  The manifest's content_hash is an opaque server-side HMAC — it can
+   *  NEVER be computed locally (the old implementation compared an MD5 of
+   *  local content against it, which could not match). Divergence is
+   *  instead detected from two locally-knowable facts:
+   *    - local edits: fnv1a(local) differs from the stored synced hash
+   *    - server drift: the manifest hash differs from the stored serverHash
+   *      (only meaningful when a serverHash was recorded — pre-rev sync
+   *      state stays quiet rather than re-pushing the whole vault). */
   async reconcile() {
     devLog().log("reconcile", "start"), rlog().info("reconcile", "Reconcile started");
     let manifest = await this.api.getManifest();
@@ -5096,8 +5354,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (!serverHash)
         missing.push(file.path);
       else {
-        let content = await this.app.vault.cachedRead(file);
-        await this.md5(content) !== serverHash && diverged.push(file.path), serverNotes.delete(file.path);
+        serverNotes.delete(file.path);
+        let stored = this.syncState.get((0, import_obsidian15.normalizePath)(file.path)), content = await this.app.vault.cachedRead(file), locallyModified = stored === void 0 || stored.hash !== fnv1a(content), serverDrifted = (stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash !== serverHash;
+        (locallyModified || serverDrifted) && diverged.push(file.path);
       }
     }
     let extraOnServer = [...serverNotes.keys()];

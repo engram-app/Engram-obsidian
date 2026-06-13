@@ -69,15 +69,21 @@ export interface NoteResponse {
 		created_at: string;
 		updated_at: string;
 		version?: number;
+		/** Opaque server-side content hash (HMAC) — store per path, never compute locally. */
+		content_hash?: string;
 	};
 	chunks_indexed: number;
 }
 
-/** A change entry from GET /notes/changes */
+/** A change entry from GET /notes/changes.
+ *  `content` is absent on `fields=meta` pages (protocol rev) — callers must
+ *  resolve the body before applying a non-deleted change. `content_hash` is
+ *  the server's opaque hash; compare it to the stored per-path serverHash. */
 export interface NoteChange {
 	path: string;
 	title: string;
-	content: string;
+	content?: string;
+	content_hash?: string;
 	folder: string;
 	tags: string[];
 	mtime: number;
@@ -90,6 +96,9 @@ export interface NoteChange {
 export interface ChangesResponse {
 	changes: NoteChange[];
 	server_time: string;
+	/** Protocol rev pagination — absent on pre-rev backends. */
+	has_more?: boolean;
+	next_cursor?: string | null;
 }
 
 /** Response from DELETE /notes/{path} */
@@ -104,8 +113,11 @@ export interface NoteStreamEvent {
 	path: string;
 	timestamp: number;
 	kind?: "note" | "attachment";
-	/** Inline note data — present when the server includes content in the broadcast. */
+	/** Inline note data — present when the server includes content in the broadcast.
+	 *  Dual-field transition: protocol-rev backends send BOTH content and
+	 *  content_hash for one release, then drop content. */
 	content?: string;
+	content_hash?: string;
 	title?: string;
 	folder?: string;
 	tags?: string[];
@@ -204,6 +216,8 @@ export interface NoteDetail {
 	path: string;
 	title: string;
 	content: string;
+	/** Opaque server-side content hash (protocol rev). */
+	content_hash?: string;
 	folder: string;
 	tags: string[];
 	mtime: number;
@@ -267,6 +281,9 @@ export interface FileSyncState {
 	hash: number;
 	/** Server version counter (monotonic, from backend). */
 	version?: number;
+	/** Last server content_hash seen for this path (opaque HMAC, from push
+	 *  responses / changes pages / broadcasts). Never computed locally. */
+	serverHash?: string;
 }
 
 /** A single entry in the sync log ring buffer. */
@@ -345,6 +362,25 @@ export interface SyncProgress {
 	currentPath?: string;
 }
 
+/** One entry in the POST /notes/batch response (protocol rev). */
+export interface BatchUpsertResult {
+	/** Echoes the input path — the correlation key. */
+	path: string;
+	status: "ok" | "conflict" | "error";
+	id?: string;
+	version?: number;
+	content_hash?: string;
+	/** Canonical (sanitized) path — rename the local file when it differs. */
+	server_path?: string;
+	server_note?: VersionConflictResponse["server_note"];
+	errors?: unknown;
+}
+
+/** Response from POST /notes/batch. */
+export interface BatchUpsertResponse {
+	results: BatchUpsertResult[];
+}
+
 /** 409 conflict response from the server when expected_version mismatches. */
 export interface VersionConflictResponse {
 	conflict: true;
@@ -353,6 +389,7 @@ export interface VersionConflictResponse {
 		path: string;
 		title: string;
 		content: string;
+		content_hash?: string;
 		folder: string;
 		tags: string[];
 		mtime: number;

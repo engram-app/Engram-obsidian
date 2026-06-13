@@ -12,6 +12,7 @@ import type {
 	AttachmentChangesResponse,
 	AttachmentDetail,
 	AttachmentResponse,
+	BatchUpsertResponse,
 	ChangesResponse,
 	DeleteResponse,
 	ManifestResponse,
@@ -91,9 +92,10 @@ export class EngramApi {
 		method: string,
 		path: string,
 		body?: unknown,
+		extraHeaders?: Record<string, string>,
 	): Promise<RequestUrlResponse> {
 		try {
-			return await this.sendRequest(method, path, body);
+			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
 			const status = (e as { status?: number }).status;
 			// 402 = tier limit exceeded. Convert to a typed error carrying the
@@ -110,7 +112,7 @@ export class EngramApi {
 			// recovery path, so retry only when invalidateAccessToken is supported.
 			if (status === 401 && this.authProvider?.invalidateAccessToken) {
 				this.authProvider.invalidateAccessToken();
-				return this.sendRequest(method, path, body);
+				return this.sendRequest(method, path, body, extraHeaders);
 			}
 			// Log every non-2xx with method/status/vault so failures are legible
 			// (a 404 here meaning "token's user doesn't own this vault" is easy
@@ -127,10 +129,12 @@ export class EngramApi {
 		method: string,
 		path: string,
 		body?: unknown,
+		extraHeaders?: Record<string, string>,
 	): Promise<RequestUrlResponse> {
 		const token = await this.getAuthToken();
 		const headers: Record<string, string> = {
 			Authorization: `Bearer ${token}`,
+			...extraHeaders,
 		};
 		if (this.vaultId) {
 			headers["X-Vault-ID"] = this.vaultId;
@@ -236,11 +240,37 @@ export class EngramApi {
 		}
 	}
 
-	/** Get changes since a timestamp. */
-	async getChanges(since: string): Promise<ChangesResponse> {
-		const encoded = encodeURIComponent(since);
-		const resp = await this.request("GET", `/notes/changes?since=${encoded}`);
+	/** Get changes since a timestamp.
+	 *  Protocol rev: pass limit/cursor to page through large vaults and
+	 *  fields:"meta" to receive content_hash instead of content. Pre-rev
+	 *  backends ignore the extra params and return the legacy full response. */
+	async getChanges(
+		since: string,
+		opts?: { limit?: number; cursor?: string; fields?: "meta" },
+	): Promise<ChangesResponse> {
+		const params = new URLSearchParams({ since });
+		if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+		if (opts?.cursor) params.set("cursor", opts.cursor);
+		if (opts?.fields) params.set("fields", opts.fields);
+		const resp = await this.request("GET", `/notes/changes?${params.toString()}`);
 		return resp.json as ChangesResponse;
+	}
+
+	/** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).
+	 *  Sends a fresh idempotency key per call — the server replays the cached
+	 *  response on retry instead of re-executing the batch. Throws with
+	 *  status 404/405 on pre-rev backends; callers fall back to per-note
+	 *  pushes. */
+	async pushNotesBatch(
+		notes: Array<{ path: string; content: string; mtime: number; version?: number }>,
+	): Promise<BatchUpsertResponse> {
+		const resp = await this.request(
+			"POST",
+			"/notes/batch",
+			{ notes },
+			{ "X-Idempotency-Key": crypto.randomUUID() },
+		);
+		return resp.json as BatchUpsertResponse;
 	}
 
 	/** Get full note by path. */

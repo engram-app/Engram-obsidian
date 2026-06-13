@@ -8,6 +8,9 @@ import type { SyncProgress } from "../src/types";
 // Mock the API — mirrors the pattern from sync.test.ts
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
+	// Legacy-backend shape: no batch endpoint — pushAll falls back to the
+	// per-note path these tests assert.
+	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	getAttachmentChanges: mock().mockResolvedValue({
 		changes: [],
@@ -376,7 +379,7 @@ describe("SyncEngine.computeSyncPlan", () => {
 		const plan = await engine.computeSyncPlan("full");
 
 		// Fix widened the since param to epoch so the delta returns the full server set
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z");
+		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
 		expect(plan.toPush.notes).toEqual([]);
 	});
 
