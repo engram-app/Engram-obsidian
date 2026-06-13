@@ -451,3 +451,94 @@ describe("reconcile (serverHash-based)", () => {
 		expect(result!.extraOnServer).toEqual(["server-only.md"]);
 	});
 });
+
+describe("pull resilience + fetch strategy", () => {
+	test("first sync pulls full-content pages; incremental pulls request meta", async () => {
+		const engine = createEngine();
+		// First sync: no lastSync → fields undefined (full content).
+		await engine.pull();
+		let opts = (mockApi.getChanges as jest.Mock).mock.calls[0][1];
+		expect(opts.fields).toBeUndefined();
+
+		// Incremental: lastSync present → hash-only pages.
+		(mockApi.getChanges as jest.Mock).mockClear();
+		engine.setLastSync("2026-06-12T00:00:00Z");
+		await engine.pull();
+		opts = (mockApi.getChanges as jest.Mock).mock.calls[0][1];
+		expect(opts.fields).toBe("meta");
+	});
+
+	test("a transient body-fetch failure pins lastSync so the change is retried", async () => {
+		const engine = createEngine();
+		engine.setLastSync("2026-06-12T00:00:00Z");
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [metaChange("flaky.md", "h-x", 1, { updated_at: "2026-06-12T00:01:00Z" })],
+			server_time: "2026-06-12T00:05:00Z",
+			has_more: false,
+			next_cursor: null,
+		});
+		(mockApi.getNote as jest.Mock).mockRejectedValueOnce({ status: 503 });
+
+		await engine.pull();
+
+		// lastSync pinned at the failed change, NOT advanced to server_time.
+		expect(engine.getLastSync()).toBe("2026-06-12T00:01:00Z");
+	});
+
+	test("a local apply failure does NOT pin lastSync (legacy skip semantics)", async () => {
+		const engine = createEngine();
+		engine.setLastSync("2026-06-12T00:00:00Z");
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [
+				metaChange("bad?.md", "h-bad", 1, {
+					updated_at: "2026-06-12T00:01:00Z",
+					content: "# inline",
+				}),
+			],
+			server_time: "2026-06-12T00:05:00Z",
+			has_more: false,
+			next_cursor: null,
+		});
+		(mockApp.vault.create as jest.Mock).mockRejectedValueOnce(
+			new Error("File name cannot contain ?"),
+		);
+
+		await engine.pull();
+
+		expect(engine.getLastSync()).toBe("2026-06-12T00:05:00Z");
+	});
+});
+
+describe("batch push sizing", () => {
+	test("notes above 10MB are routed through the single-note path", async () => {
+		const engine = createEngine();
+		const small = new TFile("small.md");
+		const huge = new TFile("huge.md", Date.now(), 11 * 1024 * 1024);
+		mockApp.vault.getFiles.mockReturnValue([small, huge]);
+		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
+			results: [
+				{
+					path: "small.md",
+					status: "ok",
+					id: "id-s",
+					version: 1,
+					content_hash: "h-s",
+					server_path: "small.md",
+				},
+			],
+		});
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({
+			note: { path: "huge.md", version: 1 },
+			chunks_indexed: 0,
+		});
+
+		await engine.pushAll();
+
+		const sent = (mockApi.pushNotesBatch as jest.Mock).mock.calls[0][0];
+		expect(sent.map((n: { path: string }) => n.path)).toEqual(["small.md"]);
+		// The oversized file went through pushNote (single-note 413 path owns
+		// the too_large Sync Center categorization).
+		const single = (mockApi.pushNote as jest.Mock).mock.calls;
+		expect(single.some((c: unknown[]) => c[0] === "huge.md")).toBe(true);
+	});
+});

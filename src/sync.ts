@@ -1036,6 +1036,15 @@ export class SyncEngine {
 		return { changes: all, server_time: serverTime };
 	}
 
+	/** True when a meta change can't be hash-skipped (body would be fetched). */
+	private changeNeedsBody(change: NoteChange): boolean {
+		if (change.content_hash === undefined) return true;
+		const normalized = normalizePath(change.path);
+		const stored = this.syncState.get(normalized);
+		const exists = this.app.vault.getFileByPath(normalized) !== null;
+		return !(exists && stored?.serverHash === change.content_hash);
+	}
+
 	/** Resolve a (possibly meta-only) change to one that carries content.
 	 *  Returns null when the change needs no work: the server hash matches the
 	 *  stored serverHash AND the local file still exists — only the version is
@@ -1078,7 +1087,8 @@ export class SyncEngine {
 			return 0;
 		}
 		if (this.pulling) return 0;
-		if (!this.lastSync) {
+		const isFirstSync = !this.lastSync;
+		if (isFirstSync) {
 			// First sync — use epoch
 			this.lastSync = "1970-01-01T00:00:00Z";
 		}
@@ -1089,13 +1099,33 @@ export class SyncEngine {
 		devLog().log("pull", `start since=${this.lastSync}`);
 		rlog().info("pull", `Pull started since=${this.lastSync}`);
 		try {
-			// Fetch note and attachment changes in parallel. Notes use hash-only
-			// pages (fields=meta) — bodies are fetched selectively for hashes we
-			// don't already hold.
+			// Fetch note and attachment changes in parallel. Incremental pulls
+			// use hash-only pages (fields=meta) — bodies are fetched selectively
+			// for hashes we don't already hold. First syncs pull full-content
+			// pages: every body is needed, and per-note GETs would turn a
+			// 1k-note cold pull into 1k requests (rate-limit suicide).
+			const fields = isFirstSync ? undefined : ("meta" as const);
 			const [noteResp, attachResp] = await Promise.all([
-				this.fetchAllNoteChanges(this.lastSync, "meta"),
+				this.fetchAllNoteChanges(this.lastSync, fields),
 				this.api.getAttachmentChanges(this.lastSync),
 			]);
+
+			// Escape hatch: when an incremental delta needs MANY bodies (another
+			// device bulk-pushed), refetch full-content pages once instead of
+			// issuing one GET per note.
+			let noteChanges = noteResp.changes;
+			if (fields === "meta") {
+				const needBodies = noteChanges.filter(
+					(c) => !c.deleted && c.content === undefined && this.changeNeedsBody(c),
+				).length;
+				if (needBodies > 50) {
+					devLog().log(
+						"pull",
+						`meta delta needs ${needBodies} bodies — refetching full pages`,
+					);
+					noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes;
+				}
+			}
 			devLog().log(
 				"pull",
 				`fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
@@ -1106,12 +1136,38 @@ export class SyncEngine {
 			);
 			let applied = 0;
 			let skipped = 0;
+			let oldestFailedUpdatedAt: string | null = null;
 
-			for (const change of noteResp.changes) {
+			for (const change of noteChanges) {
+				let resolved: NoteChange | null = null;
 				try {
-					const resolved = await this.resolveChangeBody(change);
+					resolved = await this.resolveChangeBody(change);
+				} catch (e) {
+					// Body-fetch failure is transient (network/5xx) — pin
+					// lastSync at this change so the next pull re-serves it;
+					// advancing past it would drop the change forever.
+					skipped++;
+					if (
+						oldestFailedUpdatedAt === null ||
+						change.updated_at < oldestFailedUpdatedAt
+					) {
+						oldestFailedUpdatedAt = change.updated_at;
+					}
+					const msg = errMsg(e);
+					devLog().log("error", `body fetch failed: ${change.path} — ${msg}`);
+					rlog().error(
+						"pull",
+						`Body fetch failed (will retry next pull): ${change.path} — ${msg}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+					continue;
+				}
+				try {
 					if (resolved && (await this.applyChange(resolved))) applied++;
 				} catch (e) {
+					// Local apply failure (e.g. illegal filename) is permanent —
+					// don't pin lastSync, or one bad file re-serves the whole
+					// window every poll. Legacy skip semantics.
 					skipped++;
 					const msg = errMsg(e);
 					// biome-ignore lint/suspicious/noConsole: error boundary
@@ -1148,12 +1204,16 @@ export class SyncEngine {
 			// don't abort the pull — folder sync is eventually consistent.
 			await this.syncExplicitFolders();
 
-			// Use the later server_time
+			// Use the later server_time — but never advance past the oldest
+			// failed change (the inclusive since filter re-serves it next pull).
 			const serverTime =
 				noteResp.server_time > attachResp.server_time
 					? noteResp.server_time
 					: attachResp.server_time;
-			this.lastSync = serverTime;
+			this.lastSync =
+				oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime
+					? oldestFailedUpdatedAt
+					: serverTime;
 			await this.saveData({ lastSync: this.lastSync });
 
 			devLog().log(
@@ -1276,8 +1336,10 @@ export class SyncEngine {
 		);
 		try {
 			const epoch = "1970-01-01T00:00:00Z";
+			// Full-content pages: a force pull needs (nearly) every body, so
+			// per-note GETs would multiply requests by the vault size.
 			const [noteResp, attachResp] = await Promise.all([
-				this.fetchAllNoteChanges(epoch, "meta"),
+				this.fetchAllNoteChanges(epoch),
 				this.api.getAttachmentChanges(epoch),
 			]);
 			devLog().log(
@@ -1765,13 +1827,11 @@ export class SyncEngine {
 					return false;
 				}
 				if (resolution.choice === "keep-local") {
-					// Push local version to server
+					// Push local version to server. pushFile records the fresh
+					// syncState (hash/version/serverHash) from the response — do
+					// NOT overwrite it with the stale pre-conflict version here.
 					try {
 						await this.pushFile(existing);
-						this.syncState.set(normalized, {
-							hash: localHash,
-							version: lastSynced?.version,
-						});
 						rlog().info(
 							"conflict",
 							`Resolved: ${change.path} → keep-local | pushOk=true`,
@@ -2180,35 +2240,32 @@ export class SyncEngine {
 	): Promise<{ pushed: number; failed: number } | null> {
 		if (this.batchPushUnsupported) return null;
 
+		// Notes above the single-note size cap go through pushFile so the
+		// server's 413 produces the proper too_large Sync Center issue
+		// (terminal, with sizeBytes) instead of an opaque batch error — and
+		// so one huge note can't blow the request-body limit for 99 others.
+		const MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024;
+		// The server's Plug.Parsers cap is 11MB per request body — flush a
+		// chunk before the accumulated content would approach it. Margin
+		// covers JSON envelope + multibyte expansion.
+		const BATCH_PAYLOAD_BUDGET = 6_000_000;
+		const BATCH_MAX_NOTES = 100;
+
 		let pushed = 0;
 		let failed = 0;
 		let done = 0;
 
-		for (let i = 0; i < files.length; i += 100) {
-			const chunk = files.slice(i, i + 100);
-			const entries: Array<{
-				file: TFile;
-				content: string;
-				hash: number;
-				version?: number;
-			}> = [];
+		type Entry = { file: TFile; content: string; hash: number; version?: number };
+		let chunk: Entry[] = [];
+		let chunkBytes = 0;
+		const oversized: TFile[] = [];
 
-			for (const file of chunk) {
-				const content = await this.app.vault.cachedRead(file);
-				const hash = fnv1a(content);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
-					done++;
-					this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
-					continue;
-				}
-				entries.push({ file, content, hash, version: existing?.version });
-			}
-
-			if (entries.length === 0) {
-				onProgress?.(done, failed);
-				continue;
-			}
+		// Sends the accumulated chunk. Returns "ok" | "unsupported" | "transport".
+		const flushChunk = async (): Promise<"ok" | "unsupported" | "transport"> => {
+			if (chunk.length === 0) return "ok";
+			const entries = chunk;
+			chunk = [];
+			chunkBytes = 0;
 
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
@@ -2258,39 +2315,120 @@ export class SyncEngine {
 					}
 				}
 				this.goOnline();
+				return "ok";
 			} catch (err) {
 				const status = (err as { status?: number }).status;
 				if (status === 404 || status === 405) {
 					// Pre-rev backend — remember and let the caller fall back.
 					this.batchPushUnsupported = true;
 					rlog().info("push", "Batch endpoint unsupported — falling back to per-note");
-					return null;
+					return "unsupported";
 				}
-				// Transport/server failure: queue this chunk + everything after
-				// it for retry, mirroring the single-push offline path.
-				const remaining = [...entries.map((e) => e.file), ...files.slice(i + 100)];
+				// Transport/server failure: queue this chunk for retry,
+				// mirroring the single-push offline path. The caller queues
+				// whatever hasn't been read yet.
 				rlog().error(
 					"push",
-					`Batch push failed (${errMsg(err)}) — queueing ${remaining.length} files`,
+					`Batch push failed (${errMsg(err)}) — queueing ${entries.length} files`,
 				);
-				for (const file of remaining) {
+				for (const e of entries) {
 					failed++;
+					done++;
 					await this.enqueueChange({
-						path: file.path,
+						path: e.file.path,
 						action: "upsert",
 						kind: "note",
-						mtime: file.stat.mtime / 1000,
+						mtime: e.file.stat.mtime / 1000,
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
 					});
 				}
-				onProgress?.(done, failed);
-				return { pushed, failed };
+				return "transport";
 			} finally {
 				for (const e of entries) {
 					this.pushing.delete(e.file.path);
 					this.markRecentlyPushed(e.file.path);
 				}
+			}
+		};
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i]!;
+			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
+				oversized.push(file);
+				continue;
+			}
+			const content = await this.app.vault.cachedRead(file);
+			const hash = fnv1a(content);
+			const existing = this.syncState.get(normalizePath(file.path));
+			if (!force && existing !== undefined && hash === existing.hash) {
+				done++;
+				this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
+				continue;
+			}
+
+			if (
+				chunk.length >= BATCH_MAX_NOTES ||
+				(chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET)
+			) {
+				const outcome = await flushChunk();
+				if (outcome === "unsupported") return null;
+				if (outcome === "transport") {
+					// Queue everything not yet attempted (incl. this file).
+					for (const rest of [file, ...files.slice(i + 1), ...oversized]) {
+						failed++;
+						await this.enqueueChange({
+							path: rest.path,
+							action: "upsert",
+							kind: "note",
+							mtime: rest.stat.mtime / 1000,
+							timestamp: Date.now(),
+							vaultId: this.settings.vaultId ?? undefined,
+						});
+					}
+					onProgress?.(done, failed);
+					return { pushed, failed };
+				}
+				onProgress?.(done, failed);
+			}
+
+			chunk.push({ file, content, hash, version: existing?.version });
+			chunkBytes += content.length;
+		}
+
+		const outcome = await flushChunk();
+		if (outcome === "unsupported") return null;
+		if (outcome === "transport") {
+			for (const rest of oversized) {
+				failed++;
+				await this.enqueueChange({
+					path: rest.path,
+					action: "upsert",
+					kind: "note",
+					mtime: rest.stat.mtime / 1000,
+					timestamp: Date.now(),
+					vaultId: this.settings.vaultId ?? undefined,
+				});
+			}
+			onProgress?.(done, failed);
+			return { pushed, failed };
+		}
+		onProgress?.(done, failed);
+
+		// Oversized notes: single-note path → server 413 → proper terminal
+		// too_large issue with sizeBytes.
+		for (const file of oversized) {
+			try {
+				const ok = await this.pushFile(file, force);
+				done++;
+				if (ok) {
+					pushed++;
+					this.logEntry("push", file.path, "ok");
+				}
+			} catch (e) {
+				done++;
+				failed++;
+				this.logEntry("push", file.path, "error", errMsg(e));
 			}
 			onProgress?.(done, failed);
 		}
@@ -2989,7 +3127,21 @@ export class SyncEngine {
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
 					}
-					await this.api.pushNote(entry.path, content, mtime!);
+					const resp = await this.api.pushNote(entry.path, content, mtime!);
+					// Record fresh sync state — without this the replayed push
+					// leaves a stale version (next push 409s avoidably) and no
+					// serverHash (hash-skip dedupe misses the echo).
+					if (!("conflict" in resp) && content !== undefined) {
+						const np = normalizePath(entry.path);
+						this.syncState.set(np, {
+							hash: fnv1a(content),
+							version: resp.note.version,
+							serverHash: resp.note.content_hash,
+						});
+						if (resp.note.version != null) {
+							this.baseStore?.set(np, content, resp.note.version);
+						}
+					}
 				}
 				await this.queue.dequeue(entry.path, this.settings.vaultId ?? undefined);
 				flushed++;

@@ -4319,6 +4319,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return { changes: all, server_time: serverTime };
   }
+  /** True when a meta change can't be hash-skipped (body would be fetched). */
+  changeNeedsBody(change) {
+    if (change.content_hash === void 0) return !0;
+    let normalized = (0, import_obsidian15.normalizePath)(change.path), stored = this.syncState.get(normalized);
+    return !(this.app.vault.getFileByPath(normalized) !== null && (stored == null ? void 0 : stored.serverHash) === change.content_hash);
+  }
   /** Resolve a (possibly meta-only) change to one that carries content.
    *  Returns null when the change needs no work: the server hash matches the
    *  stored serverHash AND the local file still exists — only the version is
@@ -4348,12 +4354,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
     if (this.pulling) return 0;
-    this.lastSync || (this.lastSync = "1970-01-01T00:00:00Z"), this.pulling = !0, this.lastError = "", this.emitStatus(), devLog().log("pull", `start since=${this.lastSync}`), rlog().info("pull", `Pull started since=${this.lastSync}`);
+    let isFirstSync = !this.lastSync;
+    isFirstSync && (this.lastSync = "1970-01-01T00:00:00Z"), this.pulling = !0, this.lastError = "", this.emitStatus(), devLog().log("pull", `start since=${this.lastSync}`), rlog().info("pull", `Pull started since=${this.lastSync}`);
     try {
-      let [noteResp, attachResp] = await Promise.all([
-        this.fetchAllNoteChanges(this.lastSync, "meta"),
+      let fields = isFirstSync ? void 0 : "meta", [noteResp, attachResp] = await Promise.all([
+        this.fetchAllNoteChanges(this.lastSync, fields),
         this.api.getAttachmentChanges(this.lastSync)
-      ]);
+      ]), noteChanges = noteResp.changes;
+      if (fields === "meta") {
+        let needBodies = noteChanges.filter(
+          (c) => !c.deleted && c.content === void 0 && this.changeNeedsBody(c)
+        ).length;
+        needBodies > 50 && (devLog().log(
+          "pull",
+          `meta delta needs ${needBodies} bodies \u2014 refetching full pages`
+        ), noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes);
+      }
       devLog().log(
         "pull",
         `fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
@@ -4361,10 +4377,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         "pull",
         `Fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
       );
-      let applied = 0, skipped = 0;
-      for (let change of noteResp.changes)
+      let applied = 0, skipped = 0, oldestFailedUpdatedAt = null;
+      for (let change of noteChanges) {
+        let resolved = null;
         try {
-          let resolved = await this.resolveChangeBody(change);
+          resolved = await this.resolveChangeBody(change);
+        } catch (e) {
+          skipped++, (oldestFailedUpdatedAt === null || change.updated_at < oldestFailedUpdatedAt) && (oldestFailedUpdatedAt = change.updated_at);
+          let msg = errMsg(e);
+          devLog().log("error", `body fetch failed: ${change.path} \u2014 ${msg}`), rlog().error(
+            "pull",
+            `Body fetch failed (will retry next pull): ${change.path} \u2014 ${msg}`,
+            e instanceof Error ? e.stack : void 0
+          );
+          continue;
+        }
+        try {
           resolved && await this.applyChange(resolved) && applied++;
         } catch (e) {
           skipped++;
@@ -4375,6 +4403,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             e instanceof Error ? e.stack : void 0
           );
         }
+      }
       for (let change of attachResp.changes)
         try {
           await this.applyAttachmentChange(change) && applied++;
@@ -4389,7 +4418,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
       await this.syncExplicitFolders();
       let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
-      return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
+      return this.lastSync = oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime ? oldestFailedUpdatedAt : serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
         "pull",
         `done \u2014 applied ${applied}, skipped ${skipped}, lastSync=${this.lastSync}`
       ), rlog().info("pull", `Pull done \u2014 applied ${applied}, skipped ${skipped}`), applied;
@@ -4465,7 +4494,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
     try {
       let epoch = "1970-01-01T00:00:00Z", [noteResp, attachResp] = await Promise.all([
-        this.fetchAllNoteChanges(epoch, "meta"),
+        this.fetchAllNoteChanges(epoch),
         this.api.getAttachmentChanges(epoch)
       ]);
       devLog().log(
@@ -4766,10 +4795,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return rlog().info("conflict", `Resolved: ${change.path} \u2192 skip`), !1;
         if (resolution.choice === "keep-local") {
           try {
-            await this.pushFile(existing), this.syncState.set(normalized, {
-              hash: localHash,
-              version: lastSynced == null ? void 0 : lastSynced.version
-            }), rlog().info(
+            await this.pushFile(existing), rlog().info(
               "conflict",
               `Resolved: ${change.path} \u2192 keep-local | pushOk=true`
             );
@@ -4997,21 +5023,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async pushNotesViaBatch(files, force, onProgress) {
     var _a, _b;
     if (this.batchPushUnsupported) return null;
-    let pushed = 0, failed = 0, done = 0;
-    for (let i = 0; i < files.length; i += 100) {
-      let chunk = files.slice(i, i + 100), entries = [];
-      for (let file of chunk) {
-        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian15.normalizePath)(file.path));
-        if (!force && existing !== void 0 && hash === existing.hash) {
-          done++, this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
-          continue;
-        }
-        entries.push({ file, content, hash, version: existing == null ? void 0 : existing.version });
-      }
-      if (entries.length === 0) {
-        onProgress == null || onProgress(done, failed);
-        continue;
-      }
+    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
+      var _a2, _b2;
+      if (chunk.length === 0) return "ok";
+      let entries = chunk;
+      chunk = [], chunkBytes = 0;
       for (let e of entries) this.pushing.add(e.file.path);
       try {
         await this.paceRequest();
@@ -5035,7 +5051,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.pushing.delete(e.file.path), await this.pushFile(e.file, !0) && pushed++;
           else {
             failed++;
-            let msg = JSON.stringify((_a = r.errors) != null ? _a : "batch error");
+            let msg = JSON.stringify((_a2 = r.errors) != null ? _a2 : "batch error");
             this.issues.record({
               path: e.file.path,
               kind: "note",
@@ -5047,29 +5063,81 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), this.logEntry("push", e.file.path, "error", msg);
           }
         }
-        this.goOnline();
+        return this.goOnline(), "ok";
       } catch (err) {
         let status = err.status;
         if (status === 404 || status === 405)
-          return this.batchPushUnsupported = !0, rlog().info("push", "Batch endpoint unsupported \u2014 falling back to per-note"), null;
-        let remaining = [...entries.map((e) => e.file), ...files.slice(i + 100)];
+          return this.batchPushUnsupported = !0, rlog().info("push", "Batch endpoint unsupported \u2014 falling back to per-note"), "unsupported";
         rlog().error(
           "push",
-          `Batch push failed (${errMsg(err)}) \u2014 queueing ${remaining.length} files`
+          `Batch push failed (${errMsg(err)}) \u2014 queueing ${entries.length} files`
         );
-        for (let file of remaining)
-          failed++, await this.enqueueChange({
-            path: file.path,
+        for (let e of entries)
+          failed++, done++, await this.enqueueChange({
+            path: e.file.path,
             action: "upsert",
             kind: "note",
-            mtime: file.stat.mtime / 1e3,
+            mtime: e.file.stat.mtime / 1e3,
             timestamp: Date.now(),
-            vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
+            vaultId: (_b2 = this.settings.vaultId) != null ? _b2 : void 0
           });
-        return onProgress == null || onProgress(done, failed), { pushed, failed };
+        return "transport";
       } finally {
         for (let e of entries)
           this.pushing.delete(e.file.path), this.markRecentlyPushed(e.file.path);
+      }
+    };
+    for (let i = 0; i < files.length; i++) {
+      let file = files[i];
+      if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
+        oversized.push(file);
+        continue;
+      }
+      let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian15.normalizePath)(file.path));
+      if (!force && existing !== void 0 && hash === existing.hash) {
+        done++, this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
+        continue;
+      }
+      if (chunk.length >= BATCH_MAX_NOTES || chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET) {
+        let outcome2 = await flushChunk();
+        if (outcome2 === "unsupported") return null;
+        if (outcome2 === "transport") {
+          for (let rest of [file, ...files.slice(i + 1), ...oversized])
+            failed++, await this.enqueueChange({
+              path: rest.path,
+              action: "upsert",
+              kind: "note",
+              mtime: rest.stat.mtime / 1e3,
+              timestamp: Date.now(),
+              vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
+            });
+          return onProgress == null || onProgress(done, failed), { pushed, failed };
+        }
+        onProgress == null || onProgress(done, failed);
+      }
+      chunk.push({ file, content, hash, version: existing == null ? void 0 : existing.version }), chunkBytes += content.length;
+    }
+    let outcome = await flushChunk();
+    if (outcome === "unsupported") return null;
+    if (outcome === "transport") {
+      for (let rest of oversized)
+        failed++, await this.enqueueChange({
+          path: rest.path,
+          action: "upsert",
+          kind: "note",
+          mtime: rest.stat.mtime / 1e3,
+          timestamp: Date.now(),
+          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
+        });
+      return onProgress == null || onProgress(done, failed), { pushed, failed };
+    }
+    onProgress == null || onProgress(done, failed);
+    for (let file of oversized) {
+      try {
+        let ok = await this.pushFile(file, force);
+        done++, ok && (pushed++, this.logEntry("push", file.path, "ok"));
+      } catch (e) {
+        done++, failed++, this.logEntry("push", file.path, "error", errMsg(e));
       }
       onProgress == null || onProgress(done, failed);
     }
@@ -5400,7 +5468,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Flush queued changes oldest-first. Stops on first failure. */
   async flushQueue() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -5441,9 +5509,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
-          await this.api.pushNote(entry.path, content, mtime);
+          let resp = await this.api.pushNote(entry.path, content, mtime);
+          if (!("conflict" in resp) && content !== void 0) {
+            let np = (0, import_obsidian15.normalizePath)(entry.path);
+            this.syncState.set(np, {
+              hash: fnv1a(content),
+              version: resp.note.version,
+              serverHash: resp.note.content_hash
+            }), resp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, resp.note.version));
+          }
         }
-        await this.queue.dequeue(entry.path, (_c = this.settings.vaultId) != null ? _c : void 0), flushed++;
+        await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), flushed++;
       } catch (e) {
         this.goOffline();
         break;
