@@ -9,6 +9,9 @@ import { __noticeCapture } from "./__mocks__/obsidian";
 // Mock the API
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
+	// Legacy-backend shape: no batch endpoint — engine falls back to per-note
+	// pushes, which is exactly what these tests assert.
+	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
@@ -139,6 +142,7 @@ beforeEach(() => {
 			return Promise.resolve("");
 		});
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
+	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockRejectedValue({ status: 404 });
 });
 
 afterEach(() => {
@@ -603,7 +607,7 @@ describe("SyncEngine.pull (fresh install)", () => {
 
 		expect(pulled).toBe(1);
 		// Should have called getChanges with epoch (the default for empty lastSync)
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z");
+		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
 		expect(mockApp.vault.create).toHaveBeenCalledWith(
 			"Notes/Existing.md",
 			"# Existing\n\nAlready on server",
@@ -643,7 +647,7 @@ describe("SyncEngine.pull (fresh install)", () => {
 		const result = await engine.fullSync();
 
 		expect(result.pulled).toBe(2);
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z");
+		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
 		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
 		// lastSync should be updated for future syncs
 		expect(engine.getLastSync()).toBe("2026-03-02T00:00:00Z");
@@ -670,7 +674,7 @@ describe("SyncEngine.pull (fresh install)", () => {
 		});
 
 		await engine.pull();
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z");
+		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
 		expect(engine.getLastSync()).toBe("2026-03-01T12:00:00Z");
 
 		// Second pull — should use the saved timestamp, not epoch
@@ -680,7 +684,7 @@ describe("SyncEngine.pull (fresh install)", () => {
 		});
 
 		await engine.pull();
-		expect(mockApi.getChanges).toHaveBeenCalledWith("2026-03-01T12:00:00Z");
+		expect(mockApi.getChanges).toHaveBeenCalledWith("2026-03-01T12:00:00Z", expect.anything());
 	});
 });
 

@@ -15,6 +15,7 @@ import type { SyncLog } from "./sync-log";
 import { threeWayMerge } from "./three-way-merge";
 import type {
 	AttachmentChange,
+	BatchUpsertResult,
 	ConflictInfo,
 	ConflictResolution,
 	EngramSyncSettings,
@@ -758,6 +759,7 @@ export class SyncEngine {
 								this.syncState.set(np, {
 									hash: fnv1a(merge.merged),
 									version: mergeResp.note.version,
+									serverHash: mergeResp.note.content_hash,
 								});
 								if (mergeResp.note.version != null) {
 									this.baseStore?.set(np, merge.merged, mergeResp.note.version);
@@ -795,7 +797,11 @@ export class SyncEngine {
 						const forceResp = await this.api.pushNote(file.path, content, mtime);
 						if (!("conflict" in forceResp)) {
 							const np = normalizePath(file.path);
-							this.syncState.set(np, { hash, version: forceResp.note.version });
+							this.syncState.set(np, {
+								hash,
+								version: forceResp.note.version,
+								serverHash: forceResp.note.content_hash,
+							});
 							if (forceResp.note.version != null) {
 								this.baseStore?.set(np, content, forceResp.note.version);
 							}
@@ -808,6 +814,7 @@ export class SyncEngine {
 							this.syncState.set(np, {
 								hash: fnv1a(serverNote.content),
 								version: serverNote.version,
+								serverHash: serverNote.content_hash,
 							});
 							this.baseStore?.set(np, serverNote.content, serverNote.version);
 						}
@@ -826,6 +833,7 @@ export class SyncEngine {
 							this.syncState.set(np, {
 								hash: fnv1a(resolution.mergedContent),
 								version: mergeResp.note.version,
+								serverHash: mergeResp.note.content_hash,
 							});
 							if (mergeResp.note.version != null) {
 								this.baseStore?.set(
@@ -861,13 +869,21 @@ export class SyncEngine {
 						);
 					}
 					this.syncState.delete(normalizePath(file.path));
-					this.syncState.set(normalizePath(serverPath), { hash, version: serverVersion });
+					this.syncState.set(normalizePath(serverPath), {
+						hash,
+						version: serverVersion,
+						serverHash: resp.note.content_hash,
+					});
 					this.baseStore?.delete(normalizePath(file.path));
 					if (serverVersion != null) {
 						this.baseStore?.set(normalizePath(serverPath), content, serverVersion);
 					}
 				} else {
-					this.syncState.set(normalizePath(file.path), { hash, version: serverVersion });
+					this.syncState.set(normalizePath(file.path), {
+						hash,
+						version: serverVersion,
+						serverHash: resp.note.content_hash,
+					});
 					if (serverVersion != null) {
 						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
 					}
@@ -998,13 +1014,81 @@ export class SyncEngine {
 	// --- Pull: Engram → local vault ---
 
 	/** Pull remote changes and apply to vault. */
+	/** Page through GET /notes/changes until has_more=false (protocol rev).
+	 *  Pre-rev backends return no has_more — the loop exits after one page,
+	 *  preserving legacy behavior. fields:"meta" requests hash-only pages. */
+	private async fetchAllNoteChanges(
+		since: string,
+		fields?: "meta",
+	): Promise<{ changes: NoteChange[]; server_time: string }> {
+		const all: NoteChange[] = [];
+		let cursor: string | undefined;
+		let serverTime = "";
+		// Loop ceiling is corruption protection (cursor not advancing), not a
+		// real limit: 10k pages × 500 = 5M notes.
+		for (let page = 0; page < 10_000; page++) {
+			const resp = await this.api.getChanges(since, { limit: 500, cursor, fields });
+			all.push(...resp.changes);
+			serverTime = resp.server_time;
+			if (!resp.has_more || !resp.next_cursor) break;
+			cursor = resp.next_cursor;
+		}
+		return { changes: all, server_time: serverTime };
+	}
+
+	/** True when a meta change can't be hash-skipped (body would be fetched). */
+	private changeNeedsBody(change: NoteChange): boolean {
+		if (change.content_hash === undefined) return true;
+		const normalized = normalizePath(change.path);
+		const stored = this.syncState.get(normalized);
+		const exists = this.app.vault.getFileByPath(normalized) !== null;
+		return !(exists && stored?.serverHash === change.content_hash);
+	}
+
+	/** Resolve a (possibly meta-only) change to one that carries content.
+	 *  Returns null when the change needs no work: the server hash matches the
+	 *  stored serverHash AND the local file still exists — only the version is
+	 *  advanced so the next push doesn't 409. */
+	private async resolveChangeBody(
+		change: NoteChange,
+		opts: { skipUnchanged: boolean } = { skipUnchanged: true },
+	): Promise<NoteChange | null> {
+		if (change.deleted) return change;
+
+		const normalized = normalizePath(change.path);
+
+		if (opts.skipUnchanged && change.content_hash !== undefined) {
+			const stored = this.syncState.get(normalized);
+			const exists = this.app.vault.getFileByPath(normalized) !== null;
+			if (exists && stored?.serverHash === change.content_hash) {
+				this.syncState.set(normalized, {
+					...stored,
+					version: change.version ?? stored.version,
+				});
+				devLog().log("pull", `skip (hash match): ${change.path}`);
+				return null;
+			}
+		}
+
+		if (change.content !== undefined) return change;
+
+		const note = await this.api.getNote(change.path);
+		return {
+			...change,
+			content: note.content,
+			content_hash: note.content_hash ?? change.content_hash,
+			version: note.version ?? change.version,
+		};
+	}
+
 	async pull(): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
 		}
 		if (this.pulling) return 0;
-		if (!this.lastSync) {
+		const isFirstSync = !this.lastSync;
+		if (isFirstSync) {
 			// First sync — use epoch
 			this.lastSync = "1970-01-01T00:00:00Z";
 		}
@@ -1015,11 +1099,33 @@ export class SyncEngine {
 		devLog().log("pull", `start since=${this.lastSync}`);
 		rlog().info("pull", `Pull started since=${this.lastSync}`);
 		try {
-			// Fetch note and attachment changes in parallel
+			// Fetch note and attachment changes in parallel. Incremental pulls
+			// use hash-only pages (fields=meta) — bodies are fetched selectively
+			// for hashes we don't already hold. First syncs pull full-content
+			// pages: every body is needed, and per-note GETs would turn a
+			// 1k-note cold pull into 1k requests (rate-limit suicide).
+			const fields = isFirstSync ? undefined : ("meta" as const);
 			const [noteResp, attachResp] = await Promise.all([
-				this.api.getChanges(this.lastSync),
+				this.fetchAllNoteChanges(this.lastSync, fields),
 				this.api.getAttachmentChanges(this.lastSync),
 			]);
+
+			// Escape hatch: when an incremental delta needs MANY bodies (another
+			// device bulk-pushed), refetch full-content pages once instead of
+			// issuing one GET per note.
+			let noteChanges = noteResp.changes;
+			if (fields === "meta") {
+				const needBodies = noteChanges.filter(
+					(c) => !c.deleted && c.content === undefined && this.changeNeedsBody(c),
+				).length;
+				if (needBodies > 50) {
+					devLog().log(
+						"pull",
+						`meta delta needs ${needBodies} bodies — refetching full pages`,
+					);
+					noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes;
+				}
+			}
 			devLog().log(
 				"pull",
 				`fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
@@ -1030,11 +1136,38 @@ export class SyncEngine {
 			);
 			let applied = 0;
 			let skipped = 0;
+			let oldestFailedUpdatedAt: string | null = null;
 
-			for (const change of noteResp.changes) {
+			for (const change of noteChanges) {
+				let resolved: NoteChange | null = null;
 				try {
-					if (await this.applyChange(change)) applied++;
+					resolved = await this.resolveChangeBody(change);
 				} catch (e) {
+					// Body-fetch failure is transient (network/5xx) — pin
+					// lastSync at this change so the next pull re-serves it;
+					// advancing past it would drop the change forever.
+					skipped++;
+					if (
+						oldestFailedUpdatedAt === null ||
+						change.updated_at < oldestFailedUpdatedAt
+					) {
+						oldestFailedUpdatedAt = change.updated_at;
+					}
+					const msg = errMsg(e);
+					devLog().log("error", `body fetch failed: ${change.path} — ${msg}`);
+					rlog().error(
+						"pull",
+						`Body fetch failed (will retry next pull): ${change.path} — ${msg}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+					continue;
+				}
+				try {
+					if (resolved && (await this.applyChange(resolved))) applied++;
+				} catch (e) {
+					// Local apply failure (e.g. illegal filename) is permanent —
+					// don't pin lastSync, or one bad file re-serves the whole
+					// window every poll. Legacy skip semantics.
 					skipped++;
 					const msg = errMsg(e);
 					// biome-ignore lint/suspicious/noConsole: error boundary
@@ -1071,12 +1204,16 @@ export class SyncEngine {
 			// don't abort the pull — folder sync is eventually consistent.
 			await this.syncExplicitFolders();
 
-			// Use the later server_time
+			// Use the later server_time — but never advance past the oldest
+			// failed change (the inclusive since filter re-serves it next pull).
 			const serverTime =
 				noteResp.server_time > attachResp.server_time
 					? noteResp.server_time
 					: attachResp.server_time;
-			this.lastSync = serverTime;
+			this.lastSync =
+				oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime
+					? oldestFailedUpdatedAt
+					: serverTime;
 			await this.saveData({ lastSync: this.lastSync });
 
 			devLog().log(
@@ -1199,8 +1336,10 @@ export class SyncEngine {
 		);
 		try {
 			const epoch = "1970-01-01T00:00:00Z";
+			// Full-content pages: a force pull needs (nearly) every body, so
+			// per-note GETs would multiply requests by the vault size.
 			const [noteResp, attachResp] = await Promise.all([
-				this.api.getChanges(epoch),
+				this.fetchAllNoteChanges(epoch),
 				this.api.getAttachmentChanges(epoch),
 			]);
 			devLog().log(
@@ -1228,15 +1367,33 @@ export class SyncEngine {
 						noteChanges.push(change);
 						continue;
 					}
-					const existing = this.app.vault.getFileByPath(normalizePath(change.path));
+					const normalized = normalizePath(change.path);
+					const existing = this.app.vault.getFileByPath(normalized);
 					if (existing) {
 						const localContent = await this.app.vault.cachedRead(existing);
-						if (localContent === change.content) {
-							// Content identical — update sync state but skip the work
-							const normalized = normalizePath(change.path);
+						const stored = this.syncState.get(normalized);
+						const localUnchanged =
+							stored !== undefined && stored.hash === fnv1a(localContent);
+						// Protocol rev: meta pages carry content_hash, not content.
+						// (server hash unchanged, local unchanged) proves there is no
+						// work without fetching the body.
+						if (
+							change.content_hash !== undefined &&
+							stored?.serverHash === change.content_hash &&
+							localUnchanged
+						) {
+							this.syncState.set(normalized, {
+								...stored,
+								version: change.version ?? stored.version,
+							});
+							continue;
+						}
+						// Legacy backend: full content present — compare directly.
+						if (change.content !== undefined && localContent === change.content) {
 							this.syncState.set(normalized, {
 								hash: fnv1a(localContent),
 								version: change.version,
+								serverHash: change.content_hash,
 							});
 							if (change.version != null) {
 								this.baseStore?.set(normalized, change.content, change.version);
@@ -1277,7 +1434,10 @@ export class SyncEngine {
 				const results = await Promise.all(
 					batch.map(async (change) => {
 						try {
-							const ok = await this.applyChange(change, true);
+							const resolved = await this.resolveChangeBody(change, {
+								skipUnchanged: false,
+							});
+							const ok = resolved ? await this.applyChange(resolved, true) : false;
 							if (ok) {
 								this.logEntry("pull", change.path, "ok");
 							} else {
@@ -1411,6 +1571,23 @@ export class SyncEngine {
 
 		const isAttachment = event.kind === "attachment";
 
+		// Protocol rev — hash-compare dedupe: if the event's content_hash
+		// matches the server hash we already hold for this path, the local
+		// copy is current; skip without touching the vault or the network.
+		if (event.event_type === "upsert" && !isAttachment && event.content_hash !== undefined) {
+			const stored = this.syncState.get(normalizePath(event.path));
+			if (stored?.serverHash === event.content_hash) {
+				if (event.version != null && event.version !== stored.version) {
+					this.syncState.set(normalizePath(event.path), {
+						...stored,
+						version: event.version,
+					});
+				}
+				rlog().info("ws", `Hash skip: ${event.path}`);
+				return;
+			}
+		}
+
 		if (event.event_type === "delete") {
 			const normalized = normalizePath(event.path);
 			const existing = this.app.vault.getFileByPath(normalized);
@@ -1437,11 +1614,15 @@ export class SyncEngine {
 						attachment.content_base64,
 					);
 				} else if (event.content !== undefined) {
-					// Use inline content from the broadcast — no extra HTTP roundtrip
+					// Use inline content from the broadcast — no extra HTTP
+					// roundtrip. (Dual-field transition: backends send content
+					// for one more release; afterwards only content_hash and the
+					// fetch branch below applies.)
 					await this.applyChange({
 						path: event.path,
 						title: event.title ?? "",
 						content: event.content,
+						content_hash: event.content_hash,
 						folder: event.folder ?? "",
 						tags: event.tags ?? [],
 						mtime: event.mtime ?? Date.now(),
@@ -1450,17 +1631,19 @@ export class SyncEngine {
 						version: event.version,
 					});
 				} else {
-					// Fallback: fetch content via GET (e.g., folder rename broadcasts)
+					// Hash-only broadcast (or folder rename): fetch the body.
 					const note = await this.api.getNote(event.path);
 					await this.applyChange({
 						path: note.path,
 						title: note.title,
 						content: note.content,
+						content_hash: note.content_hash ?? event.content_hash,
 						folder: note.folder,
 						tags: note.tags,
 						mtime: note.mtime,
 						updated_at: note.updated_at,
 						deleted: false,
+						version: note.version ?? event.version,
 					});
 				}
 			} catch (e) {
@@ -1537,6 +1720,13 @@ export class SyncEngine {
 			return false;
 		}
 
+		// Meta-only changes must be resolved to a body before apply — reaching
+		// here without content is a caller bug, not a recoverable state.
+		const content = change.content;
+		if (content === undefined) {
+			throw new Error(`applyChange: missing content for ${change.path}`);
+		}
+
 		// Create or update the file
 		const existing = this.app.vault.getFileByPath(normalized);
 		if (existing) {
@@ -1560,10 +1750,10 @@ export class SyncEngine {
 				// just stale and the remote is newer.
 				const localMtimeS = existing.stat.mtime / 1000;
 				const stale = change.mtime - localMtimeS > STALE_THRESHOLD_S;
-				localModified = stale ? false : localContent !== change.content;
+				localModified = stale ? false : localContent !== content;
 			}
 
-			if (!forceOverwrite && localModified && localContent !== change.content) {
+			if (!forceOverwrite && localModified && localContent !== content) {
 				// Both sides differ — real conflict
 				const localMtime = existing.stat.mtime / 1000;
 
@@ -1578,13 +1768,13 @@ export class SyncEngine {
 						` | localHash=${localHash} | syncedHash=${lastSyncedHash ?? "none"}` +
 						` | localMtime=${new Date(localMtime * 1000).toISOString()}` +
 						` | remoteMtime=${new Date(change.mtime * 1000).toISOString()}` +
-						` | localLen=${localContent.length} | remoteLen=${change.content.length}`,
+						` | localLen=${localContent.length} | remoteLen=${content.length}`,
 				);
 
 				// Attempt 3-way auto-merge if we have a base
 				const pullBase = this.baseStore?.get(normalized);
 				if (pullBase) {
-					const merge = threeWayMerge(pullBase.content, localContent, change.content);
+					const merge = threeWayMerge(pullBase.content, localContent, content);
 					if (merge.clean) {
 						await this.modifyFile(existing, merge.merged);
 						this.syncState.set(normalized, {
@@ -1608,7 +1798,7 @@ export class SyncEngine {
 							"conflict",
 							`Auto-merged (pull): ${change.path}` +
 								` | baseLen=${pullBase.content.length} | localLen=${localContent.length}` +
-								` | remoteLen=${change.content.length} | mergedLen=${merge.merged.length}`,
+								` | remoteLen=${content.length} | mergedLen=${merge.merged.length}`,
 						);
 						return true;
 					}
@@ -1617,7 +1807,7 @@ export class SyncEngine {
 						`Auto-merge failed (pull): ${change.path}` +
 							` | conflicts=${merge.conflicts.length}` +
 							` | baseLen=${pullBase.content.length} | localLen=${localContent.length}` +
-							` | remoteLen=${change.content.length}`,
+							` | remoteLen=${content.length}`,
 					);
 				}
 
@@ -1626,7 +1816,7 @@ export class SyncEngine {
 					path: change.path,
 					localContent,
 					localMtime,
-					remoteContent: change.content,
+					remoteContent: content,
 					remoteMtime: change.mtime,
 					baseContent: pullBase?.content,
 					vaultName: this.app.vault.getName(),
@@ -1637,13 +1827,11 @@ export class SyncEngine {
 					return false;
 				}
 				if (resolution.choice === "keep-local") {
-					// Push local version to server
+					// Push local version to server. pushFile records the fresh
+					// syncState (hash/version/serverHash) from the response — do
+					// NOT overwrite it with the stale pre-conflict version here.
 					try {
 						await this.pushFile(existing);
-						this.syncState.set(normalized, {
-							hash: localHash,
-							version: lastSynced?.version,
-						});
 						rlog().info(
 							"conflict",
 							`Resolved: ${change.path} → keep-local | pushOk=true`,
@@ -1663,15 +1851,15 @@ export class SyncEngine {
 					const baseName = normalized.replace(/\.md$/, "");
 					const conflictPath = `${baseName} (conflict ${date}).md`;
 					try {
-						await this.createFileWithFolders(conflictPath, change.content);
+						await this.createFileWithFolders(conflictPath, content);
 						this.syncState.set(normalizePath(conflictPath), {
-							hash: fnv1a(change.content),
+							hash: fnv1a(content),
 							version: change.version,
 						});
 						if (change.version != null) {
 							this.baseStore?.set(
 								normalizePath(conflictPath),
-								change.content,
+								content,
 								change.version,
 							);
 						}
@@ -1719,40 +1907,42 @@ export class SyncEngine {
 				}
 				// "keep-remote" falls through to overwrite below
 				rlog().info("conflict", `Resolved: ${change.path} → keep-remote`);
-			} else if (localContent === change.content) {
+			} else if (localContent === content) {
 				// Content identical — nothing to do
 				devLog().log("pull", `applyChange SKIP (identical): ${change.path}`);
-				this.syncState.set(normalized, { hash: localHash, version: change.version });
+				this.syncState.set(normalized, {
+					hash: localHash,
+					version: change.version,
+					serverHash: change.content_hash,
+				});
 				if (change.version != null) {
-					this.baseStore?.set(normalized, change.content, change.version);
+					this.baseStore?.set(normalized, content, change.version);
 				}
 				rlog().info("pull", `Unchanged: ${change.path}`);
 				return false;
 			}
 
 			// Apply remote change (no conflict, or keep-remote chosen)
-			devLog().log(
-				"pull",
-				`applyChange OVERWRITE: ${change.path} (len=${change.content.length})`,
-			);
-			await this.modifyFile(existing, change.content);
+			devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`);
+			await this.modifyFile(existing, content);
 			this.syncState.set(normalized, {
-				hash: fnv1a(change.content),
+				hash: fnv1a(content),
 				version: change.version,
+				serverHash: change.content_hash,
 			});
 			if (change.version != null) {
-				this.baseStore?.set(normalized, change.content, change.version);
+				this.baseStore?.set(normalized, content, change.version);
 			}
 			rlog().info(
 				"pull",
-				`Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${change.content.length}`,
+				`Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`,
 			);
 			return true;
 		}
 		// New file — create it
-		devLog().log("pull", `applyChange CREATE: ${normalized} (len=${change.content.length})`);
+		devLog().log("pull", `applyChange CREATE: ${normalized} (len=${content.length})`);
 		try {
-			await this.createFileWithFolders(normalized, change.content);
+			await this.createFileWithFolders(normalized, content);
 		} catch (createErr) {
 			rlog().error(
 				"pull",
@@ -1762,13 +1952,14 @@ export class SyncEngine {
 			throw createErr;
 		}
 		this.syncState.set(normalized, {
-			hash: fnv1a(change.content),
+			hash: fnv1a(content),
 			version: change.version,
+			serverHash: change.content_hash,
 		});
 		if (change.version != null) {
-			this.baseStore?.set(normalized, change.content, change.version);
+			this.baseStore?.set(normalized, content, change.version);
 		}
-		rlog().info("pull", `Created: ${change.path} | len=${change.content.length}`);
+		rlog().info("pull", `Created: ${change.path} | len=${content.length}`);
 		return true;
 	}
 
@@ -2029,6 +2220,267 @@ export class SyncEngine {
 	 *  vault-change case where we cleared sync state — neither would
 	 *  otherwise touch the push path because lastSync is empty and the
 	 *  mtime comparison short-circuits. */
+	/** Sticky "server has no POST /notes/batch" flag — set on the first
+	 *  404/405 so later bulk syncs skip the probe entirely. */
+	private batchPushUnsupported = false;
+
+	/** Bulk-push note files via POST /notes/batch in chunks of 100.
+	 *
+	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
+	 *  the caller falls back to per-file pushes. Per-result handling:
+	 *  ok → record state (incl. server-sanitized renames); conflict → re-route
+	 *  through pushFile so the existing 3-way merge / interactive flow stays
+	 *  the single conflict path; error → record an issue. A transport error
+	 *  mid-bulk enqueues the remaining files and goes offline, mirroring the
+	 *  single-push error path. */
+	private async pushNotesViaBatch(
+		files: TFile[],
+		force: boolean,
+		onProgress?: (done: number, failed: number) => void,
+	): Promise<{ pushed: number; failed: number } | null> {
+		if (this.batchPushUnsupported) return null;
+
+		// Notes above the single-note size cap go through pushFile so the
+		// server's 413 produces the proper too_large Sync Center issue
+		// (terminal, with sizeBytes) instead of an opaque batch error — and
+		// so one huge note can't blow the request-body limit for 99 others.
+		const MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024;
+		// The server's Plug.Parsers cap is 11MB per request body — flush a
+		// chunk before the accumulated content would approach it. Margin
+		// covers JSON envelope + multibyte expansion.
+		const BATCH_PAYLOAD_BUDGET = 6_000_000;
+		const BATCH_MAX_NOTES = 100;
+
+		let pushed = 0;
+		let failed = 0;
+		let done = 0;
+
+		type Entry = { file: TFile; content: string; hash: number; version?: number };
+		let chunk: Entry[] = [];
+		let chunkBytes = 0;
+		const oversized: TFile[] = [];
+
+		// Sends the accumulated chunk. Returns "ok" | "unsupported" | "transport".
+		const flushChunk = async (): Promise<"ok" | "unsupported" | "transport"> => {
+			if (chunk.length === 0) return "ok";
+			const entries = chunk;
+			chunk = [];
+			chunkBytes = 0;
+
+			for (const e of entries) this.pushing.add(e.file.path);
+			try {
+				await this.paceRequest();
+				const resp = await this.api.pushNotesBatch(
+					entries.map((e) => ({
+						path: e.file.path,
+						content: e.content,
+						mtime: e.file.stat.mtime / 1000,
+						version: e.version,
+					})),
+				);
+				const byPath = new Map(resp.results.map((r) => [r.path, r]));
+
+				for (const e of entries) {
+					const r = byPath.get(e.file.path);
+					done++;
+					if (!r) {
+						failed++;
+						this.logEntry("push", e.file.path, "error", "missing batch result");
+						continue;
+					}
+					if (r.status === "ok") {
+						await this.recordBatchPushOk(e.file, e.content, e.hash, r);
+						pushed++;
+						this.logEntry("push", e.file.path, "ok");
+					} else if (r.status === "conflict") {
+						// Hand the file to the single-note flow, which owns 3-way
+						// merge + interactive resolution. It re-pushes with the
+						// stored version, gets the same 409, and resolves.
+						this.pushing.delete(e.file.path);
+						const ok = await this.pushFile(e.file, true);
+						if (ok) pushed++;
+					} else {
+						failed++;
+						const msg = JSON.stringify(r.errors ?? "batch error");
+						this.issues.record({
+							path: e.file.path,
+							kind: "note",
+							category: "other",
+							message: msg,
+							firstFailedAt: Date.now(),
+							lastFailedAt: Date.now(),
+							attempts: 1,
+						});
+						this.logEntry("push", e.file.path, "error", msg);
+					}
+				}
+				this.goOnline();
+				return "ok";
+			} catch (err) {
+				const status = (err as { status?: number }).status;
+				if (status === 404 || status === 405) {
+					// Pre-rev backend — remember and let the caller fall back.
+					this.batchPushUnsupported = true;
+					rlog().info("push", "Batch endpoint unsupported — falling back to per-note");
+					return "unsupported";
+				}
+				// Transport/server failure: queue this chunk for retry,
+				// mirroring the single-push offline path. The caller queues
+				// whatever hasn't been read yet.
+				rlog().error(
+					"push",
+					`Batch push failed (${errMsg(err)}) — queueing ${entries.length} files`,
+				);
+				for (const e of entries) {
+					failed++;
+					done++;
+					await this.enqueueChange({
+						path: e.file.path,
+						action: "upsert",
+						kind: "note",
+						mtime: e.file.stat.mtime / 1000,
+						timestamp: Date.now(),
+						vaultId: this.settings.vaultId ?? undefined,
+					});
+				}
+				return "transport";
+			} finally {
+				for (const e of entries) {
+					this.pushing.delete(e.file.path);
+					this.markRecentlyPushed(e.file.path);
+				}
+			}
+		};
+
+		for (let i = 0; i < files.length; i++) {
+			const file = files[i]!;
+			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
+				oversized.push(file);
+				continue;
+			}
+			const content = await this.app.vault.cachedRead(file);
+			const hash = fnv1a(content);
+			const existing = this.syncState.get(normalizePath(file.path));
+			if (!force && existing !== undefined && hash === existing.hash) {
+				done++;
+				this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
+				continue;
+			}
+
+			if (
+				chunk.length >= BATCH_MAX_NOTES ||
+				(chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET)
+			) {
+				const outcome = await flushChunk();
+				if (outcome === "unsupported") return null;
+				if (outcome === "transport") {
+					// Queue everything not yet attempted (incl. this file).
+					for (const rest of [file, ...files.slice(i + 1), ...oversized]) {
+						failed++;
+						await this.enqueueChange({
+							path: rest.path,
+							action: "upsert",
+							kind: "note",
+							mtime: rest.stat.mtime / 1000,
+							timestamp: Date.now(),
+							vaultId: this.settings.vaultId ?? undefined,
+						});
+					}
+					onProgress?.(done, failed);
+					return { pushed, failed };
+				}
+				onProgress?.(done, failed);
+			}
+
+			chunk.push({ file, content, hash, version: existing?.version });
+			chunkBytes += content.length;
+		}
+
+		const outcome = await flushChunk();
+		if (outcome === "unsupported") return null;
+		if (outcome === "transport") {
+			for (const rest of oversized) {
+				failed++;
+				await this.enqueueChange({
+					path: rest.path,
+					action: "upsert",
+					kind: "note",
+					mtime: rest.stat.mtime / 1000,
+					timestamp: Date.now(),
+					vaultId: this.settings.vaultId ?? undefined,
+				});
+			}
+			onProgress?.(done, failed);
+			return { pushed, failed };
+		}
+		onProgress?.(done, failed);
+
+		// Oversized notes: single-note path → server 413 → proper terminal
+		// too_large issue with sizeBytes.
+		for (const file of oversized) {
+			try {
+				const ok = await this.pushFile(file, force);
+				done++;
+				if (ok) {
+					pushed++;
+					this.logEntry("push", file.path, "ok");
+				}
+			} catch (e) {
+				done++;
+				failed++;
+				this.logEntry("push", file.path, "error", errMsg(e));
+			}
+			onProgress?.(done, failed);
+		}
+
+		return { pushed, failed };
+	}
+
+	/** Record a successful batch-push result: sync state, base store, issue
+	 *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
+	private async recordBatchPushOk(
+		file: TFile,
+		content: string,
+		hash: number,
+		result: BatchUpsertResult,
+	): Promise<void> {
+		const serverPath =
+			result.server_path && result.server_path !== file.path ? result.server_path : undefined;
+
+		if (serverPath) {
+			const localFile = this.app.vault.getFileByPath(file.path);
+			if (localFile) {
+				await this.app.vault.rename(localFile, serverPath);
+				rlog().info("push", `Renamed: ${file.path} → ${serverPath} (server sanitized)`);
+				new Notice(
+					`Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`,
+				);
+			}
+			this.syncState.delete(normalizePath(file.path));
+			this.baseStore?.delete(normalizePath(file.path));
+			const np = normalizePath(serverPath);
+			this.syncState.set(np, {
+				hash,
+				version: result.version,
+				serverHash: result.content_hash,
+			});
+			if (result.version != null) {
+				this.baseStore?.set(np, content, result.version);
+			}
+		} else {
+			const np = normalizePath(file.path);
+			this.syncState.set(np, {
+				hash,
+				version: result.version,
+				serverHash: result.content_hash,
+			});
+			if (result.version != null) {
+				this.baseStore?.set(np, content, result.version);
+			}
+		}
+		this.issues.clear(file.path);
+	}
+
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -2055,13 +2507,37 @@ export class SyncEngine {
 			this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
 		}
 
-		for (let i = 0; i < toSync.length; i += 10) {
-			const batch = toSync.slice(i, i + 10);
+		// Protocol rev: notes via the batch endpoint (echo suppression inside),
+		// attachments via the per-file path; pre-rev backends fall back wholesale.
+		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
+		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
+
+		const batchOutcome = await this.pushNotesViaBatch(noteFiles, false, (done, failedSoFar) => {
+			this.onSyncProgress?.({
+				phase: "pushing",
+				current: Math.min(done, total),
+				total,
+				failed: failedSoFar,
+			});
+		});
+
+		let perFile: TFile[];
+		let doneOffset = 0;
+		if (batchOutcome) {
+			pushed += batchOutcome.pushed;
+			doneOffset = noteFiles.length;
+			perFile = attachFiles;
+		} else {
+			perFile = toSync;
+		}
+
+		for (let i = 0; i < perFile.length; i += 10) {
+			const batch = perFile.slice(i, i + 10);
 			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
 			pushed += results.filter(Boolean).length;
 			this.onSyncProgress?.({
 				phase: "pushing",
-				current: Math.min(i + batch.length, total),
+				current: Math.min(doneOffset + i + batch.length, total),
 				total,
 				failed: 0,
 			});
@@ -2110,7 +2586,7 @@ export class SyncEngine {
 		const since = mode !== "full" || needsDeltaAsInventory ? epoch : this.lastSync || epoch;
 
 		const [noteResp, attachResp] = await Promise.all([
-			this.api.getChanges(since),
+			this.fetchAllNoteChanges(since),
 			this.api.getAttachmentChanges(since),
 		]);
 
@@ -2171,7 +2647,10 @@ export class SyncEngine {
 
 					// Check if server content actually differs from local
 					const serverChange = noteResp.changes.find((c) => c.path === path);
-					const serverHash = serverChange ? fnv1a(serverChange.content) : undefined;
+					const serverHash =
+						serverChange?.content !== undefined
+							? fnv1a(serverChange.content)
+							: undefined;
 
 					if (serverHash !== undefined && localHash === serverHash) {
 						// Content identical — nothing to do, skip entirely
@@ -2318,8 +2797,34 @@ export class SyncEngine {
 
 		this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
 
-		for (let i = 0; i < toSync.length; i += 10) {
-			const batch = toSync.slice(i, i + 10);
+		// Protocol rev: notes go through POST /notes/batch (100 per request);
+		// attachments keep the per-file path. Pre-rev backends (or a sticky
+		// 404) fall back to per-file pushes for everything.
+		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
+		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
+
+		const batchOutcome = await this.pushNotesViaBatch(noteFiles, true, (done, failedSoFar) => {
+			this.onSyncProgress?.({
+				phase: "pushing",
+				current: done,
+				total,
+				failed: failedSoFar,
+			});
+		});
+
+		let perFile: TFile[];
+		let doneOffset = 0;
+		if (batchOutcome) {
+			pushed += batchOutcome.pushed;
+			failed += batchOutcome.failed;
+			doneOffset = noteFiles.length;
+			perFile = attachFiles;
+		} else {
+			perFile = toSync;
+		}
+
+		for (let i = 0; i < perFile.length; i += 10) {
+			const batch = perFile.slice(i, i + 10);
 			const results = await Promise.all(
 				batch.map(async (f: TFile) => {
 					try {
@@ -2341,7 +2846,7 @@ export class SyncEngine {
 			pushed += results.filter(Boolean).length;
 			this.onSyncProgress?.({
 				phase: "pushing",
-				current: i + batch.length,
+				current: doneOffset + i + batch.length,
 				total,
 				failed,
 				currentPath: batch[batch.length - 1]!.path,
@@ -2440,19 +2945,17 @@ export class SyncEngine {
 		}
 	}
 
-	/** Compute MD5 hex hash of a UTF-8 string using Web Crypto API. */
-	private async md5(content: string): Promise<string> {
-		const encoder = new TextEncoder();
-		const data = encoder.encode(content);
-		const hashBuffer = await crypto.subtle.digest("MD5", data);
-		const hashArray = new Uint8Array(hashBuffer);
-		return Array.from(hashArray)
-			.map((b) => b.toString(16).padStart(2, "0"))
-			.join("");
-	}
-
 	/** Reconcile local vault against server manifest.
-	 *  Returns null if server doesn't support the manifest endpoint. */
+	 *  Returns null if server doesn't support the manifest endpoint.
+	 *
+	 *  The manifest's content_hash is an opaque server-side HMAC — it can
+	 *  NEVER be computed locally (the old implementation compared an MD5 of
+	 *  local content against it, which could not match). Divergence is
+	 *  instead detected from two locally-knowable facts:
+	 *    - local edits: fnv1a(local) differs from the stored synced hash
+	 *    - server drift: the manifest hash differs from the stored serverHash
+	 *      (only meaningful when a serverHash was recorded — pre-rev sync
+	 *      state stays quiet rather than re-pushing the whole vault). */
 	async reconcile(): Promise<ReconcileResult | null> {
 		devLog().log("reconcile", "start");
 		rlog().info("reconcile", "Reconcile started");
@@ -2478,12 +2981,15 @@ export class SyncEngine {
 			if (!serverHash) {
 				missing.push(file.path);
 			} else {
+				serverNotes.delete(file.path);
+				const stored = this.syncState.get(normalizePath(file.path));
 				const content = await this.app.vault.cachedRead(file);
-				const localHash = await this.md5(content);
-				if (localHash !== serverHash) {
+				const locallyModified = stored === undefined || stored.hash !== fnv1a(content);
+				const serverDrifted =
+					stored?.serverHash !== undefined && stored.serverHash !== serverHash;
+				if (locallyModified || serverDrifted) {
 					diverged.push(file.path);
 				}
-				serverNotes.delete(file.path);
 			}
 		}
 
@@ -2621,7 +3127,21 @@ export class SyncEngine {
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
 					}
-					await this.api.pushNote(entry.path, content, mtime!);
+					const resp = await this.api.pushNote(entry.path, content, mtime!);
+					// Record fresh sync state — without this the replayed push
+					// leaves a stale version (next push 409s avoidably) and no
+					// serverHash (hash-skip dedupe misses the echo).
+					if (!("conflict" in resp) && content !== undefined) {
+						const np = normalizePath(entry.path);
+						this.syncState.set(np, {
+							hash: fnv1a(content),
+							version: resp.note.version,
+							serverHash: resp.note.content_hash,
+						});
+						if (resp.note.version != null) {
+							this.baseStore?.set(np, content, resp.note.version);
+						}
+					}
 				}
 				await this.queue.dequeue(entry.path, this.settings.vaultId ?? undefined);
 				flushed++;
