@@ -26,6 +26,9 @@ export class SyncPreviewState {
 	/** Within the vault-picker, true while the "make a new vault" form is shown
 	 *  instead of the list of existing vaults. */
 	creatingVault = false;
+	/** Whether the "advanced sync options" accordion (push/pull grid) is
+	 *  expanded. Collapsed by default so the modal leads with the Sync action. */
+	advancedOpen = false;
 	private resolved = false;
 
 	constructor(
@@ -65,6 +68,11 @@ export class SyncPreviewState {
 		this.view = "preview";
 		this.pendingChoice = null;
 		this.confirmInput = "";
+	}
+
+	toggleAdvanced(): void {
+		if (this.resolved) return;
+		this.advancedOpen = !this.advancedOpen;
 	}
 
 	enterVaultPicker(): void {
@@ -148,7 +156,7 @@ interface OptionCard {
 const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
-	label: "Merge",
+	label: "Sync",
 	subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
 	cssClass: "engram-sync-preview-option mod-cta",
 };
@@ -309,7 +317,21 @@ export class SyncPreviewModal extends Modal {
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
 		this.renderOptionCard(mergeRow, MERGE_CARD);
 
+		const advancedToggle = options.createEl("button", {
+			cls: "engram-sync-preview-advanced-toggle",
+		});
+		advancedToggle.createSpan({
+			cls: "engram-sync-preview-advanced-chevron",
+			text: this.state.advancedOpen ? "▾" : "▸",
+		});
+		advancedToggle.createSpan({ text: "Show advanced sync options" });
+		advancedToggle.addEventListener("click", () => {
+			this.state.toggleAdvanced();
+			this.render();
+		});
+
 		const grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
+		if (!this.state.advancedOpen) grid.addClass("is-collapsed");
 		const pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
 		pushCol.createDiv({
 			text: "Push (local → cloud)",
