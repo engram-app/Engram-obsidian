@@ -869,8 +869,16 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(engine.getLastSync()).toBe("2026-03-01T12:02:00Z");
 	});
 
-	test("status shows offline after failed push (change queued for retry)", async () => {
-		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(new Error("500"));
+	test("a per-file server error (502) queues a retry but stays ONLINE", async () => {
+		// A storage 502 on one file means that file failed, NOT that the backend
+		// is unreachable. The change is queued for retry and recorded as an issue,
+		// but the plugin must not report itself disconnected.
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(
+			Object.assign(new Error("Request failed, status 502"), {
+				status: 502,
+				json: { error: "failed to upload to storage backend" },
+			}),
+		);
 
 		const engine = createEngine({ debounceMs: 10 });
 		const file = new TFile("Notes/Fail.md", Date.now());
@@ -879,8 +887,31 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		const status = engine.getStatus();
-		expect(status.state).toBe("offline");
+		expect(engine.isOffline()).toBe(false);
+		expect(status.state).not.toBe("offline");
 		expect(status.queued).toBe(1);
+		// The recorded issue surfaces the backend's message, not "status 502".
+		const issue = engine.issues.get("Notes/Fail.md");
+		expect(issue?.message).toBe("failed to upload to storage backend");
+	});
+
+	test("failed push tallies into the aggregated failure summary (drained once)", async () => {
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(
+			Object.assign(new Error("Request failed, status 502"), {
+				status: 502,
+				json: { error: "failed to upload to storage backend" },
+			}),
+		);
+
+		const engine = createEngine({ debounceMs: 10 });
+		engine.handleModify(new TFile("Notes/Fail.md", Date.now()));
+		await new Promise((r) => setTimeout(r, 100));
+
+		const summary = engine.drainFailureSummary();
+		expect(summary.count).toBe(1);
+		expect(summary.firstMessage).toBe("failed to upload to storage backend");
+		// Draining resets the tally.
+		expect(engine.drainFailureSummary().count).toBe(0);
 	});
 
 	test("error clears on next successful sync", async () => {
@@ -1501,6 +1532,72 @@ describe("SyncEngine offline queue integration", () => {
 		await new Promise((r) => setTimeout(r, 200));
 
 		expect(engine.isOffline()).toBe(false);
+	});
+
+	test("flushQueue clears the IssueStore entry when a queued file finally uploads", async () => {
+		const engine = createEngine();
+		// A prior failure left both an issue and a queued retry for the same path.
+		engine.issues.record({
+			path: "Notes/Recovered.md",
+			kind: "note",
+			category: "server",
+			status: 502,
+			message: "failed to upload to storage backend",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 3,
+		});
+		engine.queue.load([
+			{
+				path: "Notes/Recovered.md",
+				action: "upsert",
+				content: "X",
+				mtime: 100,
+				timestamp: 1,
+			},
+		]);
+		expect(engine.issues.count()).toBe(1);
+
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+		await engine.flushQueue();
+
+		// The stale error must be gone once the file uploads (the reported bug).
+		expect(engine.issues.get("Notes/Recovered.md")).toBeUndefined();
+		expect(engine.issues.count()).toBe(0);
+	});
+
+	test("retryFailedNow re-enqueues transient/parked issues, leaves actionable ones", async () => {
+		const engine = createEngine();
+		// A parked transient failure (past the cap, no longer in the queue)...
+		engine.issues.record({
+			path: "Notes/Parked.md",
+			kind: "note",
+			category: "server",
+			status: 502,
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 6,
+		});
+		// ...and an actionable one that retrying can't fix.
+		engine.issues.record({
+			path: "Big.pdf",
+			kind: "attachment",
+			category: "too_large",
+			status: 413,
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		mockApp.vault.getFileByPath.mockReturnValue(new TFile("Notes/Parked.md", 100));
+		mockApp.vault.cachedRead.mockResolvedValue("content");
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+
+		await engine.retryFailedNow();
+
+		expect(engine.issues.get("Notes/Parked.md")).toBeUndefined(); // retried + cleared
+		expect(engine.issues.get("Big.pdf")).toBeDefined(); // left for the user to act on
 	});
 
 	test("flushQueue processes entries oldest-first", async () => {

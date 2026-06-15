@@ -1036,12 +1036,12 @@ var EngramApi = class _EngramApi {
   }
   /** Get full note by path. */
   async getNote(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("GET", `/notes/${encoded}`)).json;
   }
   /** Delete a note. */
   async deleteNote(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("DELETE", `/notes/${encoded}`)).json;
   }
   // --- Attachment methods ---
@@ -1056,12 +1056,12 @@ var EngramApi = class _EngramApi {
   }
   /** Get attachment content (base64). */
   async getAttachment(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("GET", `/attachments/${encoded}`)).json;
   }
   /** Delete an attachment. */
   async deleteAttachment(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("DELETE", `/attachments/${encoded}`)).json;
   }
   /** Semantic search across indexed notes. */
@@ -1135,6 +1135,9 @@ function parseLimitExceededError(e) {
     pick("limit"),
     pick("current")
   );
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 function arrayBufferToBase64(buffer) {
   let bytes = new Uint8Array(buffer), binary = "";
@@ -2140,7 +2143,10 @@ var import_obsidian7 = require("obsidian"), PHASE_LABELS = {
     }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createEl("p", {
       text: "",
       cls: "engram-progress-summary"
-    }), this.summaryEl.hidden = !0;
+    }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
+      text: "You can close this \u2014 the sync keeps running in the background.",
+      cls: "engram-progress-hint"
+    });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
     this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", {
       text: "Done",
@@ -2182,7 +2188,7 @@ var import_obsidian7 = require("obsidian"), PHASE_LABELS = {
     var _a, _b;
     let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
       let parts = [];
       progress.current > 0 && parts.push(`${progress.current} synced`), progress.failed > 0 && parts.push(`${progress.failed} failed`), this.summaryEl.setText(parts.join(", ")), this.summaryEl.hidden = !1, progress.failed > 0 && (this.failedEl.setText(
         `${progress.failed} failed \u2014 run "Engram: Show sync log" for details`
@@ -2558,6 +2564,159 @@ function pickInitialTab(settings) {
 // src/sync-center-render.ts
 var import_obsidian13 = require("obsidian");
 
+// src/issue-store.ts
+var IssueStore = class {
+  constructor() {
+    this.issues = /* @__PURE__ */ new Map();
+  }
+  /** Record a new failure or merge into the existing one for `path`. */
+  record(issue) {
+    let existing = this.issues.get(issue.path);
+    if (existing) {
+      this.issues.set(issue.path, {
+        ...issue,
+        firstFailedAt: existing.firstFailedAt,
+        attempts: existing.attempts + 1
+      });
+      return;
+    }
+    this.issues.set(issue.path, { ...issue });
+  }
+  /** Look up the current issue for `path`, if any. */
+  get(path) {
+    return this.issues.get(path);
+  }
+  /** Remove the issue for `path` (called on successful push/pull). */
+  clear(path) {
+    this.issues.delete(path);
+  }
+  clearAll() {
+    this.issues.clear();
+  }
+  all() {
+    return Array.from(this.issues.values());
+  }
+  count(category) {
+    if (!category) return this.issues.size;
+    let n = 0;
+    for (let issue of this.issues.values())
+      issue.category === category && n++;
+    return n;
+  }
+  byCategory() {
+    var _a;
+    let groups = {};
+    for (let issue of this.issues.values()) {
+      let bucket = (_a = groups[issue.category]) != null ? _a : [];
+      bucket.push(issue), groups[issue.category] = bucket;
+    }
+    return groups;
+  }
+  /** Plain-JSON snapshot for persistence. */
+  serialize() {
+    return this.all();
+  }
+  /** Rebuild from persisted JSON. Tolerant of unknown/malformed input. */
+  hydrate(data) {
+    if (this.issues.clear(), !!Array.isArray(data))
+      for (let raw of data)
+        isPersistedIssue(raw) && this.issues.set(raw.path, raw);
+  }
+};
+function categorizeError(err) {
+  var _a, _b, _c;
+  if (err instanceof LimitExceededError && err.reason === "attachments_disabled")
+    return {
+      category: "needs_pro",
+      status: 402,
+      message: err.message,
+      terminal: !0,
+      upgradeUrl: (_a = err.upgradeUrl) != null ? _a : void 0
+    };
+  let status = typeof err == "object" && err !== null && (_b = err.status) != null ? _b : void 0, message = (_c = extractServerMessage(err)) != null ? _c : err instanceof Error ? err.message : String(err);
+  return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
+}
+function extractServerMessage(err) {
+  if (typeof err != "object" || err === null) return;
+  let e = err, body = null;
+  if (e.json && typeof e.json == "object")
+    body = e.json;
+  else if (typeof e.text == "string")
+    try {
+      let parsed = JSON.parse(e.text);
+      parsed && typeof parsed == "object" && (body = parsed);
+    } catch (e2) {
+      return;
+    }
+  if (body && typeof body.error == "string" && body.error.length > 0) return body.error;
+}
+function shouldGoOffline(err) {
+  return categorizeError(err).category === "network";
+}
+var RETRY_CAP = 5;
+function shouldRetryAfterFailure(classified, attempts) {
+  return classified.terminal ? !1 : attempts < RETRY_CAP;
+}
+function issueDisposition(category) {
+  switch (category) {
+    case "too_large":
+    case "needs_pro":
+    case "auth":
+    case "conflict":
+      return "actionable";
+    default:
+      return "transient";
+  }
+}
+function remediation(category) {
+  switch (category) {
+    case "needs_pro":
+      return {
+        title: "Attachments need a paid plan",
+        hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs."
+      };
+    case "too_large":
+      return {
+        title: "Too large for the server",
+        hint: "The server limit is 5 MB. Compress or split the file, then it will sync."
+      };
+    case "auth":
+      return {
+        title: "Sign-in expired",
+        hint: "Reconnect your account to resume syncing."
+      };
+    case "conflict":
+      return {
+        title: "Unresolved conflict",
+        hint: "Open the file to resolve the conflict, then sync again."
+      };
+    case "server":
+      return {
+        title: "Server error",
+        hint: "A temporary server problem \u2014 retrying automatically."
+      };
+    case "network":
+      return {
+        title: "Network unavailable",
+        hint: "Can't reach the server \u2014 retrying automatically."
+      };
+    default:
+      return {
+        title: "Sync failed",
+        hint: "An unexpected error \u2014 retrying automatically."
+      };
+  }
+}
+var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
+function healthCheckDelay(failures) {
+  return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
+}
+function isPersistedIssue(value) {
+  if (typeof value != "object" || value === null) return !1;
+  let v = value;
+  return typeof v.path == "string" && (v.kind === "note" || v.kind === "attachment") && typeof v.category == "string" && typeof v.message == "string" && typeof v.firstFailedAt == "number" && typeof v.lastFailedAt == "number" && typeof v.attempts == "number";
+}
+
 // src/sync-preview-modal.ts
 var import_obsidian12 = require("obsidian");
 
@@ -2697,6 +2856,9 @@ var SyncPreviewState = class {
     /** Within the vault-picker, true while the "make a new vault" form is shown
      *  instead of the list of existing vaults. */
     this.creatingVault = !1;
+    /** Whether the "advanced sync options" accordion (push/pull grid) is
+     *  expanded. Collapsed by default so the modal leads with the Sync action. */
+    this.advancedOpen = !1;
     this.resolved = !1;
     this.plan = initialPlan;
   }
@@ -2720,6 +2882,9 @@ var SyncPreviewState = class {
   }
   goBack() {
     this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
+  }
+  toggleAdvanced() {
+    this.resolved || (this.advancedOpen = !this.advancedOpen);
   }
   enterVaultPicker() {
     this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
@@ -2757,7 +2922,7 @@ function describeCreateVaultError(e) {
 var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
-  label: "Merge",
+  label: "Sync",
   subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
   cssClass: "engram-sync-preview-option mod-cta"
 }, PUSH_CARDS = [
@@ -2828,21 +2993,39 @@ var MERGE_CARD = {
   renderPreview() {
     var _a;
     let { contentEl } = this, empty = isPlanEmpty(this.state.plan), context = (_a = this.opts.context) != null ? _a : "review";
-    if (this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), empty) {
-      contentEl.createDiv({ cls: "engram-sync-preview-footer" }).createEl("button", {
-        text: "Close",
-        cls: "mod-cta"
-      }).addEventListener("click", () => this.state.cancel());
-      return;
-    }
+    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-    options.createDiv({
+    empty || options.createDiv({
       cls: "engram-sync-preview-options-header",
       text: OPTIONS_HEADER_BY_CONTEXT[context]
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-    this.renderOptionCard(mergeRow, MERGE_CARD);
-    let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" }), pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
+    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", {
+      text: empty ? "Close" : "Cancel",
+      cls: empty ? "mod-cta" : void 0
+    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** Render the "Show advanced sync options" accordion (collapsed by default)
+   *  with the push/pull direction grid. Shared by the up-to-date and
+   *  has-changes preview states so force push/pull stays reachable even at
+   *  100% match. */
+  renderAdvancedOptions(options) {
+    let advancedToggle = options.createEl("button", {
+      cls: "engram-sync-preview-advanced-toggle"
+    });
+    advancedToggle.createSpan({
+      cls: "engram-sync-preview-advanced-chevron",
+      text: this.state.advancedOpen ? "\u25BE" : "\u25B8"
+    }), advancedToggle.createSpan({ text: "Show advanced sync options" }), advancedToggle.addEventListener("click", () => {
+      this.state.toggleAdvanced(), this.render();
+    });
+    let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
+    this.state.advancedOpen || grid.addClass("is-collapsed");
+    let pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
     pushCol.createDiv({
       text: "Push (local \u2192 cloud)",
       cls: "engram-sync-preview-options-col-header"
@@ -2856,10 +3039,6 @@ var MERGE_CARD = {
     });
     for (let card of PULL_CARDS)
       this.renderOptionCard(pullCol, card);
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
-      this.openVaultPicker();
-    });
   }
   renderHeader(parent, context) {
     if (context === "up-to-date") {
@@ -3119,32 +3298,40 @@ var MERGE_CARD = {
 };
 
 // src/sync-center-render.ts
+var DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 function sectionHeading(parent, title) {
   return new import_obsidian13.Setting(parent).setName(title).setHeading();
 }
-var CATEGORY_LABEL = {
-  too_large: "Too large \u2014 server max 5 MB",
-  auth: "Auth failure \u2014 token invalid or expired",
-  server: "Server error",
-  network: "Network failure",
-  conflict: "Unresolved conflict",
-  needs_pro: "Needs Pro \u2014 upgrade to sync attachments",
-  other: "Other failure"
-}, CATEGORY_ORDER = [
+var CATEGORY_ORDER = [
   "needs_pro",
   "too_large",
-  "conflict",
   "auth",
+  "conflict",
   "server",
   "network",
   "other"
-];
+], CATEGORY_ICON = {
+  needs_pro: "\u{1F512}",
+  too_large: "\u{1F4E6}",
+  auth: "\u{1F511}",
+  conflict: "\u26A1"
+};
 function renderSyncCenter(parent, plugin, refresh) {
-  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderIssues(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
+  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
+}
+function groupedByCategory(issues, disposition) {
+  var _a;
+  let groups = /* @__PURE__ */ new Map();
+  for (let issue of issues) {
+    if (issueDisposition(issue.category) !== disposition) continue;
+    let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
+    bucket.push(issue), groups.set(issue.category, bucket);
+  }
+  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
 }
 function renderHeader(parent, plugin) {
-  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), issueCount = plugin.syncEngine.issues.count(), ignoredCount = plugin.syncEngine.ignoredFiles.size();
-  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), issueCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${issueCount} issue${issueCount === 1 ? "" : "s"}`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
+  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all = plugin.syncEngine.issues.all(), attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length, retryingCount = all.length - attentionCount, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
 }
 function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
@@ -3157,7 +3344,7 @@ function renderActions(parent, plugin, refresh) {
       }).awaitChoice();
       if (choice === "change-vault")
         throw new Error("Sync Center received change-vault choice \u2014 caller missing");
-      await plugin.runSyncFromChoice(choice);
+      await plugin.runSyncWithProgress(choice);
     } catch (e) {
       new import_obsidian13.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
@@ -3169,41 +3356,71 @@ function makeActionButton(parent, text, handler) {
     handler();
   });
 }
-function renderIssues(parent, plugin, refresh) {
-  let section = parent.createDiv({ cls: "engram-sync-center-section" });
-  sectionHeading(section, `Issues (${plugin.syncEngine.issues.count()})`);
+function renderNeedsAttention(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), "actionable"), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({ cls: "engram-sync-center-section" }), heading2 = sectionHeading(section, `Needs attention (${total})`);
+  total > 0 && heading2.addButton(
+    (btn) => btn.setButtonText("Clear all").onClick(() => {
+      for (let [, list] of groups)
+        for (let issue of list) plugin.syncEngine.issues.clear(issue.path);
+      plugin.persistEngineState().then(refresh);
+    })
+  );
   let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  if (plugin.syncEngine.issues.all().length === 0) {
+  if (total === 0) {
     body.createEl("p", {
       cls: "engram-sync-center-empty",
-      text: "No sync failures. Everything pushed cleanly."
+      text: "Nothing needs your attention. \u{1F389}"
     });
     return;
   }
-  let grouped = plugin.syncEngine.issues.byCategory();
-  for (let category of CATEGORY_ORDER) {
-    let list = grouped[category];
-    !list || list.length === 0 || renderCategoryGroup(body, plugin, refresh, category, list);
-  }
+  for (let [category, list] of groups)
+    renderAttentionCard(body, plugin, refresh, category, list);
 }
-function renderCategoryGroup(parent, plugin, refresh, category, issues) {
-  let group = parent.createDiv({ cls: "engram-sync-center-group" }), groupHead = group.createEl("h4", {
-    cls: "engram-sync-center-group-head",
-    text: `${CATEGORY_LABEL[category]} (${issues.length})`
+function renderAttentionCard(parent, plugin, refresh, category, issues) {
+  var _a, _b, _c;
+  let { title, hint } = remediation(category), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u26A0" }), head.createSpan({
+    cls: "engram-sync-center-card-title",
+    text: `${title} (${issues.length})`
+  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
+  if (category === "needs_pro") {
+    let url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
+    actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank"));
+  }
+  actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
+    for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
+    plugin.persistEngineState().then(refresh);
   });
-  groupHead.createSpan({ cls: "engram-sync-center-group-toggle", text: " \u25BE" });
-  let list = group.createDiv({ cls: "engram-sync-center-issue-list" });
-  groupHead.addEventListener("click", () => list.classList.toggle("is-collapsed"));
+  let toggle = actions.createEl("button", {
+    text: `Show files (${issues.length}) \u25BE`,
+    cls: "engram-sync-center-card-toggle"
+  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
   for (let issue of issues)
-    renderIssueRow(list, plugin, refresh, issue);
+    renderFileRow(fileList, plugin, refresh, issue);
 }
-function renderIssueRow(parent, plugin, refresh, issue) {
-  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" }), pathRow = main.createDiv({ cls: "engram-sync-center-issue-path" });
-  if (issue.category === "needs_pro") {
-    let icon = pathRow.createSpan({ cls: "engram-needs-pro-icon" });
-    icon.setText("\u{1F512}"), icon.setAttribute("aria-label", "Upgrade to sync attachments"), icon.setAttribute("title", "Upgrade to sync attachments");
-  }
-  pathRow.createSpan({ text: issue.path });
+function renderRetrying(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), "transient"), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
+  if (total === 0) return;
+  let section = parent.createDiv({ cls: "engram-sync-center-section" });
+  sectionHeading(section, `Retrying automatically (${total})`).addButton(
+    (btn) => btn.setButtonText("Retry all now").setCta().onClick(async () => {
+      await plugin.syncEngine.retryFailedNow(), refresh();
+    })
+  );
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  body.createEl("p", {
+    cls: "engram-sync-center-card-hint",
+    text: "Temporary errors \u2014 these clear themselves once the server recovers."
+  });
+  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+  for (let [, issues] of groups)
+    for (let issue of issues) renderFileRow(list, plugin, refresh, issue);
+}
+function renderFileRow(parent, plugin, refresh, issue) {
+  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" });
+  main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
   let meta = main.createDiv({ cls: "engram-sync-center-issue-meta" }), parts = [];
   issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 "));
   let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
@@ -3482,79 +3699,6 @@ var IgnoredFiles = class {
   }
 };
 
-// src/issue-store.ts
-var IssueStore = class {
-  constructor() {
-    this.issues = /* @__PURE__ */ new Map();
-  }
-  /** Record a new failure or merge into the existing one for `path`. */
-  record(issue) {
-    let existing = this.issues.get(issue.path);
-    if (existing) {
-      this.issues.set(issue.path, {
-        ...issue,
-        firstFailedAt: existing.firstFailedAt,
-        attempts: existing.attempts + 1
-      });
-      return;
-    }
-    this.issues.set(issue.path, { ...issue });
-  }
-  /** Remove the issue for `path` (called on successful push/pull). */
-  clear(path) {
-    this.issues.delete(path);
-  }
-  clearAll() {
-    this.issues.clear();
-  }
-  all() {
-    return Array.from(this.issues.values());
-  }
-  count(category) {
-    if (!category) return this.issues.size;
-    let n = 0;
-    for (let issue of this.issues.values())
-      issue.category === category && n++;
-    return n;
-  }
-  byCategory() {
-    var _a;
-    let groups = {};
-    for (let issue of this.issues.values()) {
-      let bucket = (_a = groups[issue.category]) != null ? _a : [];
-      bucket.push(issue), groups[issue.category] = bucket;
-    }
-    return groups;
-  }
-  /** Plain-JSON snapshot for persistence. */
-  serialize() {
-    return this.all();
-  }
-  /** Rebuild from persisted JSON. Tolerant of unknown/malformed input. */
-  hydrate(data) {
-    if (this.issues.clear(), !!Array.isArray(data))
-      for (let raw of data)
-        isPersistedIssue(raw) && this.issues.set(raw.path, raw);
-  }
-};
-function categorizeError(err) {
-  var _a;
-  if (err instanceof LimitExceededError && err.reason === "attachments_disabled")
-    return {
-      category: "needs_pro",
-      status: 402,
-      message: err.message,
-      terminal: !0
-    };
-  let status = typeof err == "object" && err !== null && (_a = err.status) != null ? _a : void 0, message = err instanceof Error ? err.message : String(err);
-  return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
-}
-function isPersistedIssue(value) {
-  if (typeof value != "object" || value === null) return !1;
-  let v = value;
-  return typeof v.path == "string" && (v.kind === "note" || v.kind === "attachment") && typeof v.category == "string" && typeof v.message == "string" && typeof v.firstFailedAt == "number" && typeof v.lastFailedAt == "number" && typeof v.attempts == "number";
-}
-
 // src/offline-queue.ts
 function dedupKey(pathOrEntry, vaultId) {
   return typeof pathOrEntry == "object" ? pathOrEntry.vaultId ? `${pathOrEntry.vaultId}:${pathOrEntry.path}` : pathOrEntry.path : vaultId ? `${vaultId}:${pathOrEntry}` : pathOrEntry;
@@ -3678,7 +3822,7 @@ function countFolders(paths) {
   }
   return set.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, HEALTH_CHECK_INTERVAL_MS = 3e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -3737,6 +3881,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.lastError = "";
     this.offline = !1;
     this.healthCheckTimer = null;
+    /** Consecutive failed health probes — drives exponential backoff. */
+    this.healthCheckFailures = 0;
     this.ready = !1;
     /** When true, all sync actions (file events, stream events, bulk methods)
      *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -3790,6 +3936,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  drainAttachmentLimitedCount() so a single batched toast can be fired
      *  per push cycle (spec §4.6). */
     this.attachmentLimitedThisBatch = 0;
+    /** Count of generic (non-needs_pro) push failures this batch, plus the
+     *  first server message seen — drained by main.ts into a single aggregated
+     *  "N file(s) failed to sync — open Sync Center" Notice. */
+    this.failuresThisBatch = 0;
     /** Suppresses re-toasting once we've already shown the "N attachments
      *  skipped" notice in this plugin session. Re-armed only when the engine
      *  is destroyed/reloaded so the user isn't nagged on every fullSync. */
@@ -3982,7 +4132,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
         vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
-      });
+      }), this.maybeGoOffline(e);
     }
   }
   /** Handle a vault rename event. */
@@ -4004,7 +4154,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
           vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
-        }));
+        }), this.maybeGoOffline(e));
       }
     isBinary || (_b = this.baseStore) == null || _b.rename((0, import_obsidian15.normalizePath)(oldPath), (0, import_obsidian15.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
@@ -4090,7 +4240,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Push a single file to Engram. Returns true on success.
    *  When force is true, skip echo suppression (used by pushAll). */
   async pushFile(file, force = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     if (this.pushing.has(file.path)) return !1;
     if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
       return devLog().log("push", `skip (needs_pro): ${file.path}`), !1;
@@ -4237,23 +4387,28 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         category: classified.category,
         status: classified.status,
-        message: msg,
+        // Surface the backend's own message (e.g. "failed to upload to
+        // storage backend") rather than the bare "Request failed, status N".
+        message: classified.message,
         sizeBytes: classified.category === "too_large" ? file.stat.size : void 0,
+        upgradeUrl: classified.upgradeUrl,
         firstFailedAt: now,
         lastFailedAt: now,
         attempts: 1
-      }), classified.category === "needs_pro" && (this.attachmentLimitedThisBatch += 1), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      });
+      let attempts = (_j = (_i = this.issues.get(file.path)) == null ? void 0 : _i.attempts) != null ? _j : 1;
+      classified.category === "needs_pro" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_k = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
-      ), this.logEntry("push", file.path, "error", msg, classified.category), classified.terminal || await this.enqueueChange({
+      ), this.logEntry("push", file.path, "error", msg, classified.category), shouldRetryAfterFailure(classified, attempts) && await this.enqueueChange({
         path: file.path,
         action: "upsert",
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_i = this.settings.vaultId) != null ? _i : void 0
-      });
+        vaultId: (_l = this.settings.vaultId) != null ? _l : void 0
+      }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
     }
@@ -4267,6 +4422,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let issue of this.issues.all())
       if (issue.path === path && issue.category === "needs_pro") return !0;
     return !1;
+  }
+  /** Drain the batch failure tally for an aggregated, deduped Notice. Returns
+   *  the count of generic failures since the last drain plus the first server
+   *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+  drainFailureSummary() {
+    let count = this.failuresThisBatch, firstMessage = this.firstFailureMessageThisBatch;
+    return this.failuresThisBatch = 0, this.firstFailureMessageThisBatch = void 0, { count, firstMessage };
+  }
+  /** Emit a single aggregated, deduped Notice covering all generic push
+   *  failures this batch — "N file(s) failed to sync — open Sync Center" with
+   *  the first server message. Replaces silent per-file console errors with one
+   *  actionable signal. Called once at the end of pushModifiedFiles / pushAll. */
+  flushFailureSummaryToast() {
+    let { count, firstMessage } = this.drainFailureSummary();
+    if (count <= 0) return;
+    let noun = count === 1 ? "file" : "files", detail = firstMessage ? ` (${firstMessage})` : "";
+    new import_obsidian15.Notice(`Engram: ${count} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
   }
   /** Emit a single batched toast covering all attachments skipped this batch
    *  with `needs_pro`. Called once at the end of pushModifiedFiles / pushAll.
@@ -5081,7 +5253,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             timestamp: Date.now(),
             vaultId: (_b2 = this.settings.vaultId) != null ? _b2 : void 0
           });
-        return "transport";
+        return this.maybeGoOffline(err), "transport";
       } finally {
         for (let e of entries)
           this.pushing.delete(e.file.path), this.markRecentlyPushed(e.file.path);
@@ -5194,7 +5366,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         failed: 0
       });
     }
-    return this.flushAttachmentLimitedToast(), pushed;
+    return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
   /** Compute what a sync would do without executing it (dry-run preview).
    *
@@ -5340,7 +5512,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         currentPath: batch[batch.length - 1].path
       });
     }
-    (_d = this.onSyncProgress) == null || _d.call(this, { phase: "complete", current: total, total, failed }), this.flushAttachmentLimitedToast();
+    (_d = this.onSyncProgress) == null || _d.call(this, { phase: "complete", current: total, total, failed }), this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast();
     let skipped = total - pushed - failed;
     devLog().log(
       "push",
@@ -5439,7 +5611,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   // --- Offline queue ---
   /** Queue a change for retry and go offline. */
   async enqueueChange(entry) {
-    await this.queue.enqueue(entry), this.goOffline();
+    await this.queue.enqueue(entry), this.emitStatus();
+  }
+  /** Flip to offline ONLY when the failure indicates true connection loss
+   *  (no HTTP response). A per-file HTTP status error is that file's problem,
+   *  surfaced in the Sync Center — it must not report the whole plugin as
+   *  disconnected. */
+  maybeGoOffline(cause) {
+    shouldGoOffline(cause) && this.goOffline();
   }
   /** Transition to offline mode and start health checking. */
   goOffline() {
@@ -5451,22 +5630,56 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       console.error("Engram Sync: queue flush failed", e);
     }));
   }
-  /** Start periodic health checks while offline. */
+  /** Start health checks while offline, with exponential backoff (5s → 10s →
+   *  … capped at 60s) so a long outage doesn't hammer the server every 30s.
+   *  The backoff resets when we reconnect (stopHealthCheck). */
   startHealthCheck() {
-    this.healthCheckTimer || (this.healthCheckTimer = window.setInterval(() => {
-      (async () => {
-        try {
-          await this.api.health() && this.goOnline();
-        } catch (e) {
-        }
-      })();
-    }, HEALTH_CHECK_INTERVAL_MS));
+    if (this.healthCheckTimer) return;
+    let tick = () => {
+      this.healthCheckTimer = window.setTimeout(() => {
+        (async () => {
+          try {
+            if (await this.api.health()) {
+              this.goOnline();
+              return;
+            }
+          } catch (e) {
+          }
+          this.healthCheckFailures++, tick();
+        })();
+      }, healthCheckDelay(this.healthCheckFailures));
+    };
+    tick();
   }
-  /** Stop periodic health checks. */
+  /** Stop health checks and reset the backoff. */
   stopHealthCheck() {
-    this.healthCheckTimer && (window.clearInterval(this.healthCheckTimer), this.healthCheckTimer = null);
+    this.healthCheckTimer && (window.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
   }
   /** Flush queued changes oldest-first. Stops on first failure. */
+  /** Retry every transient (auto-retryable) failure now — including ones
+   *  already parked past RETRY_CAP — by re-enqueuing a content-free entry and
+   *  flushing. Actionable failures (too_large, needs_pro, auth, conflict) are
+   *  left alone; retrying can't fix them. Wired to "Retry all now". */
+  async retryFailedNow() {
+    var _a;
+    for (let issue of this.issues.all()) {
+      if (issueDisposition(issue.category) !== "transient") continue;
+      let file = this.app.vault.getFileByPath((0, import_obsidian15.normalizePath)(issue.path));
+      if (!file) {
+        this.issues.clear(issue.path);
+        continue;
+      }
+      await this.queue.enqueue({
+        path: issue.path,
+        action: "upsert",
+        kind: issue.kind,
+        mtime: file.stat.mtime / 1e3,
+        timestamp: Date.now(),
+        vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
+      });
+    }
+    return this.flushQueue();
+  }
   async flushQueue() {
     var _a, _b, _c, _d;
     let entries = this.queue.all();
@@ -5489,7 +5702,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               await this.queue.dequeue(
                 entry.path,
                 (_a = this.settings.vaultId) != null ? _a : void 0
-              ), flushed++;
+              ), this.issues.clear(entry.path), flushed++;
               continue;
             }
             let buffer = await this.app.vault.readBinary(file);
@@ -5504,7 +5717,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               await this.queue.dequeue(
                 entry.path,
                 (_b = this.settings.vaultId) != null ? _b : void 0
-              ), flushed++;
+              ), this.issues.clear(entry.path), flushed++;
               continue;
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
@@ -5519,9 +5732,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), resp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, resp.note.version));
           }
         }
-        await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), flushed++;
+        await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), this.issues.clear(entry.path), flushed++;
       } catch (e) {
-        this.goOffline();
+        this.maybeGoOffline(e);
         break;
       }
     return devLog().log(
@@ -6128,6 +6341,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       }
     }
   }
+  /** Run a sync choice with a live progress modal. Opens SyncProgressModal
+   *  immediately so feedback ("Preparing…") shows the instant the preview
+   *  closes — no dead gap — then streams engine progress into it and restores
+   *  the prior progress callback when the sync settles. The modal's "Run in
+   *  background" closes it while the sync keeps running. No-op choices
+   *  (cancel / change-vault) skip the modal entirely. */
+  async runSyncWithProgress(choice) {
+    if (choice === "cancel" || choice === "change-vault")
+      return this.runSyncFromChoice(choice);
+    let modal = new SyncProgressModal(this.app), prev = this.syncEngine.onSyncProgress;
+    this.syncEngine.onSyncProgress = (progress) => {
+      modal.update(progress), prev == null || prev(progress);
+    }, modal.open();
+    try {
+      return await this.runSyncFromChoice(choice);
+    } catch (e) {
+      throw modal.close(), e;
+    } finally {
+      this.syncEngine.onSyncProgress = prev;
+    }
+  }
   /** True when both `apiUrl` and at least one of `apiKey` (self-hosted /
    *  static key) or `refreshToken` (OAuth device flow) are set. Used to gate
    *  startup sync, post-saveSettings sync, the status-bar click handler, and
@@ -6181,7 +6415,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
           return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a = this.settingTab) == null || _a.display(), this.syncEngine.computeSyncPlan("full");
         }
       }).awaitChoice();
-      await this.runSyncFromChoice(choice);
+      await this.runSyncWithProgress(choice);
     } catch (e) {
       console.error("Engram Sync: sync preview failed", e), new import_obsidian17.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
     }

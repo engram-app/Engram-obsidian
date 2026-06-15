@@ -275,14 +275,14 @@ export class EngramApi {
 
 	/** Get full note by path. */
 	async getNote(path: string): Promise<NoteDetail> {
-		const encoded = encodeURIComponent(path);
+		const encoded = encodePath(path);
 		const resp = await this.request("GET", `/notes/${encoded}`);
 		return resp.json as NoteDetail;
 	}
 
 	/** Delete a note. */
 	async deleteNote(path: string): Promise<DeleteResponse> {
-		const encoded = encodeURIComponent(path);
+		const encoded = encodePath(path);
 		const resp = await this.request("DELETE", `/notes/${encoded}`);
 		return resp.json as DeleteResponse;
 	}
@@ -307,14 +307,14 @@ export class EngramApi {
 
 	/** Get attachment content (base64). */
 	async getAttachment(path: string): Promise<AttachmentDetail> {
-		const encoded = encodeURIComponent(path);
+		const encoded = encodePath(path);
 		const resp = await this.request("GET", `/attachments/${encoded}`);
 		return resp.json as AttachmentDetail;
 	}
 
 	/** Delete an attachment. */
 	async deleteAttachment(path: string): Promise<DeleteResponse> {
-		const encoded = encodeURIComponent(path);
+		const encoded = encodePath(path);
 		const resp = await this.request("DELETE", `/attachments/${encoded}`);
 		return resp.json as DeleteResponse;
 	}
@@ -433,6 +433,14 @@ function parseLimitExceededError(e: unknown): LimitExceededError {
 		pick<number | boolean>("limit"),
 		pick<number>("current"),
 	);
+}
+
+/** Encode a vault path for use in a URL path segment list. Encodes each
+ *  segment but preserves the "/" separators — Phoenix's Plug.Static rejects
+ *  %2F-encoded slashes with a 400 (InvalidPathError) before routing/auth, so
+ *  encodeURIComponent over the whole path breaks any file in a subfolder. */
+function encodePath(path: string): string {
+	return path.split("/").map(encodeURIComponent).join("/");
 }
 
 /** Convert an ArrayBuffer to a base64 string. */

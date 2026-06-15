@@ -23,6 +23,7 @@ import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
 import { SyncEngine } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
+import { SyncProgressModal } from "./sync-progress-modal";
 import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
@@ -842,6 +843,35 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Run a sync choice with a live progress modal. Opens SyncProgressModal
+	 *  immediately so feedback ("Preparing…") shows the instant the preview
+	 *  closes — no dead gap — then streams engine progress into it and restores
+	 *  the prior progress callback when the sync settles. The modal's "Run in
+	 *  background" closes it while the sync keeps running. No-op choices
+	 *  (cancel / change-vault) skip the modal entirely. */
+	async runSyncWithProgress(choice: SyncChoice): Promise<boolean> {
+		if (choice === "cancel" || choice === "change-vault") {
+			return this.runSyncFromChoice(choice);
+		}
+		const modal = new SyncProgressModal(this.app);
+		const prev = this.syncEngine.onSyncProgress;
+		this.syncEngine.onSyncProgress = (progress) => {
+			modal.update(progress);
+			prev?.(progress);
+		};
+		modal.open();
+		try {
+			return await this.runSyncFromChoice(choice);
+		} catch (e) {
+			// Don't leave the modal stuck on "Preparing…" — close it so the
+			// caller's error Notice is the visible signal.
+			modal.close();
+			throw e;
+		} finally {
+			this.syncEngine.onSyncProgress = prev;
+		}
+	}
+
 	/** True when both `apiUrl` and at least one of `apiKey` (self-hosted /
 	 *  static key) or `refreshToken` (OAuth device flow) are set. Used to gate
 	 *  startup sync, post-saveSettings sync, the status-bar click handler, and
@@ -931,7 +961,7 @@ export default class EngramSyncPlugin extends Plugin {
 			});
 			const choice = await modal.awaitChoice();
 
-			await this.runSyncFromChoice(choice);
+			await this.runSyncWithProgress(choice);
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: sync preview failed", e);

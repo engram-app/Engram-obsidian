@@ -211,7 +211,8 @@ describe("EngramApi", () => {
 			await api.deleteNote("Notes/My File.md");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("DELETE");
-			expect(opts.url).toContain(encodeURIComponent("Notes/My File.md"));
+			expect(opts.url).toContain("Notes/My%20File.md");
+			expect(opts.url).not.toContain("%2F");
 		});
 	});
 
@@ -548,7 +549,8 @@ describe("EngramApi", () => {
 			const result = await api.getNote("Notes/My File.md");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("GET");
-			expect(opts.url).toContain(encodeURIComponent("Notes/My File.md"));
+			expect(opts.url).toContain("Notes/My%20File.md");
+			expect(opts.url).not.toContain("%2F");
 			expect(result).toEqual({ path: "Notes/My File.md", content: "# Hello", version: 1 });
 		});
 	});
@@ -586,7 +588,8 @@ describe("EngramApi", () => {
 			const result = await api.getAttachment("images/my photo.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("GET");
-			expect(opts.url).toContain(encodeURIComponent("images/my photo.png"));
+			expect(opts.url).toContain("images/my%20photo.png");
+			expect(opts.url).not.toContain("%2F");
 			expect(result).toEqual({ path: "images/my photo.png", content_base64: "aGVsbG8=" });
 		});
 	});
@@ -600,7 +603,7 @@ describe("EngramApi", () => {
 			await api.deleteAttachment("images/photo.png");
 			const opts = mockRequestUrl.mock.calls[0][0] as any;
 			expect(opts.method).toBe("DELETE");
-			expect(opts.url).toContain(encodeURIComponent("images/photo.png"));
+			expect(opts.url).toContain("images/photo.png");
 		});
 	});
 
@@ -756,5 +759,50 @@ describe("EngramApi", () => {
 			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
 			expect(invalidate).toHaveBeenCalledTimes(1);
 		});
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Path-in-URL encoding — must preserve slashes. Phoenix's Plug.Static rejects
+// %2F-encoded slashes with a 400 (Plug.Static.InvalidPathError) before auth,
+// so attachments/notes in subfolders could never be fetched or deleted.
+// ---------------------------------------------------------------------------
+
+describe("path encoding for by-path URL methods", () => {
+	function api(): EngramApi {
+		return new EngramApi("http://host", "key");
+	}
+	function lastUrl(): string {
+		const calls = mockRequestUrl.mock.calls;
+		return (calls[calls.length - 1]![0] as { url: string }).url;
+	}
+
+	test("getAttachment keeps real slashes and encodes segment chars", async () => {
+		mockRequestUrl.mockResolvedValue({ json: {} });
+		await api().getAttachment("Legal/Formation/a b.pdf");
+		const url = lastUrl();
+		expect(url).toContain("/attachments/Legal/Formation/a%20b.pdf");
+		expect(url).not.toContain("%2F");
+	});
+
+	test("deleteAttachment keeps real slashes", async () => {
+		mockRequestUrl.mockResolvedValue({ json: {} });
+		await api().deleteAttachment("Legal/Formation/x.pdf");
+		expect(lastUrl()).toContain("/attachments/Legal/Formation/x.pdf");
+		expect(lastUrl()).not.toContain("%2F");
+	});
+
+	test("getNote keeps real slashes", async () => {
+		mockRequestUrl.mockResolvedValue({ json: {} });
+		await api().getNote("Notes/Sub/Deep.md");
+		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
+		expect(lastUrl()).not.toContain("%2F");
+	});
+
+	test("deleteNote keeps real slashes", async () => {
+		mockRequestUrl.mockResolvedValue({ json: {} });
+		await api().deleteNote("Notes/Sub/Deep.md");
+		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
+		expect(lastUrl()).not.toContain("%2F");
 	});
 });
