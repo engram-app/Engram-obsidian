@@ -13,6 +13,8 @@
  */
 export class LimitExceededError extends Error {
 	readonly name = "LimitExceededError";
+	/** HTTP status that produced this error. Always 402 (the limit status). */
+	readonly status = 402;
 
 	constructor(
 		public readonly reason: string,
