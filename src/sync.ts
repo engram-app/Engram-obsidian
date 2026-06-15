@@ -214,6 +214,14 @@ export class SyncEngine {
 	 *  per push cycle (spec §4.6). */
 	private attachmentLimitedThisBatch = 0;
 
+	/** Plan-gated attachment skips drained by the most recent push flush, kept
+	 *  so the terminal "complete" progress event can report a `skipped` count
+	 *  even after `flushAttachmentLimitedToast()` has reset the live tally.
+	 *  Disjoint from the `failed` counter (real failures) by construction —
+	 *  informational outcomes increment `attachmentLimitedThisBatch`, genuine
+	 *  failures increment `failuresThisBatch` / the local `failed`. */
+	private lastBatchSkipped = 0;
+
 	/** Count of generic (non-needs_pro) push failures this batch, plus the
 	 *  first server message seen — drained by main.ts into a single aggregated
 	 *  "N file(s) failed to sync — open Sync Center" Notice. */
@@ -1094,6 +1102,9 @@ export class SyncEngine {
 	private flushAttachmentLimitedToast(): void {
 		const count = this.attachmentLimitedThisBatch;
 		this.attachmentLimitedThisBatch = 0;
+		// Stash for the terminal progress event's `skipped` tally — survives the
+		// reset above (which the once-per-session toast guard below relies on).
+		this.lastBatchSkipped = count;
 		if (count <= 0) return;
 		if (this.attachmentLimitToastShown) return;
 		this.attachmentLimitToastShown = true;
@@ -2370,7 +2381,16 @@ export class SyncEngine {
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
-		this.onSyncProgress?.({ phase: "complete", current: pushed, total: pushed, failed: 0 });
+		// pushModifiedFiles already flushed the plan-skip tally into
+		// lastBatchSkipped, so surface it here as `skipped` (disjoint from
+		// failed — informational skips never increment the failure counter).
+		this.onSyncProgress?.({
+			phase: "complete",
+			current: pushed,
+			total: pushed,
+			failed: 0,
+			skipped: this.lastBatchSkipped,
+		});
 
 		// Persist syncState updated during push (pull already saved its own)
 		if (pushed > 0) {
@@ -3025,10 +3045,20 @@ export class SyncEngine {
 			});
 		}
 
-		this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
-
+		// Flush first so the terminal "complete" can report the plan-skipped
+		// tally (flush stashes it into lastBatchSkipped before resetting the
+		// live counter). skipped and failed are disjoint — plan-skips never hit
+		// the `failed` counter (pushFile returns false for them, no failed++).
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
+
+		this.onSyncProgress?.({
+			phase: "complete",
+			current: pushed,
+			total,
+			failed,
+			skipped: this.lastBatchSkipped,
+		});
 
 		const skipped = total - pushed - failed;
 		devLog().log(

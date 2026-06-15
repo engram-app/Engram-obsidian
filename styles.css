@@ -874,6 +874,41 @@
 	margin: 12px 0 0;
 }
 
+/* Three-way completion tally: ✓ synced · ⤳ skipped (plan) · ✕ failed. */
+.engram-progress-summary-tally {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	align-items: baseline;
+}
+
+.engram-progress-tally-synced {
+	color: var(--text-success, var(--text-normal));
+}
+
+/* Calm — plan-skips are expected on Free tier, not errors. Accent, not red. */
+.engram-progress-tally-skipped {
+	color: var(--text-accent);
+}
+
+.engram-progress-tally-failed {
+	color: var(--text-error);
+}
+
+.engram-progress-plan-note {
+	margin: 8px 0 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.engram-progress-upgrade {
+	flex: none;
+}
+
 .engram-progress-hint {
 	margin: 12px 0 0;
 	color: var(--text-muted);

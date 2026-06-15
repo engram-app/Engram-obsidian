@@ -10,8 +10,10 @@ import type EngramSyncPlugin from "./main";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
-/** Fallback billing URL when a needs_pro issue didn't carry one. */
-const DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
+/** Fallback billing URL when a needs_pro issue didn't carry one. Exported so
+ *  other plan-gated surfaces (e.g. the sync progress modal's "skipped" note)
+ *  link to the same place. */
+export const DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */

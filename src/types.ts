@@ -367,6 +367,11 @@ export interface SyncProgress {
 	current: number;
 	total: number;
 	failed: number;
+	/** Plan-gated / informational attachments that were skipped (not failures).
+	 *  Counted separately from `failed` so the completion summary can show a
+	 *  three-way ✓ synced · ⤳ skipped (plan) · ✕ failed tally. Optional —
+	 *  non-complete phases and older callers omit it (treated as 0). */
+	skipped?: number;
 	/** Current file being processed (optional, for display). */
 	currentPath?: string;
 }
