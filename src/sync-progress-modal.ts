@@ -1,5 +1,61 @@
 import { Modal } from "obsidian";
+import { DEFAULT_UPGRADE_URL } from "./sync-center-render";
 import type { SyncProgress } from "./types";
+
+/** Final tally rendered when a sync settles. Plan-gated attachments land in
+ *  `skipped` (informational, not a failure); genuine errors land in `failed`.
+ *  The two are disjoint — the sync engine tallies plan-skips into
+ *  `attachmentLimitedThisBatch` and real failures into the `failed` counter,
+ *  so a single attachment is never counted in both. */
+export interface CompletionSummary {
+	synced: number;
+	skipped: number;
+	failed: number;
+}
+
+/** Render the three-way ✓ synced · ⤳ skipped (plan) · ✕ failed completion
+ *  tally into `parent`, plus (when anything was plan-skipped) a one-line note
+ *  pointing at the Sync Center with an [Upgrade] affordance.
+ *
+ *  Pure + DOM-agnostic (only uses the Obsidian element-creation helpers) so it
+ *  is unit-testable without a real Modal. The caller owns clearing `parent`
+ *  before re-rendering. */
+export function renderCompletionSummary(parent: HTMLElement, summary: CompletionSummary): void {
+	const line = parent.createDiv({ cls: "engram-progress-summary-tally" });
+
+	// Match the modal's existing zero-handling: only show a segment when > 0.
+	if (summary.synced > 0) {
+		line.createSpan({
+			cls: "engram-progress-tally-synced",
+			text: `✓ ${summary.synced} synced`,
+		});
+	}
+	if (summary.skipped > 0) {
+		line.createSpan({
+			cls: "engram-progress-tally-skipped",
+			text: `⤳ ${summary.skipped} skipped (Free plan)`,
+		});
+	}
+	if (summary.failed > 0) {
+		line.createSpan({
+			cls: "engram-progress-tally-failed",
+			text: `✕ ${summary.failed} failed`,
+		});
+	}
+
+	if (summary.skipped > 0) {
+		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
+		const noun = summary.skipped === 1 ? "attachment" : "attachments";
+		note.createSpan({
+			text: `${summary.skipped} ${noun} need a paid plan — see Sync Center. `,
+		});
+		const upgrade = note.createEl("button", {
+			text: "Upgrade",
+			cls: "engram-progress-upgrade mod-cta",
+		});
+		upgrade.addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+	}
+}
 
 const PHASE_LABELS: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting local files",
@@ -64,8 +120,7 @@ export class SyncProgressModal extends Modal {
 		});
 		this.failedEl.hidden = true;
 
-		this.summaryEl = contentEl.createEl("p", {
-			text: "",
+		this.summaryEl = contentEl.createDiv({
 			cls: "engram-progress-summary",
 		});
 		this.summaryEl.hidden = true;
@@ -162,10 +217,12 @@ export class SyncProgressModal extends Modal {
 			this.bgBtn.hidden = true;
 			this.closeBtn.hidden = false;
 
-			const parts: string[] = [];
-			if (progress.current > 0) parts.push(`${progress.current} synced`);
-			if (progress.failed > 0) parts.push(`${progress.failed} failed`);
-			this.summaryEl.setText(parts.join(", "));
+			this.summaryEl.empty();
+			renderCompletionSummary(this.summaryEl, {
+				synced: progress.current,
+				skipped: progress.skipped ?? 0,
+				failed: progress.failed,
+			});
 			this.summaryEl.hidden = false;
 
 			if (progress.failed > 0) {
@@ -173,6 +230,8 @@ export class SyncProgressModal extends Modal {
 					`${progress.failed} failed — run "Engram: Show sync log" for details`,
 				);
 				this.failedEl.hidden = false;
+			} else {
+				this.failedEl.hidden = true;
 			}
 			return;
 		}

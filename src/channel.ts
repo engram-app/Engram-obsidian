@@ -30,6 +30,7 @@ export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
 	private readonly joinRef = "1";
+	private readonly userJoinRef = "2";
 	private heartbeatTimer: number | null = null;
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
@@ -44,6 +45,10 @@ export class NoteChannel {
 	onEvent: ((event: NoteStreamEvent) => void) | null = null;
 	onStatusChange: ((connected: boolean) => void) | null = null;
 	onVaultDeleted: (() => void) | null = null;
+	/** Surfaces the user's current plan/entitlements from the best-effort
+	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
+	 *  broadcasts). Never gates the plugin's connected state. */
+	onPlanState: ((plan: unknown) => void) | null = null;
 
 	constructor(baseUrl: string, apiKey: string, userId: string, vaultId: string | null = null) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
@@ -83,6 +88,10 @@ export class NoteChannel {
 
 	private get topic(): string {
 		return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
+	}
+
+	private get userTopic(): string {
+		return `user:${this.userId}`;
 	}
 
 	async connect(): Promise<void> {
@@ -205,6 +214,11 @@ export class NoteChannel {
 
 	private joinChannel(): void {
 		this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]);
+		// Best-effort: join the per-user topic to receive plan/entitlement state.
+		// Uses a distinct join ref so replies are attributable, and an older
+		// backend that doesn't serve this topic simply replies with an error
+		// (handled below) without affecting the sync channel.
+		this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
 	}
 
 	private startHeartbeat(): void {
@@ -224,7 +238,7 @@ export class NoteChannel {
 			return;
 		}
 
-		const [, , , event, payload] = msg as [
+		const [, , topic, event, payload] = msg as [
 			string | null,
 			string | null,
 			string,
@@ -234,12 +248,35 @@ export class NoteChannel {
 
 		if (event === "phx_reply") {
 			const status = (payload as { status?: string }).status;
-			if (status === "ok" && !this.connected) {
-				this.setConnected(true);
-				rlog().info("channel", `Joined ${this.topic}`);
+			if (status === "ok") {
+				// The plugin's connected state is keyed ONLY on the sync topic.
+				// The user topic is best-effort and must never flip connected.
+				if (topic === this.topic && !this.connected) {
+					this.setConnected(true);
+					rlog().info("channel", `Joined ${this.topic}`);
+				} else if (topic === this.userTopic) {
+					const response = (payload as { response?: { plan?: unknown } }).response;
+					const plan = response?.plan;
+					if (plan !== undefined && plan !== null) {
+						rlog().info("channel", `Joined ${this.userTopic} — plan state received`);
+						this.onPlanState?.(plan);
+					}
+				}
 			} else if (status === "error") {
-				rlog().error("channel", `Channel join error: ${JSON.stringify(payload)}`);
+				// Include the topic so a best-effort user-topic join failure
+				// (e.g. an older backend) is distinguishable from a sync failure.
+				// Either way we do NOT touch sync connection state here.
+				rlog().error(
+					"channel",
+					`Channel join error on ${topic}: ${JSON.stringify(payload)}`,
+				);
 			}
+			return;
+		}
+
+		if (event === "subscription_activated" && topic === this.userTopic) {
+			rlog().info("channel", "Received subscription_activated event");
+			this.onPlanState?.(payload);
 			return;
 		}
 

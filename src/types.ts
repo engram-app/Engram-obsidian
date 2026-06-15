@@ -1,3 +1,5 @@
+import type { PlanState } from "./plan-state";
+
 /** Plugin settings stored in data.json */
 export interface EngramSyncSettings {
 	/** Engram base URL (e.g. "http://10.0.20.214:8000") */
@@ -42,6 +44,9 @@ export interface EngramSyncSettings {
 	userEmail?: string;
 	/** Active auth method. */
 	authMethod?: "oauth" | "api_key" | null;
+	/** Last-known plan/limit state pushed by the backend over the WebSocket.
+	 *  Null until the first plan event is received (or older backend). */
+	planState?: PlanState | null;
 }
 
 export const DEFAULT_SETTINGS: EngramSyncSettings = {
@@ -54,6 +59,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	conflictResolution: "auto",
 	vaultId: null,
 	clientId: "",
+	planState: null,
 };
 
 /** A note as returned by POST /notes */
@@ -303,6 +309,7 @@ export type SyncIssueCategory =
 	| "network"
 	| "conflict"
 	| "needs_pro"
+	| "quota"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads
@@ -360,6 +367,11 @@ export interface SyncProgress {
 	current: number;
 	total: number;
 	failed: number;
+	/** Plan-gated / informational attachments that were skipped (not failures).
+	 *  Counted separately from `failed` so the completion summary can show a
+	 *  three-way ✓ synced · ⤳ skipped (plan) · ✕ failed tally. Optional —
+	 *  non-complete phases and older callers omit it (treated as 0). */
+	skipped?: number;
 	/** Current file being processed (optional, for display). */
 	currentPath?: string;
 }

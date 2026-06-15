@@ -3213,6 +3213,115 @@ describe("SyncEngine IssueStore integration", () => {
 	});
 });
 
+describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
+	test("free text-only: non-text attachment is pre-skipped, no upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
+		// Informational skip is tallied for the batched toast.
+		expect(engine.getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {
+		const engine = createEngine();
+		// .txt isn't in BINARY_EXTENSIONS, so force it through the binary path to
+		// prove the text-MIME parity rule itself allows it (effective MIME text/*).
+		const file = new TFile("note.txt", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		expect((engine as any).preGateAttachment(file)).toBeNull();
+	});
+
+	test("free text-only: a .md note still uploads (notes not pre-gated)", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/Test.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(engine.issues.count()).toBe(0);
+	});
+
+	test("oversize attachment is pre-skipped as too_large", async () => {
+		const engine = createEngine();
+		const file = new TFile("big.png", Date.now(), 500);
+		engine.applyPlanState({
+			tier: "pro",
+			attachmentsTextOnly: false,
+			maxFileBytes: 100,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		const issue = engine.issues.get("big.png");
+		expect(issue?.category).toBe("too_large");
+		expect(issue?.sizeBytes).toBe(500);
+	});
+
+	test("bypassPlanSkip (resync) ignores the pre-gate and attempts upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		// Sanity: a normal push is pre-skipped.
+		await (engine as any).pushFile(file, true);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// Forced bypass (what resyncSkippedAttachments does) must attempt the upload.
+		await (engine as any).pushFile(file, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+
+	test("no planState → no pre-gate (backend decides), upload IS attempted", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		// No applyPlanState — planState stays null.
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+});
+
 describe("SyncEngine.pushAll with deleteRemoteExtras", () => {
 	test("keep-remote mode: pushes all local, never calls deleteNote", async () => {
 		const engine = createEngine();
@@ -3582,5 +3691,191 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
 		expect(toast).toBeDefined();
 		expect(toast?.message).toContain("1 attachment skipped");
+	});
+
+	function makeQuotaError(): LimitExceededError {
+		return new LimitExceededError(
+			"attachments_quota_exceeded",
+			"https://app.engram.page/settings/billing",
+			"attachment_storage_bytes",
+			1000,
+			1000,
+		);
+	}
+
+	test("quota 402 → skipped (not failed), category=quota, NOT re-queued", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/big.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeQuotaError());
+
+		await (engine as any).pushFile(file, true);
+
+		expect(engine.issues.count("quota")).toBe(1);
+		// Terminal — never re-queued.
+		expect(engine.queue.size).toBe(0);
+		// Tallied as a plan-skip, not a failure.
+		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test.each([
+		["needs_pro", () => makeAttachmentLimitedError()],
+		["quota", () => makeQuotaError()],
+	])("plan-limit %s push does NOT call console.error", async (_label, makeErr) => {
+		const engine = createEngine();
+		const file = new TFile("Assets/x.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeErr());
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, true);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test("a real failure (5xx) STILL calls console.error", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/x.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# x");
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce({ status: 502, message: "boom" });
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, false);
+			expect(spy).toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
+	const freePlan = {
+		tier: "free" as const,
+		attachmentsTextOnly: true,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 1,
+	};
+	const proPlan = {
+		tier: "pro" as const,
+		attachmentsTextOnly: false,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 2,
+	};
+
+	test("applyPlanState persists via onPlanStatePersist", () => {
+		const engine = createEngine();
+		const saved: unknown[] = [];
+		engine.onPlanStatePersist = (p) => saved.push(p);
+		engine.applyPlanState(proPlan);
+		expect(saved.length).toBe(1);
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("hydratePlanState seeds state without triggering a resync", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+
+		// Hydrating with a paid plan must NOT re-push — prev is null but this is a
+		// reload, not an upgrade.
+		engine.hydratePlanState(proPlan);
+		// Let any (erroneously) scheduled microtasks settle.
+		await Promise.resolve();
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("on capability gained, skipped attachments are re-attempted and cleared", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// free → free: no capability gain, no resync.
+		engine.applyPlanState(freePlan);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// free → pro: text-only true→false = capability gain → resync fires.
+		engine.applyPlanState(proPlan);
+		await engine.resyncSkippedAttachments();
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+		expect(engine.issues.get("a.png")).toBeUndefined();
+	});
+
+	test("bypassPlanSkip re-attempts a parked needs_pro attachment (force alone does not)", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the
+		// needs_pro entry still short-circuits — no network call, stays quiet.
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+
+	test("a parked quota attachment is also short-circuited on a normal re-push, and re-attempted under bypassPlanSkip", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "quota",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the parked
+		// quota entry is informational, so it short-circuits — no network call,
+		// stays quiet. (Pre-fix this re-uploaded and re-402'd every sync.)
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
 	});
 });

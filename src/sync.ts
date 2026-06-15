@@ -16,7 +16,9 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { isTextAttachment } from "./mime";
 import { OfflineQueue } from "./offline-queue";
+import { type PlanState, attachmentCapabilityGained } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
 import { threeWayMerge } from "./three-way-merge";
@@ -31,6 +33,7 @@ import type {
 	NoteStreamEvent,
 	QueueEntry,
 	ReconcileResult,
+	SyncIssueCategory,
 	SyncLogEntry,
 	SyncPlan,
 	SyncProgress,
@@ -183,6 +186,15 @@ export class SyncEngine {
 	/** Called after each batch during pushAll/pullAll to report progress. */
 	onSyncProgress: ((progress: SyncProgress) => void) | null = null;
 
+	/** Last-known plan/entitlement state, fed by the channel's `onPlanState`
+	 *  callback (user-topic join reply + `subscription_activated`). Drives the
+	 *  upgrade-triggered re-sync of plan-skipped attachments. Null until the
+	 *  first plan event arrives (or an older backend that never sends one). */
+	private planState: PlanState | null = null;
+
+	/** Set by main.ts to persist plan state to settings when it changes. */
+	onPlanStatePersist: ((p: PlanState) => void) | null = null;
+
 	/** Optional sync log — receives an entry for each push/pull outcome. */
 	syncLog: SyncLog | null = null;
 
@@ -201,6 +213,14 @@ export class SyncEngine {
 	 *  drainAttachmentLimitedCount() so a single batched toast can be fired
 	 *  per push cycle (spec §4.6). */
 	private attachmentLimitedThisBatch = 0;
+
+	/** Plan-gated attachment skips drained by the most recent push flush, kept
+	 *  so the terminal "complete" progress event can report a `skipped` count
+	 *  even after `flushAttachmentLimitedToast()` has reset the live tally.
+	 *  Disjoint from the `failed` counter (real failures) by construction —
+	 *  informational outcomes increment `attachmentLimitedThisBatch`, genuine
+	 *  failures increment `failuresThisBatch` / the local `failed`. */
+	private lastBatchSkipped = 0;
 
 	/** Count of generic (non-needs_pro) push failures this batch, plus the
 	 *  first server message seen — drained by main.ts into a single aggregated
@@ -679,18 +699,53 @@ export class SyncEngine {
 	private pendingPostPullPushes: Set<string> = new Set();
 
 	/** Push a single file to Engram. Returns true on success.
-	 *  When force is true, skip echo suppression (used by pushAll). */
-	private async pushFile(file: TFile, force = false): Promise<boolean> {
+	 *  When force is true, skip echo suppression (used by pushAll).
+	 *  When bypassPlanSkip is true, also skip the needs_pro short-circuit so a
+	 *  parked attachment is actually re-uploaded — used ONLY by
+	 *  resyncSkippedAttachments on a plan upgrade. The bulk paths (pushAll /
+	 *  pushModifiedFiles) pass force without this, so they stay quiet on
+	 *  plan-gated attachments. */
+	private async pushFile(file: TFile, force = false, bypassPlanSkip = false): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
-		// Persistence shortcut: if this attachment was already marked needs_pro
-		// (Free-tier 402 on a previous push), skip it without re-hitting the
+		// Persistence shortcut: if this attachment was already parked under an
+		// informational plan-skip (Free-tier 402 attachments-disabled, or a
+		// storage-quota 402, on a previous push), skip it without re-hitting the
 		// backend. The issue stays in the Sync Center until the user upgrades or
 		// dismisses it. This is what makes the batched toast quiet on the next
 		// sync — there's nothing left to fail, so the count is 0.
-		if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path)) {
-			devLog().log("push", `skip (needs_pro): ${file.path}`);
+		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path)) {
+			devLog().log("push", `skip (plan-informational): ${file.path}`);
 			return false;
+		}
+
+		// Plan-limit pre-gate: with known limits, don't even attempt an upload the
+		// backend WILL reject. Records the same informational/actionable issue a
+		// 402/413 would have, but with no network round-trip — this is what removes
+		// the noise at the source. Only for binary attachments; notes are never
+		// pre-gated. bypassPlanSkip (resyncSkippedAttachments after an upgrade)
+		// skips this so a parked attachment is actually re-uploaded.
+		if (!bypassPlanSkip && this.isBinaryFile(file)) {
+			const gate = this.preGateAttachment(file);
+			if (gate) {
+				const now = Date.now();
+				this.issues.record({
+					path: file.path,
+					kind: "attachment",
+					category: gate.category,
+					message: gate.message,
+					sizeBytes: gate.category === "too_large" ? file.stat.size : undefined,
+					upgradeUrl: gate.upgradeUrl,
+					firstFailedAt: now,
+					lastFailedAt: now,
+					attempts: 1,
+				});
+				if (issueDisposition(gate.category) === "informational") {
+					this.attachmentLimitedThisBatch += 1;
+				}
+				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
+				return false;
+			}
 		}
 
 		await this.acquirePushSlot();
@@ -911,10 +966,11 @@ export class SyncEngine {
 		} catch (e) {
 			const msg = errMsg(e);
 			const classified = categorizeError(e);
-			// 402 attachments_disabled is an expected Free-tier outcome, not a
-			// programming error — don't pollute the dev console. (Other categories
-			// keep the existing error log for triage.)
-			if (classified.category !== "needs_pro") {
+			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
+			// not programming errors — don't pollute the dev console. Gate by
+			// disposition so both informational reasons stay quiet; other
+			// categories keep the error log for triage.
+			if (issueDisposition(classified.category) !== "informational") {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error(`Engram Sync: failed to push ${file.path}`, e);
 			}
@@ -934,8 +990,10 @@ export class SyncEngine {
 				attempts: 1,
 			});
 			const attempts = this.issues.get(file.path)?.attempts ?? 1;
-			if (classified.category === "needs_pro") {
-				// Tally for the batched session toast (drained by pushAll / pushModifiedFiles).
+			if (issueDisposition(classified.category) === "informational") {
+				// Plan-limit skip (needs_pro, quota): tally as "skipped", not failed.
+				// Drives the batched session toast (drained by pushAll /
+				// pushModifiedFiles) and the progress "skipped" count.
 				this.attachmentLimitedThisBatch += 1;
 			} else {
 				// Tally for the batched "N files failed to sync" Notice.
@@ -978,15 +1036,40 @@ export class SyncEngine {
 		return success;
 	}
 
-	/** True iff the issue store already has a `needs_pro` entry for this path
-	 *  (i.e. backend returned 402 attachments_disabled on a prior push). Used to
-	 *  short-circuit re-push attempts without hitting the network — survives
-	 *  plugin reloads because the issue store is persisted. */
-	private hasNeedsProIssue(path: string): boolean {
+	/** True iff the issue store already has a parked *informational* entry for this
+	 *  path (e.g. backend returned 402 attachments_disabled or 402 storage-quota on a
+	 *  prior push). Used to short-circuit re-push attempts without hitting the
+	 *  network — survives plugin reloads because the issue store is persisted. */
+	private hasInformationalIssue(path: string): boolean {
 		for (const issue of this.issues.all()) {
-			if (issue.path === path && issue.category === "needs_pro") return true;
+			if (issue.path === path && issueDisposition(issue.category) === "informational")
+				return true;
 		}
 		return false;
+	}
+
+	/** Plan-limit pre-check for an attachment, using last-known PlanState. Returns
+	 *  a category to skip under (mirroring the backend's 413/402 outcomes), or null
+	 *  to proceed with the upload. The backend remains the authoritative fallback
+	 *  when local plan state is stale (null → we defer to the server). */
+	private preGateAttachment(
+		file: TFile,
+	): { category: SyncIssueCategory; message: string; upgradeUrl?: string } | null {
+		const plan = this.planState;
+		if (!plan) return null; // unknown limits → let the backend decide
+		if (plan.maxFileBytes > 0 && file.stat.size > plan.maxFileBytes) {
+			return {
+				category: "too_large",
+				message: `File exceeds the ${plan.maxFileBytes}-byte limit`,
+			};
+		}
+		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
+			return {
+				category: "needs_pro",
+				message: "Free syncs notes only — images & PDFs need a paid plan.",
+			};
+		}
+		return null;
 	}
 
 	/** Drain the batch failure tally for an aggregated, deduped Notice. Returns
@@ -1021,6 +1104,9 @@ export class SyncEngine {
 	private flushAttachmentLimitedToast(): void {
 		const count = this.attachmentLimitedThisBatch;
 		this.attachmentLimitedThisBatch = 0;
+		// Stash for the terminal progress event's `skipped` tally — survives the
+		// reset above (which the once-per-session toast guard below relies on).
+		this.lastBatchSkipped = count;
 		if (count <= 0) return;
 		if (this.attachmentLimitToastShown) return;
 		this.attachmentLimitToastShown = true;
@@ -1041,6 +1127,54 @@ export class SyncEngine {
 	/** Test hook: whether the session has already shown the batched toast. */
 	hasShownAttachmentLimitToast(): boolean {
 		return this.attachmentLimitToastShown;
+	}
+
+	// --- Plan state ---
+
+	/** Store new plan state; on a capability gain (upgrade unlocks non-text
+	 *  attachments), re-attempt the attachments parked as informational
+	 *  plan-skips. Persists via onPlanStatePersist so a reload keeps the state. */
+	applyPlanState(next: PlanState): void {
+		const gained = attachmentCapabilityGained(this.planState, next);
+		this.planState = next;
+		this.onPlanStatePersist?.(next);
+		if (gained) {
+			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
+			rlog().info("push", "Plan capability gained — re-syncing skipped attachments");
+			void this.resyncSkippedAttachments();
+		}
+	}
+
+	/** Seed plan state from persisted settings on load WITHOUT triggering a
+	 *  re-sync. A normal reload must not be read as an upgrade: applyPlanState
+	 *  would see prev=null and treat any non-text-only plan as a fresh capability
+	 *  gain, spuriously re-pushing every parked attachment on every launch. */
+	hydratePlanState(p: PlanState): void {
+		this.planState = p;
+	}
+
+	/** The current plan state (test/UI hook). */
+	getPlanState(): PlanState | null {
+		return this.planState;
+	}
+
+	/** Re-push every file currently parked as an informational plan-skip
+	 *  (needs_pro / quota). Force-pushes AND bypasses the needs_pro short-circuit
+	 *  so the upload is actually re-attempted; the normal push success path
+	 *  clears the issue. Wired to the channel's upgrade event and the Sync Center
+	 *  "Sync these now" button. */
+	async resyncSkippedAttachments(): Promise<void> {
+		const skipped = this.issues
+			.all()
+			.filter((i) => issueDisposition(i.category) === "informational");
+		if (skipped.length === 0) return;
+		for (const issue of skipped) {
+			const file = this.app.vault.getAbstractFileByPath(normalizePath(issue.path));
+			if (file instanceof TFile) {
+				await this.pushFile(file, /* force */ true, /* bypassPlanSkip */ true);
+			}
+		}
+		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
@@ -2249,7 +2383,16 @@ export class SyncEngine {
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
-		this.onSyncProgress?.({ phase: "complete", current: pushed, total: pushed, failed: 0 });
+		// pushModifiedFiles already flushed the plan-skip tally into
+		// lastBatchSkipped, so surface it here as `skipped` (disjoint from
+		// failed — informational skips never increment the failure counter).
+		this.onSyncProgress?.({
+			phase: "complete",
+			current: pushed,
+			total: pushed,
+			failed: 0,
+			skipped: this.lastBatchSkipped,
+		});
 
 		// Persist syncState updated during push (pull already saved its own)
 		if (pushed > 0) {
@@ -2904,10 +3047,20 @@ export class SyncEngine {
 			});
 		}
 
-		this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
-
+		// Flush first so the terminal "complete" can report the plan-skipped
+		// tally (flush stashes it into lastBatchSkipped before resetting the
+		// live counter). skipped and failed are disjoint — plan-skips never hit
+		// the `failed` counter (pushFile returns false for them, no failed++).
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
+
+		this.onSyncProgress?.({
+			phase: "complete",
+			current: pushed,
+			total,
+			failed,
+			skipped: this.lastBatchSkipped,
+		});
 
 		const skipped = total - pushed - failed;
 		devLog().log(
@@ -3142,8 +3295,9 @@ export class SyncEngine {
 	/** Flush queued changes oldest-first. Stops on first failure. */
 	/** Retry every transient (auto-retryable) failure now — including ones
 	 *  already parked past RETRY_CAP — by re-enqueuing a content-free entry and
-	 *  flushing. Actionable failures (too_large, needs_pro, auth, conflict) are
-	 *  left alone; retrying can't fix them. Wired to "Retry all now". */
+	 *  flushing. Non-transient failures — actionable (too_large, auth, conflict)
+	 *  and informational (needs_pro, quota) — are left alone; retrying can't fix
+	 *  them. Wired to "Retry all now". */
 	async retryFailedNow(): Promise<number> {
 		for (const issue of this.issues.all()) {
 			if (issueDisposition(issue.category) !== "transient") continue;
