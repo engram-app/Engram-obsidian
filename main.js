@@ -731,7 +731,7 @@ var import_obsidian17 = require("obsidian");
 var import_obsidian = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/mcp", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
