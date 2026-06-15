@@ -3583,4 +3583,65 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		expect(toast).toBeDefined();
 		expect(toast?.message).toContain("1 attachment skipped");
 	});
+
+	function makeQuotaError(): LimitExceededError {
+		return new LimitExceededError(
+			"attachments_quota_exceeded",
+			"https://app.engram.page/settings/billing",
+			"attachment_storage_bytes",
+			1000,
+			1000,
+		);
+	}
+
+	test("quota 402 → skipped (not failed), category=quota, NOT re-queued", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/big.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeQuotaError());
+
+		await (engine as any).pushFile(file, true);
+
+		expect(engine.issues.count("quota")).toBe(1);
+		// Terminal — never re-queued.
+		expect(engine.queue.size).toBe(0);
+		// Tallied as a plan-skip, not a failure.
+		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test.each([
+		["needs_pro", () => makeAttachmentLimitedError()],
+		["quota", () => makeQuotaError()],
+	])("plan-limit %s push does NOT call console.error", async (_label, makeErr) => {
+		const engine = createEngine();
+		const file = new TFile("Assets/x.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeErr());
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, true);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test("a real failure (5xx) STILL calls console.error", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/x.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# x");
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce({ status: 502, message: "boom" });
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, false);
+			expect(spy).toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
 });

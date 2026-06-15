@@ -911,10 +911,11 @@ export class SyncEngine {
 		} catch (e) {
 			const msg = errMsg(e);
 			const classified = categorizeError(e);
-			// 402 attachments_disabled is an expected Free-tier outcome, not a
-			// programming error — don't pollute the dev console. (Other categories
-			// keep the existing error log for triage.)
-			if (classified.category !== "needs_pro") {
+			// Plan-limit 402s (needs_pro, quota) are expected Free-tier outcomes,
+			// not programming errors — don't pollute the dev console. Gate by
+			// disposition so both informational reasons stay quiet; other
+			// categories keep the error log for triage.
+			if (issueDisposition(classified.category) !== "informational") {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error(`Engram Sync: failed to push ${file.path}`, e);
 			}
@@ -934,8 +935,10 @@ export class SyncEngine {
 				attempts: 1,
 			});
 			const attempts = this.issues.get(file.path)?.attempts ?? 1;
-			if (classified.category === "needs_pro") {
-				// Tally for the batched session toast (drained by pushAll / pushModifiedFiles).
+			if (issueDisposition(classified.category) === "informational") {
+				// Plan-limit skip (needs_pro, quota): tally as "skipped", not failed.
+				// Drives the batched session toast (drained by pushAll /
+				// pushModifiedFiles) and the progress "skipped" count.
 				this.attachmentLimitedThisBatch += 1;
 			} else {
 				// Tally for the batched "N files failed to sync" Notice.

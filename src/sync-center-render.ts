@@ -48,6 +48,7 @@ export function renderSyncCenter(
 	parent.addClass("engram-sync-center");
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
+	renderPlanSkips(parent, plugin, refresh);
 	renderNeedsAttention(parent, plugin, refresh);
 	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
@@ -56,9 +57,9 @@ export function renderSyncCenter(
 }
 
 /** All current issues whose disposition is in `dispositions`, grouped by
- *  category in CATEGORY_ORDER. Accepts a set so the "Needs attention" section
- *  can fold in `informational` plan-limit issues (needs_pro, quota) alongside
- *  the `actionable` ones — they share the same card layout and upgrade path. */
+ *  category in CATEGORY_ORDER. Each section passes the single disposition it
+ *  owns (informational / actionable / transient) so the three surfaces stay
+ *  cleanly partitioned. */
 function groupedByCategory(
 	issues: SyncIssue[],
 	dispositions: IssueDisposition[],
@@ -77,10 +78,14 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 	const status = plugin.syncEngine.getStatus();
 	const all = plugin.syncEngine.issues.all();
-	// Informational (plan-limit) issues render in the "Needs attention" section
-	// alongside actionable ones, so count them there — not as "retrying".
-	const attentionCount = all.filter((i) => issueDisposition(i.category) !== "transient").length;
-	const retryingCount = all.length - attentionCount;
+	// Three independent buckets, one per disposition. Informational (plan-limit)
+	// issues are their own calm "not synced on your plan" tally — never folded
+	// into "needs attention" nor "retrying".
+	const planSkipCount = all.filter(
+		(i) => issueDisposition(i.category) === "informational",
+	).length;
+	const attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length;
+	const retryingCount = all.filter((i) => issueDisposition(i.category) === "transient").length;
 	const ignoredCount = plugin.syncEngine.ignoredFiles.size();
 
 	const dot = header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` });
@@ -89,6 +94,10 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const title = header.createSpan({ cls: "engram-sync-center-title" });
 	title.setText(`Engram Sync — ${status.state}`);
 
+	if (planSkipCount > 0) {
+		const badge = header.createSpan({ cls: "engram-sync-center-plan-badge" });
+		badge.setText(`${planSkipCount} not on your plan`);
+	}
 	if (attentionCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-issue-badge" });
 		badge.setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`);
@@ -141,6 +150,72 @@ function makeActionButton(
 	});
 }
 
+/** "Not synced on your plan" — terminal plan-limit facts (needs_pro, quota).
+ *  Calm, info-styled section rendered ABOVE "Needs attention": nothing is
+ *  broken, these files just exceed the current tier. One card per reason with
+ *  an Upgrade CTA; no retry/dismiss churn. */
+function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]);
+	const total = groups.reduce((n, [, list]) => n + list.length, 0);
+	if (total === 0) return; // No section when nothing is plan-skipped.
+
+	const section = parent.createDiv({
+		cls: "engram-sync-center-section engram-sync-center-plan-section",
+	});
+	sectionHeading(section, `Not synced on your plan (${total})`);
+
+	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
+	body.createEl("p", {
+		cls: "engram-sync-center-card-hint",
+		text: "These files are fine — they just need a paid plan to sync.",
+	});
+
+	for (const [category, list] of groups) {
+		renderPlanCard(body, plugin, refresh, category, list);
+	}
+}
+
+/** A calm (info-styled) plan-skip card: remediation copy, file list, and a
+ *  single Upgrade button. No Dismiss/Retry — the fact stands until the plan
+ *  changes. */
+function renderPlanCard(
+	parent: HTMLElement,
+	plugin: EngramSyncPlugin,
+	refresh: () => void,
+	category: SyncIssueCategory,
+	issues: SyncIssue[],
+): void {
+	const { title, hint } = remediation(category);
+	const card = parent.createDiv({
+		cls: "engram-sync-center-card engram-sync-center-card-info",
+	});
+
+	const head = card.createDiv({ cls: "engram-sync-center-card-head" });
+	head.createSpan({ cls: "engram-sync-center-card-icon", text: CATEGORY_ICON[category] ?? "🔒" });
+	head.createSpan({
+		cls: "engram-sync-center-card-title",
+		text: `${title} (${issues.length})`,
+	});
+
+	card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+
+	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
+	const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
+	const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+	upgrade.addEventListener("click", () => window.open(url, "_blank"));
+
+	const toggle = actions.createEl("button", {
+		text: `Show files (${issues.length}) ▾`,
+		cls: "engram-sync-center-card-toggle",
+	});
+	const fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+	toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
+
+	for (const issue of issues) {
+		renderFileRow(fileList, plugin, refresh, issue);
+	}
+}
+
 /** "Needs attention" — permanent failures the user must act on, one card per
  *  reason. Aggregates the files sharing each reason. */
 function renderNeedsAttention(
@@ -148,16 +223,15 @@ function renderNeedsAttention(
 	plugin: EngramSyncPlugin,
 	refresh: () => void,
 ): void {
-	// Fold informational plan-limit issues (needs_pro, quota) in with the
-	// actionable ones: both are terminal, never auto-retry, and want an upgrade
-	// CTA. A dedicated "Not synced on your plan" grouping is a later task.
-	const groups = groupedByCategory(plugin.syncEngine.issues.all(), [
-		"actionable",
-		"informational",
-	]);
+	// Only actionable issues here (too_large, auth, conflict). Informational
+	// plan-limit issues now render in their own calm "Not synced on your plan"
+	// section above; transient ones go under "Retrying automatically".
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]);
 	const total = groups.reduce((n, [, list]) => n + list.length, 0);
 
-	const section = parent.createDiv({ cls: "engram-sync-center-section" });
+	const section = parent.createDiv({
+		cls: "engram-sync-center-section engram-sync-center-attention-section",
+	});
 	const heading = sectionHeading(section, `Needs attention (${total})`);
 	if (total > 0) {
 		heading.addButton((btn) =>
@@ -204,12 +278,6 @@ function renderAttentionCard(
 	card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
 
 	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-
-	if (category === "needs_pro" || category === "quota") {
-		const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
-		const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
-		upgrade.addEventListener("click", () => window.open(url, "_blank"));
-	}
 
 	// Per-card dismiss — clears these errors without permanently ignoring the
 	// files (unlike "Ignore"). They reappear if they fail again.

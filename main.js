@@ -1747,9 +1747,10 @@ var import_obsidian3 = require("obsidian");
 var TABLE = {
   notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
   vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
-  attachments_disabled: "Image/PDF sync requires upgrade.",
-  attachments_quota_exceeded: "Attachment storage full. Upgrade for more.",
-  file_too_large: "File too large for your tier.",
+  attachment_must_be_text: "Free syncs notes only \u2014 images & PDFs need a paid plan.",
+  attachments_disabled: "Attachment sync needs a paid plan.",
+  attachments_quota_exceeded: "Attachment storage is full \u2014 upgrade for more.",
+  file_too_large: "File too large for your plan.",
   concurrent_devices_exceeded: "Already signed in on another device. Upgrade for multi-device.",
   device_swap_cooldown: "Device swap cooldown active. Wait or upgrade.",
   ai_conversations_per_day_exceeded: "Daily AI limit reached.",
@@ -3348,7 +3349,7 @@ var CATEGORY_ORDER = [
   conflict: "\u26A1"
 };
 function renderSyncCenter(parent, plugin, refresh) {
-  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
+  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderPlanSkips(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
 }
 function groupedByCategory(issues, dispositions) {
   var _a;
@@ -3361,8 +3362,10 @@ function groupedByCategory(issues, dispositions) {
   return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
 }
 function renderHeader(parent, plugin) {
-  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all = plugin.syncEngine.issues.all(), attentionCount = all.filter((i) => issueDisposition(i.category) !== "transient").length, retryingCount = all.length - attentionCount, ignoredCount = plugin.syncEngine.ignoredFiles.size();
-  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
+  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all = plugin.syncEngine.issues.all(), planSkipCount = all.filter(
+    (i) => issueDisposition(i.category) === "informational"
+  ).length, attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length, retryingCount = all.filter((i) => issueDisposition(i.category) === "transient").length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
 }
 function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
@@ -3387,11 +3390,44 @@ function makeActionButton(parent, text, handler) {
     handler();
   });
 }
+function renderPlanSkips(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]), total = groups.reduce((n, [, list]) => n + list.length, 0);
+  if (total === 0) return;
+  let section = parent.createDiv({
+    cls: "engram-sync-center-section engram-sync-center-plan-section"
+  });
+  sectionHeading(section, `Not synced on your plan (${total})`);
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  body.createEl("p", {
+    cls: "engram-sync-center-card-hint",
+    text: "These files are fine \u2014 they just need a paid plan to sync."
+  });
+  for (let [category, list] of groups)
+    renderPlanCard(body, plugin, refresh, category, list);
+}
+function renderPlanCard(parent, plugin, refresh, category, issues) {
+  var _a, _b, _c;
+  let { title, hint } = remediation(category), card = parent.createDiv({
+    cls: "engram-sync-center-card engram-sync-center-card-info"
+  }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u{1F512}" }), head.createSpan({
+    cls: "engram-sync-center-card-title",
+    text: `${title} (${issues.length})`
+  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" }), url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
+  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank"));
+  let toggle = actions.createEl("button", {
+    text: `Show files (${issues.length}) \u25BE`,
+    cls: "engram-sync-center-card-toggle"
+  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
+  for (let issue of issues)
+    renderFileRow(fileList, plugin, refresh, issue);
+}
 function renderNeedsAttention(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), [
-    "actionable",
-    "informational"
-  ]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({ cls: "engram-sync-center-section" }), heading2 = sectionHeading(section, `Needs attention (${total})`);
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({
+    cls: "engram-sync-center-section engram-sync-center-attention-section"
+  }), heading2 = sectionHeading(section, `Needs attention (${total})`);
   total > 0 && heading2.addButton(
     (btn) => btn.setButtonText("Clear all").onClick(() => {
       for (let [, list] of groups)
@@ -3411,17 +3447,13 @@ function renderNeedsAttention(parent, plugin, refresh) {
     renderAttentionCard(body, plugin, refresh, category, list);
 }
 function renderAttentionCard(parent, plugin, refresh, category, issues) {
-  var _a, _b, _c;
+  var _a;
   let { title, hint } = remediation(category), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
   head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u26A0" }), head.createSpan({
     cls: "engram-sync-center-card-title",
     text: `${title} (${issues.length})`
   }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
   let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-  if (category === "needs_pro" || category === "quota") {
-    let url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
-    actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank"));
-  }
   actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
     for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
     plugin.persistEngineState().then(refresh);
@@ -4414,7 +4446,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
       let msg = errMsg(e), classified = categorizeError(e);
-      classified.category !== "needs_pro" && console.error(`Engram Sync: failed to push ${file.path}`, e);
+      issueDisposition(classified.category) !== "informational" && console.error(`Engram Sync: failed to push ${file.path}`, e);
       let now = Date.now();
       this.issues.record({
         path: file.path,
@@ -4431,7 +4463,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         attempts: 1
       });
       let attempts = (_j = (_i = this.issues.get(file.path)) == null ? void 0 : _i.attempts) != null ? _j : 1;
-      classified.category === "needs_pro" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_k = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_k = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
