@@ -303,6 +303,7 @@ export type SyncIssueCategory =
 	| "network"
 	| "conflict"
 	| "needs_pro"
+	| "quota"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads

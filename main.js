@@ -785,6 +785,8 @@ var LimitExceededError = class extends Error {
     this.limit = limit;
     this.current = current;
     this.name = "LimitExceededError";
+    /** HTTP status that produced this error. Always 402 (the limit status). */
+    this.status = 402;
   }
 };
 
@@ -2623,11 +2625,31 @@ var IssueStore = class {
         isPersistedIssue(raw) && this.issues.set(raw.path, raw);
   }
 };
+function limitReasonToCategory(reason) {
+  switch (reason) {
+    case "attachment_must_be_text":
+    case "attachments_disabled":
+      return "needs_pro";
+    case "attachments_quota_exceeded":
+      return "quota";
+    case "file_too_large":
+      return "too_large";
+    // Note/vault-cap 402s come from POST /api/notes, not the attachment path.
+    // Map them to the neutral `other` bucket so they aren't rendered as the
+    // attachment-flavored needs_pro surface nor counted in the attachment skip
+    // toast. Still terminal via categorizeError's LimitExceededError branch.
+    case "notes_cap_exceeded":
+    case "vaults_cap_exceeded":
+      return "other";
+    default:
+      return "needs_pro";
+  }
+}
 function categorizeError(err) {
   var _a, _b, _c;
-  if (err instanceof LimitExceededError && err.reason === "attachments_disabled")
+  if (err instanceof LimitExceededError)
     return {
-      category: "needs_pro",
+      category: limitReasonToCategory(err.reason),
       status: 402,
       message: err.message,
       terminal: !0,

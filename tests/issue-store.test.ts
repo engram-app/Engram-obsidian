@@ -5,6 +5,7 @@ import {
 	categorizeError,
 	healthCheckDelay,
 	issueDisposition,
+	limitReasonToCategory,
 	remediation,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
@@ -183,32 +184,80 @@ describe("categorizeError", () => {
 		expect(result.status).toBe(413);
 	});
 
-	test("LimitExceededError attachments_disabled → needs_pro + terminal", () => {
+	test("402 attachment_must_be_text → needs_pro, terminal", () => {
 		const err = new LimitExceededError(
-			"attachments_disabled",
-			"https://app.engram.page/settings/billing",
-			"attachments_enabled",
-			false,
+			"attachment_must_be_text",
+			"https://u",
+			"attachments_text_only",
+			true,
 			null,
 		);
-		const result = categorizeError(err);
-		expect(result.category).toBe("needs_pro");
-		expect(result.terminal).toBe(true);
-		expect(result.status).toBe(402);
+		const c = categorizeError(err);
+		expect(c.category).toBe("needs_pro");
+		expect(c.terminal).toBe(true);
+		expect(c.status).toBe(402);
+		expect(c.upgradeUrl).toBe("https://u");
 	});
 
-	test("LimitExceededError for other reasons does NOT map to needs_pro", () => {
-		// notes_cap and vaults_cap have their own handling (toast + bail) and
-		// should not pollute the Sync Center "Needs Pro" surface.
-		const err = new LimitExceededError(
-			"notes_cap_exceeded",
-			"https://app.engram.page/settings/billing",
-			"notes_cap",
-			10000,
-			10000,
+	test("402 attachments_disabled → needs_pro, terminal", () => {
+		expect(
+			categorizeError(
+				new LimitExceededError(
+					"attachments_disabled",
+					null,
+					"attachments_enabled",
+					false,
+					null,
+				),
+			).category,
+		).toBe("needs_pro");
+	});
+
+	test("402 attachments_quota_exceeded → quota, terminal", () => {
+		const c = categorizeError(
+			new LimitExceededError(
+				"attachments_quota_exceeded",
+				"https://u",
+				"attachment_bytes_cap",
+				1024,
+				1024,
+			),
 		);
-		const result = categorizeError(err);
-		expect(result.category).not.toBe("needs_pro");
+		expect(c.category).toBe("quota");
+		expect(c.terminal).toBe(true);
+	});
+
+	test("402 file_too_large → too_large, terminal", () => {
+		expect(
+			categorizeError(
+				new LimitExceededError("file_too_large", null, "max_file_bytes", 5000000, null),
+			).category,
+		).toBe("too_large");
+	});
+
+	test("402 notes_cap_exceeded → other, not the attachment needs_pro surface", () => {
+		const c = categorizeError(
+			new LimitExceededError("notes_cap_exceeded", "https://u", "notes_cap", 10000, 10000),
+		);
+		expect(c.category).toBe("other");
+		expect(c.category).not.toBe("needs_pro");
+		expect(c.terminal).toBe(true);
+	});
+
+	test("402 unknown reason → needs_pro (informational, not network)", () => {
+		const c = categorizeError(
+			new LimitExceededError("some_new_reason", "https://u", null, null, null),
+		);
+		expect(c.terminal).toBe(true);
+		expect(c.category).not.toBe("network");
+	});
+
+	test("limitReasonToCategory maps backend reasons to categories", () => {
+		expect(limitReasonToCategory("attachment_must_be_text")).toBe("needs_pro");
+		expect(limitReasonToCategory("attachments_disabled")).toBe("needs_pro");
+		expect(limitReasonToCategory("attachments_quota_exceeded")).toBe("quota");
+		expect(limitReasonToCategory("file_too_large")).toBe("too_large");
+		expect(limitReasonToCategory("anything_else")).toBe("needs_pro");
 	});
 
 	test("prefers the backend JSON error message over the bare HTTP message", () => {
