@@ -3853,4 +3853,29 @@ describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
 		await (engine as any).pushFile(png, true, true);
 		expect(mockApi.pushAttachment).toHaveBeenCalled();
 	});
+
+	test("a parked quota attachment is also short-circuited on a normal re-push, and re-attempted under bypassPlanSkip", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "quota",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the parked
+		// quota entry is informational, so it short-circuits — no network call,
+		// stays quiet. (Pre-fix this re-uploaded and re-402'd every sync.)
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
 });

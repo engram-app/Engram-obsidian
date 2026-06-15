@@ -708,13 +708,14 @@ export class SyncEngine {
 	private async pushFile(file: TFile, force = false, bypassPlanSkip = false): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
-		// Persistence shortcut: if this attachment was already marked needs_pro
-		// (Free-tier 402 on a previous push), skip it without re-hitting the
+		// Persistence shortcut: if this attachment was already parked under an
+		// informational plan-skip (Free-tier 402 attachments-disabled, or a
+		// storage-quota 402, on a previous push), skip it without re-hitting the
 		// backend. The issue stays in the Sync Center until the user upgrades or
 		// dismisses it. This is what makes the batched toast quiet on the next
 		// sync — there's nothing left to fail, so the count is 0.
-		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasNeedsProIssue(file.path)) {
-			devLog().log("push", `skip (needs_pro): ${file.path}`);
+		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path)) {
+			devLog().log("push", `skip (plan-informational): ${file.path}`);
 			return false;
 		}
 
@@ -1035,13 +1036,14 @@ export class SyncEngine {
 		return success;
 	}
 
-	/** True iff the issue store already has a `needs_pro` entry for this path
-	 *  (i.e. backend returned 402 attachments_disabled on a prior push). Used to
-	 *  short-circuit re-push attempts without hitting the network — survives
-	 *  plugin reloads because the issue store is persisted. */
-	private hasNeedsProIssue(path: string): boolean {
+	/** True iff the issue store already has a parked *informational* entry for this
+	 *  path (e.g. backend returned 402 attachments_disabled or 402 storage-quota on a
+	 *  prior push). Used to short-circuit re-push attempts without hitting the
+	 *  network — survives plugin reloads because the issue store is persisted. */
+	private hasInformationalIssue(path: string): boolean {
 		for (const issue of this.issues.all()) {
-			if (issue.path === path && issue.category === "needs_pro") return true;
+			if (issue.path === path && issueDisposition(issue.category) === "informational")
+				return true;
 		}
 		return false;
 	}
@@ -3293,8 +3295,9 @@ export class SyncEngine {
 	/** Flush queued changes oldest-first. Stops on first failure. */
 	/** Retry every transient (auto-retryable) failure now — including ones
 	 *  already parked past RETRY_CAP — by re-enqueuing a content-free entry and
-	 *  flushing. Actionable failures (too_large, needs_pro, auth, conflict) are
-	 *  left alone; retrying can't fix them. Wired to "Retry all now". */
+	 *  flushing. Non-transient failures — actionable (too_large, auth, conflict)
+	 *  and informational (needs_pro, quota) — are left alone; retrying can't fix
+	 *  them. Wired to "Retry all now". */
 	async retryFailedNow(): Promise<number> {
 		for (const issue of this.issues.all()) {
 			if (issueDisposition(issue.category) !== "transient") continue;

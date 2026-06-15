@@ -4420,8 +4420,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     if (this.pushing.has(file.path)) return !1;
-    if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
-      return devLog().log("push", `skip (needs_pro): ${file.path}`), !1;
+    if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
+      return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
     if (!bypassPlanSkip && this.isBinaryFile(file)) {
       let gate = this.preGateAttachment(file);
       if (gate) {
@@ -4609,13 +4609,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return success;
   }
-  /** True iff the issue store already has a `needs_pro` entry for this path
-   *  (i.e. backend returned 402 attachments_disabled on a prior push). Used to
-   *  short-circuit re-push attempts without hitting the network — survives
-   *  plugin reloads because the issue store is persisted. */
-  hasNeedsProIssue(path) {
+  /** True iff the issue store already has a parked *informational* entry for this
+   *  path (e.g. backend returned 402 attachments_disabled or 402 storage-quota on a
+   *  prior push). Used to short-circuit re-push attempts without hitting the
+   *  network — survives plugin reloads because the issue store is persisted. */
+  hasInformationalIssue(path) {
     for (let issue of this.issues.all())
-      if (issue.path === path && issue.category === "needs_pro") return !0;
+      if (issue.path === path && issueDisposition(issue.category) === "informational")
+        return !0;
     return !1;
   }
   /** Plan-limit pre-check for an attachment, using last-known PlanState. Returns
@@ -5920,8 +5921,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Flush queued changes oldest-first. Stops on first failure. */
   /** Retry every transient (auto-retryable) failure now — including ones
    *  already parked past RETRY_CAP — by re-enqueuing a content-free entry and
-   *  flushing. Actionable failures (too_large, needs_pro, auth, conflict) are
-   *  left alone; retrying can't fix them. Wired to "Retry all now". */
+   *  flushing. Non-transient failures — actionable (too_large, auth, conflict)
+   *  and informational (needs_pro, quota) — are left alone; retrying can't fix
+   *  them. Wired to "Retry all now". */
   async retryFailedNow() {
     var _a;
     for (let issue of this.issues.all()) {
