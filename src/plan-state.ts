@@ -17,7 +17,8 @@ export function parsePlanState(raw: unknown, now: number): PlanState | null {
 		tier: (r.tier as PlanState["tier"]) ?? "free",
 		attachmentsTextOnly: r.attachments_text_only === true,
 		maxFileBytes: typeof r.max_file_bytes === "number" ? r.max_file_bytes : 0,
-		attachmentBytesCap: typeof r.attachment_bytes_cap === "number" ? r.attachment_bytes_cap : null,
+		attachmentBytesCap:
+			typeof r.attachment_bytes_cap === "number" ? r.attachment_bytes_cap : null,
 		updatedAt: now,
 	};
 }

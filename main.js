@@ -1262,6 +1262,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.ws = null;
     this.ref = 0;
     this.joinRef = "1";
+    this.userJoinRef = "2";
     this.heartbeatTimer = null;
     this.reconnectTimer = null;
     this.reconnectMs = 1e3;
@@ -1271,6 +1272,10 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.onEvent = null;
     this.onStatusChange = null;
     this.onVaultDeleted = null;
+    /** Surfaces the user's current plan/entitlements from the best-effort
+     *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
+     *  broadcasts). Never gates the plugin's connected state. */
+    this.onPlanState = null;
     this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
@@ -1287,6 +1292,9 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
   }
   get topic() {
     return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
+  }
+  get userTopic() {
+    return `user:${this.userId}`;
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
@@ -1348,7 +1356,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     };
   }
   joinChannel() {
-    this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]);
+    this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
   }
   startHeartbeat() {
     this.heartbeatTimer = window.setInterval(() => {
@@ -1357,7 +1365,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     }, 3e4);
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1365,14 +1373,28 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
       rlog().error("channel", `Failed to parse message: ${raw}`);
       return;
     }
-    let [, , , event, payload] = msg;
+    let [, , topic, event, payload] = msg;
     if (event === "phx_reply") {
       let status = payload.status;
-      status === "ok" && !this.connected ? (this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`)) : status === "error" && rlog().error("channel", `Channel join error: ${JSON.stringify(payload)}`);
+      if (status === "ok") {
+        if (topic === this.topic && !this.connected)
+          this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`);
+        else if (topic === this.userTopic) {
+          let response = payload.response, plan = response == null ? void 0 : response.plan;
+          plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
+        }
+      } else status === "error" && rlog().error(
+        "channel",
+        `Channel join error on ${topic}: ${JSON.stringify(payload)}`
+      );
+      return;
+    }
+    if (event === "subscription_activated" && topic === this.userTopic) {
+      rlog().info("channel", "Received subscription_activated event"), (_b = this.onPlanState) == null || _b.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_a = this.onVaultDeleted) == null || _a.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_c = this.onVaultDeleted) == null || _c.call(this);
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1380,7 +1402,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_b = p.kind) != null ? _b : "note",
+        kind: (_d = p.kind) != null ? _d : "note",
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -1390,10 +1412,10 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_c = this.onEvent) == null || _c.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_e = this.onEvent) == null || _e.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_d = payload.notes) != null ? _d : [];
+      let notes = (_f = payload.notes) != null ? _f : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1409,7 +1431,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_e = this.onEvent) == null || _e.call(this, streamEvent);
+        (_g = this.onEvent) == null || _g.call(this, streamEvent);
       }
     }
   }
@@ -2760,7 +2782,8 @@ var DEFAULT_SETTINGS = {
   remoteLoggingEnabled: !1,
   conflictResolution: "auto",
   vaultId: null,
-  clientId: ""
+  clientId: "",
+  planState: null
 }, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
   "pull-all-delete-local",
   "push-all-delete-remote"
