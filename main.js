@@ -2341,6 +2341,12 @@ function isPersistedIssue(value) {
 // src/sync-preview-modal.ts
 var import_obsidian7 = require("obsidian");
 
+// src/mime.ts
+var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
+function isTextAttachment(ext) {
+  return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
+}
+
 // src/types.ts
 var DEFAULT_SETTINGS = {
   apiUrl: "",
@@ -2541,6 +2547,16 @@ var SyncPreviewState = class {
 function describeCreateVaultError(e) {
   return e instanceof LimitExceededError ? toastFor(e.reason) : (e == null ? void 0 : e.status) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
 }
+function extOf(path) {
+  let base = path.slice(path.lastIndexOf("/") + 1), dot = base.lastIndexOf(".");
+  return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
+}
+function countSkippedAttachments(plan, attachmentsTextOnly) {
+  return attachmentsTextOnly ? plan.toPush.attachments.filter((p) => !isTextAttachment(extOf(p))).length : 0;
+}
+function skippedAttachmentsLine(n) {
+  return n <= 0 ? null : `Free syncs notes only \u2014 ${n} ${n === 1 ? "attachment" : "attachments"} will be skipped.`;
+}
 var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
@@ -2615,7 +2631,7 @@ var MERGE_CARD = {
   renderPreview() {
     var _a;
     let { contentEl } = this, empty = isPlanEmpty(this.state.plan), context = (_a = this.opts.context) != null ? _a : "review";
-    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl);
+    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
     empty || options.createDiv({
       cls: "engram-sync-preview-options-header",
@@ -2661,6 +2677,15 @@ var MERGE_CARD = {
     });
     for (let card of PULL_CARDS)
       this.renderOptionCard(pullCol, card);
+  }
+  /** One calm, non-blocking info line for a text-only (Free) plan when the
+   *  upcoming push includes non-text attachments. Renders nothing when the
+   *  plan isn't text-only, the flag is unknown, or the count is zero. */
+  renderSkippedAttachmentsNote(parent) {
+    let n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === !0), text = skippedAttachmentsLine(n);
+    if (text == null) return;
+    let note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
+    note.createSpan({ text: "\u2139\uFE0F ", cls: "engram-sync-preview-skip-note-icon" }), note.createSpan({ text });
   }
   renderHeader(parent, context) {
     if (context === "up-to-date") {
@@ -3832,12 +3857,6 @@ var IgnoredFiles = class {
         typeof entry == "string" && this.set.add(entry);
   }
 };
-
-// src/mime.ts
-var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
-function isTextAttachment(ext) {
-  return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
-}
 
 // src/offline-queue.ts
 function dedupKey(pathOrEntry, vaultId) {
@@ -6650,17 +6669,19 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
    *  saveSettings once auth + vault are configured. First-sync is just
    *  one case of the preview UX. */
   async doSyncWithFirstSyncCheck(opts = {}) {
+    var _a, _b;
     try {
       let plan = await this.syncEngine.computeSyncPlan("full"), context = this.derivePreviewContext(), choice = await new SyncPreviewModal(this.app, plan, {
         remoteVaultName: this.settings.remoteVaultName,
         showChangeVault: !0,
         context,
         initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
+        attachmentsTextOnly: (_b = (_a = this.syncEngine.getPlanState()) == null ? void 0 : _a.attachmentsTextOnly) != null ? _b : !1,
         listVaults: () => this.api.listVaults(),
         createVault: (name) => this.api.createVault(name),
         applyVaultChange: async (id, name) => {
-          var _a;
-          return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a = this.settingTab) == null || _a.display(), this.syncEngine.computeSyncPlan("full");
+          var _a2;
+          return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
         }
       }).awaitChoice();
       await this.runSyncWithProgress(choice);

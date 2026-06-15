@@ -954,6 +954,7 @@ export default class EngramSyncPlugin extends Plugin {
 				showChangeVault: true,
 				context,
 				initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
+				attachmentsTextOnly: this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
 				listVaults: () => this.api.listVaults(),
 				createVault: (name) => this.api.createVault(name),
 				applyVaultChange: async (id, name) => {

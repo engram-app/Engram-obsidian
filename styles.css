@@ -1550,6 +1550,17 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-muted);
 }
 
+.engram-sync-preview-skip-note {
+	text-align: center;
+	margin: 0.25em 0 1em 0;
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.engram-sync-preview-skip-note-icon {
+	opacity: 0.8;
+}
+
 .engram-sync-preview-options {
 	display: flex;
 	flex-direction: column;
