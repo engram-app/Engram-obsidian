@@ -3500,6 +3500,10 @@ var IssueStore = class {
     }
     this.issues.set(issue.path, { ...issue });
   }
+  /** Look up the current issue for `path`, if any. */
+  get(path) {
+    return this.issues.get(path);
+  }
   /** Remove the issue for `path` (called on successful push/pull). */
   clear(path) {
     this.issues.delete(path);
@@ -3538,7 +3542,7 @@ var IssueStore = class {
   }
 };
 function categorizeError(err) {
-  var _a;
+  var _a, _b;
   if (err instanceof LimitExceededError && err.reason === "attachments_disabled")
     return {
       category: "needs_pro",
@@ -3546,8 +3550,33 @@ function categorizeError(err) {
       message: err.message,
       terminal: !0
     };
-  let status = typeof err == "object" && err !== null && (_a = err.status) != null ? _a : void 0, message = err instanceof Error ? err.message : String(err);
+  let status = typeof err == "object" && err !== null && (_a = err.status) != null ? _a : void 0, message = (_b = extractServerMessage(err)) != null ? _b : err instanceof Error ? err.message : String(err);
   return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
+}
+function extractServerMessage(err) {
+  if (typeof err != "object" || err === null) return;
+  let e = err, body = null;
+  if (e.json && typeof e.json == "object")
+    body = e.json;
+  else if (typeof e.text == "string")
+    try {
+      let parsed = JSON.parse(e.text);
+      parsed && typeof parsed == "object" && (body = parsed);
+    } catch (e2) {
+      return;
+    }
+  if (body && typeof body.error == "string" && body.error.length > 0) return body.error;
+}
+function shouldGoOffline(err) {
+  return categorizeError(err).category === "network";
+}
+var RETRY_CAP = 5;
+function shouldRetryAfterFailure(classified, attempts) {
+  return classified.terminal ? !1 : attempts < RETRY_CAP;
+}
+var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
+function healthCheckDelay(failures) {
+  return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
 }
 function isPersistedIssue(value) {
   if (typeof value != "object" || value === null) return !1;
@@ -3678,7 +3707,7 @@ function countFolders(paths) {
   }
   return set.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, HEALTH_CHECK_INTERVAL_MS = 3e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -3737,6 +3766,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.lastError = "";
     this.offline = !1;
     this.healthCheckTimer = null;
+    /** Consecutive failed health probes — drives exponential backoff. */
+    this.healthCheckFailures = 0;
     this.ready = !1;
     /** When true, all sync actions (file events, stream events, bulk methods)
      *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -3790,6 +3821,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  drainAttachmentLimitedCount() so a single batched toast can be fired
      *  per push cycle (spec §4.6). */
     this.attachmentLimitedThisBatch = 0;
+    /** Count of generic (non-needs_pro) push failures this batch, plus the
+     *  first server message seen — drained by main.ts into a single aggregated
+     *  "N file(s) failed to sync — open Sync Center" Notice. */
+    this.failuresThisBatch = 0;
     /** Suppresses re-toasting once we've already shown the "N attachments
      *  skipped" notice in this plugin session. Re-armed only when the engine
      *  is destroyed/reloaded so the user isn't nagged on every fullSync. */
@@ -3982,7 +4017,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
         vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
-      });
+      }), this.maybeGoOffline(e);
     }
   }
   /** Handle a vault rename event. */
@@ -4004,7 +4039,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
           vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
-        }));
+        }), this.maybeGoOffline(e));
       }
     isBinary || (_b = this.baseStore) == null || _b.rename((0, import_obsidian15.normalizePath)(oldPath), (0, import_obsidian15.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
@@ -4090,7 +4125,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Push a single file to Engram. Returns true on success.
    *  When force is true, skip echo suppression (used by pushAll). */
   async pushFile(file, force = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     if (this.pushing.has(file.path)) return !1;
     if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
       return devLog().log("push", `skip (needs_pro): ${file.path}`), !1;
@@ -4237,23 +4272,27 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         category: classified.category,
         status: classified.status,
-        message: msg,
+        // Surface the backend's own message (e.g. "failed to upload to
+        // storage backend") rather than the bare "Request failed, status N".
+        message: classified.message,
         sizeBytes: classified.category === "too_large" ? file.stat.size : void 0,
         firstFailedAt: now,
         lastFailedAt: now,
         attempts: 1
-      }), classified.category === "needs_pro" && (this.attachmentLimitedThisBatch += 1), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      });
+      let attempts = (_j = (_i = this.issues.get(file.path)) == null ? void 0 : _i.attempts) != null ? _j : 1;
+      classified.category === "needs_pro" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_k = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
-      ), this.logEntry("push", file.path, "error", msg, classified.category), classified.terminal || await this.enqueueChange({
+      ), this.logEntry("push", file.path, "error", msg, classified.category), shouldRetryAfterFailure(classified, attempts) && await this.enqueueChange({
         path: file.path,
         action: "upsert",
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_i = this.settings.vaultId) != null ? _i : void 0
-      });
+        vaultId: (_l = this.settings.vaultId) != null ? _l : void 0
+      }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
     }
@@ -4267,6 +4306,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let issue of this.issues.all())
       if (issue.path === path && issue.category === "needs_pro") return !0;
     return !1;
+  }
+  /** Drain the batch failure tally for an aggregated, deduped Notice. Returns
+   *  the count of generic failures since the last drain plus the first server
+   *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+  drainFailureSummary() {
+    let count = this.failuresThisBatch, firstMessage = this.firstFailureMessageThisBatch;
+    return this.failuresThisBatch = 0, this.firstFailureMessageThisBatch = void 0, { count, firstMessage };
+  }
+  /** Emit a single aggregated, deduped Notice covering all generic push
+   *  failures this batch — "N file(s) failed to sync — open Sync Center" with
+   *  the first server message. Replaces silent per-file console errors with one
+   *  actionable signal. Called once at the end of pushModifiedFiles / pushAll. */
+  flushFailureSummaryToast() {
+    let { count, firstMessage } = this.drainFailureSummary();
+    if (count <= 0) return;
+    let noun = count === 1 ? "file" : "files", detail = firstMessage ? ` (${firstMessage})` : "";
+    new import_obsidian15.Notice(`Engram: ${count} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
   }
   /** Emit a single batched toast covering all attachments skipped this batch
    *  with `needs_pro`. Called once at the end of pushModifiedFiles / pushAll.
@@ -5081,7 +5137,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             timestamp: Date.now(),
             vaultId: (_b2 = this.settings.vaultId) != null ? _b2 : void 0
           });
-        return "transport";
+        return this.maybeGoOffline(err), "transport";
       } finally {
         for (let e of entries)
           this.pushing.delete(e.file.path), this.markRecentlyPushed(e.file.path);
@@ -5194,7 +5250,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         failed: 0
       });
     }
-    return this.flushAttachmentLimitedToast(), pushed;
+    return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
   /** Compute what a sync would do without executing it (dry-run preview).
    *
@@ -5340,7 +5396,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         currentPath: batch[batch.length - 1].path
       });
     }
-    (_d = this.onSyncProgress) == null || _d.call(this, { phase: "complete", current: total, total, failed }), this.flushAttachmentLimitedToast();
+    (_d = this.onSyncProgress) == null || _d.call(this, { phase: "complete", current: total, total, failed }), this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast();
     let skipped = total - pushed - failed;
     devLog().log(
       "push",
@@ -5439,7 +5495,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   // --- Offline queue ---
   /** Queue a change for retry and go offline. */
   async enqueueChange(entry) {
-    await this.queue.enqueue(entry), this.goOffline();
+    await this.queue.enqueue(entry), this.emitStatus();
+  }
+  /** Flip to offline ONLY when the failure indicates true connection loss
+   *  (no HTTP response). A per-file HTTP status error is that file's problem,
+   *  surfaced in the Sync Center — it must not report the whole plugin as
+   *  disconnected. */
+  maybeGoOffline(cause) {
+    shouldGoOffline(cause) && this.goOffline();
   }
   /** Transition to offline mode and start health checking. */
   goOffline() {
@@ -5451,20 +5514,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       console.error("Engram Sync: queue flush failed", e);
     }));
   }
-  /** Start periodic health checks while offline. */
+  /** Start health checks while offline, with exponential backoff (5s → 10s →
+   *  … capped at 60s) so a long outage doesn't hammer the server every 30s.
+   *  The backoff resets when we reconnect (stopHealthCheck). */
   startHealthCheck() {
-    this.healthCheckTimer || (this.healthCheckTimer = window.setInterval(() => {
-      (async () => {
-        try {
-          await this.api.health() && this.goOnline();
-        } catch (e) {
-        }
-      })();
-    }, HEALTH_CHECK_INTERVAL_MS));
+    if (this.healthCheckTimer) return;
+    let tick = () => {
+      this.healthCheckTimer = window.setTimeout(() => {
+        (async () => {
+          try {
+            if (await this.api.health()) {
+              this.goOnline();
+              return;
+            }
+          } catch (e) {
+          }
+          this.healthCheckFailures++, tick();
+        })();
+      }, healthCheckDelay(this.healthCheckFailures));
+    };
+    tick();
   }
-  /** Stop periodic health checks. */
+  /** Stop health checks and reset the backoff. */
   stopHealthCheck() {
-    this.healthCheckTimer && (window.clearInterval(this.healthCheckTimer), this.healthCheckTimer = null);
+    this.healthCheckTimer && (window.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
   }
   /** Flush queued changes oldest-first. Stops on first failure. */
   async flushQueue() {
@@ -5521,7 +5594,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
         await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), flushed++;
       } catch (e) {
-        this.goOffline();
+        this.maybeGoOffline(e);
         break;
       }
     return devLog().log(

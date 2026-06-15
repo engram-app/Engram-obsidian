@@ -869,8 +869,16 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(engine.getLastSync()).toBe("2026-03-01T12:02:00Z");
 	});
 
-	test("status shows offline after failed push (change queued for retry)", async () => {
-		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(new Error("500"));
+	test("a per-file server error (502) queues a retry but stays ONLINE", async () => {
+		// A storage 502 on one file means that file failed, NOT that the backend
+		// is unreachable. The change is queued for retry and recorded as an issue,
+		// but the plugin must not report itself disconnected.
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(
+			Object.assign(new Error("Request failed, status 502"), {
+				status: 502,
+				json: { error: "failed to upload to storage backend" },
+			}),
+		);
 
 		const engine = createEngine({ debounceMs: 10 });
 		const file = new TFile("Notes/Fail.md", Date.now());
@@ -879,8 +887,31 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		const status = engine.getStatus();
-		expect(status.state).toBe("offline");
+		expect(engine.isOffline()).toBe(false);
+		expect(status.state).not.toBe("offline");
 		expect(status.queued).toBe(1);
+		// The recorded issue surfaces the backend's message, not "status 502".
+		const issue = engine.issues.get("Notes/Fail.md");
+		expect(issue?.message).toBe("failed to upload to storage backend");
+	});
+
+	test("failed push tallies into the aggregated failure summary (drained once)", async () => {
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(
+			Object.assign(new Error("Request failed, status 502"), {
+				status: 502,
+				json: { error: "failed to upload to storage backend" },
+			}),
+		);
+
+		const engine = createEngine({ debounceMs: 10 });
+		engine.handleModify(new TFile("Notes/Fail.md", Date.now()));
+		await new Promise((r) => setTimeout(r, 100));
+
+		const summary = engine.drainFailureSummary();
+		expect(summary.count).toBe(1);
+		expect(summary.firstMessage).toBe("failed to upload to storage backend");
+		// Draining resets the tally.
+		expect(engine.drainFailureSummary().count).toBe(0);
 	});
 
 	test("error clears on next successful sync", async () => {

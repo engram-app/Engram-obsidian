@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, test } from "bun:test";
-import { IssueStore, categorizeError } from "../src/issue-store";
+import {
+	IssueStore,
+	RETRY_CAP,
+	categorizeError,
+	healthCheckDelay,
+	shouldGoOffline,
+	shouldRetryAfterFailure,
+} from "../src/issue-store";
 import { LimitExceededError } from "../src/limit-error";
 import type { SyncIssue } from "../src/types";
 
@@ -200,5 +207,72 @@ describe("categorizeError", () => {
 		);
 		const result = categorizeError(err);
 		expect(result.category).not.toBe("needs_pro");
+	});
+
+	test("prefers the backend JSON error message over the bare HTTP message", () => {
+		// Obsidian's requestUrl rejection carries the parsed body on `.json`.
+		const err = Object.assign(new Error("Request failed, status 502"), {
+			status: 502,
+			json: { error: "failed to upload to storage backend" },
+		});
+		expect(categorizeError(err).message).toBe("failed to upload to storage backend");
+	});
+
+	test("falls back to parsing the body from `.text` when `.json` is absent", () => {
+		const err = Object.assign(new Error("Request failed, status 502"), {
+			status: 502,
+			text: JSON.stringify({ error: "failed to upload to storage backend" }),
+		});
+		expect(categorizeError(err).message).toBe("failed to upload to storage backend");
+	});
+
+	test("falls back to the bare message when the body has no error field", () => {
+		const err = Object.assign(new Error("Request failed, status 500"), {
+			status: 500,
+			json: { something_else: true },
+		});
+		expect(categorizeError(err).message).toBe("Request failed, status 500");
+	});
+});
+
+describe("shouldGoOffline", () => {
+	test("true only for true connection loss (no HTTP status)", () => {
+		expect(shouldGoOffline(new Error("Failed to fetch"))).toBe(true);
+		expect(shouldGoOffline(new TypeError("network"))).toBe(true);
+	});
+
+	test("false for any HTTP status error — a server/per-file failure is not a disconnect", () => {
+		expect(shouldGoOffline(Object.assign(new Error(), { status: 502 }))).toBe(false);
+		expect(shouldGoOffline(Object.assign(new Error(), { status: 500 }))).toBe(false);
+		expect(shouldGoOffline(Object.assign(new Error(), { status: 413 }))).toBe(false);
+		expect(shouldGoOffline(Object.assign(new Error(), { status: 404 }))).toBe(false);
+	});
+});
+
+describe("shouldRetryAfterFailure", () => {
+	test("retries non-terminal errors below the cap", () => {
+		const server = categorizeError(Object.assign(new Error(), { status: 502 }));
+		expect(shouldRetryAfterFailure(server, 1)).toBe(true);
+		expect(shouldRetryAfterFailure(server, RETRY_CAP - 1)).toBe(true);
+	});
+
+	test("parks (stops retrying) once attempts reach the cap", () => {
+		const server = categorizeError(Object.assign(new Error(), { status: 502 }));
+		expect(shouldRetryAfterFailure(server, RETRY_CAP)).toBe(false);
+		expect(shouldRetryAfterFailure(server, RETRY_CAP + 3)).toBe(false);
+	});
+
+	test("never retries terminal errors regardless of attempts", () => {
+		const tooLarge = categorizeError(Object.assign(new Error(), { status: 413 }));
+		expect(shouldRetryAfterFailure(tooLarge, 1)).toBe(false);
+	});
+});
+
+describe("healthCheckDelay (exponential backoff)", () => {
+	test("grows exponentially from the base and caps", () => {
+		expect(healthCheckDelay(0)).toBe(5_000);
+		expect(healthCheckDelay(1)).toBe(10_000);
+		expect(healthCheckDelay(2)).toBe(20_000);
+		expect(healthCheckDelay(10)).toBe(60_000); // capped
 	});
 });

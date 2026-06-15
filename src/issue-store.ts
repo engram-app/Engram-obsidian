@@ -26,6 +26,11 @@ export class IssueStore {
 		this.issues.set(issue.path, { ...issue });
 	}
 
+	/** Look up the current issue for `path`, if any. */
+	get(path: string): SyncIssue | undefined {
+		return this.issues.get(path);
+	}
+
 	/** Remove the issue for `path` (called on successful push/pull). */
 	clear(path: string): void {
 		this.issues.delete(path);
@@ -100,7 +105,10 @@ export function categorizeError(err: unknown): CategorizedError {
 		typeof err === "object" && err !== null
 			? ((err as { status?: number }).status ?? undefined)
 			: undefined;
-	const message = err instanceof Error ? err.message : String(err);
+	// Prefer the backend's structured error message (e.g. "failed to upload to
+	// storage backend") over the bare "Request failed, status N" — the server
+	// message is what makes a failure actionable in the Sync Center / a Notice.
+	const message = extractServerMessage(err) ?? (err instanceof Error ? err.message : String(err));
 
 	if (status === 413) return { category: "too_large", status, message, terminal: true };
 	// 401/403 are terminal: api.ts already does a single inline refresh-and-retry on
@@ -113,6 +121,57 @@ export function categorizeError(err: unknown): CategorizedError {
 		return { category: "server", status, message, terminal: false };
 	if (status === undefined) return { category: "network", message, terminal: false };
 	return { category: "other", status, message, terminal: false };
+}
+
+/** Pull the backend's `error` field out of an Obsidian requestUrl rejection.
+ *  The body arrives as parsed `.json` or raw `.text` depending on platform —
+ *  mirror parseLimitExceededError's tolerance. Returns undefined when there's
+ *  no usable string message. */
+export function extractServerMessage(err: unknown): string | undefined {
+	if (typeof err !== "object" || err === null) return undefined;
+	const e = err as { json?: unknown; text?: string };
+	let body: Record<string, unknown> | null = null;
+	if (e.json && typeof e.json === "object") {
+		body = e.json as Record<string, unknown>;
+	} else if (typeof e.text === "string") {
+		try {
+			const parsed: unknown = JSON.parse(e.text);
+			if (parsed && typeof parsed === "object") body = parsed as Record<string, unknown>;
+		} catch {
+			return undefined;
+		}
+	}
+	if (body && typeof body.error === "string" && body.error.length > 0) return body.error;
+	return undefined;
+}
+
+/** Whether a push/pull failure means the backend is genuinely unreachable
+ *  (true connection loss) — the ONLY thing that should flip the whole plugin
+ *  offline. A per-file HTTP status error (incl. 5xx like a storage 502) is that
+ *  file's problem, recorded in the Sync Center; it must NOT mark us offline. */
+export function shouldGoOffline(err: unknown): boolean {
+	return categorizeError(err).category === "network";
+}
+
+/** Max retry attempts before a non-terminal failure is parked as
+ *  needs-attention (stops the re-enqueue loop for a persistently-failing file,
+ *  e.g. a broken storage backend). */
+export const RETRY_CAP = 5;
+
+/** Whether a failed push should be re-queued for retry. Terminal errors never
+ *  retry; non-terminal errors retry until they hit RETRY_CAP, then park. */
+export function shouldRetryAfterFailure(classified: CategorizedError, attempts: number): boolean {
+	if (classified.terminal) return false;
+	return attempts < RETRY_CAP;
+}
+
+const HEALTH_CHECK_BASE_MS = 5_000;
+const HEALTH_CHECK_MAX_MS = 60_000;
+
+/** Exponential backoff for the offline health-check probe: 5s, 10s, 20s, …
+ *  capped at 60s. `failures` is the count of consecutive failed probes. */
+export function healthCheckDelay(failures: number): number {
+	return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
 }
 
 function isPersistedIssue(value: unknown): value is SyncIssue {

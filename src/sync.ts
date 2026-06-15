@@ -8,7 +8,13 @@ import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { IgnoredFiles } from "./ignored-files";
-import { IssueStore, categorizeError } from "./issue-store";
+import {
+	IssueStore,
+	categorizeError,
+	healthCheckDelay,
+	shouldGoOffline,
+	shouldRetryAfterFailure,
+} from "./issue-store";
 import { OfflineQueue } from "./offline-queue";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
@@ -50,9 +56,6 @@ function countFolders(paths: Iterable<string>): number {
 
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
-
-/** How often (ms) to check connectivity when offline. */
-const HEALTH_CHECK_INTERVAL_MS = 30_000;
 
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
@@ -132,6 +135,8 @@ export class SyncEngine {
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
+	/** Consecutive failed health probes — drives exponential backoff. */
+	private healthCheckFailures = 0;
 	private ready = false;
 	/** When true, all sync actions (file events, stream events, bulk methods)
 	 *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -195,6 +200,12 @@ export class SyncEngine {
 	 *  drainAttachmentLimitedCount() so a single batched toast can be fired
 	 *  per push cycle (spec §4.6). */
 	private attachmentLimitedThisBatch = 0;
+
+	/** Count of generic (non-needs_pro) push failures this batch, plus the
+	 *  first server message seen — drained by main.ts into a single aggregated
+	 *  "N file(s) failed to sync — open Sync Center" Notice. */
+	private failuresThisBatch = 0;
+	private firstFailureMessageThisBatch: string | undefined;
 
 	/** Suppresses re-toasting once we've already shown the "N attachments
 	 *  skipped" notice in this plugin session. Re-armed only when the engine
@@ -486,6 +497,7 @@ export class SyncEngine {
 				timestamp: Date.now(),
 				vaultId: this.settings.vaultId ?? undefined,
 			});
+			this.maybeGoOffline(e);
 		}
 	}
 
@@ -523,6 +535,7 @@ export class SyncEngine {
 						timestamp: Date.now(),
 						vaultId: this.settings.vaultId ?? undefined,
 					});
+					this.maybeGoOffline(e);
 				}
 			}
 		}
@@ -910,15 +923,22 @@ export class SyncEngine {
 				kind: isBinary ? "attachment" : "note",
 				category: classified.category,
 				status: classified.status,
-				message: msg,
+				// Surface the backend's own message (e.g. "failed to upload to
+				// storage backend") rather than the bare "Request failed, status N".
+				message: classified.message,
 				sizeBytes: classified.category === "too_large" ? file.stat.size : undefined,
 				firstFailedAt: now,
 				lastFailedAt: now,
 				attempts: 1,
 			});
+			const attempts = this.issues.get(file.path)?.attempts ?? 1;
 			if (classified.category === "needs_pro") {
 				// Tally for the batched session toast (drained by pushAll / pushModifiedFiles).
 				this.attachmentLimitedThisBatch += 1;
+			} else {
+				// Tally for the batched "N files failed to sync" Notice.
+				this.failuresThisBatch += 1;
+				this.firstFailureMessageThisBatch ??= classified.message;
 			}
 			devLog().log("error", `push failed: ${file.path} — ${msg} (${classified.category})`);
 			rlog().error(
@@ -927,13 +947,11 @@ export class SyncEngine {
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.logEntry("push", file.path, "error", msg, classified.category);
-			// Terminal failures (e.g. 413, 402 attachments_disabled) skip the
-			// offline queue — retrying will just hit the same error. The user
-			// must take action via the Sync Center (ignore, shrink the file, or
-			// upgrade their tier) or wait for the server limit to rise.
-			if (!classified.terminal) {
-				// Queue for retry — content-free to avoid O(n²) serialization.
-				// Content will be re-read from vault when flushing.
+			// Re-queue for retry only while it's worth it. Terminal failures (413,
+			// 402) never retry; non-terminal failures retry until RETRY_CAP, then
+			// park in the Sync Center — retrying a broken storage backend forever
+			// just hammers it. Content-free entry; content re-read on flush.
+			if (shouldRetryAfterFailure(classified, attempts)) {
 				await this.enqueueChange({
 					path: file.path,
 					action: "upsert",
@@ -943,6 +961,9 @@ export class SyncEngine {
 					vaultId: this.settings.vaultId ?? undefined,
 				});
 			}
+			// Only true connection loss (no HTTP response) takes the plugin
+			// offline — a per-file 5xx leaves the backend reachable.
+			this.maybeGoOffline(e);
 		} finally {
 			this.pushing.delete(file.path);
 			this.releasePushSlot();
@@ -964,6 +985,30 @@ export class SyncEngine {
 			if (issue.path === path && issue.category === "needs_pro") return true;
 		}
 		return false;
+	}
+
+	/** Drain the batch failure tally for an aggregated, deduped Notice. Returns
+	 *  the count of generic failures since the last drain plus the first server
+	 *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+	drainFailureSummary(): { count: number; firstMessage?: string } {
+		const count = this.failuresThisBatch;
+		const firstMessage = this.firstFailureMessageThisBatch;
+		this.failuresThisBatch = 0;
+		this.firstFailureMessageThisBatch = undefined;
+		return { count, firstMessage };
+	}
+
+	/** Emit a single aggregated, deduped Notice covering all generic push
+	 *  failures this batch — "N file(s) failed to sync — open Sync Center" with
+	 *  the first server message. Replaces silent per-file console errors with one
+	 *  actionable signal. Called once at the end of pushModifiedFiles / pushAll. */
+	private flushFailureSummaryToast(): void {
+		const { count, firstMessage } = this.drainFailureSummary();
+		if (count <= 0) return;
+		const noun = count === 1 ? "file" : "files";
+		const detail = firstMessage ? ` (${firstMessage})` : "";
+		new Notice(`Engram: ${count} ${noun} failed to sync${detail} — open Sync Center`, 10_000);
+		rlog().warn("push", `${count} ${noun} failed to sync${detail}`);
 	}
 
 	/** Emit a single batched toast covering all attachments skipped this batch
@@ -2343,6 +2388,9 @@ export class SyncEngine {
 						vaultId: this.settings.vaultId ?? undefined,
 					});
 				}
+				// A whole-batch failure with no HTTP response = connection loss.
+				// A batch 5xx is a server error, not a disconnect — stay online.
+				this.maybeGoOffline(err);
 				return "transport";
 			} finally {
 				for (const e of entries) {
@@ -2544,6 +2592,7 @@ export class SyncEngine {
 		}
 
 		this.flushAttachmentLimitedToast();
+		this.flushFailureSummaryToast();
 		return pushed;
 	}
 
@@ -2856,6 +2905,7 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
 
 		this.flushAttachmentLimitedToast();
+		this.flushFailureSummaryToast();
 
 		const skipped = total - pushed - failed;
 		devLog().log(
@@ -3012,7 +3062,19 @@ export class SyncEngine {
 	/** Queue a change for retry and go offline. */
 	private async enqueueChange(entry: QueueEntry): Promise<void> {
 		await this.queue.enqueue(entry);
-		this.goOffline();
+		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
+		// file's server-side error (e.g. a storage 502) leaves the backend
+		// perfectly reachable. The offline transition is decided separately via
+		// maybeGoOffline(), only on true connection loss.
+		this.emitStatus();
+	}
+
+	/** Flip to offline ONLY when the failure indicates true connection loss
+	 *  (no HTTP response). A per-file HTTP status error is that file's problem,
+	 *  surfaced in the Sync Center — it must not report the whole plugin as
+	 *  disconnected. */
+	private maybeGoOffline(cause: unknown): void {
+		if (shouldGoOffline(cause)) this.goOffline();
 	}
 
 	/** Transition to offline mode and start health checking. */
@@ -3042,29 +3104,37 @@ export class SyncEngine {
 		});
 	}
 
-	/** Start periodic health checks while offline. */
+	/** Start health checks while offline, with exponential backoff (5s → 10s →
+	 *  … capped at 60s) so a long outage doesn't hammer the server every 30s.
+	 *  The backoff resets when we reconnect (stopHealthCheck). */
 	private startHealthCheck(): void {
 		if (this.healthCheckTimer) return;
-		this.healthCheckTimer = window.setInterval(() => {
-			void (async () => {
-				try {
-					const ok = await this.api.health();
-					if (ok) {
-						this.goOnline();
+		const tick = () => {
+			this.healthCheckTimer = window.setTimeout(() => {
+				void (async () => {
+					try {
+						if (await this.api.health()) {
+							this.goOnline();
+							return;
+						}
+					} catch {
+						// Still offline
 					}
-				} catch {
-					// Still offline
-				}
-			})();
-		}, HEALTH_CHECK_INTERVAL_MS);
+					this.healthCheckFailures++;
+					tick();
+				})();
+			}, healthCheckDelay(this.healthCheckFailures));
+		};
+		tick();
 	}
 
-	/** Stop periodic health checks. */
+	/** Stop health checks and reset the backoff. */
 	private stopHealthCheck(): void {
 		if (this.healthCheckTimer) {
-			window.clearInterval(this.healthCheckTimer);
+			window.clearTimeout(this.healthCheckTimer);
 			this.healthCheckTimer = null;
 		}
+		this.healthCheckFailures = 0;
 	}
 
 	/** Flush queued changes oldest-first. Stops on first failure. */
@@ -3145,9 +3215,11 @@ export class SyncEngine {
 				}
 				await this.queue.dequeue(entry.path, this.settings.vaultId ?? undefined);
 				flushed++;
-			} catch {
-				// Lost connectivity again — stop flushing
-				this.goOffline();
+			} catch (e) {
+				// Stop this flush pass on the first failure. Only flip offline if
+				// it's a real connection loss — a server error on one entry must
+				// not report the whole plugin as disconnected.
+				this.maybeGoOffline(e);
 				break;
 			}
 		}
