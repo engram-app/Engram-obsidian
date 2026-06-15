@@ -25,6 +25,7 @@ export class SyncProgressModal extends Modal {
 	private barInner!: HTMLElement;
 	private failedEl!: HTMLElement;
 	private summaryEl!: HTMLElement;
+	private hintEl!: HTMLElement;
 	private bgBtn!: HTMLButtonElement;
 	private closeBtn!: HTMLButtonElement;
 
@@ -68,6 +69,11 @@ export class SyncProgressModal extends Modal {
 			cls: "engram-progress-summary",
 		});
 		this.summaryEl.hidden = true;
+
+		this.hintEl = contentEl.createEl("p", {
+			text: "You can close this — the sync keeps running in the background.",
+			cls: "engram-progress-hint",
+		});
 
 		const buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
 		this.bgBtn = buttons.createEl("button", { text: "Run in background" });
@@ -152,6 +158,7 @@ export class SyncProgressModal extends Modal {
 			this.pathEl.setText("");
 			this.barInner.setCssStyles({ width: "100%" });
 			this.barInner.addClass("is-complete");
+			this.hintEl.hidden = true;
 			this.bgBtn.hidden = true;
 			this.closeBtn.hidden = false;
 

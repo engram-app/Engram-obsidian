@@ -2143,7 +2143,10 @@ var import_obsidian7 = require("obsidian"), PHASE_LABELS = {
     }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createEl("p", {
       text: "",
       cls: "engram-progress-summary"
-    }), this.summaryEl.hidden = !0;
+    }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
+      text: "You can close this \u2014 the sync keeps running in the background.",
+      cls: "engram-progress-hint"
+    });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
     this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", {
       text: "Done",
@@ -2185,7 +2188,7 @@ var import_obsidian7 = require("obsidian"), PHASE_LABELS = {
     var _a, _b;
     let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
       let parts = [];
       progress.current > 0 && parts.push(`${progress.current} synced`), progress.failed > 0 && parts.push(`${progress.failed} failed`), this.summaryEl.setText(parts.join(", ")), this.summaryEl.hidden = !1, progress.failed > 0 && (this.failedEl.setText(
         `${progress.failed} failed \u2014 run "Engram: Show sync log" for details`
@@ -3341,7 +3344,7 @@ function renderActions(parent, plugin, refresh) {
       }).awaitChoice();
       if (choice === "change-vault")
         throw new Error("Sync Center received change-vault choice \u2014 caller missing");
-      await plugin.runSyncFromChoice(choice);
+      await plugin.runSyncWithProgress(choice);
     } catch (e) {
       new import_obsidian13.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
@@ -6338,6 +6341,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       }
     }
   }
+  /** Run a sync choice with a live progress modal. Opens SyncProgressModal
+   *  immediately so feedback ("Preparing…") shows the instant the preview
+   *  closes — no dead gap — then streams engine progress into it and restores
+   *  the prior progress callback when the sync settles. The modal's "Run in
+   *  background" closes it while the sync keeps running. No-op choices
+   *  (cancel / change-vault) skip the modal entirely. */
+  async runSyncWithProgress(choice) {
+    if (choice === "cancel" || choice === "change-vault")
+      return this.runSyncFromChoice(choice);
+    let modal = new SyncProgressModal(this.app), prev = this.syncEngine.onSyncProgress;
+    this.syncEngine.onSyncProgress = (progress) => {
+      modal.update(progress), prev == null || prev(progress);
+    }, modal.open();
+    try {
+      return await this.runSyncFromChoice(choice);
+    } catch (e) {
+      throw modal.close(), e;
+    } finally {
+      this.syncEngine.onSyncProgress = prev;
+    }
+  }
   /** True when both `apiUrl` and at least one of `apiKey` (self-hosted /
    *  static key) or `refreshToken` (OAuth device flow) are set. Used to gate
    *  startup sync, post-saveSettings sync, the status-bar click handler, and
@@ -6391,7 +6415,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
           return this.settings.vaultId = id, this.settings.remoteVaultName = name, this.api.setVaultId(id), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a = this.settingTab) == null || _a.display(), this.syncEngine.computeSyncPlan("full");
         }
       }).awaitChoice();
-      await this.runSyncFromChoice(choice);
+      await this.runSyncWithProgress(choice);
     } catch (e) {
       console.error("Engram Sync: sync preview failed", e), new import_obsidian17.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
     }

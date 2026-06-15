@@ -874,6 +874,12 @@
 	margin: 12px 0 0;
 }
 
+.engram-progress-hint {
+	margin: 12px 0 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
 .engram-progress-buttons {
 	display: flex;
 	justify-content: flex-end;
