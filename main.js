@@ -730,7 +730,16 @@ var import_obsidian17 = require("obsidian");
 // src/api.ts
 var import_obsidian = require("obsidian");
 
+// src/tabs/urls.ts
+var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/mcp", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+
 // src/auth-state.ts
+function migrateCloudApiUrl(apiUrl, cloudUrl) {
+  let origin = completeOrigin(apiUrl);
+  if (!origin) return null;
+  let host = new URL(origin).hostname;
+  return LEGACY_CLOUD_HOSTS.includes(host) ? cloudUrl : null;
+}
 function completeOrigin(url) {
   if (!url) return null;
   let parsed;
@@ -3331,11 +3340,6 @@ var PHASE_LABELS = {
 
 // src/tabs/about-tab.ts
 var import_obsidian10 = require("obsidian");
-
-// src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://app.engram.page", ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/mcp", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
-
-// src/tabs/about-tab.ts
 function externalLink(parent, text, href) {
   parent.createEl("a", { text, href, attr: { target: "_blank", rel: "noopener" } });
 }
@@ -6427,7 +6431,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
   async loadSettings() {
     var _a;
     let data = await this.loadData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), await this.saveData({ ...data, settings: this.settings }));
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null;
+    let migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
+    migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, await this.saveData({ ...data, settings: this.settings })), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), await this.saveData({ ...data, settings: this.settings }));
   }
   async saveSettings() {
     this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
