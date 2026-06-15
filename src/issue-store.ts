@@ -193,13 +193,22 @@ export function shouldRetryAfterFailure(classified: CategorizedError, attempts: 
 	return attempts < RETRY_CAP;
 }
 
-/** Whether an issue needs the user to do something (permanent until they act)
- *  or will clear itself via automatic retry (transient). Drives the Sync
- *  Center split: "Needs attention" vs "Retrying automatically". */
-export function issueDisposition(category: SyncIssueCategory): "actionable" | "transient" {
+/** How the Sync Center treats an issue:
+ *  - `informational` — a terminal plan-limit fact (needs_pro, quota). Nothing
+ *    the user can do file-by-file; surfaced for awareness with an upgrade path.
+ *    Must NOT be re-enqueued for retry (retrying can't change the plan).
+ *  - `actionable` — permanent until the user acts (too_large, auth, conflict).
+ *    Also never auto-retried.
+ *  - `transient` — clears itself via automatic retry (server, network, other).
+ *  Drives the Sync Center split and the "Retry all now" filter. */
+export type IssueDisposition = "informational" | "actionable" | "transient";
+
+export function issueDisposition(category: SyncIssueCategory): IssueDisposition {
 	switch (category) {
-		case "too_large":
 		case "needs_pro":
+		case "quota":
+			return "informational";
+		case "too_large":
 		case "auth":
 		case "conflict":
 			return "actionable";
@@ -217,6 +226,11 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 			return {
 				title: "Attachments need a paid plan",
 				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
+			};
+		case "quota":
+			return {
+				title: "Attachment storage full",
+				hint: "You've used all the attachment storage on your plan. Upgrade for more.",
 			};
 		case "too_large":
 			return {

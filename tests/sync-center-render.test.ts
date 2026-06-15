@@ -190,6 +190,18 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(titles[0].text).toContain("Attachments need a paid plan");
 	});
 
+	test("a quota (informational) failure renders its remediation title as a card", () => {
+		const plugin = makeMockPlugin([
+			makeIssue({ path: "Assets/big.png", category: "quota", status: 402 }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		// Informational issues fold into "Needs attention" — assert the card and
+		// its remediation copy render rather than vanishing.
+		expect(findAllByCls(parent, "engram-sync-center-card").length).toBeGreaterThanOrEqual(1);
+		expect(allText(parent)).toContain("Attachment storage full");
+	});
+
 	test("a transient (server) failure renders under 'Retrying automatically', not as a card", () => {
 		const plugin = makeMockPlugin([
 			makeIssue({ path: "Notes/x.md", kind: "note", category: "server", status: 502 }),

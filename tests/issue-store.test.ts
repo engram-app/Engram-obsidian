@@ -320,16 +320,29 @@ describe("shouldRetryAfterFailure", () => {
 });
 
 describe("issueDisposition", () => {
-	test("permanent failures that need user action are 'actionable'", () => {
-		for (const c of ["too_large", "needs_pro", "auth", "conflict"] as SyncIssueCategory[]) {
-			expect(issueDisposition(c)).toBe("actionable");
-		}
+	test("needs_pro and quota are informational", () => {
+		expect(issueDisposition("needs_pro")).toBe("informational");
+		expect(issueDisposition("quota")).toBe("informational");
 	});
 
-	test("retryable failures are 'transient'", () => {
-		for (const c of ["server", "network", "other"] as SyncIssueCategory[]) {
-			expect(issueDisposition(c)).toBe("transient");
-		}
+	test("too_large/auth/conflict are actionable", () => {
+		expect(issueDisposition("too_large")).toBe("actionable");
+		expect(issueDisposition("auth")).toBe("actionable");
+		expect(issueDisposition("conflict")).toBe("actionable");
+	});
+
+	test("server/network/other are transient", () => {
+		expect(issueDisposition("server")).toBe("transient");
+		expect(issueDisposition("network")).toBe("transient");
+		expect(issueDisposition("other")).toBe("transient");
+	});
+
+	test("a 402 limit error does not flap the plugin offline", () => {
+		expect(
+			shouldGoOffline(
+				new LimitExceededError("attachment_must_be_text", null, null, true, null),
+			),
+		).toBe(false);
 	});
 });
 
@@ -338,6 +351,7 @@ describe("remediation", () => {
 		const cats: SyncIssueCategory[] = [
 			"too_large",
 			"needs_pro",
+			"quota",
 			"auth",
 			"conflict",
 			"server",
@@ -354,6 +368,11 @@ describe("remediation", () => {
 	test("needs_pro points at upgrading; too_large explains the size limit", () => {
 		expect(remediation("needs_pro").hint.toLowerCase()).toContain("upgrade");
 		expect(remediation("too_large").hint).toContain("5 MB");
+	});
+
+	test("quota has its own remediation copy", () => {
+		expect(remediation("quota").title.length).toBeGreaterThan(0);
+		expect(remediation("quota").title).not.toBe(remediation("other").title);
 	});
 });
 

@@ -2681,8 +2681,10 @@ function shouldRetryAfterFailure(classified, attempts) {
 }
 function issueDisposition(category) {
   switch (category) {
-    case "too_large":
     case "needs_pro":
+    case "quota":
+      return "informational";
+    case "too_large":
     case "auth":
     case "conflict":
       return "actionable";
@@ -2696,6 +2698,11 @@ function remediation(category) {
       return {
         title: "Attachments need a paid plan",
         hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs."
+      };
+    case "quota":
+      return {
+        title: "Attachment storage full",
+        hint: "You've used all the attachment storage on your plan. Upgrade for more."
       };
     case "too_large":
       return {
@@ -3326,6 +3333,7 @@ function sectionHeading(parent, title) {
 }
 var CATEGORY_ORDER = [
   "needs_pro",
+  "quota",
   "too_large",
   "auth",
   "conflict",
@@ -3334,6 +3342,7 @@ var CATEGORY_ORDER = [
   "other"
 ], CATEGORY_ICON = {
   needs_pro: "\u{1F512}",
+  quota: "\u{1F5C4}",
   too_large: "\u{1F4E6}",
   auth: "\u{1F511}",
   conflict: "\u26A1"
@@ -3341,18 +3350,18 @@ var CATEGORY_ORDER = [
 function renderSyncCenter(parent, plugin, refresh) {
   parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
 }
-function groupedByCategory(issues, disposition) {
+function groupedByCategory(issues, dispositions) {
   var _a;
   let groups = /* @__PURE__ */ new Map();
   for (let issue of issues) {
-    if (issueDisposition(issue.category) !== disposition) continue;
+    if (!dispositions.includes(issueDisposition(issue.category))) continue;
     let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
     bucket.push(issue), groups.set(issue.category, bucket);
   }
   return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
 }
 function renderHeader(parent, plugin) {
-  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all = plugin.syncEngine.issues.all(), attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length, retryingCount = all.length - attentionCount, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all = plugin.syncEngine.issues.all(), attentionCount = all.filter((i) => issueDisposition(i.category) !== "transient").length, retryingCount = all.length - attentionCount, ignoredCount = plugin.syncEngine.ignoredFiles.size();
   header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
 }
 function renderActions(parent, plugin, refresh) {
@@ -3379,7 +3388,10 @@ function makeActionButton(parent, text, handler) {
   });
 }
 function renderNeedsAttention(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), "actionable"), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({ cls: "engram-sync-center-section" }), heading2 = sectionHeading(section, `Needs attention (${total})`);
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), [
+    "actionable",
+    "informational"
+  ]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({ cls: "engram-sync-center-section" }), heading2 = sectionHeading(section, `Needs attention (${total})`);
   total > 0 && heading2.addButton(
     (btn) => btn.setButtonText("Clear all").onClick(() => {
       for (let [, list] of groups)
@@ -3406,7 +3418,7 @@ function renderAttentionCard(parent, plugin, refresh, category, issues) {
     text: `${title} (${issues.length})`
   }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
   let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-  if (category === "needs_pro") {
+  if (category === "needs_pro" || category === "quota") {
     let url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
     actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank"));
   }
@@ -3423,7 +3435,7 @@ function renderAttentionCard(parent, plugin, refresh, category, issues) {
     renderFileRow(fileList, plugin, refresh, issue);
 }
 function renderRetrying(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), "transient"), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
   if (total === 0) return;
   let section = parent.createDiv({ cls: "engram-sync-center-section" });
   sectionHeading(section, `Retrying automatically (${total})`).addButton(

@@ -5,7 +5,7 @@
  *  clicked from.
  */
 import { Notice, Setting, normalizePath } from "obsidian";
-import { issueDisposition, remediation } from "./issue-store";
+import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
@@ -22,6 +22,7 @@ function sectionHeading(parent: HTMLElement, title: string): Setting {
 /** Category render order within each section. */
 const CATEGORY_ORDER: SyncIssueCategory[] = [
 	"needs_pro",
+	"quota",
 	"too_large",
 	"auth",
 	"conflict",
@@ -32,6 +33,7 @@ const CATEGORY_ORDER: SyncIssueCategory[] = [
 
 const CATEGORY_ICON: Partial<Record<SyncIssueCategory, string>> = {
 	needs_pro: "🔒",
+	quota: "🗄",
 	too_large: "📦",
 	auth: "🔑",
 	conflict: "⚡",
@@ -53,14 +55,17 @@ export function renderSyncCenter(
 	renderStats(parent, plugin);
 }
 
-/** All current issues split by disposition, grouped by category in order. */
+/** All current issues whose disposition is in `dispositions`, grouped by
+ *  category in CATEGORY_ORDER. Accepts a set so the "Needs attention" section
+ *  can fold in `informational` plan-limit issues (needs_pro, quota) alongside
+ *  the `actionable` ones — they share the same card layout and upgrade path. */
 function groupedByCategory(
 	issues: SyncIssue[],
-	disposition: "actionable" | "transient",
+	dispositions: IssueDisposition[],
 ): Array<[SyncIssueCategory, SyncIssue[]]> {
 	const groups = new Map<SyncIssueCategory, SyncIssue[]>();
 	for (const issue of issues) {
-		if (issueDisposition(issue.category) !== disposition) continue;
+		if (!dispositions.includes(issueDisposition(issue.category))) continue;
 		const bucket = groups.get(issue.category) ?? [];
 		bucket.push(issue);
 		groups.set(issue.category, bucket);
@@ -72,7 +77,9 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 	const status = plugin.syncEngine.getStatus();
 	const all = plugin.syncEngine.issues.all();
-	const attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length;
+	// Informational (plan-limit) issues render in the "Needs attention" section
+	// alongside actionable ones, so count them there — not as "retrying".
+	const attentionCount = all.filter((i) => issueDisposition(i.category) !== "transient").length;
 	const retryingCount = all.length - attentionCount;
 	const ignoredCount = plugin.syncEngine.ignoredFiles.size();
 
@@ -141,7 +148,13 @@ function renderNeedsAttention(
 	plugin: EngramSyncPlugin,
 	refresh: () => void,
 ): void {
-	const groups = groupedByCategory(plugin.syncEngine.issues.all(), "actionable");
+	// Fold informational plan-limit issues (needs_pro, quota) in with the
+	// actionable ones: both are terminal, never auto-retry, and want an upgrade
+	// CTA. A dedicated "Not synced on your plan" grouping is a later task.
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), [
+		"actionable",
+		"informational",
+	]);
 	const total = groups.reduce((n, [, list]) => n + list.length, 0);
 
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
@@ -192,7 +205,7 @@ function renderAttentionCard(
 
 	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
 
-	if (category === "needs_pro") {
+	if (category === "needs_pro" || category === "quota") {
 		const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
 		const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
 		upgrade.addEventListener("click", () => window.open(url, "_blank"));
@@ -221,7 +234,7 @@ function renderAttentionCard(
 /** "Retrying automatically" — transient failures retried with backoff; clears
  *  itself on success. Offers a manual "Retry all now". */
 function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
-	const groups = groupedByCategory(plugin.syncEngine.issues.all(), "transient");
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]);
 	const total = groups.reduce((n, [, list]) => n + list.length, 0);
 	if (total === 0) return; // No section when nothing is retrying.
 
