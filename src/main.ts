@@ -172,9 +172,15 @@ export default class EngramSyncPlugin extends Plugin {
 		};
 
 		// Persist plan state to settings whenever the channel reports a new one.
+		// MUST use savePluginData (a plain disk write), NOT saveSettings:
+		// saveSettings() calls setupNoteStream(), which tears down and recreates
+		// the WebSocket channel. Since plan state arrives FROM that channel's
+		// message handler (onPlanState), saveSettings would destroy the channel
+		// mid-message → reconnect → re-join user:* → plan arrives → repeat, a
+		// reconnect loop that leaves the socket permanently "not connected".
 		this.syncEngine.onPlanStatePersist = (p) => {
 			this.settings.planState = p;
-			void this.saveSettings();
+			void this.savePluginData(this.syncEngine.getLastSync());
 		};
 
 		// Wire up queue persistence
@@ -802,7 +808,10 @@ export default class EngramSyncPlugin extends Plugin {
 
 				channel.onPlanState = (raw) => {
 					const parsed = parsePlanState(raw, Date.now());
-					if (parsed) this.syncEngine.applyPlanState(parsed);
+					// Defer off the channel's synchronous message-handler tick:
+					// applyPlanState can persist + re-sync, and must never run
+					// re-entrantly inside the WebSocket onmessage that delivered it.
+					if (parsed) queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
 				};
 
 				this.noteStream = channel;
