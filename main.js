@@ -2990,20 +2990,27 @@ var MERGE_CARD = {
   renderPreview() {
     var _a;
     let { contentEl } = this, empty = isPlanEmpty(this.state.plan), context = (_a = this.opts.context) != null ? _a : "review";
-    if (this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), empty) {
-      contentEl.createDiv({ cls: "engram-sync-preview-footer" }).createEl("button", {
-        text: "Close",
-        cls: "mod-cta"
-      }).addEventListener("click", () => this.state.cancel());
-      return;
-    }
+    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-    options.createDiv({
+    empty || options.createDiv({
       cls: "engram-sync-preview-options-header",
       text: OPTIONS_HEADER_BY_CONTEXT[context]
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-    this.renderOptionCard(mergeRow, MERGE_CARD);
+    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", {
+      text: empty ? "Close" : "Cancel",
+      cls: empty ? "mod-cta" : void 0
+    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** Render the "Show advanced sync options" accordion (collapsed by default)
+   *  with the push/pull direction grid. Shared by the up-to-date and
+   *  has-changes preview states so force push/pull stays reachable even at
+   *  100% match. */
+  renderAdvancedOptions(options) {
     let advancedToggle = options.createEl("button", {
       cls: "engram-sync-preview-advanced-toggle"
     });
@@ -3029,10 +3036,6 @@ var MERGE_CARD = {
     });
     for (let card of PULL_CARDS)
       this.renderOptionCard(pullCol, card);
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
-      this.openVaultPicker();
-    });
   }
   renderHeader(parent, context) {
     if (context === "up-to-date") {

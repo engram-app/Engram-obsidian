@@ -298,25 +298,41 @@ export class SyncPreviewModal extends Modal {
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
 
-		if (empty) {
-			const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-			const closeBtn = footer.createEl("button", {
-				text: "Close",
-				cls: "mod-cta",
-			});
-			closeBtn.addEventListener("click", () => this.state.cancel());
-			return;
-		}
-
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-		options.createDiv({
-			cls: "engram-sync-preview-options-header",
-			text: OPTIONS_HEADER_BY_CONTEXT[context],
-		});
+		// When already in sync there's no direction to "choose" — drop the prompt
+		// but still offer Sync + the (collapsed) advanced options for a deliberate
+		// force push/pull or recovery.
+		if (!empty) {
+			options.createDiv({
+				cls: "engram-sync-preview-options-header",
+				text: OPTIONS_HEADER_BY_CONTEXT[context],
+			});
+		}
 
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
 		this.renderOptionCard(mergeRow, MERGE_CARD);
 
+		this.renderAdvancedOptions(options);
+
+		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+		const dismissBtn = footer.createEl("button", {
+			text: empty ? "Close" : "Cancel",
+			cls: empty ? "mod-cta" : undefined,
+		});
+		dismissBtn.addEventListener("click", () => this.state.cancel());
+		if (this.opts.showChangeVault) {
+			const changeBtn = footer.createEl("button", { text: "Change vault" });
+			changeBtn.addEventListener("click", () => {
+				void this.openVaultPicker();
+			});
+		}
+	}
+
+	/** Render the "Show advanced sync options" accordion (collapsed by default)
+	 *  with the push/pull direction grid. Shared by the up-to-date and
+	 *  has-changes preview states so force push/pull stays reachable even at
+	 *  100% match. */
+	private renderAdvancedOptions(options: HTMLElement): void {
 		const advancedToggle = options.createEl("button", {
 			cls: "engram-sync-preview-advanced-toggle",
 		});
@@ -348,16 +364,6 @@ export class SyncPreviewModal extends Modal {
 		});
 		for (const card of PULL_CARDS) {
 			this.renderOptionCard(pullCol, card);
-		}
-
-		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const cancelBtn = footer.createEl("button", { text: "Cancel" });
-		cancelBtn.addEventListener("click", () => this.state.cancel());
-		if (this.opts.showChangeVault) {
-			const changeBtn = footer.createEl("button", { text: "Change vault" });
-			changeBtn.addEventListener("click", () => {
-				void this.openVaultPicker();
-			});
 		}
 	}
 
