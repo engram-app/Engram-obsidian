@@ -1036,12 +1036,12 @@ var EngramApi = class _EngramApi {
   }
   /** Get full note by path. */
   async getNote(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("GET", `/notes/${encoded}`)).json;
   }
   /** Delete a note. */
   async deleteNote(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("DELETE", `/notes/${encoded}`)).json;
   }
   // --- Attachment methods ---
@@ -1056,12 +1056,12 @@ var EngramApi = class _EngramApi {
   }
   /** Get attachment content (base64). */
   async getAttachment(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("GET", `/attachments/${encoded}`)).json;
   }
   /** Delete an attachment. */
   async deleteAttachment(path) {
-    let encoded = encodeURIComponent(path);
+    let encoded = encodePath(path);
     return (await this.request("DELETE", `/attachments/${encoded}`)).json;
   }
   /** Semantic search across indexed notes. */
@@ -1135,6 +1135,9 @@ function parseLimitExceededError(e) {
     pick("limit"),
     pick("current")
   );
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
 }
 function arrayBufferToBase64(buffer) {
   let bytes = new Uint8Array(buffer), binary = "";
