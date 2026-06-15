@@ -89,15 +89,40 @@ interface CategorizedError {
 	upgradeUrl?: string;
 }
 
+/** Map a backend 402 `reason` to a SyncIssueCategory. Unknown reasons default
+ *  to `needs_pro` (every 402 is a plan limit with an upgrade path). */
+export function limitReasonToCategory(reason: string): SyncIssueCategory {
+	switch (reason) {
+		case "attachment_must_be_text":
+		case "attachments_disabled":
+			return "needs_pro";
+		case "attachments_quota_exceeded":
+			return "quota";
+		case "file_too_large":
+			return "too_large";
+		// Note/vault-cap 402s come from POST /api/notes, not the attachment path.
+		// Map them to the neutral `other` bucket so they aren't rendered as the
+		// attachment-flavored needs_pro surface nor counted in the attachment skip
+		// toast. Still terminal via categorizeError's LimitExceededError branch.
+		case "notes_cap_exceeded":
+		case "vaults_cap_exceeded":
+			return "other";
+		default:
+			return "needs_pro";
+	}
+}
+
 /** Classify a thrown error from a push/pull call. */
 export function categorizeError(err: unknown): CategorizedError {
-	// LimitExceededError from a 402 attachments_disabled is terminal — re-pushing
-	// will keep failing until the user's tier changes. Mark as `needs_pro` so the
-	// Sync Center renders the "Upgrade to sync attachments" group, and so the
+	// Any LimitExceededError (a 402 plan-limit) is terminal — re-pushing will
+	// keep failing until the user's tier changes. Map the backend `reason` to a
+	// category so the Sync Center renders the right group (e.g. "Upgrade to sync
+	// attachments" for needs_pro, the storage-cap card for quota), and so the
 	// push loop knows not to enqueue the file for retry.
-	if (err instanceof LimitExceededError && err.reason === "attachments_disabled") {
+	if (err instanceof LimitExceededError) {
+		const category = limitReasonToCategory(err.reason);
 		return {
-			category: "needs_pro",
+			category,
 			status: 402,
 			message: err.message,
 			terminal: true,
@@ -168,13 +193,22 @@ export function shouldRetryAfterFailure(classified: CategorizedError, attempts: 
 	return attempts < RETRY_CAP;
 }
 
-/** Whether an issue needs the user to do something (permanent until they act)
- *  or will clear itself via automatic retry (transient). Drives the Sync
- *  Center split: "Needs attention" vs "Retrying automatically". */
-export function issueDisposition(category: SyncIssueCategory): "actionable" | "transient" {
+/** How the Sync Center treats an issue:
+ *  - `informational` — a terminal plan-limit fact (needs_pro, quota). Nothing
+ *    the user can do file-by-file; surfaced for awareness with an upgrade path.
+ *    Must NOT be re-enqueued for retry (retrying can't change the plan).
+ *  - `actionable` — permanent until the user acts (too_large, auth, conflict).
+ *    Also never auto-retried.
+ *  - `transient` — clears itself via automatic retry (server, network, other).
+ *  Drives the Sync Center split and the "Retry all now" filter. */
+export type IssueDisposition = "informational" | "actionable" | "transient";
+
+export function issueDisposition(category: SyncIssueCategory): IssueDisposition {
 	switch (category) {
-		case "too_large":
 		case "needs_pro":
+		case "quota":
+			return "informational";
+		case "too_large":
 		case "auth":
 		case "conflict":
 			return "actionable";
@@ -192,6 +226,11 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 			return {
 				title: "Attachments need a paid plan",
 				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
+			};
+		case "quota":
+			return {
+				title: "Attachment storage full",
+				hint: "You've used all the attachment storage on your plan. Upgrade for more.",
 			};
 		case "too_large":
 			return {

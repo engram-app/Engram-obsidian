@@ -6,8 +6,10 @@ import {
 	completeOrigin,
 	interpretHealthProbe,
 	isBackendChange,
+	migrateCloudApiUrl,
 	withClearedAuth,
 } from "../src/auth-state";
+import { ENGRAM_CLOUD_URL } from "../src/tabs/urls";
 import type { EngramSyncSettings } from "../src/types";
 
 const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSettings => ({
@@ -306,5 +308,41 @@ describe("cloudTabAction", () => {
 		// applyApiUrlChange would not wipe in this case, so don't prompt either.
 		const settings = fullSettings({ apiUrl: "https://app.engram.page/api" });
 		expect(cloudTabAction(settings, CLOUD)).toBe("render");
+	});
+});
+
+describe("migrateCloudApiUrl", () => {
+	test("rewrites legacy app.engram.page host to the canonical cloud REST host", () => {
+		expect(migrateCloudApiUrl("https://app.engram.page", ENGRAM_CLOUD_URL)).toBe(
+			ENGRAM_CLOUD_URL,
+		);
+	});
+
+	test("ignores trailing slash / path on the legacy host and still migrates", () => {
+		expect(migrateCloudApiUrl("https://app.engram.page/", ENGRAM_CLOUD_URL)).toBe(
+			ENGRAM_CLOUD_URL,
+		);
+	});
+
+	test("is case-insensitive on the legacy host", () => {
+		expect(migrateCloudApiUrl("https://APP.Engram.Page", ENGRAM_CLOUD_URL)).toBe(
+			ENGRAM_CLOUD_URL,
+		);
+	});
+
+	test("returns null when already on the canonical cloud host (no-op)", () => {
+		expect(migrateCloudApiUrl(ENGRAM_CLOUD_URL, ENGRAM_CLOUD_URL)).toBeNull();
+	});
+
+	test("returns null for a self-hosted URL (never touch it)", () => {
+		expect(migrateCloudApiUrl("https://engram.ras.band", ENGRAM_CLOUD_URL)).toBeNull();
+	});
+
+	test("returns null for empty / unset apiUrl", () => {
+		expect(migrateCloudApiUrl("", ENGRAM_CLOUD_URL)).toBeNull();
+	});
+
+	test("returns null for an unparseable mid-typing URL", () => {
+		expect(migrateCloudApiUrl("https://app", ENGRAM_CLOUD_URL)).toBeNull();
 	});
 });

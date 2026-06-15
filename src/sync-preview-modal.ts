@@ -1,6 +1,7 @@
 import { type App, Modal } from "obsidian";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
+import { isTextAttachment } from "./mime";
 import {
 	type OptionBreakdown,
 	buildDeletionTree,
@@ -145,6 +146,30 @@ export function describeCreateVaultError(e: unknown): string {
 	return "Could not create the vault — check your connection and try again.";
 }
 
+/** Lowercase file extension (no leading dot) of a path, or "" when none. */
+function extOf(path: string): string {
+	const base = path.slice(path.lastIndexOf("/") + 1);
+	const dot = base.lastIndexOf(".");
+	return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
+}
+
+/** How many attachments the upcoming push would skip under a text-only plan.
+ *  Mirrors the backend's Free text-only gate (see `mime.ts`): an attachment is
+ *  skipped iff its effective MIME does NOT start with `text/`. Returns 0 when
+ *  the plan is not text-only (nothing is gated). Pure for testing. */
+export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boolean): number {
+	if (!attachmentsTextOnly) return 0;
+	return plan.toPush.attachments.filter((p) => !isTextAttachment(extOf(p))).length;
+}
+
+/** The one muted pre-flight line for plan-skipped attachments, or null when
+ *  there is nothing to say (n === 0). Pure for testing. */
+export function skippedAttachmentsLine(n: number): string | null {
+	if (n <= 0) return null;
+	const noun = n === 1 ? "attachment" : "attachments";
+	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
+}
+
 interface OptionCard {
 	choice: SyncChoice;
 	emoji: string;
@@ -229,6 +254,11 @@ export interface SyncPreviewOptions {
 	 *  "vault-picker" when the user entered the modal via a "Change vault"
 	 *  affordance on the settings page. */
 	initialView?: "preview" | "vault-picker";
+	/** Current plan's text-only attachment flag. When true and the upcoming
+	 *  push includes non-text attachments, the preview shows one muted
+	 *  informational line saying they will be skipped. Omitted/undefined =
+	 *  unknown plan → no line. */
+	attachmentsTextOnly?: boolean;
 }
 
 export class SyncPreviewModal extends Modal {
@@ -297,6 +327,7 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
+		this.renderSkippedAttachmentsNote(contentEl);
 
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
 		// When already in sync there's no direction to "choose" — drop the prompt
@@ -365,6 +396,18 @@ export class SyncPreviewModal extends Modal {
 		for (const card of PULL_CARDS) {
 			this.renderOptionCard(pullCol, card);
 		}
+	}
+
+	/** One calm, non-blocking info line for a text-only (Free) plan when the
+	 *  upcoming push includes non-text attachments. Renders nothing when the
+	 *  plan isn't text-only, the flag is unknown, or the count is zero. */
+	private renderSkippedAttachmentsNote(parent: HTMLElement): void {
+		const n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === true);
+		const text = skippedAttachmentsLine(n);
+		if (text == null) return;
+		const note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
+		note.createSpan({ text: "ℹ️ ", cls: "engram-sync-preview-skip-note-icon" });
+		note.createSpan({ text });
 	}
 
 	private renderHeader(parent: HTMLElement, context: SyncPreviewContext | "up-to-date"): void {
