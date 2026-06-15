@@ -18,6 +18,7 @@ import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
+import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
@@ -168,6 +169,12 @@ export default class EngramSyncPlugin extends Plugin {
 			return modal.waitForChoice();
 		};
 
+		// Persist plan state to settings whenever the channel reports a new one.
+		this.syncEngine.onPlanStatePersist = (p) => {
+			this.settings.planState = p;
+			void this.saveSettings();
+		};
+
 		// Wire up queue persistence
 		this.syncEngine.queue.onPersist(async (entries) => {
 			await this.savePluginData(this.syncEngine.getLastSync(), entries);
@@ -194,6 +201,14 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		this.syncEngine.issues.hydrate(saved?.syncIssues);
 		this.syncEngine.ignoredFiles.hydrate(saved?.ignoredFiles);
+
+		// Seed plan state from persisted settings WITHOUT re-syncing. A normal
+		// reload is not an upgrade — hydratePlanState sets the field but skips the
+		// capability-gain check so we don't spuriously re-push parked attachments
+		// every launch.
+		if (this.settings.planState) {
+			this.syncEngine.hydratePlanState(this.settings.planState);
+		}
 
 		// Register settings tab
 		this.settingTab = new EngramSyncSettingTab(this.app, this);
@@ -773,6 +788,11 @@ export default class EngramSyncPlugin extends Plugin {
 					// Use savePluginData instead of saveSettings to avoid triggering re-registration
 					void this.savePluginData(this.syncEngine.getLastSync());
 					this.noteStream?.disconnect();
+				};
+
+				channel.onPlanState = (raw) => {
+					const parsed = parsePlanState(raw, Date.now());
+					if (parsed) this.syncEngine.applyPlanState(parsed);
 				};
 
 				this.noteStream = channel;

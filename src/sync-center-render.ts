@@ -204,6 +204,13 @@ function renderPlanCard(
 	const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
 	upgrade.addEventListener("click", () => window.open(url, "_blank"));
 
+	// Manual re-attempt for users who upgraded out-of-band (e.g. the plan event
+	// hasn't landed yet, or they want to retry without waiting for it).
+	const resync = actions.createEl("button", { text: "Sync these now" });
+	resync.addEventListener("click", () => {
+		void plugin.syncEngine.resyncSkippedAttachments().then(refresh);
+	});
+
 	const toggle = actions.createEl("button", {
 		text: `Show files (${issues.length}) ▾`,
 		cls: "engram-sync-center-card-toggle",

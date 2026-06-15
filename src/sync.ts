@@ -17,6 +17,7 @@ import {
 	shouldRetryAfterFailure,
 } from "./issue-store";
 import { OfflineQueue } from "./offline-queue";
+import { type PlanState, attachmentCapabilityGained } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
 import { threeWayMerge } from "./three-way-merge";
@@ -182,6 +183,15 @@ export class SyncEngine {
 
 	/** Called after each batch during pushAll/pullAll to report progress. */
 	onSyncProgress: ((progress: SyncProgress) => void) | null = null;
+
+	/** Last-known plan/entitlement state, fed by the channel's `onPlanState`
+	 *  callback (user-topic join reply + `subscription_activated`). Drives the
+	 *  upgrade-triggered re-sync of plan-skipped attachments. Null until the
+	 *  first plan event arrives (or an older backend that never sends one). */
+	private planState: PlanState | null = null;
+
+	/** Set by main.ts to persist plan state to settings when it changes. */
+	onPlanStatePersist: ((p: PlanState) => void) | null = null;
 
 	/** Optional sync log — receives an entry for each push/pull outcome. */
 	syncLog: SyncLog | null = null;
@@ -679,8 +689,13 @@ export class SyncEngine {
 	private pendingPostPullPushes: Set<string> = new Set();
 
 	/** Push a single file to Engram. Returns true on success.
-	 *  When force is true, skip echo suppression (used by pushAll). */
-	private async pushFile(file: TFile, force = false): Promise<boolean> {
+	 *  When force is true, skip echo suppression (used by pushAll).
+	 *  When bypassPlanSkip is true, also skip the needs_pro short-circuit so a
+	 *  parked attachment is actually re-uploaded — used ONLY by
+	 *  resyncSkippedAttachments on a plan upgrade. The bulk paths (pushAll /
+	 *  pushModifiedFiles) pass force without this, so they stay quiet on
+	 *  plan-gated attachments. */
+	private async pushFile(file: TFile, force = false, bypassPlanSkip = false): Promise<boolean> {
 		if (this.pushing.has(file.path)) return false;
 
 		// Persistence shortcut: if this attachment was already marked needs_pro
@@ -688,7 +703,7 @@ export class SyncEngine {
 		// backend. The issue stays in the Sync Center until the user upgrades or
 		// dismisses it. This is what makes the batched toast quiet on the next
 		// sync — there's nothing left to fail, so the count is 0.
-		if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path)) {
+		if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasNeedsProIssue(file.path)) {
 			devLog().log("push", `skip (needs_pro): ${file.path}`);
 			return false;
 		}
@@ -1044,6 +1059,54 @@ export class SyncEngine {
 	/** Test hook: whether the session has already shown the batched toast. */
 	hasShownAttachmentLimitToast(): boolean {
 		return this.attachmentLimitToastShown;
+	}
+
+	// --- Plan state ---
+
+	/** Store new plan state; on a capability gain (upgrade unlocks non-text
+	 *  attachments), re-attempt the attachments parked as informational
+	 *  plan-skips. Persists via onPlanStatePersist so a reload keeps the state. */
+	applyPlanState(next: PlanState): void {
+		const gained = attachmentCapabilityGained(this.planState, next);
+		this.planState = next;
+		this.onPlanStatePersist?.(next);
+		if (gained) {
+			devLog().log("push", "plan capability gained — re-syncing skipped attachments");
+			rlog().info("push", "Plan capability gained — re-syncing skipped attachments");
+			void this.resyncSkippedAttachments();
+		}
+	}
+
+	/** Seed plan state from persisted settings on load WITHOUT triggering a
+	 *  re-sync. A normal reload must not be read as an upgrade: applyPlanState
+	 *  would see prev=null and treat any non-text-only plan as a fresh capability
+	 *  gain, spuriously re-pushing every parked attachment on every launch. */
+	hydratePlanState(p: PlanState): void {
+		this.planState = p;
+	}
+
+	/** The current plan state (test/UI hook). */
+	getPlanState(): PlanState | null {
+		return this.planState;
+	}
+
+	/** Re-push every file currently parked as an informational plan-skip
+	 *  (needs_pro / quota). Force-pushes AND bypasses the needs_pro short-circuit
+	 *  so the upload is actually re-attempted; the normal push success path
+	 *  clears the issue. Wired to the channel's upgrade event and the Sync Center
+	 *  "Sync these now" button. */
+	async resyncSkippedAttachments(): Promise<void> {
+		const skipped = this.issues
+			.all()
+			.filter((i) => issueDisposition(i.category) === "informational");
+		if (skipped.length === 0) return;
+		for (const issue of skipped) {
+			const file = this.app.vault.getAbstractFileByPath(normalizePath(issue.path));
+			if (file instanceof TFile) {
+				await this.pushFile(file, /* force */ true, /* bypassPlanSkip */ true);
+			}
+		}
+		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */

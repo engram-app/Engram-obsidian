@@ -1803,6 +1803,24 @@ function notifyLimitExceeded(err) {
   }
 }
 
+// src/plan-state.ts
+function parsePlanState(raw, now) {
+  var _a;
+  if (typeof raw != "object" || raw === null) return null;
+  let r = raw;
+  return typeof r.tier != "string" ? null : {
+    tier: (_a = r.tier) != null ? _a : "free",
+    attachmentsTextOnly: r.attachments_text_only === !0,
+    maxFileBytes: typeof r.max_file_bytes == "number" ? r.max_file_bytes : 0,
+    attachmentBytesCap: typeof r.attachment_bytes_cap == "number" ? r.attachment_bytes_cap : null,
+    updatedAt: now
+  };
+}
+function attachmentCapabilityGained(prev, next) {
+  var _a;
+  return ((_a = prev == null ? void 0 : prev.attachmentsTextOnly) != null ? _a : !0) && !next.attachmentsTextOnly;
+}
+
 // src/search-modal.ts
 var import_obsidian4 = require("obsidian"), SearchModal = class extends import_obsidian4.Modal {
   constructor(app, api) {
@@ -3438,7 +3456,9 @@ function renderPlanCard(parent, plugin, refresh, category, issues) {
     text: `${title} (${issues.length})`
   }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
   let actions = card.createDiv({ cls: "engram-sync-center-card-actions" }), url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
-  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank"));
+  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank")), actions.createEl("button", { text: "Sync these now" }).addEventListener("click", () => {
+    plugin.syncEngine.resyncSkippedAttachments().then(refresh);
+  });
   let toggle = actions.createEl("button", {
     text: `Show files (${issues.length}) \u25BE`,
     cls: "engram-sync-center-card-toggle"
@@ -4010,6 +4030,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.onConflict = null;
     /** Called after each batch during pushAll/pullAll to report progress. */
     this.onSyncProgress = null;
+    /** Last-known plan/entitlement state, fed by the channel's `onPlanState`
+     *  callback (user-topic join reply + `subscription_activated`). Drives the
+     *  upgrade-triggered re-sync of plan-skipped attachments. Null until the
+     *  first plan event arrives (or an older backend that never sends one). */
+    this.planState = null;
+    /** Set by main.ts to persist plan state to settings when it changes. */
+    this.onPlanStatePersist = null;
     /** Optional sync log — receives an entry for each push/pull outcome. */
     this.syncLog = null;
     /** Persistent record of files that failed to sync, with reason. Surfaced
@@ -4327,11 +4354,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     ), await new Promise((resolve) => window.setTimeout(resolve, waitMs)), this.requestTimestamps = this.requestTimestamps.filter((t) => t > Date.now() - windowMs), this.requestTimestamps.push(Date.now());
   }
   /** Push a single file to Engram. Returns true on success.
-   *  When force is true, skip echo suppression (used by pushAll). */
-  async pushFile(file, force = !1) {
+   *  When force is true, skip echo suppression (used by pushAll).
+   *  When bypassPlanSkip is true, also skip the needs_pro short-circuit so a
+   *  parked attachment is actually re-uploaded — used ONLY by
+   *  resyncSkippedAttachments on a plan upgrade. The bulk paths (pushAll /
+   *  pushModifiedFiles) pass force without this, so they stay quiet on
+   *  plan-gated attachments. */
+  async pushFile(file, force = !1, bypassPlanSkip = !1) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     if (this.pushing.has(file.path)) return !1;
-    if (this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
+    if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
       return devLog().log("push", `skip (needs_pro): ${file.path}`), !1;
     await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
     let isBinary = this.isBinaryFile(file), success = !1;
@@ -4552,6 +4584,47 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Test hook: whether the session has already shown the batched toast. */
   hasShownAttachmentLimitToast() {
     return this.attachmentLimitToastShown;
+  }
+  // --- Plan state ---
+  /** Store new plan state; on a capability gain (upgrade unlocks non-text
+   *  attachments), re-attempt the attachments parked as informational
+   *  plan-skips. Persists via onPlanStatePersist so a reload keeps the state. */
+  applyPlanState(next) {
+    var _a;
+    let gained = attachmentCapabilityGained(this.planState, next);
+    this.planState = next, (_a = this.onPlanStatePersist) == null || _a.call(this, next), gained && (devLog().log("push", "plan capability gained \u2014 re-syncing skipped attachments"), rlog().info("push", "Plan capability gained \u2014 re-syncing skipped attachments"), this.resyncSkippedAttachments());
+  }
+  /** Seed plan state from persisted settings on load WITHOUT triggering a
+   *  re-sync. A normal reload must not be read as an upgrade: applyPlanState
+   *  would see prev=null and treat any non-text-only plan as a fresh capability
+   *  gain, spuriously re-pushing every parked attachment on every launch. */
+  hydratePlanState(p) {
+    this.planState = p;
+  }
+  /** The current plan state (test/UI hook). */
+  getPlanState() {
+    return this.planState;
+  }
+  /** Re-push every file currently parked as an informational plan-skip
+   *  (needs_pro / quota). Force-pushes AND bypasses the needs_pro short-circuit
+   *  so the upload is actually re-attempted; the normal push success path
+   *  clears the issue. Wired to the channel's upgrade event and the Sync Center
+   *  "Sync these now" button. */
+  async resyncSkippedAttachments() {
+    let skipped = this.issues.all().filter((i) => issueDisposition(i.category) === "informational");
+    if (skipped.length !== 0) {
+      for (let issue of skipped) {
+        let file = this.app.vault.getAbstractFileByPath((0, import_obsidian15.normalizePath)(issue.path));
+        file instanceof import_obsidian15.TFile && await this.pushFile(
+          file,
+          /* force */
+          !0,
+          /* bypassPlanSkip */
+          !0
+        );
+      }
+      new import_obsidian15.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
+    }
   }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {
@@ -6087,11 +6160,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       this.updateStatusBar(status);
     }, this.syncEngine.onConflict = async (info) => new ConflictModal(this.app, info, this.settings, (mode) => {
       this.settings.conflictViewMode = mode, this.saveSettings();
-    }).waitForChoice(), this.syncEngine.queue.onPersist(async (entries) => {
+    }).waitForChoice(), this.syncEngine.onPlanStatePersist = (p) => {
+      this.settings.planState = p, this.saveSettings();
+    }, this.syncEngine.queue.onPersist(async (entries) => {
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
     let saved = await this.loadData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -6383,6 +6458,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian17.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+      }, channel.onPlanState = (raw) => {
+        let parsed = parsePlanState(raw, Date.now());
+        parsed && this.syncEngine.applyPlanState(parsed);
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), channel.connect();
     }).catch((e) => {
       if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(

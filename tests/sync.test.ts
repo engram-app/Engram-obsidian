@@ -3645,3 +3645,103 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		}
 	});
 });
+
+describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
+	const freePlan = {
+		tier: "free" as const,
+		attachmentsTextOnly: true,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 1,
+	};
+	const proPlan = {
+		tier: "pro" as const,
+		attachmentsTextOnly: false,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 2,
+	};
+
+	test("applyPlanState persists via onPlanStatePersist", () => {
+		const engine = createEngine();
+		const saved: unknown[] = [];
+		engine.onPlanStatePersist = (p) => saved.push(p);
+		engine.applyPlanState(proPlan);
+		expect(saved.length).toBe(1);
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("hydratePlanState seeds state without triggering a resync", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+
+		// Hydrating with a paid plan must NOT re-push — prev is null but this is a
+		// reload, not an upgrade.
+		engine.hydratePlanState(proPlan);
+		// Let any (erroneously) scheduled microtasks settle.
+		await Promise.resolve();
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("on capability gained, skipped attachments are re-attempted and cleared", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// free → free: no capability gain, no resync.
+		engine.applyPlanState(freePlan);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// free → pro: text-only true→false = capability gain → resync fires.
+		engine.applyPlanState(proPlan);
+		await engine.resyncSkippedAttachments();
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+		expect(engine.issues.get("a.png")).toBeUndefined();
+	});
+
+	test("bypassPlanSkip re-attempts a parked needs_pro attachment (force alone does not)", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the
+		// needs_pro entry still short-circuits — no network call, stays quiet.
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+});
