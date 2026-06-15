@@ -39,9 +39,9 @@ function simulateOpen(ws: any): void {
 	ws.onopen?.();
 }
 
-function getLastSentMessage(ws: any): unknown[] {
-	const raw = ws.sent[ws.sent.length - 1];
-	return JSON.parse(raw) as unknown[];
+/** The sync-topic `phx_join` is always the first frame sent on open. */
+function getSyncJoinMessage(ws: any): unknown[] {
+	return JSON.parse(ws.sent[0]) as unknown[];
 }
 
 function simulateMessage(ws: any, msg: unknown[]): void {
@@ -59,7 +59,7 @@ describe("NoteChannel topic format", () => {
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
-		const joinMsg = getLastSentMessage(lastWsInstance);
+		const joinMsg = getSyncJoinMessage(lastWsInstance);
 		// [joinRef, ref, topic, event, payload]
 		expect(joinMsg[2]).toBe("sync:42:7");
 		expect(joinMsg[3]).toBe("phx_join");
@@ -72,10 +72,152 @@ describe("NoteChannel topic format", () => {
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
-		const joinMsg = getLastSentMessage(lastWsInstance);
+		const joinMsg = getSyncJoinMessage(lastWsInstance);
 		expect(joinMsg[2]).toBe("sync:42");
 		expect(joinMsg[3]).toBe("phx_join");
 
+		channel.disconnect();
+	});
+});
+
+describe("NoteChannel user topic + plan state", () => {
+	test("joins user:{userId} as a second phx_join on open", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		// First join is the sync topic, second is the user topic.
+		const join1 = JSON.parse(lastWsInstance.sent[0]);
+		const join2 = JSON.parse(lastWsInstance.sent[1]);
+		expect(join1[2]).toBe("sync:42:7");
+		expect(join1[3]).toBe("phx_join");
+		expect(join2[2]).toBe("user:42");
+		expect(join2[3]).toBe("phx_join");
+		// Distinct join refs so server replies are attributable.
+		expect(join2[0]).not.toBe(join1[0]);
+
+		channel.disconnect();
+	});
+
+	test("user-topic join reply surfaces plan state", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const seen: unknown[] = [];
+		channel.onPlanState = (p) => seen.push(p);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"2",
+			"9",
+			"user:u1",
+			"phx_reply",
+			{
+				status: "ok",
+				response: {
+					plan: {
+						tier: "free",
+						attachments_text_only: true,
+						max_file_bytes: 10,
+						attachment_bytes_cap: 5,
+					},
+				},
+			},
+		]);
+
+		expect(seen.length).toBe(1);
+		expect((seen[0] as { tier: string }).tier).toBe("free");
+		channel.disconnect();
+	});
+
+	test("subscription_activated on user topic surfaces plan state", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const seen: unknown[] = [];
+		channel.onPlanState = (p) => seen.push(p);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"user:u1",
+			"subscription_activated",
+			{
+				tier: "pro",
+				attachments_text_only: false,
+				max_file_bytes: 100,
+				attachment_bytes_cap: null,
+			},
+		]);
+
+		expect(seen.length).toBe(1);
+		expect((seen[0] as { tier: string }).tier).toBe("pro");
+		channel.disconnect();
+	});
+
+	test("sync-topic join reply sets connected; user-topic reply alone does not", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		// A user-topic reply alone must NOT flip connected.
+		simulateMessage(lastWsInstance, [
+			"2",
+			"9",
+			"user:42",
+			"phx_reply",
+			{ status: "ok", response: { plan: { tier: "free" } } },
+		]);
+		expect(channel.isConnected()).toBe(false);
+
+		// Only the sync-topic reply marks the channel connected.
+		const join1 = JSON.parse(lastWsInstance.sent[0]);
+		simulateMessage(lastWsInstance, [
+			join1[0],
+			join1[1],
+			"sync:42:7",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+		expect(channel.isConnected()).toBe(true);
+
+		channel.disconnect();
+	});
+
+	test("user-topic join error does not flip connected and does not throw", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(() =>
+			simulateMessage(lastWsInstance, [
+				"2",
+				"9",
+				"user:42",
+				"phx_reply",
+				{ status: "error", response: { reason: "unmatched topic" } },
+			]),
+		).not.toThrow();
+		expect(channel.isConnected()).toBe(false);
+
+		channel.disconnect();
+	});
+
+	test("user-topic reply without a plan does not call onPlanState", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const seen: unknown[] = [];
+		channel.onPlanState = (p) => seen.push(p);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"2",
+			"9",
+			"user:u1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+
+		expect(seen.length).toBe(0);
 		channel.disconnect();
 	});
 });
@@ -116,7 +258,7 @@ describe("NoteChannel updateConfig with vaultId", () => {
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
-		const joinMsg = getLastSentMessage(lastWsInstance);
+		const joinMsg = getSyncJoinMessage(lastWsInstance);
 		expect(joinMsg[2]).toBe("sync:42:99");
 
 		channel.disconnect();
