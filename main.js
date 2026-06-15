@@ -2697,6 +2697,9 @@ var SyncPreviewState = class {
     /** Within the vault-picker, true while the "make a new vault" form is shown
      *  instead of the list of existing vaults. */
     this.creatingVault = !1;
+    /** Whether the "advanced sync options" accordion (push/pull grid) is
+     *  expanded. Collapsed by default so the modal leads with the Sync action. */
+    this.advancedOpen = !1;
     this.resolved = !1;
     this.plan = initialPlan;
   }
@@ -2720,6 +2723,9 @@ var SyncPreviewState = class {
   }
   goBack() {
     this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
+  }
+  toggleAdvanced() {
+    this.resolved || (this.advancedOpen = !this.advancedOpen);
   }
   enterVaultPicker() {
     this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
@@ -2757,7 +2763,7 @@ function describeCreateVaultError(e) {
 var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
-  label: "Merge",
+  label: "Sync",
   subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
   cssClass: "engram-sync-preview-option mod-cta"
 }, PUSH_CARDS = [
@@ -2842,7 +2848,18 @@ var MERGE_CARD = {
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
     this.renderOptionCard(mergeRow, MERGE_CARD);
-    let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" }), pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
+    let advancedToggle = options.createEl("button", {
+      cls: "engram-sync-preview-advanced-toggle"
+    });
+    advancedToggle.createSpan({
+      cls: "engram-sync-preview-advanced-chevron",
+      text: this.state.advancedOpen ? "\u25BE" : "\u25B8"
+    }), advancedToggle.createSpan({ text: "Show advanced sync options" }), advancedToggle.addEventListener("click", () => {
+      this.state.toggleAdvanced(), this.render();
+    });
+    let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
+    this.state.advancedOpen || grid.addClass("is-collapsed");
+    let pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
     pushCol.createDiv({
       text: "Push (local \u2192 cloud)",
       cls: "engram-sync-preview-options-col-header"

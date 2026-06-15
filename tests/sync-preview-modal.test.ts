@@ -168,6 +168,28 @@ describe("SyncPreviewState — non-destructive choices", () => {
 	});
 });
 
+describe("SyncPreviewState — advanced options accordion", () => {
+	test("advancedOpen defaults to collapsed", () => {
+		const { state } = newState();
+		expect(state.advancedOpen).toBe(false);
+	});
+
+	test("toggleAdvanced flips the flag open then closed", () => {
+		const { state } = newState();
+		state.toggleAdvanced();
+		expect(state.advancedOpen).toBe(true);
+		state.toggleAdvanced();
+		expect(state.advancedOpen).toBe(false);
+	});
+
+	test("toggleAdvanced is a no-op once resolved", () => {
+		const { state } = newState();
+		state.pickOption("smart-merge");
+		state.toggleAdvanced();
+		expect(state.advancedOpen).toBe(false);
+	});
+});
+
 describe("SyncPreviewState — destructive choices route through confirm view", () => {
 	test("pull-all-delete-local swaps to confirm view, does not resolve", () => {
 		const { state, resolved } = newState();

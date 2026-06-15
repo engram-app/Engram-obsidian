@@ -1487,6 +1487,36 @@ body.is-mobile .engram-support-buttons > a {
 	gap: 0.75em;
 }
 
+.engram-sync-preview-options-grid.is-collapsed {
+	display: none;
+}
+
+.engram-sync-preview-advanced-toggle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 0.4em;
+	width: 100%;
+	margin: 0.25em 0;
+	padding: 6px 10px;
+	background: transparent;
+	box-shadow: none;
+	border: none;
+	cursor: pointer;
+	user-select: none;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.engram-sync-preview-advanced-toggle:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.engram-sync-preview-advanced-chevron {
+	font-size: 10px;
+}
+
 .engram-sync-preview-options-col {
 	display: flex;
 	flex-direction: column;
