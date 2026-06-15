@@ -3213,6 +3213,115 @@ describe("SyncEngine IssueStore integration", () => {
 	});
 });
 
+describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
+	test("free text-only: non-text attachment is pre-skipped, no upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
+		// Informational skip is tallied for the batched toast.
+		expect(engine.getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {
+		const engine = createEngine();
+		// .txt isn't in BINARY_EXTENSIONS, so force it through the binary path to
+		// prove the text-MIME parity rule itself allows it (effective MIME text/*).
+		const file = new TFile("note.txt", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		expect((engine as any).preGateAttachment(file)).toBeNull();
+	});
+
+	test("free text-only: a .md note still uploads (notes not pre-gated)", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/Test.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(engine.issues.count()).toBe(0);
+	});
+
+	test("oversize attachment is pre-skipped as too_large", async () => {
+		const engine = createEngine();
+		const file = new TFile("big.png", Date.now(), 500);
+		engine.applyPlanState({
+			tier: "pro",
+			attachmentsTextOnly: false,
+			maxFileBytes: 100,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		const issue = engine.issues.get("big.png");
+		expect(issue?.category).toBe("too_large");
+		expect(issue?.sizeBytes).toBe(500);
+	});
+
+	test("bypassPlanSkip (resync) ignores the pre-gate and attempts upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		// Sanity: a normal push is pre-skipped.
+		await (engine as any).pushFile(file, true);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// Forced bypass (what resyncSkippedAttachments does) must attempt the upload.
+		await (engine as any).pushFile(file, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+
+	test("no planState → no pre-gate (backend decides), upload IS attempted", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		// No applyPlanState — planState stays null.
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+});
+
 describe("SyncEngine.pushAll with deleteRemoteExtras", () => {
 	test("keep-remote mode: pushes all local, never calls deleteNote", async () => {
 		const engine = createEngine();

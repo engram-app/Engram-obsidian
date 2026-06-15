@@ -16,6 +16,7 @@ import {
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
+import { isTextAttachment } from "./mime";
 import { OfflineQueue } from "./offline-queue";
 import { type PlanState, attachmentCapabilityGained } from "./plan-state";
 import { rlog } from "./remote-log";
@@ -32,6 +33,7 @@ import type {
 	NoteStreamEvent,
 	QueueEntry,
 	ReconcileResult,
+	SyncIssueCategory,
 	SyncLogEntry,
 	SyncPlan,
 	SyncProgress,
@@ -708,6 +710,35 @@ export class SyncEngine {
 			return false;
 		}
 
+		// Plan-limit pre-gate: with known limits, don't even attempt an upload the
+		// backend WILL reject. Records the same informational/actionable issue a
+		// 402/413 would have, but with no network round-trip — this is what removes
+		// the noise at the source. Only for binary attachments; notes are never
+		// pre-gated. bypassPlanSkip (resyncSkippedAttachments after an upgrade)
+		// skips this so a parked attachment is actually re-uploaded.
+		if (!bypassPlanSkip && this.isBinaryFile(file)) {
+			const gate = this.preGateAttachment(file);
+			if (gate) {
+				const now = Date.now();
+				this.issues.record({
+					path: file.path,
+					kind: "attachment",
+					category: gate.category,
+					message: gate.message,
+					sizeBytes: gate.category === "too_large" ? file.stat.size : undefined,
+					upgradeUrl: gate.upgradeUrl,
+					firstFailedAt: now,
+					lastFailedAt: now,
+					attempts: 1,
+				});
+				if (issueDisposition(gate.category) === "informational") {
+					this.attachmentLimitedThisBatch += 1;
+				}
+				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
+				return false;
+			}
+		}
+
 		await this.acquirePushSlot();
 		this.pushing.add(file.path);
 		this.lastError = "";
@@ -1005,6 +1036,30 @@ export class SyncEngine {
 			if (issue.path === path && issue.category === "needs_pro") return true;
 		}
 		return false;
+	}
+
+	/** Plan-limit pre-check for an attachment, using last-known PlanState. Returns
+	 *  a category to skip under (mirroring the backend's 413/402 outcomes), or null
+	 *  to proceed with the upload. The backend remains the authoritative fallback
+	 *  when local plan state is stale (null → we defer to the server). */
+	private preGateAttachment(
+		file: TFile,
+	): { category: SyncIssueCategory; message: string; upgradeUrl?: string } | null {
+		const plan = this.planState;
+		if (!plan) return null; // unknown limits → let the backend decide
+		if (plan.maxFileBytes > 0 && file.stat.size > plan.maxFileBytes) {
+			return {
+				category: "too_large",
+				message: `File exceeds the ${plan.maxFileBytes}-byte limit`,
+			};
+		}
+		if (plan.attachmentsTextOnly && !isTextAttachment(file.extension)) {
+			return {
+				category: "needs_pro",
+				message: "Free syncs notes only — images & PDFs need a paid plan.",
+			};
+		}
+		return null;
 	}
 
 	/** Drain the batch failure tally for an aggregated, deduped Notice. Returns

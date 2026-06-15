@@ -3808,6 +3808,12 @@ var IgnoredFiles = class {
   }
 };
 
+// src/mime.ts
+var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
+function isTextAttachment(ext) {
+  return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
+}
+
 // src/offline-queue.ts
 function dedupKey(pathOrEntry, vaultId) {
   return typeof pathOrEntry == "object" ? pathOrEntry.vaultId ? `${pathOrEntry.vaultId}:${pathOrEntry.path}` : pathOrEntry.path : vaultId ? `${vaultId}:${pathOrEntry}` : pathOrEntry;
@@ -4365,6 +4371,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasNeedsProIssue(file.path))
       return devLog().log("push", `skip (needs_pro): ${file.path}`), !1;
+    if (!bypassPlanSkip && this.isBinaryFile(file)) {
+      let gate = this.preGateAttachment(file);
+      if (gate) {
+        let now = Date.now();
+        return this.issues.record({
+          path: file.path,
+          kind: "attachment",
+          category: gate.category,
+          message: gate.message,
+          sizeBytes: gate.category === "too_large" ? file.stat.size : void 0,
+          upgradeUrl: gate.upgradeUrl,
+          firstFailedAt: now,
+          lastFailedAt: now,
+          attempts: 1
+        }), issueDisposition(gate.category) === "informational" && (this.attachmentLimitedThisBatch += 1), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
+      }
+    }
     await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
     let isBinary = this.isBinaryFile(file), success = !1;
     devLog().log(
@@ -4543,6 +4566,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let issue of this.issues.all())
       if (issue.path === path && issue.category === "needs_pro") return !0;
     return !1;
+  }
+  /** Plan-limit pre-check for an attachment, using last-known PlanState. Returns
+   *  a category to skip under (mirroring the backend's 413/402 outcomes), or null
+   *  to proceed with the upload. The backend remains the authoritative fallback
+   *  when local plan state is stale (null → we defer to the server). */
+  preGateAttachment(file) {
+    let plan = this.planState;
+    return plan ? plan.maxFileBytes > 0 && file.stat.size > plan.maxFileBytes ? {
+      category: "too_large",
+      message: `File exceeds the ${plan.maxFileBytes}-byte limit`
+    } : plan.attachmentsTextOnly && !isTextAttachment(file.extension) ? {
+      category: "needs_pro",
+      message: "Free syncs notes only \u2014 images & PDFs need a paid plan."
+    } : null : null;
   }
   /** Drain the batch failure tally for an aggregated, deduped Notice. Returns
    *  the count of generic failures since the last drain plus the first server
