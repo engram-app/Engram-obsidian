@@ -4,11 +4,13 @@ import {
 	RETRY_CAP,
 	categorizeError,
 	healthCheckDelay,
+	issueDisposition,
+	remediation,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "../src/issue-store";
 import { LimitExceededError } from "../src/limit-error";
-import type { SyncIssue } from "../src/types";
+import type { SyncIssue, SyncIssueCategory } from "../src/types";
 
 function makeIssue(overrides: Partial<SyncIssue> = {}): SyncIssue {
 	const now = Date.now();
@@ -265,6 +267,44 @@ describe("shouldRetryAfterFailure", () => {
 	test("never retries terminal errors regardless of attempts", () => {
 		const tooLarge = categorizeError(Object.assign(new Error(), { status: 413 }));
 		expect(shouldRetryAfterFailure(tooLarge, 1)).toBe(false);
+	});
+});
+
+describe("issueDisposition", () => {
+	test("permanent failures that need user action are 'actionable'", () => {
+		for (const c of ["too_large", "needs_pro", "auth", "conflict"] as SyncIssueCategory[]) {
+			expect(issueDisposition(c)).toBe("actionable");
+		}
+	});
+
+	test("retryable failures are 'transient'", () => {
+		for (const c of ["server", "network", "other"] as SyncIssueCategory[]) {
+			expect(issueDisposition(c)).toBe("transient");
+		}
+	});
+});
+
+describe("remediation", () => {
+	test("every category has a non-empty title and hint", () => {
+		const cats: SyncIssueCategory[] = [
+			"too_large",
+			"needs_pro",
+			"auth",
+			"conflict",
+			"server",
+			"network",
+			"other",
+		];
+		for (const c of cats) {
+			const r = remediation(c);
+			expect(r.title.length).toBeGreaterThan(0);
+			expect(r.hint.length).toBeGreaterThan(0);
+		}
+	});
+
+	test("needs_pro points at upgrading; too_large explains the size limit", () => {
+		expect(remediation("needs_pro").hint.toLowerCase()).toContain("upgrade");
+		expect(remediation("too_large").hint).toContain("5 MB");
 	});
 });
 

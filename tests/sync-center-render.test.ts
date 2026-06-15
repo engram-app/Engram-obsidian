@@ -143,54 +143,65 @@ function makeMockPlugin(issues: SyncIssue[]): any {
 	};
 }
 
-describe("renderSyncCenter — Needs Pro surface", () => {
+describe("renderSyncCenter — Needs attention cards", () => {
 	let parent: FakeEl;
 
 	beforeEach(() => {
 		parent = makeFakeEl("div");
 	});
 
-	test("renders the Needs Pro group label when an issue has category needs_pro", () => {
+	test("renders a needs-attention card with plain-language title + upgrade hint", () => {
 		const plugin = makeMockPlugin([makeIssue()]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
 		const text = allText(parent);
-		expect(text).toContain("Needs Pro");
-		expect(text.toLowerCase()).toContain("upgrade to sync attachments");
+		expect(text).toContain("Attachments need a paid plan");
+		expect(text.toLowerCase()).toContain("upgrade to sync");
 	});
 
-	test("renders a lock icon span for needs_pro rows", () => {
+	test("renders the lock icon on the needs_pro card", () => {
 		const plugin = makeMockPlugin([makeIssue()]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
-		const lockIcons = findAllByCls(parent, "engram-needs-pro-icon");
-		expect(lockIcons).toHaveLength(1);
-		expect(lockIcons[0].text).toBe("🔒");
-		expect(lockIcons[0].attrs["aria-label"]).toBe("Upgrade to sync attachments");
+		const icons = findAllByCls(parent, "engram-sync-center-card-icon");
+		expect(icons.some((i) => i.text === "🔒")).toBe(true);
 	});
 
-	test("non-needs_pro issues do NOT get a lock icon", () => {
+	test("too_large gets its own card (different icon, no lock)", () => {
 		const plugin = makeMockPlugin([
 			makeIssue({ path: "Health/big.pdf", category: "too_large", status: 413 }),
 		]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
-		const lockIcons = findAllByCls(parent, "engram-needs-pro-icon");
-		expect(lockIcons).toHaveLength(0);
-		// And the original "Too large" group label is still rendered.
+		const icons = findAllByCls(parent, "engram-sync-center-card-icon");
+		expect(icons.some((i) => i.text === "🔒")).toBe(false);
 		expect(allText(parent)).toMatch(/Too large/);
 	});
 
-	test("Needs Pro group appears before other categories in CATEGORY_ORDER", () => {
+	test("needs_pro card appears before too_large (CATEGORY_ORDER)", () => {
 		const plugin = makeMockPlugin([
-			makeIssue({ path: "Assets/a.png", category: "needs_pro", status: 402 }),
 			makeIssue({ path: "Health/big.pdf", category: "too_large", status: 413 }),
+			makeIssue({ path: "Assets/a.png", category: "needs_pro", status: 402 }),
 		]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
-		const groupHeads = findAllByCls(parent, "engram-sync-center-group-head");
-		expect(groupHeads.length).toBeGreaterThanOrEqual(2);
-		// Needs Pro must render first
-		expect(groupHeads[0].text).toContain("Needs Pro");
+		const titles = findAllByCls(parent, "engram-sync-center-card-title");
+		expect(titles.length).toBeGreaterThanOrEqual(2);
+		expect(titles[0].text).toContain("Attachments need a paid plan");
+	});
+
+	test("a transient (server) failure renders under 'Retrying automatically', not as a card", () => {
+		const plugin = makeMockPlugin([
+			makeIssue({ path: "Notes/x.md", kind: "note", category: "server", status: 502 }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const text = allText(parent);
+		// Header badge + retrying-section body copy (section headings render via
+		// Obsidian's Setting, which the test's allText doesn't capture).
+		expect(text).toContain("1 retrying");
+		expect(text).toContain("Temporary errors");
+		// No actionable card for a transient failure.
+		expect(findAllByCls(parent, "engram-sync-center-card")).toHaveLength(0);
 	});
 });

@@ -317,6 +317,8 @@ export interface SyncIssue {
 	message: string;
 	/** File size in bytes — set when category is "too_large". */
 	sizeBytes?: number;
+	/** Billing/upgrade URL — set when category is "needs_pro". */
+	upgradeUrl?: string;
 	firstFailedAt: number;
 	lastFailedAt: number;
 	attempts: number;

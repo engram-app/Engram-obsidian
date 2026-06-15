@@ -5,9 +5,13 @@
  *  clicked from.
  */
 import { Notice, Setting, normalizePath } from "obsidian";
+import { issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
+
+/** Fallback billing URL when a needs_pro issue didn't carry one. */
+const DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
@@ -15,25 +19,23 @@ function sectionHeading(parent: HTMLElement, title: string): Setting {
 	return new Setting(parent).setName(title).setHeading();
 }
 
-const CATEGORY_LABEL: Record<SyncIssueCategory, string> = {
-	too_large: "Too large — server max 5 MB",
-	auth: "Auth failure — token invalid or expired",
-	server: "Server error",
-	network: "Network failure",
-	conflict: "Unresolved conflict",
-	needs_pro: "Needs Pro — upgrade to sync attachments",
-	other: "Other failure",
-};
-
+/** Category render order within each section. */
 const CATEGORY_ORDER: SyncIssueCategory[] = [
 	"needs_pro",
 	"too_large",
-	"conflict",
 	"auth",
+	"conflict",
 	"server",
 	"network",
 	"other",
 ];
+
+const CATEGORY_ICON: Partial<Record<SyncIssueCategory, string>> = {
+	needs_pro: "🔒",
+	too_large: "📦",
+	auth: "🔑",
+	conflict: "⚡",
+};
 
 export function renderSyncCenter(
 	parent: HTMLElement,
@@ -44,16 +46,34 @@ export function renderSyncCenter(
 	parent.addClass("engram-sync-center");
 	renderHeader(parent, plugin);
 	renderActions(parent, plugin, refresh);
-	renderIssues(parent, plugin, refresh);
+	renderNeedsAttention(parent, plugin, refresh);
+	renderRetrying(parent, plugin, refresh);
 	renderIgnored(parent, plugin, refresh);
 	renderActivity(parent, plugin, refresh);
 	renderStats(parent, plugin);
 }
 
+/** All current issues split by disposition, grouped by category in order. */
+function groupedByCategory(
+	issues: SyncIssue[],
+	disposition: "actionable" | "transient",
+): Array<[SyncIssueCategory, SyncIssue[]]> {
+	const groups = new Map<SyncIssueCategory, SyncIssue[]>();
+	for (const issue of issues) {
+		if (issueDisposition(issue.category) !== disposition) continue;
+		const bucket = groups.get(issue.category) ?? [];
+		bucket.push(issue);
+		groups.set(issue.category, bucket);
+	}
+	return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)!]);
+}
+
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 	const status = plugin.syncEngine.getStatus();
-	const issueCount = plugin.syncEngine.issues.count();
+	const all = plugin.syncEngine.issues.all();
+	const attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length;
+	const retryingCount = all.length - attentionCount;
 	const ignoredCount = plugin.syncEngine.ignoredFiles.size();
 
 	const dot = header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` });
@@ -62,9 +82,13 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const title = header.createSpan({ cls: "engram-sync-center-title" });
 	title.setText(`Engram Sync — ${status.state}`);
 
-	if (issueCount > 0) {
+	if (attentionCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-issue-badge" });
-		badge.setText(`${issueCount} issue${issueCount === 1 ? "" : "s"}`);
+		badge.setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`);
+	}
+	if (retryingCount > 0) {
+		const badge = header.createSpan({ cls: "engram-sync-center-retrying-badge" });
+		badge.setText(`${retryingCount} retrying`);
 	}
 	if (ignoredCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-ignored-badge" });
@@ -110,51 +134,121 @@ function makeActionButton(
 	});
 }
 
-function renderIssues(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
+/** "Needs attention" — permanent failures the user must act on, one card per
+ *  reason. Aggregates the files sharing each reason. */
+function renderNeedsAttention(
+	parent: HTMLElement,
+	plugin: EngramSyncPlugin,
+	refresh: () => void,
+): void {
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), "actionable");
+	const total = groups.reduce((n, [, list]) => n + list.length, 0);
+
 	const section = parent.createDiv({ cls: "engram-sync-center-section" });
-	sectionHeading(section, `Issues (${plugin.syncEngine.issues.count()})`);
+	const heading = sectionHeading(section, `Needs attention (${total})`);
+	if (total > 0) {
+		heading.addButton((btn) =>
+			btn.setButtonText("Clear all").onClick(() => {
+				for (const [, list] of groups) {
+					for (const issue of list) plugin.syncEngine.issues.clear(issue.path);
+				}
+				void plugin.persistEngineState().then(refresh);
+			}),
+		);
+	}
 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
-	const issues = plugin.syncEngine.issues.all();
-	if (issues.length === 0) {
+	if (total === 0) {
 		body.createEl("p", {
 			cls: "engram-sync-center-empty",
-			text: "No sync failures. Everything pushed cleanly.",
+			text: "Nothing needs your attention. 🎉",
 		});
 		return;
 	}
 
-	const grouped = plugin.syncEngine.issues.byCategory();
-	for (const category of CATEGORY_ORDER) {
-		const list = grouped[category];
-		if (!list || list.length === 0) continue;
-		renderCategoryGroup(body, plugin, refresh, category, list);
+	for (const [category, list] of groups) {
+		renderAttentionCard(body, plugin, refresh, category, list);
 	}
 }
 
-function renderCategoryGroup(
+function renderAttentionCard(
 	parent: HTMLElement,
 	plugin: EngramSyncPlugin,
 	refresh: () => void,
 	category: SyncIssueCategory,
 	issues: SyncIssue[],
 ): void {
-	const group = parent.createDiv({ cls: "engram-sync-center-group" });
-	const groupHead = group.createEl("h4", {
-		cls: "engram-sync-center-group-head",
-		text: `${CATEGORY_LABEL[category]} (${issues.length})`,
-	});
-	groupHead.createSpan({ cls: "engram-sync-center-group-toggle", text: " ▾" });
+	const { title, hint } = remediation(category);
+	const card = parent.createDiv({ cls: "engram-sync-center-card" });
 
-	const list = group.createDiv({ cls: "engram-sync-center-issue-list" });
-	groupHead.addEventListener("click", () => list.classList.toggle("is-collapsed"));
+	const head = card.createDiv({ cls: "engram-sync-center-card-head" });
+	head.createSpan({ cls: "engram-sync-center-card-icon", text: CATEGORY_ICON[category] ?? "⚠" });
+	head.createSpan({
+		cls: "engram-sync-center-card-title",
+		text: `${title} (${issues.length})`,
+	});
+
+	card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+
+	const actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
+
+	if (category === "needs_pro") {
+		const url = issues.find((i) => i.upgradeUrl)?.upgradeUrl ?? DEFAULT_UPGRADE_URL;
+		const upgrade = actions.createEl("button", { text: "Upgrade", cls: "mod-cta" });
+		upgrade.addEventListener("click", () => window.open(url, "_blank"));
+	}
+
+	// Per-card dismiss — clears these errors without permanently ignoring the
+	// files (unlike "Ignore"). They reappear if they fail again.
+	const dismiss = actions.createEl("button", { text: "Dismiss" });
+	dismiss.addEventListener("click", () => {
+		for (const issue of issues) plugin.syncEngine.issues.clear(issue.path);
+		void plugin.persistEngineState().then(refresh);
+	});
+
+	const toggle = actions.createEl("button", {
+		text: `Show files (${issues.length}) ▾`,
+		cls: "engram-sync-center-card-toggle",
+	});
+	const fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+	toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
 
 	for (const issue of issues) {
-		renderIssueRow(list, plugin, refresh, issue);
+		renderFileRow(fileList, plugin, refresh, issue);
 	}
 }
 
-function renderIssueRow(
+/** "Retrying automatically" — transient failures retried with backoff; clears
+ *  itself on success. Offers a manual "Retry all now". */
+function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: () => void): void {
+	const groups = groupedByCategory(plugin.syncEngine.issues.all(), "transient");
+	const total = groups.reduce((n, [, list]) => n + list.length, 0);
+	if (total === 0) return; // No section when nothing is retrying.
+
+	const section = parent.createDiv({ cls: "engram-sync-center-section" });
+	const heading = sectionHeading(section, `Retrying automatically (${total})`);
+	heading.addButton((btn) =>
+		btn
+			.setButtonText("Retry all now")
+			.setCta()
+			.onClick(async () => {
+				await plugin.syncEngine.retryFailedNow();
+				refresh();
+			}),
+	);
+
+	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
+	body.createEl("p", {
+		cls: "engram-sync-center-card-hint",
+		text: "Temporary errors — these clear themselves once the server recovers.",
+	});
+	const list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+	for (const [, issues] of groups) {
+		for (const issue of issues) renderFileRow(list, plugin, refresh, issue);
+	}
+}
+
+function renderFileRow(
 	parent: HTMLElement,
 	plugin: EngramSyncPlugin,
 	refresh: () => void,
@@ -163,15 +257,7 @@ function renderIssueRow(
 	const row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
 
 	const main = row.createDiv({ cls: "engram-sync-center-issue-main" });
-	const pathRow = main.createDiv({ cls: "engram-sync-center-issue-path" });
-	if (issue.category === "needs_pro") {
-		// Compact lock marker matches the spec §4.6 "Needs Pro" surface.
-		const icon = pathRow.createSpan({ cls: "engram-needs-pro-icon" });
-		icon.setText("🔒");
-		icon.setAttribute("aria-label", "Upgrade to sync attachments");
-		icon.setAttribute("title", "Upgrade to sync attachments");
-	}
-	pathRow.createSpan({ text: issue.path });
+	main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
 
 	const meta = main.createDiv({ cls: "engram-sync-center-issue-meta" });
 	const parts: string[] = [];

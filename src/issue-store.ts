@@ -85,6 +85,8 @@ interface CategorizedError {
 	message: string;
 	/** If true, the offline queue should NOT retry this — user action required. */
 	terminal: boolean;
+	/** Billing/upgrade URL when the failure is a tier limit (needs_pro). */
+	upgradeUrl?: string;
 }
 
 /** Classify a thrown error from a push/pull call. */
@@ -99,6 +101,7 @@ export function categorizeError(err: unknown): CategorizedError {
 			status: 402,
 			message: err.message,
 			terminal: true,
+			upgradeUrl: err.upgradeUrl ?? undefined,
 		};
 	}
 	const status =
@@ -163,6 +166,64 @@ export const RETRY_CAP = 5;
 export function shouldRetryAfterFailure(classified: CategorizedError, attempts: number): boolean {
 	if (classified.terminal) return false;
 	return attempts < RETRY_CAP;
+}
+
+/** Whether an issue needs the user to do something (permanent until they act)
+ *  or will clear itself via automatic retry (transient). Drives the Sync
+ *  Center split: "Needs attention" vs "Retrying automatically". */
+export function issueDisposition(category: SyncIssueCategory): "actionable" | "transient" {
+	switch (category) {
+		case "too_large":
+		case "needs_pro":
+		case "auth":
+		case "conflict":
+			return "actionable";
+		default:
+			return "transient";
+	}
+}
+
+/** Plain-language explanation + what-to-do for each failure category, shown on
+ *  the Sync Center cards so a failure is understandable without decoding HTTP
+ *  status codes. */
+export function remediation(category: SyncIssueCategory): { title: string; hint: string } {
+	switch (category) {
+		case "needs_pro":
+			return {
+				title: "Attachments need a paid plan",
+				hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs.",
+			};
+		case "too_large":
+			return {
+				title: "Too large for the server",
+				hint: "The server limit is 5 MB. Compress or split the file, then it will sync.",
+			};
+		case "auth":
+			return {
+				title: "Sign-in expired",
+				hint: "Reconnect your account to resume syncing.",
+			};
+		case "conflict":
+			return {
+				title: "Unresolved conflict",
+				hint: "Open the file to resolve the conflict, then sync again.",
+			};
+		case "server":
+			return {
+				title: "Server error",
+				hint: "A temporary server problem — retrying automatically.",
+			};
+		case "network":
+			return {
+				title: "Network unavailable",
+				hint: "Can't reach the server — retrying automatically.",
+			};
+		default:
+			return {
+				title: "Sync failed",
+				hint: "An unexpected error — retrying automatically.",
+			};
+	}
 }
 
 const HEALTH_CHECK_BASE_MS = 5_000;

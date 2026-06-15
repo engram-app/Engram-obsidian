@@ -1059,6 +1059,64 @@ body.is-mobile .engram-support-buttons > a {
 	font-weight: 600;
 }
 
+.engram-sync-center-retrying-badge {
+	background: var(--background-modifier-border);
+	color: var(--text-accent);
+	border-radius: 10px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
+/* "Needs attention" reason card — one per failure reason, inside the section. */
+.engram-sync-center-card {
+	background-color: var(--background-primary);
+	border: 1px solid var(--background-modifier-border);
+	border-left: 3px solid var(--text-error);
+	border-radius: 6px;
+	padding: 10px 12px;
+	margin-bottom: 10px;
+}
+
+.engram-sync-center-card:last-child {
+	margin-bottom: 0;
+}
+
+.engram-sync-center-card-head {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.engram-sync-center-card-icon {
+	font-size: 16px;
+}
+
+.engram-sync-center-card-title {
+	font-weight: 600;
+	color: var(--text-normal);
+}
+
+.engram-sync-center-card-hint {
+	margin: 6px 0 10px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.engram-sync-center-card-actions {
+	display: flex;
+	gap: 6px;
+	flex-wrap: wrap;
+	align-items: center;
+}
+
+.engram-sync-center-card-toggle {
+	background: transparent;
+	box-shadow: none;
+	color: var(--text-muted);
+	cursor: pointer;
+}
+
 .engram-sync-center-actions {
 	display: flex;
 	gap: 6px;
@@ -1115,40 +1173,6 @@ body.is-mobile .engram-support-buttons > a {
 	font-size: 12px;
 }
 
-.engram-sync-center-group {
-	margin-bottom: 10px;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
-	overflow: hidden;
-	background: var(--background-primary);
-}
-
-.engram-sync-center-group:last-child {
-	margin-bottom: 0;
-}
-
-.engram-sync-center-group-head {
-	margin: 0;
-	padding: 8px 10px;
-	background: var(--background-modifier-border);
-	font-size: var(--font-ui-small);
-	font-weight: 600;
-	cursor: pointer;
-	user-select: none;
-	display: flex;
-	justify-content: space-between;
-	align-items: center;
-	color: var(--text-normal);
-}
-
-.engram-sync-center-group-head:hover {
-	background: var(--background-modifier-hover);
-}
-
-.engram-sync-center-group-toggle {
-	color: var(--text-muted);
-	font-size: 10px;
-}
 
 .engram-sync-center-issue-list {
 	display: flex;
@@ -1182,12 +1206,6 @@ body.is-mobile .engram-support-buttons > a {
 	overflow: hidden;
 	text-overflow: ellipsis;
 	white-space: nowrap;
-}
-
-.engram-needs-pro-icon {
-	display: inline-block;
-	margin-right: 4px;
-	opacity: 0.8;
 }
 
 .engram-sync-center-issue-meta {

@@ -12,6 +12,7 @@ import {
 	IssueStore,
 	categorizeError,
 	healthCheckDelay,
+	issueDisposition,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
@@ -927,6 +928,7 @@ export class SyncEngine {
 				// storage backend") rather than the bare "Request failed, status N".
 				message: classified.message,
 				sizeBytes: classified.category === "too_large" ? file.stat.size : undefined,
+				upgradeUrl: classified.upgradeUrl,
 				firstFailedAt: now,
 				lastFailedAt: now,
 				attempts: 1,
@@ -3138,6 +3140,31 @@ export class SyncEngine {
 	}
 
 	/** Flush queued changes oldest-first. Stops on first failure. */
+	/** Retry every transient (auto-retryable) failure now — including ones
+	 *  already parked past RETRY_CAP — by re-enqueuing a content-free entry and
+	 *  flushing. Actionable failures (too_large, needs_pro, auth, conflict) are
+	 *  left alone; retrying can't fix them. Wired to "Retry all now". */
+	async retryFailedNow(): Promise<number> {
+		for (const issue of this.issues.all()) {
+			if (issueDisposition(issue.category) !== "transient") continue;
+			const file = this.app.vault.getFileByPath(normalizePath(issue.path));
+			if (!file) {
+				// File no longer exists locally — the failure is moot.
+				this.issues.clear(issue.path);
+				continue;
+			}
+			await this.queue.enqueue({
+				path: issue.path,
+				action: "upsert",
+				kind: issue.kind,
+				mtime: file.stat.mtime / 1000,
+				timestamp: Date.now(),
+				vaultId: this.settings.vaultId ?? undefined,
+			});
+		}
+		return this.flushQueue();
+	}
+
 	async flushQueue(): Promise<number> {
 		const entries = this.queue.all();
 		if (entries.length === 0) return 0;
@@ -3171,6 +3198,7 @@ export class SyncEngine {
 								entry.path,
 								this.settings.vaultId ?? undefined,
 							);
+							this.issues.clear(entry.path);
 							flushed++;
 							continue;
 						}
@@ -3191,6 +3219,7 @@ export class SyncEngine {
 								entry.path,
 								this.settings.vaultId ?? undefined,
 							);
+							this.issues.clear(entry.path);
 							flushed++;
 							continue;
 						}
@@ -3214,6 +3243,7 @@ export class SyncEngine {
 					}
 				}
 				await this.queue.dequeue(entry.path, this.settings.vaultId ?? undefined);
+				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
 				// Stop this flush pass on the first failure. Only flip offline if

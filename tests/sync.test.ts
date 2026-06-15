@@ -1534,6 +1534,72 @@ describe("SyncEngine offline queue integration", () => {
 		expect(engine.isOffline()).toBe(false);
 	});
 
+	test("flushQueue clears the IssueStore entry when a queued file finally uploads", async () => {
+		const engine = createEngine();
+		// A prior failure left both an issue and a queued retry for the same path.
+		engine.issues.record({
+			path: "Notes/Recovered.md",
+			kind: "note",
+			category: "server",
+			status: 502,
+			message: "failed to upload to storage backend",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 3,
+		});
+		engine.queue.load([
+			{
+				path: "Notes/Recovered.md",
+				action: "upsert",
+				content: "X",
+				mtime: 100,
+				timestamp: 1,
+			},
+		]);
+		expect(engine.issues.count()).toBe(1);
+
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+		await engine.flushQueue();
+
+		// The stale error must be gone once the file uploads (the reported bug).
+		expect(engine.issues.get("Notes/Recovered.md")).toBeUndefined();
+		expect(engine.issues.count()).toBe(0);
+	});
+
+	test("retryFailedNow re-enqueues transient/parked issues, leaves actionable ones", async () => {
+		const engine = createEngine();
+		// A parked transient failure (past the cap, no longer in the queue)...
+		engine.issues.record({
+			path: "Notes/Parked.md",
+			kind: "note",
+			category: "server",
+			status: 502,
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 6,
+		});
+		// ...and an actionable one that retrying can't fix.
+		engine.issues.record({
+			path: "Big.pdf",
+			kind: "attachment",
+			category: "too_large",
+			status: 413,
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		mockApp.vault.getFileByPath.mockReturnValue(new TFile("Notes/Parked.md", 100));
+		mockApp.vault.cachedRead.mockResolvedValue("content");
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+
+		await engine.retryFailedNow();
+
+		expect(engine.issues.get("Notes/Parked.md")).toBeUndefined(); // retried + cleared
+		expect(engine.issues.get("Big.pdf")).toBeDefined(); // left for the user to act on
+	});
+
 	test("flushQueue processes entries oldest-first", async () => {
 		const engine = createEngine();
 
