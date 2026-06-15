@@ -6267,7 +6267,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     }, this.syncEngine.onConflict = async (info) => new ConflictModal(this.app, info, this.settings, (mode) => {
       this.settings.conflictViewMode = mode, this.saveSettings();
     }).waitForChoice(), this.syncEngine.onPlanStatePersist = (p) => {
-      this.settings.planState = p, this.saveSettings();
+      this.settings.planState = p, this.savePluginData(this.syncEngine.getLastSync());
     }, this.syncEngine.queue.onPersist(async (entries) => {
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
@@ -6568,7 +6568,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
         new import_obsidian17.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
-        parsed && this.syncEngine.applyPlanState(parsed);
+        parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), channel.connect();
     }).catch((e) => {
       if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(
