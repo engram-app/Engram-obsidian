@@ -107,6 +107,50 @@ export interface ChangesResponse {
 	next_cursor?: string | null;
 }
 
+/** A note entry from the MERGED ordered feed GET /sync/changes (PR B2).
+ *  `content` is absent on meta-only pages; `content_hash` is the server's
+ *  opaque hash. `seq` is the per-vault monotonic change sequence. */
+export interface SyncNoteChange {
+	type: "note";
+	id: string;
+	seq: number;
+	path: string;
+	title: string;
+	content?: string;
+	content_hash?: string;
+	folder: string;
+	tags: string[];
+	mtime: number;
+	updated_at: string;
+	deleted: boolean;
+	version?: number;
+}
+
+/** An attachment entry from GET /sync/changes — metadata only, no bytes. */
+export interface SyncAttachmentChange {
+	type: "attachment";
+	id: string;
+	seq: number;
+	path: string;
+	mime_type: string;
+	size_bytes: number;
+	mtime: number;
+	updated_at: string;
+	deleted: boolean;
+	version?: number;
+}
+
+/** A single entry in the merged ordered feed — note or attachment, tagged. */
+export type SyncChange = SyncNoteChange | SyncAttachmentChange;
+
+/** Response from GET /sync/changes (merged ordered feed, PR B2).
+ *  `next_cursor` is an opaque token, present only when `has_more` is true. */
+export interface SyncChangesResponse {
+	changes: SyncChange[];
+	next_cursor: string | null;
+	has_more: boolean;
+}
+
 /** Response from DELETE /notes/{path} */
 export interface DeleteResponse {
 	deleted: boolean;
@@ -419,6 +463,9 @@ export interface ManifestResponse {
 	attachments: ManifestEntry[];
 	total_notes: number;
 	total_attachments: number;
+	/** Cursor-pull bootstrap watermark (backend PR B1) — the change seq the
+	 *  manifest reflects, used to seed the cursor for the first delta pull. */
+	change_seq?: number;
 }
 
 /** Response from POST /api/vaults/register */
