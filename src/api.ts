@@ -26,6 +26,7 @@ import type {
 
 export class EngramApi {
 	private vaultId: string | null = null;
+	private deviceId: string | null = null;
 	private authProvider: AuthProvider | null = null;
 
 	constructor(
@@ -37,6 +38,11 @@ export class EngramApi {
 
 	setVaultId(id: string | null): void {
 		this.vaultId = id;
+	}
+
+	/** Set the per-install device id sent as X-Device-Id on cursor pulls. */
+	setDeviceId(id: string | null): void {
+		this.deviceId = id && id.length > 0 ? id : null;
 	}
 
 	setAuthProvider(provider: AuthProvider | null): void {
@@ -138,6 +144,9 @@ export class EngramApi {
 		};
 		if (this.vaultId) {
 			headers["X-Vault-ID"] = this.vaultId;
+		}
+		if (this.deviceId) {
+			headers["X-Device-Id"] = this.deviceId;
 		}
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
