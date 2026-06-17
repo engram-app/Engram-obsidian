@@ -1900,6 +1900,74 @@ export class SyncEngine {
 		return this.applyChange(nc);
 	}
 
+	/** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
+	 *  (delete server-deleted, push offline-created — disambiguated by the
+	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
+	 *  (3-way merging diverged files via applyChange). Returns count applied. */
+	private async bootstrap(): Promise<number> {
+		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
+		const manifest = await this.api.getManifest();
+
+		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
+		if (!manifest) return this.pullViaCursor(undefined);
+
+		const serverPaths = new Set<string>([
+			...manifest.notes.map((n) => normalizePath(n.path)),
+			...manifest.attachments.map((a) => normalizePath(a.path)),
+		]);
+
+		// §F structural pass over local syncable files.
+		const toPush: TFile[] = [];
+		for (const file of this.app.vault.getFiles()) {
+			if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
+			const np = normalizePath(file.path);
+			if (serverPaths.has(np)) continue; // in manifest → content handled by the pull below
+
+			if (this.syncState.has(np)) {
+				// In baseline but gone from the server → server-deleted while away.
+				// Trash locally so the post-pull push step can't resurrect it. A
+				// trash failure (locked file / OS error) must NOT abort the whole
+				// bootstrap, and must NOT drop the baseline entry — leaving it as
+				// "in baseline" keeps it classified as server-deleted on the next
+				// run (clearing it would reclassify the file as offline-created and
+				// resurrect it on the next push). Log + carry on.
+				try {
+					await this.app.fileManager.trashFile(file);
+					this.syncState.delete(np);
+					this.baseStore?.delete(np);
+					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
+				} catch (e) {
+					rlog().error(
+						"pull",
+						`Bootstrap trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+				}
+			} else {
+				// Never synced → created locally offline → push after content reconcile.
+				toPush.push(file);
+			}
+		}
+
+		// Content delivery: genesis pull (full content + tombstones, ordered).
+		const applied = await this.pullViaCursor(undefined);
+
+		// Push offline-created files now that deletes are reconciled.
+		for (const file of toPush) {
+			try {
+				await this.pushFile(file, true);
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Bootstrap push failed: ${file.path} — ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
+			}
+		}
+
+		return applied;
+	}
+
 	/** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
 	 *  server returns from seq 0). Applies each entry, persists the cursor after
 	 *  every page (at-least-once; applies are idempotent), returns count applied.

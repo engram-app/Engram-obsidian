@@ -7,7 +7,7 @@
  * on the captured request headers.
  */
 import { type Mock, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { requestUrl } from "obsidian";
+import { TFile, requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 import { encodeCursor } from "../src/cursor";
 import { HistoryExpiredError, SyncEngine } from "../src/sync";
@@ -420,4 +420,186 @@ describe("SyncEngine pullViaCursor", () => {
 		// Loop still completed and advanced the cursor to the tip.
 		expect(engine.getSyncCursor()).toBe(encodeCursor(e3.seq, e3.id));
 	});
+});
+
+describe("SyncEngine bootstrap (§F reconcile + genesis pull)", () => {
+	// A real mock TFile — isSyncable needs `instanceof TFile` + an `extension`,
+	// shouldIgnore needs a `path`. The shim constructor sets both.
+	function fakeFile(path: string): TFile {
+		return new TFile(path);
+	}
+
+	let getManifest: Mock<() => Promise<any>>;
+	let getSyncChanges: Mock<(cursor?: string, limit?: number) => Promise<any>>;
+	let trashFile: Mock<(file: any) => Promise<void>>;
+	let saveDataSpy: Mock<(data: any) => Promise<void>>;
+
+	function createEngine(localFiles: any[]): {
+		engine: SyncEngine;
+		pushFileSpy: ReturnType<typeof spyOn>;
+		applySpy: ReturnType<typeof spyOn>;
+	} {
+		const mockApp = {
+			vault: {
+				getName: () => "Test Vault",
+				configDir: ".obsidian",
+				getFiles: () => localFiles,
+			},
+			workspace: {},
+			fileManager: { trashFile },
+		} as any;
+		const api = { getManifest, getSyncChanges } as unknown as EngramApi;
+		const engine = new SyncEngine(
+			mockApp,
+			api,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			saveDataSpy,
+		);
+		// pushFile is private; spy via the prototype so we can assert calls.
+		const pushFileSpy = spyOn(engine as any, "pushFile").mockResolvedValue(true);
+		const applySpy = spyOn(engine, "applySyncChange").mockResolvedValue(true);
+		return { engine, pushFileSpy, applySpy };
+	}
+
+	function emptyManifest() {
+		return { notes: [], attachments: [], total_notes: 0, total_attachments: 0 };
+	}
+
+	beforeEach(() => {
+		getManifest = mock();
+		getSyncChanges = mock().mockResolvedValue({
+			changes: [],
+			next_cursor: null,
+			has_more: false,
+		});
+		trashFile = mock().mockResolvedValue(undefined);
+		saveDataSpy = mock().mockResolvedValue(undefined);
+	});
+
+	test("server-deleted (in baseline, gone from manifest) → trashed, NOT pushed", async () => {
+		getManifest.mockResolvedValueOnce(emptyManifest());
+		const gone = fakeFile("gone.md");
+		const { engine, pushFileSpy } = createEngine([gone]);
+		// Baseline knows this path → it was previously synced.
+		engine.importSyncState({ "gone.md": { hash: 123 } });
+
+		await (engine as any).bootstrap();
+
+		expect(trashFile).toHaveBeenCalledTimes(1);
+		expect(trashFile.mock.calls[0][0]).toBe(gone);
+		expect(pushFileSpy).not.toHaveBeenCalled();
+	});
+
+	test("offline-created (not in baseline, gone from manifest) → pushed, NOT trashed", async () => {
+		getManifest.mockResolvedValueOnce(emptyManifest());
+		const created = fakeFile("new.md");
+		const { engine, pushFileSpy } = createEngine([created]);
+		// Baseline empty → never synced → created locally while offline.
+
+		await (engine as any).bootstrap();
+
+		expect(pushFileSpy).toHaveBeenCalledTimes(1);
+		expect(pushFileSpy.mock.calls[0][0]).toBe(created);
+		expect(trashFile).not.toHaveBeenCalled();
+	});
+
+	test("in-manifest file → content delivered by the genesis pull (no per-file action)", async () => {
+		getManifest.mockResolvedValueOnce({
+			notes: [{ path: "a.md", content_hash: "h1" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
+		getSyncChanges.mockReset().mockResolvedValueOnce({
+			changes: [noteEntryFor("a.md")],
+			next_cursor: null,
+			has_more: false,
+		});
+		// Empty local vault — server has a file we don't.
+		const { engine, pushFileSpy, applySpy } = createEngine([]);
+
+		const applied = await (engine as any).bootstrap();
+
+		// Content came through the cursor pull, not a structural push/trash.
+		expect(applySpy).toHaveBeenCalledTimes(1);
+		expect(applied).toBe(1);
+		expect(pushFileSpy).not.toHaveBeenCalled();
+		expect(trashFile).not.toHaveBeenCalled();
+	});
+
+	test("no manifest endpoint (404 → null) → genesis pull only, no reconcile", async () => {
+		getManifest.mockResolvedValueOnce(null);
+		getSyncChanges.mockReset().mockResolvedValueOnce({
+			changes: [noteEntryFor("a.md")],
+			next_cursor: null,
+			has_more: false,
+		});
+		// A local file in baseline would normally be trashed — but with no manifest
+		// there's nothing to reconcile against, so it must be left untouched.
+		const gone = fakeFile("gone.md");
+		const { engine, pushFileSpy, applySpy } = createEngine([gone]);
+		engine.importSyncState({ "gone.md": { hash: 123 } });
+
+		const applied = await (engine as any).bootstrap();
+
+		expect(applied).toBe(1);
+		expect(applySpy).toHaveBeenCalledTimes(1);
+		expect(trashFile).not.toHaveBeenCalled();
+		expect(pushFileSpy).not.toHaveBeenCalled();
+	});
+
+	test("in-manifest file present locally → skipped by structural pass (not trashed/pushed)", async () => {
+		getManifest.mockResolvedValueOnce({
+			notes: [{ path: "a.md", content_hash: "h1" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
+		const local = fakeFile("a.md");
+		const { engine, pushFileSpy } = createEngine([local]);
+		// Even with a baseline entry, an in-manifest file is left to the pull.
+		engine.importSyncState({ "a.md": { hash: 123 } });
+
+		await (engine as any).bootstrap();
+
+		expect(trashFile).not.toHaveBeenCalled();
+		expect(pushFileSpy).not.toHaveBeenCalled();
+	});
+
+	test("trash failure does NOT abort bootstrap and keeps the baseline (no resurrection)", async () => {
+		getManifest.mockResolvedValueOnce(emptyManifest());
+		trashFile.mockReset().mockRejectedValueOnce(new Error("file locked"));
+		const gone = fakeFile("gone.md");
+		const { engine, pushFileSpy } = createEngine([gone]);
+		engine.importSyncState({ "gone.md": { hash: 123 } });
+
+		// Must not throw — the genesis pull still runs.
+		await (engine as any).bootstrap();
+
+		// Not pushed (still server-deleted), and the baseline entry is retained so
+		// the next run retries the trash rather than reclassifying it as
+		// offline-created (which would resurrect it).
+		expect(pushFileSpy).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["gone.md"]).toBeDefined();
+	});
+
+	// Helper: a well-formed note feed entry for a given path.
+	function noteEntryFor(path: string): SyncChange {
+		const stem = path.replace(/\.md$/, "");
+		return {
+			type: "note",
+			id: `id-${stem}`,
+			seq: 1,
+			path,
+			title: stem,
+			content: `body-${stem}`,
+			content_hash: `h-${stem}`,
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		};
+	}
 });
