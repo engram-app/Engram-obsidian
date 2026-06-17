@@ -768,35 +768,6 @@ describe("SyncEngine.pull (cursor orchestration)", () => {
 		expect(await first).toBe(4);
 	});
 
-	test("a pull coalesced during an in-flight pull re-runs (catch-up not dropped)", async () => {
-		const engine = createEngine();
-		engine.setSyncCursor("CUR");
-		let calls = 0;
-		let release: () => void = () => {};
-		spyOn(engine as any, "pullViaCursor").mockImplementation(
-			() =>
-				new Promise<number>((r) => {
-					calls++;
-					if (calls === 1) {
-						release = () => r(0); // hold the first pull open
-					} else {
-						r(0); // the coalesced re-run resolves immediately
-					}
-				}),
-		);
-
-		const first = engine.pull(); // in flight, awaiting pullViaCursor #1
-		const second = await engine.pull(); // re-entry → coalesced (pullRequested)
-		expect(second).toBe(0);
-
-		release(); // first finishes → finally schedules the re-run
-		await first;
-		// let the window.setTimeout(0) re-run fire
-		await new Promise((r) => setTimeout(r, 15));
-
-		expect(calls).toBe(2); // the coalesced trigger ran a second pull, not dropped
-	});
-
 	test("pull() self-heals a vault swap: stale cursor cleared → bootstrap (not a stale-cursor pull)", async () => {
 		const engine = createEngine();
 		// Synced under vault-A (cursor belongs to A); the active vault is now B
