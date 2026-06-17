@@ -4,7 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
-import { encodeCursor } from "./cursor";
+import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -148,6 +148,11 @@ export class SyncEngine {
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
 	private pulling = false;
+	/** Set when pull() is called while one is already in flight. The in-flight
+	 *  pull re-runs once on completion so a coalesced trigger (esp. the
+	 *  reconnect catch-up at main.ts:onStatusChange) is never silently lost to
+	 *  the re-entry guard — which would drop a missed remote change. */
+	private pullRequested = false;
 	private lastSync = "";
 	/** Opaque cursor marking the plugin's durably-applied position in the
 	 *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
@@ -1311,7 +1316,14 @@ export class SyncEngine {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
 		}
-		if (this.pulling) return 0;
+		if (this.pulling) {
+			// A pull is mid-flight. Remember that another trigger arrived (e.g. a
+			// WebSocket reconnect catch-up) so we re-run once when it finishes,
+			// rather than dropping it — a dropped catch-up never fetches the
+			// change that arrived while we were disconnected.
+			this.pullRequested = true;
+			return 0;
+		}
 		this.pulling = true;
 		this.lastError = "";
 		this.emitStatus();
@@ -1362,6 +1374,15 @@ export class SyncEngine {
 			this.pulling = false;
 			this.emitStatus();
 			await this.flushPostPullPushes();
+			// A trigger arrived while we were pulling — run once more to catch it
+			// (e.g. a reconnect catch-up that overlapped a slow bootstrap). Schedule
+			// async so this doesn't re-enter inside the finally / recurse the stack.
+			if (this.pullRequested) {
+				this.pullRequested = false;
+				window.setTimeout(() => {
+					void this.pull();
+				}, 0);
+			}
 		}
 	}
 
@@ -1859,6 +1880,16 @@ export class SyncEngine {
 
 		// Content delivery: genesis pull (full content + tombstones, ordered).
 		const applied = await this.pullViaCursor(undefined);
+
+		// §E: an empty vault's genesis pull delivers no entries, so the cursor is
+		// still null. Seed it from the manifest's change_seq so the NEXT pull
+		// resumes incrementally (seq > change_seq) instead of re-bootstrapping —
+		// critical for the reconnect catch-up, which must have a position to
+		// resume from after a vault swap clears the cursor.
+		if (this.getSyncCursor() === null && typeof manifest.change_seq === "number") {
+			this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID));
+			await this.saveData({ syncCursor: this.getSyncCursor() });
+		}
 
 		// Push offline-created files now that deletes are reconciled.
 		for (const file of toPush) {

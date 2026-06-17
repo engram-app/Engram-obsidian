@@ -9,7 +9,7 @@
 import { type Mock, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile, requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
-import { encodeCursor } from "../src/cursor";
+import { MAX_CURSOR_UUID, encodeCursor } from "../src/cursor";
 import { HistoryExpiredError, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type SyncChange } from "../src/types";
 
@@ -583,6 +583,29 @@ describe("SyncEngine bootstrap (§F reconcile + genesis pull)", () => {
 		expect(engine.exportSyncState()["gone.md"]).toBeDefined();
 	});
 
+	test("empty-vault bootstrap seeds the cursor from manifest.change_seq (§E)", async () => {
+		// Empty vault → genesis pull delivers nothing → cursor would stay null and
+		// every pull would re-bootstrap. §E: seed from change_seq so the next pull
+		// resumes incrementally (and a reconnect catch-up has a position to resume).
+		getManifest.mockResolvedValueOnce({
+			notes: [],
+			attachments: [],
+			total_notes: 0,
+			total_attachments: 0,
+			change_seq: 42,
+		});
+		getSyncChanges.mockReset().mockResolvedValueOnce({
+			changes: [],
+			next_cursor: null,
+			has_more: false,
+		});
+		const { engine } = createEngine([]);
+
+		await (engine as any).bootstrap();
+
+		expect(engine.getSyncCursor()).toBe(encodeCursor(42, MAX_CURSOR_UUID));
+	});
+
 	// Helper: a well-formed note feed entry for a given path.
 	function noteEntryFor(path: string): SyncChange {
 		const stem = path.replace(/\.md$/, "");
@@ -743,5 +766,34 @@ describe("SyncEngine.pull (cursor orchestration)", () => {
 
 		release(4);
 		expect(await first).toBe(4);
+	});
+
+	test("a pull coalesced during an in-flight pull re-runs (catch-up not dropped)", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR");
+		let calls = 0;
+		let release: () => void = () => {};
+		spyOn(engine as any, "pullViaCursor").mockImplementation(
+			() =>
+				new Promise<number>((r) => {
+					calls++;
+					if (calls === 1) {
+						release = () => r(0); // hold the first pull open
+					} else {
+						r(0); // the coalesced re-run resolves immediately
+					}
+				}),
+		);
+
+		const first = engine.pull(); // in flight, awaiting pullViaCursor #1
+		const second = await engine.pull(); // re-entry → coalesced (pullRequested)
+		expect(second).toBe(0);
+
+		release(); // first finishes → finally schedules the re-run
+		await first;
+		// let the window.setTimeout(0) re-run fire
+		await new Promise((r) => setTimeout(r, 15));
+
+		expect(calls).toBe(2); // the coalesced trigger ran a second pull, not dropped
 	});
 });

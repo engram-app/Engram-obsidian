@@ -3817,6 +3817,7 @@ var EngramSyncSettingTab = class extends import_obsidian14.PluginSettingTab {
 var import_obsidian15 = require("obsidian");
 
 // src/cursor.ts
+var MAX_CURSOR_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 function encodeCursor(seq, id) {
   return btoa(`${seq}:${id}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
@@ -4064,6 +4065,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
     this.pulling = !1;
+    /** Set when pull() is called while one is already in flight. The in-flight
+     *  pull re-runs once on completion so a coalesced trigger (esp. the
+     *  reconnect catch-up at main.ts:onStatusChange) is never silently lost to
+     *  the re-entry guard — which would drop a missed remote change. */
+    this.pullRequested = !1;
     this.lastSync = "";
     /** Opaque cursor marking the plugin's durably-applied position in the
      *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
@@ -4828,7 +4834,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
-    if (this.pulling) return 0;
+    if (this.pulling)
+      return this.pullRequested = !0, 0;
     this.pulling = !0, this.lastError = "", this.emitStatus(), rlog().info("pull", `Pull started cursor=${(_a = this.getSyncCursor()) != null ? _a : "(bootstrap)"}`);
     try {
       let applied;
@@ -4860,7 +4867,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         e instanceof Error ? e.stack : void 0
       ), this.lastError = e instanceof Error ? `Pull failed: ${e.message}` : "Pull failed", 0;
     } finally {
-      this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes();
+      this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes(), this.pullRequested && (this.pullRequested = !1, window.setTimeout(() => {
+        this.pull();
+      }, 0));
     }
   }
   /** Push any files that were modified during pull. Echo suppression will
@@ -5189,6 +5198,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           toPush.push(file);
     }
     let applied = await this.pullViaCursor(void 0);
+    this.getSyncCursor() === null && typeof manifest.change_seq == "number" && (this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID)), await this.saveData({ syncCursor: this.getSyncCursor() }));
     for (let file of toPush)
       try {
         await this.pushFile(file, !0);
