@@ -136,6 +136,12 @@ export class SyncEngine {
 	private recentlyPushed: Map<string, number> = new Map();
 	private pulling = false;
 	private lastSync = "";
+	/** Opaque cursor marking the plugin's durably-applied position in the
+	 *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
+	 *  untouched for rollback). `null` = no cursor yet (genesis pull). Persisted
+	 *  under the `syncCursor` key via the saveData callback; written/read by the
+	 *  cursor-pull flow in later B2 tasks. */
+	private syncCursor: string | null = null;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -237,7 +243,10 @@ export class SyncEngine {
 		private app: App,
 		private api: EngramApi,
 		private settings: EngramSyncSettings,
-		private saveData: (data: { lastSync: string }) => Promise<void>,
+		private saveData: (data: {
+			lastSync?: string;
+			syncCursor?: string | null;
+		}) => Promise<void>,
 	) {
 		this.parseIgnorePatterns();
 	}
@@ -272,15 +281,27 @@ export class SyncEngine {
 		return this.lastSync;
 	}
 
+	getSyncCursor(): string | null {
+		return this.syncCursor;
+	}
+
+	setSyncCursor(cursor: string | null): void {
+		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
+	}
+
 	/** Reset all per-vault sync bookkeeping. Used when the user switches the
 	 *  active server vault inside the SyncPreviewModal so the next sync starts
 	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
 	async resetForVaultChange(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
+		// The cursor marks a position in the OLD vault's ordered feed — drop it so
+		// the next sync re-bootstraps against the new vault (else a genesis pull
+		// would resume from a foreign vault's seq).
+		this.syncCursor = null;
 		this.syncStateVaultId = this.settings.vaultId ?? null;
-		await this.saveData({ lastSync: "" });
-		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+		await this.saveData({ lastSync: "", syncCursor: null });
+		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
 	}
 
 	getSyncStateVaultId(): string | null {
@@ -316,8 +337,10 @@ export class SyncEngine {
 		);
 		this.syncState.clear();
 		this.lastSync = "";
+		// Drop the cursor too — it points into the prior vault's ordered feed.
+		this.syncCursor = null;
 		this.syncStateVaultId = current;
-		await this.saveData({ lastSync: "" });
+		await this.saveData({ lastSync: "", syncCursor: null });
 	}
 
 	/** Export sync state for persistence across sessions. */

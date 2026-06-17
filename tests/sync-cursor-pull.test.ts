@@ -6,9 +6,11 @@
  * issue an authed GET that routes through sendRequest (getChanges), and assert
  * on the captured request headers.
  */
-import { type Mock, beforeEach, describe, expect, test } from "bun:test";
+import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
+import { SyncEngine } from "../src/sync";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -164,5 +166,65 @@ describe("api.getSyncChanges", () => {
 		const url = mockRequestUrl.mock.calls[0][0].url as string;
 		expect(url).toContain("/sync/changes");
 		expect(url).not.toContain("cursor=");
+	});
+});
+
+describe("SyncEngine syncCursor state", () => {
+	// Minimal harness mirroring tests/sync.test.ts createEngine: a stub App,
+	// a stub EngramApi, default settings, and a saveData spy. The cursor is
+	// pure in-memory state (no I/O), so the stubs only need to satisfy the
+	// constructor signature.
+	const mockApp = {
+		vault: { getName: () => "Test Vault" },
+		workspace: {},
+		fileManager: {},
+	} as any;
+	const mockApi = {} as unknown as EngramApi;
+	let saveDataSpy: Mock<(data: { lastSync?: string; syncCursor?: string | null }) => Promise<void>>;
+
+	function createEngine(): SyncEngine {
+		return new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			saveDataSpy,
+		);
+	}
+
+	beforeEach(() => {
+		saveDataSpy = mock().mockResolvedValue(undefined);
+	});
+
+	test("get/setSyncCursor round-trips a non-empty value", () => {
+		const engine = createEngine();
+		expect(engine.getSyncCursor()).toBeNull();
+		engine.setSyncCursor("CUR-1");
+		expect(engine.getSyncCursor()).toBe("CUR-1");
+	});
+
+	test("setSyncCursor('') normalizes to null", () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-1");
+		engine.setSyncCursor("");
+		expect(engine.getSyncCursor()).toBeNull();
+	});
+
+	test("setSyncCursor(null) clears the cursor", () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-1");
+		engine.setSyncCursor(null);
+		expect(engine.getSyncCursor()).toBeNull();
+	});
+
+	test("resetForVaultChange clears the cursor and persists syncCursor:null", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-old-vault");
+		await engine.resetForVaultChange();
+		// Cursor points into the OLD vault's feed — must be dropped on switch.
+		expect(engine.getSyncCursor()).toBeNull();
+		// And the clear must be persisted (saveData carries syncCursor:null).
+		expect(saveDataSpy).toHaveBeenLastCalledWith(
+			expect.objectContaining({ syncCursor: null }),
+		);
 	});
 });

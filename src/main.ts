@@ -68,6 +68,10 @@ interface PluginData {
 	 *  collides across devices). */
 	deviceId?: string;
 	offlineQueue?: QueueEntry[];
+	/** Opaque cursor marking the durably-applied position in the backend's
+	 *  ordered sync feed (PR B2 cursor pull). Separate from `lastSync`, which is
+	 *  retained for rollback. Omitted when no cursor has been established yet. */
+	syncCursor?: string;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -154,7 +158,19 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-			await this.savePluginData(data.lastSync);
+			// Merge whichever of {lastSync, syncCursor} the engine handed us into
+			// the in-memory engine state, then persist the WHOLE PluginData via
+			// savePluginData (saveData overwrites data.json wholesale). Each field
+			// the payload omits falls through to the engine's current value, so a
+			// lastSync-only write never clobbers syncCursor and vice-versa.
+			if (data.lastSync !== undefined) {
+				this.syncEngine.setLastSync(data.lastSync);
+			}
+			if (data.syncCursor !== undefined) {
+				// null clears the cursor (persisted as undefined/omitted).
+				this.syncEngine.setSyncCursor(data.syncCursor);
+			}
+			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
 		this.syncLog = new SyncLog();
@@ -205,6 +221,9 @@ export default class EngramSyncPlugin extends Plugin {
 		const saved = (await this.loadData()) as Partial<PluginData> | null;
 		if (saved?.lastSync) {
 			this.syncEngine.setLastSync(saved.lastSync);
+		}
+		if (saved?.syncCursor) {
+			this.syncEngine.setSyncCursor(saved.syncCursor);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -651,6 +670,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
 			deviceId: this.deviceId ?? undefined,
+			// Top-level cursor; like deviceId it must be re-listed here or the
+			// next wholesale saveData() wipes it. null → omit (cursor cleared).
+			syncCursor: this.syncEngine.getSyncCursor() ?? undefined,
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
