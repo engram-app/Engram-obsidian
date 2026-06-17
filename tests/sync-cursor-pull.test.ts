@@ -6,7 +6,7 @@
  * issue an authed GET that routes through sendRequest (getChanges), and assert
  * on the captured request headers.
  */
-import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
+import { type Mock, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
@@ -226,5 +226,93 @@ describe("SyncEngine syncCursor state", () => {
 		expect(saveDataSpy).toHaveBeenLastCalledWith(
 			expect.objectContaining({ syncCursor: null }),
 		);
+	});
+});
+
+describe("SyncEngine applySyncChange dispatch", () => {
+	// Same minimal harness as above — applySyncChange is pure dispatch; we spy
+	// on the underlying apply primitives and assert the mapped arg shape.
+	const mockApp = {
+		vault: { getName: () => "Test Vault" },
+		workspace: {},
+		fileManager: {},
+	} as any;
+	const mockApi = {} as unknown as EngramApi;
+
+	function createEngine(): SyncEngine {
+		return new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			mock().mockResolvedValue(undefined),
+		);
+	}
+
+	test("note entry dispatches to applyChange with a mapped NoteChange", async () => {
+		const engine = createEngine();
+		const applyChange = spyOn(engine, "applyChange").mockResolvedValue(true);
+		const applyAttachment = spyOn(engine, "applyAttachmentChange").mockResolvedValue(true);
+
+		const result = await engine.applySyncChange({
+			type: "note",
+			id: "n1",
+			seq: 7,
+			path: "a.md",
+			title: "A",
+			content: "hi",
+			content_hash: "h1",
+			folder: "",
+			tags: ["x"],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 3,
+		});
+
+		expect(result).toBe(true);
+		expect(applyAttachment).not.toHaveBeenCalled();
+		expect(applyChange).toHaveBeenCalledTimes(1);
+		const arg = applyChange.mock.calls[0][0];
+		expect(arg.path).toBe("a.md");
+		expect(arg.content).toBe("hi");
+		expect(arg.version).toBe(3);
+		expect(arg.deleted).toBe(false);
+		// The feed-only fields must be stripped from the mapped NoteChange.
+		expect((arg as any).type).toBeUndefined();
+		expect((arg as any).seq).toBeUndefined();
+		expect((arg as any).id).toBeUndefined();
+	});
+
+	test("attachment entry dispatches to applyAttachmentChange with a mapped AttachmentChange", async () => {
+		const engine = createEngine();
+		const applyChange = spyOn(engine, "applyChange").mockResolvedValue(true);
+		const applyAttachment = spyOn(engine, "applyAttachmentChange").mockResolvedValue(true);
+
+		const result = await engine.applySyncChange({
+			type: "attachment",
+			id: "a1",
+			seq: 8,
+			path: "img.png",
+			mime_type: "image/png",
+			size_bytes: 10,
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:01Z",
+			deleted: true,
+			version: 1,
+		});
+
+		expect(result).toBe(true);
+		expect(applyChange).not.toHaveBeenCalled();
+		expect(applyAttachment).toHaveBeenCalledTimes(1);
+		const arg = applyAttachment.mock.calls[0][0];
+		expect(arg.path).toBe("img.png");
+		expect(arg.mime_type).toBe("image/png");
+		expect(arg.size_bytes).toBe(10);
+		expect(arg.deleted).toBe(true);
+		// No content bytes passed — applyAttachmentChange fetches metadata-only entries.
+		expect(applyAttachment.mock.calls[0][1]).toBeUndefined();
+		expect((arg as any).type).toBeUndefined();
+		expect((arg as any).seq).toBeUndefined();
+		expect((arg as any).id).toBeUndefined();
 	});
 });

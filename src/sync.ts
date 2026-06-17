@@ -34,6 +34,7 @@ import type {
 	QueueEntry,
 	ReconcileResult,
 	SyncIssueCategory,
+	SyncChange,
 	SyncLogEntry,
 	SyncPlan,
 	SyncProgress,
@@ -1855,6 +1856,36 @@ export class SyncEngine {
 				console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
 			}
 		}
+	}
+
+	/** Apply one merged cursor-feed entry by dispatching to the existing note /
+	 *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
+	 *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
+	async applySyncChange(c: SyncChange): Promise<boolean> {
+		if (c.type === "attachment") {
+			const ac: AttachmentChange = {
+				path: c.path,
+				mime_type: c.mime_type,
+				size_bytes: c.size_bytes,
+				mtime: c.mtime,
+				updated_at: c.updated_at,
+				deleted: c.deleted,
+			};
+			return this.applyAttachmentChange(ac);
+		}
+		const nc: NoteChange = {
+			path: c.path,
+			title: c.title,
+			content: c.content,
+			content_hash: c.content_hash,
+			folder: c.folder,
+			tags: c.tags,
+			mtime: c.mtime,
+			updated_at: c.updated_at,
+			deleted: c.deleted,
+			version: c.version,
+		};
+		return this.applyChange(nc);
 	}
 
 	/** Apply a single remote change to the vault, with conflict detection.
