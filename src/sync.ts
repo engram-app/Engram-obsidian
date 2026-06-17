@@ -1253,15 +1253,6 @@ export class SyncEngine {
 		return { changes: all, server_time: serverTime };
 	}
 
-	/** True when a meta change can't be hash-skipped (body would be fetched). */
-	private changeNeedsBody(change: NoteChange): boolean {
-		if (change.content_hash === undefined) return true;
-		const normalized = normalizePath(change.path);
-		const stored = this.syncState.get(normalized);
-		const exists = this.app.vault.getFileByPath(normalized) !== null;
-		return !(exists && stored?.serverHash === change.content_hash);
-	}
-
 	/** Resolve a (possibly meta-only) change to one that carries content.
 	 *  Returns null when the change needs no work: the server hash matches the
 	 *  stored serverHash AND the local file still exists — only the version is
@@ -1298,151 +1289,68 @@ export class SyncEngine {
 		};
 	}
 
+	/** Pull remote changes and apply to the vault via the ordered cursor feed.
+	 *
+	 *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
+	 *  files against the server, then a genesis cursor pull delivers content).
+	 *  A persisted cursor → resume the ordered feed from that position. A 410
+	 *  (history compacted past our cursor; PR D) surfaces as HistoryExpiredError
+	 *  → drop the cursor and re-bootstrap.
+	 *
+	 *  NOTE: `lastSync` is intentionally left untouched here. It is no longer the
+	 *  pull watermark (the cursor is), but `fullSync` still snapshots it as the
+	 *  pre-pull push boundary and it's retained for rollback to the legacy feed.
+	 *
+	 *  Explicit empty-folder markers ride a SEPARATE endpoint (not the cursor
+	 *  feed), so `syncExplicitFolders()` is still called post-apply — it both
+	 *  materializes server-marked empty folders and hydrates the
+	 *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
+	 *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
 	async pull(): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
 		}
 		if (this.pulling) return 0;
-		const isFirstSync = !this.lastSync;
-		if (isFirstSync) {
-			// First sync — use epoch
-			this.lastSync = "1970-01-01T00:00:00Z";
-		}
-
 		this.pulling = true;
 		this.lastError = "";
 		this.emitStatus();
-		devLog().log("pull", `start since=${this.lastSync}`);
-		rlog().info("pull", `Pull started since=${this.lastSync}`);
+		rlog().info("pull", `Pull started cursor=${this.getSyncCursor() ?? "(bootstrap)"}`);
 		try {
-			// Fetch note and attachment changes in parallel. Incremental pulls
-			// use hash-only pages (fields=meta) — bodies are fetched selectively
-			// for hashes we don't already hold. First syncs pull full-content
-			// pages: every body is needed, and per-note GETs would turn a
-			// 1k-note cold pull into 1k requests (rate-limit suicide).
-			const fields = isFirstSync ? undefined : ("meta" as const);
-			const [noteResp, attachResp] = await Promise.all([
-				this.fetchAllNoteChanges(this.lastSync, fields),
-				this.api.getAttachmentChanges(this.lastSync),
-			]);
-
-			// Escape hatch: when an incremental delta needs MANY bodies (another
-			// device bulk-pushed), refetch full-content pages once instead of
-			// issuing one GET per note.
-			let noteChanges = noteResp.changes;
-			if (fields === "meta") {
-				const needBodies = noteChanges.filter(
-					(c) => !c.deleted && c.content === undefined && this.changeNeedsBody(c),
-				).length;
-				if (needBodies > 50) {
-					devLog().log(
-						"pull",
-						`meta delta needs ${needBodies} bodies — refetching full pages`,
-					);
-					noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes;
-				}
-			}
-			devLog().log(
-				"pull",
-				`fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-			rlog().info(
-				"pull",
-				`Fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-			let applied = 0;
-			let skipped = 0;
-			let oldestFailedUpdatedAt: string | null = null;
-
-			for (const change of noteChanges) {
-				let resolved: NoteChange | null = null;
+			let applied: number;
+			if (!this.getSyncCursor()) {
+				applied = await this.bootstrap();
+			} else {
 				try {
-					resolved = await this.resolveChangeBody(change);
+					applied = await this.pullViaCursor(this.getSyncCursor() ?? undefined);
 				} catch (e) {
-					// Body-fetch failure is transient (network/5xx) — pin
-					// lastSync at this change so the next pull re-serves it;
-					// advancing past it would drop the change forever.
-					skipped++;
-					if (
-						oldestFailedUpdatedAt === null ||
-						change.updated_at < oldestFailedUpdatedAt
-					) {
-						oldestFailedUpdatedAt = change.updated_at;
+					if (e instanceof HistoryExpiredError) {
+						rlog().warn("pull", "HISTORY_EXPIRED — re-bootstrapping");
+						this.setSyncCursor(null);
+						await this.saveData({ syncCursor: null });
+						applied = await this.bootstrap();
+					} else {
+						throw e;
 					}
-					const msg = errMsg(e);
-					devLog().log("error", `body fetch failed: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Body fetch failed (will retry next pull): ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-					continue;
-				}
-				try {
-					if (resolved && (await this.applyChange(resolved))) applied++;
-				} catch (e) {
-					// Local apply failure (e.g. illegal filename) is permanent —
-					// don't pin lastSync, or one bad file re-serves the whole
-					// window every poll. Legacy skip semantics.
-					skipped++;
-					const msg = errMsg(e);
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error(`Engram Sync: skipping note ${change.path}: ${msg}`);
-					devLog().log("error", `apply skipped: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Skipped note: ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
 				}
 			}
 
-			for (const change of attachResp.changes) {
-				try {
-					if (await this.applyAttachmentChange(change)) applied++;
-				} catch (e) {
-					skipped++;
-					const msg = errMsg(e);
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error(`Engram Sync: skipping attachment ${change.path}: ${msg}`);
-					devLog().log("error", `apply skipped: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Skipped attachment: ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-				}
+			// Empty-folder markers are not in the cursor feed — sync them via their
+			// own endpoint. Non-fatal: a folder-sync failure must not fail the pull.
+			try {
+				await this.syncExplicitFolders();
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
 			}
 
-			// Pull explicit empty-folder markers and materialize on disk. Runs
-			// after note/attachment apply so empty-folder ensures don't race
-			// with note creates that may also produce the same folder. Failures
-			// don't abort the pull — folder sync is eventually consistent.
-			await this.syncExplicitFolders();
-
-			// Use the later server_time — but never advance past the oldest
-			// failed change (the inclusive since filter re-serves it next pull).
-			const serverTime =
-				noteResp.server_time > attachResp.server_time
-					? noteResp.server_time
-					: attachResp.server_time;
-			this.lastSync =
-				oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime
-					? oldestFailedUpdatedAt
-					: serverTime;
-			await this.saveData({ lastSync: this.lastSync });
-
-			devLog().log(
-				"pull",
-				`done — applied ${applied}, skipped ${skipped}, lastSync=${this.lastSync}`,
-			);
-			rlog().info("pull", `Pull done — applied ${applied}, skipped ${skipped}`);
 			return applied;
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: pull failed", e);
-			devLog().log("error", `pull failed: ${errMsg(e)}`);
 			rlog().error(
 				"pull",
 				`Pull failed: ${errMsg(e)}`,

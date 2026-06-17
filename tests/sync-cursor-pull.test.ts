@@ -603,3 +603,145 @@ describe("SyncEngine bootstrap (§F reconcile + genesis pull)", () => {
 		};
 	}
 });
+
+describe("SyncEngine.pull (cursor orchestration)", () => {
+	// pull() is pure orchestration over bootstrap() / pullViaCursor() — both
+	// private, both spied via (engine as any). The stubs only need to satisfy
+	// the constructor; the spies replace the real I/O.
+	const mockApp = {
+		vault: { getName: () => "Test Vault" },
+		workspace: {},
+		fileManager: {},
+	} as any;
+	const mockApi = {} as unknown as EngramApi;
+	let saveDataSpy: Mock<(data: any) => Promise<void>>;
+
+	function createEngine(): SyncEngine {
+		return new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 10 },
+			saveDataSpy,
+		);
+	}
+
+	beforeEach(() => {
+		saveDataSpy = mock().mockResolvedValue(undefined);
+	});
+
+	test("no cursor → bootstrap (pullViaCursor not called directly)", async () => {
+		const engine = createEngine();
+		const bootstrap = spyOn(engine as any, "bootstrap").mockResolvedValue(5);
+		const pullViaCursor = spyOn(engine as any, "pullViaCursor").mockResolvedValue(0);
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(5);
+		expect(bootstrap).toHaveBeenCalledTimes(1);
+		expect(pullViaCursor).not.toHaveBeenCalled();
+	});
+
+	test("has cursor → pullViaCursor called with that cursor (bootstrap not)", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-7");
+		const bootstrap = spyOn(engine as any, "bootstrap").mockResolvedValue(0);
+		const pullViaCursor = spyOn(engine as any, "pullViaCursor").mockResolvedValue(3);
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(3);
+		expect(bootstrap).not.toHaveBeenCalled();
+		expect(pullViaCursor).toHaveBeenCalledTimes(1);
+		expect(pullViaCursor.mock.calls[0][0]).toBe("CUR-7");
+	});
+
+	test("calls syncExplicitFolders post-pull (empty-folder markers ride a separate endpoint)", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-7");
+		spyOn(engine as any, "pullViaCursor").mockResolvedValue(0);
+		const syncFolders = spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(
+			undefined,
+		);
+
+		await engine.pull();
+
+		expect(syncFolders).toHaveBeenCalledTimes(1);
+	});
+
+	test("a failing syncExplicitFolders is non-fatal (pull still returns applied count)", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-7");
+		spyOn(engine as any, "pullViaCursor").mockResolvedValue(4);
+		spyOn(engine as any, "syncExplicitFolders").mockRejectedValue(
+			new Error("folders endpoint down"),
+		);
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(4);
+		expect(engine.getStatus().lastError).toBeFalsy();
+	});
+
+	test("pullViaCursor throws HistoryExpiredError → cursor cleared + re-bootstrap", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-stale");
+		const bootstrap = spyOn(engine as any, "bootstrap").mockResolvedValue(9);
+		const pullViaCursor = spyOn(engine as any, "pullViaCursor").mockRejectedValue(
+			new HistoryExpiredError(),
+		);
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(9);
+		expect(pullViaCursor).toHaveBeenCalledTimes(1);
+		// 410 → the cursor is dropped, persisted as null, and we re-bootstrap.
+		expect(engine.getSyncCursor()).toBeNull();
+		expect(saveDataSpy).toHaveBeenCalledWith(expect.objectContaining({ syncCursor: null }));
+		expect(bootstrap).toHaveBeenCalledTimes(1);
+	});
+
+	test("syncBlocked short-circuits without touching bootstrap/pullViaCursor", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+		const bootstrap = spyOn(engine as any, "bootstrap").mockResolvedValue(0);
+		const pullViaCursor = spyOn(engine as any, "pullViaCursor").mockResolvedValue(0);
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(0);
+		expect(bootstrap).not.toHaveBeenCalled();
+		expect(pullViaCursor).not.toHaveBeenCalled();
+	});
+
+	test("a non-HistoryExpired error sets lastError and returns 0 (status → error)", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-1");
+		spyOn(engine as any, "pullViaCursor").mockRejectedValue(new Error("network down"));
+
+		const applied = await engine.pull();
+
+		expect(applied).toBe(0);
+		expect(engine.getStatus().state).toBe("error");
+		expect(engine.getStatus().error).toBe("Pull failed: network down");
+	});
+
+	test("re-entry guard: a second pull while one is in flight returns 0", async () => {
+		const engine = createEngine();
+		let release: (n: number) => void = () => {};
+		const bootstrap = spyOn(engine as any, "bootstrap").mockImplementation(
+			() =>
+				new Promise<number>((r) => {
+					release = r;
+				}),
+		);
+
+		const first = engine.pull(); // enters, sets pulling=true, awaits bootstrap
+		const second = await engine.pull(); // re-entry — must short-circuit
+
+		expect(second).toBe(0);
+		expect(bootstrap).toHaveBeenCalledTimes(1);
+
+		release(4);
+		expect(await first).toBe(4);
+	});
+});
