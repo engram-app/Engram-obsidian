@@ -62,7 +62,16 @@ async function generateClientId(app: import("obsidian").App): Promise<string> {
 interface PluginData {
 	settings: EngramSyncSettings;
 	lastSync: string;
+	/** Per-install device id (random UUID). Sent as X-Device-Id on cursor pulls
+	 *  so the backend tracks its sync watermark per device. Device-local; NOT a
+	 *  user-facing setting. Distinct from settings.clientId (a path hash that
+	 *  collides across devices). */
+	deviceId?: string;
 	offlineQueue?: QueueEntry[];
+	/** Opaque cursor marking the durably-applied position in the backend's
+	 *  ordered sync feed (PR B2 cursor pull). Separate from `lastSync`, which is
+	 *  retained for rollback. Omitted when no cursor has been established yet. */
+	syncCursor?: string;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -86,6 +95,11 @@ export default class EngramSyncPlugin extends Plugin {
 	authProvider: AuthProvider | null = null;
 	syncEngine: SyncEngine = null!;
 	syncLog: SyncLog = new SyncLog();
+	/** Per-install device id sent as X-Device-Id so the backend attributes its
+	 *  sync watermark per device. Random UUID minted on first load, persisted
+	 *  top-level in PluginData (device-local; NOT a user-facing setting). A
+	 *  reinstall/reset mints a new id → one clean re-bootstrap. */
+	deviceId: string | null = null;
 	private syncInterval: number | null = null;
 	noteStream: NoteChannel | null = null;
 	private statusBarEl: HTMLElement | null = null;
@@ -121,6 +135,9 @@ export default class EngramSyncPlugin extends Plugin {
 		if (this.settings.vaultId) {
 			this.api.setVaultId(this.settings.vaultId);
 		}
+		// Wire the per-install device id (minted in loadSettings) onto the real
+		// api instance before any sync runs, so cursor pulls carry X-Device-Id.
+		this.api.setDeviceId(this.deviceId);
 
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
@@ -141,7 +158,19 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-			await this.savePluginData(data.lastSync);
+			// Merge whichever of {lastSync, syncCursor} the engine handed us into
+			// the in-memory engine state, then persist the WHOLE PluginData via
+			// savePluginData (saveData overwrites data.json wholesale). Each field
+			// the payload omits falls through to the engine's current value, so a
+			// lastSync-only write never clobbers syncCursor and vice-versa.
+			if (data.lastSync !== undefined) {
+				this.syncEngine.setLastSync(data.lastSync);
+			}
+			if (data.syncCursor !== undefined) {
+				// null clears the cursor (persisted as undefined/omitted).
+				this.syncEngine.setSyncCursor(data.syncCursor);
+			}
+			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
 		this.syncLog = new SyncLog();
@@ -192,6 +221,9 @@ export default class EngramSyncPlugin extends Plugin {
 		const saved = (await this.loadData()) as Partial<PluginData> | null;
 		if (saved?.lastSync) {
 			this.syncEngine.setLastSync(saved.lastSync);
+		}
+		if (saved?.syncCursor) {
+			this.syncEngine.setSyncCursor(saved.syncCursor);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -515,16 +547,33 @@ export default class EngramSyncPlugin extends Plugin {
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
+		// Mint/migrate everything in a single load/save round-trip so first load
+		// writes data.json at most once (avoids redundant double-writes).
+		let dirty = false;
 		const migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
 		if (migratedUrl && migratedUrl !== this.settings.apiUrl) {
 			this.settings.apiUrl = migratedUrl;
-			await this.saveData({ ...data, settings: this.settings });
+			dirty = true;
 		}
 		// Generate stable client ID on first load (persisted forever)
 		if (!this.settings.clientId) {
 			this.settings.clientId = await generateClientId(this.app);
-			await this.saveData({ ...data, settings: this.settings });
+			dirty = true;
 		}
+		// Mint per-install device id on first load. Distinct from clientId (a
+		// path hash that collides across devices); device id is a fresh random
+		// UUID so the backend tracks its sync watermark per install.
+		this.deviceId = data?.deviceId ?? null;
+		if (!this.deviceId) {
+			this.deviceId = crypto.randomUUID();
+			dirty = true;
+		}
+		if (dirty) {
+			await this.saveData({ ...data, settings: this.settings, deviceId: this.deviceId });
+		}
+		// NOTE: this.api is replaced with a configured instance in onload() right
+		// after loadSettings() returns; the device id is wired there via
+		// setDeviceId(this.deviceId), before any sync runs.
 	}
 
 	async saveSettings(): Promise<void> {
@@ -618,6 +667,12 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.saveData({
 			settings: this.settings,
 			lastSync,
+			// Top-level, device-local; saveData() overwrites data.json wholesale,
+			// so every field must be re-listed here or it's wiped on the next save.
+			deviceId: this.deviceId ?? undefined,
+			// Top-level cursor; like deviceId it must be re-listed here or the
+			// next wholesale saveData() wipes it. null → omit (cursor cleared).
+			syncCursor: this.syncEngine.getSyncCursor() ?? undefined,
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),

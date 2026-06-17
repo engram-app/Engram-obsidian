@@ -139,7 +139,12 @@ afterEach(() => {
 	activeEngines.length = 0;
 });
 
-describe("paginated pull", () => {
+// PR B2: pull() now drives the ordered cursor feed (getSyncChanges), not the
+// legacy timestamp feed. The meta-page pagination + serverHash body-skip +
+// body-fetch-on-hash-diff strategy these tests protect still lives in
+// fetchAllNoteChanges / resolveChangeBody, exercised by pullAll(). So these
+// were re-pointed from pull() → pullAll() — same wiring, still-live coverage.
+describe("paginated pull (legacy meta feed via pullAll)", () => {
 	test("loops pages until has_more=false, passing the cursor through", async () => {
 		const engine = createEngine();
 		(mockApi.getChanges as jest.Mock)
@@ -170,7 +175,7 @@ describe("paginated pull", () => {
 			}),
 		);
 
-		const applied = await engine.pull();
+		const applied = await engine.pullAll();
 
 		expect(applied).toBe(2);
 		const calls = (mockApi.getChanges as jest.Mock).mock.calls;
@@ -198,7 +203,7 @@ describe("paginated pull", () => {
 			next_cursor: null,
 		});
 
-		await engine.pull();
+		await engine.pullAll();
 
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
@@ -234,7 +239,7 @@ describe("paginated pull", () => {
 			version: 5,
 		});
 
-		await engine.pull();
+		await engine.pullAll();
 
 		expect(mockApi.getNote).toHaveBeenCalledWith("a.md");
 		expect(mockApp.vault.create).toHaveBeenCalled();
@@ -452,62 +457,25 @@ describe("reconcile (serverHash-based)", () => {
 	});
 });
 
-describe("pull resilience + fetch strategy", () => {
-	test("first sync pulls full-content pages; incremental pulls request meta", async () => {
-		const engine = createEngine();
-		// First sync: no lastSync → fields undefined (full content).
-		await engine.pull();
-		let opts = (mockApi.getChanges as jest.Mock).mock.calls[0][1];
-		expect(opts.fields).toBeUndefined();
-
-		// Incremental: lastSync present → hash-only pages.
-		(mockApi.getChanges as jest.Mock).mockClear();
-		engine.setLastSync("2026-06-12T00:00:00Z");
-		await engine.pull();
-		opts = (mockApi.getChanges as jest.Mock).mock.calls[0][1];
-		expect(opts.fields).toBe("meta");
-	});
-
-	test("a transient body-fetch failure pins lastSync so the change is retried", async () => {
-		const engine = createEngine();
-		engine.setLastSync("2026-06-12T00:00:00Z");
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [metaChange("flaky.md", "h-x", 1, { updated_at: "2026-06-12T00:01:00Z" })],
-			server_time: "2026-06-12T00:05:00Z",
-			has_more: false,
-			next_cursor: null,
-		});
-		(mockApi.getNote as jest.Mock).mockRejectedValueOnce({ status: 503 });
-
-		await engine.pull();
-
-		// lastSync pinned at the failed change, NOT advanced to server_time.
-		expect(engine.getLastSync()).toBe("2026-06-12T00:01:00Z");
-	});
-
-	test("a local apply failure does NOT pin lastSync (legacy skip semantics)", async () => {
-		const engine = createEngine();
-		engine.setLastSync("2026-06-12T00:00:00Z");
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				metaChange("bad?.md", "h-bad", 1, {
-					updated_at: "2026-06-12T00:01:00Z",
-					content: "# inline",
-				}),
-			],
-			server_time: "2026-06-12T00:05:00Z",
-			has_more: false,
-			next_cursor: null,
-		});
-		(mockApp.vault.create as jest.Mock).mockRejectedValueOnce(
-			new Error("File name cannot contain ?"),
-		);
-
-		await engine.pull();
-
-		expect(engine.getLastSync()).toBe("2026-06-12T00:05:00Z");
-	});
-});
+// PR B2 — REMOVED: "pull resilience + fetch strategy" (3 tests).
+//
+// These protected behaviors of the LEGACY timestamp-feed pull() that the cursor
+// pull deliberately abandoned, with no equivalent to port:
+//
+//   • "first sync full / incremental meta" — the full-vs-meta fields choice was
+//     driven by lastSync. The cursor feed always delivers full content inline
+//     (one ordered stream), so there is no fields/meta distinction to assert.
+//
+//   • "a transient body-fetch failure pins lastSync" and "a local apply failure
+//     does NOT pin lastSync" — lastSync is no longer the pull watermark; the
+//     cursor is. The cursor flow's resilience (persist-after-each-page so a
+//     failed page is re-served; skip-a-permanent-apply-failure without wedging
+//     the feed) is already covered in tests/sync-cursor-pull.test.ts under
+//     "SyncEngine pullViaCursor". Re-pinning these to a watermark pull() no
+//     longer maintains would assert dead behavior.
+//
+// The body-fetch / serverHash meta-skip mechanics themselves remain covered via
+// pullAll() in the "paginated pull (legacy meta feed via pullAll)" suite above.
 
 describe("batch push sizing", () => {
 	test("notes above 10MB are routed through the single-note path", async () => {

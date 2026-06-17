@@ -19,6 +19,7 @@ import type {
 	NoteDetail,
 	NoteResponse,
 	SearchResponse,
+	SyncChangesResponse,
 	VaultInfo,
 	VaultRegistrationResponse,
 	VersionConflictResponse,
@@ -26,6 +27,7 @@ import type {
 
 export class EngramApi {
 	private vaultId: string | null = null;
+	private deviceId: string | null = null;
 	private authProvider: AuthProvider | null = null;
 
 	constructor(
@@ -37,6 +39,11 @@ export class EngramApi {
 
 	setVaultId(id: string | null): void {
 		this.vaultId = id;
+	}
+
+	/** Set the per-install device id sent as X-Device-Id on cursor pulls. */
+	setDeviceId(id: string | null): void {
+		this.deviceId = id && id.length > 0 ? id : null;
 	}
 
 	setAuthProvider(provider: AuthProvider | null): void {
@@ -138,6 +145,9 @@ export class EngramApi {
 		};
 		if (this.vaultId) {
 			headers["X-Vault-ID"] = this.vaultId;
+		}
+		if (this.deviceId) {
+			headers["X-Device-Id"] = this.deviceId;
 		}
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
@@ -254,6 +264,18 @@ export class EngramApi {
 		if (opts?.fields) params.set("fields", opts.fields);
 		const resp = await this.request("GET", `/notes/changes?${params.toString()}`);
 		return resp.json as ChangesResponse;
+	}
+
+	/** Pull the merged ordered feed (notes ∪ attachments interleaved by
+	 *  (seq,id), tombstones included) from GET /sync/changes (PR B2). Pass the
+	 *  opaque `cursor` from the prior page; omit it for a genesis pull. */
+	async getSyncChanges(cursor?: string, limit?: number): Promise<SyncChangesResponse> {
+		const params = new URLSearchParams();
+		if (cursor) params.set("cursor", cursor);
+		if (limit !== undefined) params.set("limit", String(limit));
+		const qs = params.toString();
+		const resp = await this.request("GET", `/sync/changes${qs ? `?${qs}` : ""}`);
+		return resp.json as SyncChangesResponse;
 	}
 
 	/** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).

@@ -4,6 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
+import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -33,6 +34,8 @@ import type {
 	NoteStreamEvent,
 	QueueEntry,
 	ReconcileResult,
+	SyncChange,
+	SyncChangesResponse,
 	SyncIssueCategory,
 	SyncLogEntry,
 	SyncPlan,
@@ -44,6 +47,16 @@ import type {
  *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
 function isHttpStatus(e: unknown, status: number): boolean {
 	return typeof e === "object" && e !== null && (e as { status?: number }).status === status;
+}
+
+/** Thrown when the backend returns 410 HISTORY_EXPIRED — the cursor is below
+ *  the retention floor (post-compaction). The caller drops the cursor and
+ *  re-bootstraps. Dormant until backend PR D turns on compaction. */
+export class HistoryExpiredError extends Error {
+	constructor() {
+		super("history_expired");
+		this.name = "HistoryExpiredError";
+	}
 }
 
 /** Count distinct parent folders across the given file paths. Files at the
@@ -136,6 +149,12 @@ export class SyncEngine {
 	private recentlyPushed: Map<string, number> = new Map();
 	private pulling = false;
 	private lastSync = "";
+	/** Opaque cursor marking the plugin's durably-applied position in the
+	 *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
+	 *  untouched for rollback). `null` = no cursor yet (genesis pull). Persisted
+	 *  under the `syncCursor` key via the saveData callback; written/read by the
+	 *  cursor-pull flow in later B2 tasks. */
+	private syncCursor: string | null = null;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -237,7 +256,10 @@ export class SyncEngine {
 		private app: App,
 		private api: EngramApi,
 		private settings: EngramSyncSettings,
-		private saveData: (data: { lastSync: string }) => Promise<void>,
+		private saveData: (data: {
+			lastSync?: string;
+			syncCursor?: string | null;
+		}) => Promise<void>,
 	) {
 		this.parseIgnorePatterns();
 	}
@@ -272,15 +294,27 @@ export class SyncEngine {
 		return this.lastSync;
 	}
 
+	getSyncCursor(): string | null {
+		return this.syncCursor;
+	}
+
+	setSyncCursor(cursor: string | null): void {
+		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
+	}
+
 	/** Reset all per-vault sync bookkeeping. Used when the user switches the
 	 *  active server vault inside the SyncPreviewModal so the next sync starts
 	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
 	async resetForVaultChange(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
+		// The cursor marks a position in the OLD vault's ordered feed — drop it so
+		// the next sync re-bootstraps against the new vault (else a genesis pull
+		// would resume from a foreign vault's seq).
+		this.syncCursor = null;
 		this.syncStateVaultId = this.settings.vaultId ?? null;
-		await this.saveData({ lastSync: "" });
-		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+		await this.saveData({ lastSync: "", syncCursor: null });
+		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
 	}
 
 	getSyncStateVaultId(): string | null {
@@ -316,8 +350,10 @@ export class SyncEngine {
 		);
 		this.syncState.clear();
 		this.lastSync = "";
+		// Drop the cursor too — it points into the prior vault's ordered feed.
+		this.syncCursor = null;
 		this.syncStateVaultId = current;
-		await this.saveData({ lastSync: "" });
+		await this.saveData({ lastSync: "", syncCursor: null });
 	}
 
 	/** Export sync state for persistence across sessions. */
@@ -1217,15 +1253,6 @@ export class SyncEngine {
 		return { changes: all, server_time: serverTime };
 	}
 
-	/** True when a meta change can't be hash-skipped (body would be fetched). */
-	private changeNeedsBody(change: NoteChange): boolean {
-		if (change.content_hash === undefined) return true;
-		const normalized = normalizePath(change.path);
-		const stored = this.syncState.get(normalized);
-		const exists = this.app.vault.getFileByPath(normalized) !== null;
-		return !(exists && stored?.serverHash === change.content_hash);
-	}
-
 	/** Resolve a (possibly meta-only) change to one that carries content.
 	 *  Returns null when the change needs no work: the server hash matches the
 	 *  stored serverHash AND the local file still exists — only the version is
@@ -1262,151 +1289,90 @@ export class SyncEngine {
 		};
 	}
 
+	/** Pull remote changes and apply to the vault via the ordered cursor feed.
+	 *
+	 *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
+	 *  files against the server, then a genesis cursor pull delivers content).
+	 *  A persisted cursor → resume the ordered feed from that position. A 410
+	 *  (history compacted past our cursor; PR D) surfaces as HistoryExpiredError
+	 *  → drop the cursor and re-bootstrap.
+	 *
+	 *  NOTE: `lastSync` is intentionally left untouched here. It is no longer the
+	 *  pull watermark (the cursor is), but `fullSync` still snapshots it as the
+	 *  pre-pull push boundary and it's retained for rollback to the legacy feed.
+	 *
+	 *  Explicit empty-folder markers ride a SEPARATE endpoint (not the cursor
+	 *  feed), so `syncExplicitFolders()` is still called post-apply — it both
+	 *  materializes server-marked empty folders and hydrates the
+	 *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
+	 *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
 	async pull(): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
 		}
 		if (this.pulling) return 0;
-		const isFirstSync = !this.lastSync;
-		if (isFirstSync) {
-			// First sync — use epoch
-			this.lastSync = "1970-01-01T00:00:00Z";
-		}
-
 		this.pulling = true;
 		this.lastError = "";
 		this.emitStatus();
-		devLog().log("pull", `start since=${this.lastSync}`);
-		rlog().info("pull", `Pull started since=${this.lastSync}`);
+		rlog().info("pull", `Pull started cursor=${this.getSyncCursor() ?? "(bootstrap)"}`);
 		try {
-			// Fetch note and attachment changes in parallel. Incremental pulls
-			// use hash-only pages (fields=meta) — bodies are fetched selectively
-			// for hashes we don't already hold. First syncs pull full-content
-			// pages: every body is needed, and per-note GETs would turn a
-			// 1k-note cold pull into 1k requests (rate-limit suicide).
-			const fields = isFirstSync ? undefined : ("meta" as const);
-			const [noteResp, attachResp] = await Promise.all([
-				this.fetchAllNoteChanges(this.lastSync, fields),
-				this.api.getAttachmentChanges(this.lastSync),
-			]);
-
-			// Escape hatch: when an incremental delta needs MANY bodies (another
-			// device bulk-pushed), refetch full-content pages once instead of
-			// issuing one GET per note.
-			let noteChanges = noteResp.changes;
-			if (fields === "meta") {
-				const needBodies = noteChanges.filter(
-					(c) => !c.deleted && c.content === undefined && this.changeNeedsBody(c),
-				).length;
-				if (needBodies > 50) {
-					devLog().log(
-						"pull",
-						`meta delta needs ${needBodies} bodies — refetching full pages`,
-					);
-					noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes;
-				}
+			// Self-heal a vault swap (e.g. OAuth re-login) BEFORE reading the
+			// cursor: the cursor is per-vault, and a stale cursor from the prior
+			// vault would query the new vault for seq > <foreign seq> and silently
+			// return nothing (the reconnect-catch-up bug). invalidateIfVaultChanged
+			// clears syncState + the cursor on a vault change so we re-bootstrap.
+			// pull() is the only sync entry the reconnect catch-up uses, so the
+			// check must live here (not just in fullSync/pullAll).
+			//
+			// GATED so it only runs when it would actually act — a genuine vault
+			// mismatch with a cursor to invalidate. When the vault is unchanged
+			// (the common case, incl. offline-queue recovery) this is skipped
+			// entirely, so it adds no async tick / timing perturbation to the
+			// hot recovery path.
+			if (
+				this.getSyncCursor() !== null &&
+				this.syncStateVaultId !== null &&
+				this.settings.vaultId != null &&
+				this.syncStateVaultId !== this.settings.vaultId
+			) {
+				await this.invalidateIfVaultChanged();
 			}
-			devLog().log(
-				"pull",
-				`fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-			rlog().info(
-				"pull",
-				`Fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-			let applied = 0;
-			let skipped = 0;
-			let oldestFailedUpdatedAt: string | null = null;
 
-			for (const change of noteChanges) {
-				let resolved: NoteChange | null = null;
+			let applied: number;
+			if (!this.getSyncCursor()) {
+				applied = await this.bootstrap();
+			} else {
 				try {
-					resolved = await this.resolveChangeBody(change);
+					applied = await this.pullViaCursor(this.getSyncCursor() ?? undefined);
 				} catch (e) {
-					// Body-fetch failure is transient (network/5xx) — pin
-					// lastSync at this change so the next pull re-serves it;
-					// advancing past it would drop the change forever.
-					skipped++;
-					if (
-						oldestFailedUpdatedAt === null ||
-						change.updated_at < oldestFailedUpdatedAt
-					) {
-						oldestFailedUpdatedAt = change.updated_at;
+					if (e instanceof HistoryExpiredError) {
+						rlog().warn("pull", "HISTORY_EXPIRED — re-bootstrapping");
+						this.setSyncCursor(null);
+						await this.saveData({ syncCursor: null });
+						applied = await this.bootstrap();
+					} else {
+						throw e;
 					}
-					const msg = errMsg(e);
-					devLog().log("error", `body fetch failed: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Body fetch failed (will retry next pull): ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-					continue;
-				}
-				try {
-					if (resolved && (await this.applyChange(resolved))) applied++;
-				} catch (e) {
-					// Local apply failure (e.g. illegal filename) is permanent —
-					// don't pin lastSync, or one bad file re-serves the whole
-					// window every poll. Legacy skip semantics.
-					skipped++;
-					const msg = errMsg(e);
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error(`Engram Sync: skipping note ${change.path}: ${msg}`);
-					devLog().log("error", `apply skipped: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Skipped note: ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
 				}
 			}
 
-			for (const change of attachResp.changes) {
-				try {
-					if (await this.applyAttachmentChange(change)) applied++;
-				} catch (e) {
-					skipped++;
-					const msg = errMsg(e);
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error(`Engram Sync: skipping attachment ${change.path}: ${msg}`);
-					devLog().log("error", `apply skipped: ${change.path} — ${msg}`);
-					rlog().error(
-						"pull",
-						`Skipped attachment: ${change.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-				}
+			// Empty-folder markers are not in the cursor feed — sync them via their
+			// own endpoint. Non-fatal: a folder-sync failure must not fail the pull.
+			try {
+				await this.syncExplicitFolders();
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
 			}
 
-			// Pull explicit empty-folder markers and materialize on disk. Runs
-			// after note/attachment apply so empty-folder ensures don't race
-			// with note creates that may also produce the same folder. Failures
-			// don't abort the pull — folder sync is eventually consistent.
-			await this.syncExplicitFolders();
-
-			// Use the later server_time — but never advance past the oldest
-			// failed change (the inclusive since filter re-serves it next pull).
-			const serverTime =
-				noteResp.server_time > attachResp.server_time
-					? noteResp.server_time
-					: attachResp.server_time;
-			this.lastSync =
-				oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime
-					? oldestFailedUpdatedAt
-					: serverTime;
-			await this.saveData({ lastSync: this.lastSync });
-
-			devLog().log(
-				"pull",
-				`done — applied ${applied}, skipped ${skipped}, lastSync=${this.lastSync}`,
-			);
-			rlog().info("pull", `Pull done — applied ${applied}, skipped ${skipped}`);
 			return applied;
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: pull failed", e);
-			devLog().log("error", `pull failed: ${errMsg(e)}`);
 			rlog().error(
 				"pull",
 				`Pull failed: ${errMsg(e)}`,
@@ -1832,6 +1798,164 @@ export class SyncEngine {
 				console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
 			}
 		}
+	}
+
+	/** Apply one merged cursor-feed entry by dispatching to the existing note /
+	 *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
+	 *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
+	async applySyncChange(c: SyncChange): Promise<boolean> {
+		if (c.type === "attachment") {
+			const ac: AttachmentChange = {
+				path: c.path,
+				mime_type: c.mime_type,
+				size_bytes: c.size_bytes,
+				mtime: c.mtime,
+				updated_at: c.updated_at,
+				deleted: c.deleted,
+			};
+			return this.applyAttachmentChange(ac);
+		}
+		const nc: NoteChange = {
+			path: c.path,
+			title: c.title,
+			content: c.content,
+			content_hash: c.content_hash,
+			folder: c.folder,
+			tags: c.tags,
+			mtime: c.mtime,
+			updated_at: c.updated_at,
+			deleted: c.deleted,
+			version: c.version,
+		};
+		return this.applyChange(nc);
+	}
+
+	/** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
+	 *  (delete server-deleted, push offline-created — disambiguated by the
+	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
+	 *  (3-way merging diverged files via applyChange). Returns count applied. */
+	private async bootstrap(): Promise<number> {
+		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
+		const manifest = await this.api.getManifest();
+
+		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
+		if (!manifest) return this.pullViaCursor(undefined);
+
+		const serverPaths = new Set<string>([
+			...manifest.notes.map((n) => normalizePath(n.path)),
+			...manifest.attachments.map((a) => normalizePath(a.path)),
+		]);
+
+		// §F structural pass over local syncable files.
+		const toPush: TFile[] = [];
+		for (const file of this.app.vault.getFiles()) {
+			if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
+			const np = normalizePath(file.path);
+			if (serverPaths.has(np)) continue; // in manifest → content handled by the pull below
+
+			if (this.syncState.has(np)) {
+				// In baseline but gone from the server → server-deleted while away.
+				// Trash locally so the post-pull push step can't resurrect it. A
+				// trash failure (locked file / OS error) must NOT abort the whole
+				// bootstrap, and must NOT drop the baseline entry — leaving it as
+				// "in baseline" keeps it classified as server-deleted on the next
+				// run (clearing it would reclassify the file as offline-created and
+				// resurrect it on the next push). Log + carry on.
+				try {
+					await this.app.fileManager.trashFile(file);
+					this.syncState.delete(np);
+					this.baseStore?.delete(np);
+					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
+				} catch (e) {
+					rlog().error(
+						"pull",
+						`Bootstrap trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+				}
+			} else {
+				// Never synced → created locally offline → push after content reconcile.
+				toPush.push(file);
+			}
+		}
+
+		// Content delivery: genesis pull (full content + tombstones, ordered).
+		const applied = await this.pullViaCursor(undefined);
+
+		// §E: an empty vault's genesis pull delivers no entries, so the cursor is
+		// still null. Seed it from the manifest's change_seq so the NEXT pull
+		// resumes incrementally (seq > change_seq) instead of re-bootstrapping —
+		// critical for the reconnect catch-up, which must have a position to
+		// resume from after a vault swap clears the cursor.
+		if (this.getSyncCursor() === null && typeof manifest.change_seq === "number") {
+			this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID));
+			await this.saveData({ syncCursor: this.getSyncCursor() });
+		}
+
+		// Push offline-created files now that deletes are reconciled.
+		for (const file of toPush) {
+			try {
+				await this.pushFile(file, true);
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Bootstrap push failed: ${file.path} — ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
+			}
+		}
+
+		return applied;
+	}
+
+	/** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
+	 *  server returns from seq 0). Applies each entry, persists the cursor after
+	 *  every page (at-least-once; applies are idempotent), returns count applied.
+	 *  Throws HistoryExpiredError on 410. */
+	private async pullViaCursor(startCursor: string | undefined): Promise<number> {
+		let cursor = startCursor;
+		let applied = 0;
+
+		for (let page = 0; page < 100_000; page++) {
+			let resp: SyncChangesResponse;
+			try {
+				resp = await this.api.getSyncChanges(cursor, 500);
+			} catch (e) {
+				if ((e as { status?: number }).status === 410) throw new HistoryExpiredError();
+				throw e;
+			}
+
+			for (const c of resp.changes) {
+				try {
+					if (await this.applySyncChange(c)) applied++;
+				} catch (e) {
+					// Permanent local apply failure (e.g. illegal filename): log + skip,
+					// matching legacy pull semantics — one bad entry must not wedge the feed.
+					const msg = errMsg(e);
+					rlog().error(
+						"pull",
+						`Skipped ${c.type} ${c.path} — ${msg}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+				}
+			}
+
+			// Advance the persisted cursor to this page's tip. Mid-stream the server
+			// hands back an opaque next_cursor; on the final page it's null, so encode
+			// the head from the last entry (keeps the watermark moving for PR D GC).
+			const last = resp.changes[resp.changes.length - 1];
+			if (resp.next_cursor) {
+				this.setSyncCursor(resp.next_cursor);
+			} else if (last) {
+				this.setSyncCursor(encodeCursor(last.seq, last.id));
+			}
+			await this.saveData({ syncCursor: this.getSyncCursor() });
+
+			if (!resp.has_more || !resp.next_cursor) break;
+			cursor = resp.next_cursor;
+		}
+
+		return applied;
 	}
 
 	/** Apply a single remote change to the vault, with conflict detection.

@@ -893,11 +893,16 @@ var EngramApi = class _EngramApi {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
     this.vaultId = null;
+    this.deviceId = null;
     this.authProvider = null;
     this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl);
   }
   setVaultId(id) {
     this.vaultId = id;
+  }
+  /** Set the per-install device id sent as X-Device-Id on cursor pulls. */
+  setDeviceId(id) {
+    this.deviceId = id && id.length > 0 ? id : null;
   }
   setAuthProvider(provider) {
     this.authProvider = provider;
@@ -955,7 +960,7 @@ var EngramApi = class _EngramApi {
       Authorization: `Bearer ${await this.getAuthToken()}`,
       ...extraHeaders
     };
-    return this.vaultId && (headers["X-Vault-ID"] = this.vaultId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
+    return this.vaultId && (headers["X-Vault-ID"] = this.vaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
       url: `${this.baseUrl}${path}`,
       method,
       headers,
@@ -1031,6 +1036,15 @@ var EngramApi = class _EngramApi {
   async getChanges(since, opts) {
     let params = new URLSearchParams({ since });
     return (opts == null ? void 0 : opts.limit) !== void 0 && params.set("limit", String(opts.limit)), opts != null && opts.cursor && params.set("cursor", opts.cursor), opts != null && opts.fields && params.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params.toString()}`)).json;
+  }
+  /** Pull the merged ordered feed (notes ∪ attachments interleaved by
+   *  (seq,id), tombstones included) from GET /sync/changes (PR B2). Pass the
+   *  opaque `cursor` from the prior page; omit it for a genesis pull. */
+  async getSyncChanges(cursor, limit) {
+    let params = new URLSearchParams();
+    cursor && params.set("cursor", cursor), limit !== void 0 && params.set("limit", String(limit));
+    let qs = params.toString();
+    return (await this.request("GET", `/sync/changes${qs ? `?${qs}` : ""}`)).json;
   }
   /** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).
    *  Sends a fresh idempotency key per call — the server replays the cached
@@ -3802,6 +3816,12 @@ var EngramSyncSettingTab = class extends import_obsidian14.PluginSettingTab {
 // src/sync.ts
 var import_obsidian15 = require("obsidian");
 
+// src/cursor.ts
+var MAX_CURSOR_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+function encodeCursor(seq, id) {
+  return btoa(`${seq}:${id}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
 // src/dev-log.ts
 var noopLog = {
   log(_cat, _msg) {
@@ -3977,6 +3997,11 @@ function threeWayMerge(base, local, remote) {
 function isHttpStatus(e, status) {
   return typeof e == "object" && e !== null && e.status === status;
 }
+var HistoryExpiredError = class extends Error {
+  constructor() {
+    super("history_expired"), this.name = "HistoryExpiredError";
+  }
+};
 function countFolders(paths) {
   let set = /* @__PURE__ */ new Set();
   for (let p of paths) {
@@ -4041,6 +4066,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.recentlyPushed = /* @__PURE__ */ new Map();
     this.pulling = !1;
     this.lastSync = "";
+    /** Opaque cursor marking the plugin's durably-applied position in the
+     *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
+     *  untouched for rollback). `null` = no cursor yet (genesis pull). Persisted
+     *  under the `syncCursor` key via the saveData callback; written/read by the
+     *  cursor-pull flow in later B2 tasks. */
+    this.syncCursor = null;
     this.lastError = "";
     this.offline = !1;
     this.healthCheckTimer = null;
@@ -4156,12 +4187,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   getLastSync() {
     return this.lastSync;
   }
+  getSyncCursor() {
+    return this.syncCursor;
+  }
+  setSyncCursor(cursor) {
+    this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
+  }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "" }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState cleared");
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -4189,7 +4226,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), devLog().log(
         "lifecycle",
         `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
-      ), this.syncState.clear(), this.lastSync = "", this.syncStateVaultId = current, await this.saveData({ lastSync: "" }));
+      ), this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = current, await this.saveData({ lastSync: "", syncCursor: null }));
     }
   }
   /** Export sync state for persistence across sessions. */
@@ -4746,12 +4783,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return { changes: all, server_time: serverTime };
   }
-  /** True when a meta change can't be hash-skipped (body would be fetched). */
-  changeNeedsBody(change) {
-    if (change.content_hash === void 0) return !0;
-    let normalized = (0, import_obsidian15.normalizePath)(change.path), stored = this.syncState.get(normalized);
-    return !(this.app.vault.getFileByPath(normalized) !== null && (stored == null ? void 0 : stored.serverHash) === change.content_hash);
-  }
   /** Resolve a (possibly meta-only) change to one that carries content.
    *  Returns null when the change needs no work: the server hash matches the
    *  stored serverHash AND the local file still exists — only the version is
@@ -4777,80 +4808,55 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       version: (_c = note.version) != null ? _c : change.version
     };
   }
+  /** Pull remote changes and apply to the vault via the ordered cursor feed.
+   *
+   *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
+   *  files against the server, then a genesis cursor pull delivers content).
+   *  A persisted cursor → resume the ordered feed from that position. A 410
+   *  (history compacted past our cursor; PR D) surfaces as HistoryExpiredError
+   *  → drop the cursor and re-bootstrap.
+   *
+   *  NOTE: `lastSync` is intentionally left untouched here. It is no longer the
+   *  pull watermark (the cursor is), but `fullSync` still snapshots it as the
+   *  pre-pull push boundary and it's retained for rollback to the legacy feed.
+   *
+   *  Explicit empty-folder markers ride a SEPARATE endpoint (not the cursor
+   *  feed), so `syncExplicitFolders()` is still called post-apply — it both
+   *  materializes server-marked empty folders and hydrates the
+   *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
+   *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
   async pull() {
+    var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
     if (this.pulling) return 0;
-    let isFirstSync = !this.lastSync;
-    isFirstSync && (this.lastSync = "1970-01-01T00:00:00Z"), this.pulling = !0, this.lastError = "", this.emitStatus(), devLog().log("pull", `start since=${this.lastSync}`), rlog().info("pull", `Pull started since=${this.lastSync}`);
+    this.pulling = !0, this.lastError = "", this.emitStatus(), rlog().info("pull", `Pull started cursor=${(_a = this.getSyncCursor()) != null ? _a : "(bootstrap)"}`);
     try {
-      let fields = isFirstSync ? void 0 : "meta", [noteResp, attachResp] = await Promise.all([
-        this.fetchAllNoteChanges(this.lastSync, fields),
-        this.api.getAttachmentChanges(this.lastSync)
-      ]), noteChanges = noteResp.changes;
-      if (fields === "meta") {
-        let needBodies = noteChanges.filter(
-          (c) => !c.deleted && c.content === void 0 && this.changeNeedsBody(c)
-        ).length;
-        needBodies > 50 && (devLog().log(
+      this.getSyncCursor() !== null && this.syncStateVaultId !== null && this.settings.vaultId != null && this.syncStateVaultId !== this.settings.vaultId && await this.invalidateIfVaultChanged();
+      let applied;
+      if (!this.getSyncCursor())
+        applied = await this.bootstrap();
+      else
+        try {
+          applied = await this.pullViaCursor((_b = this.getSyncCursor()) != null ? _b : void 0);
+        } catch (e) {
+          if (e instanceof HistoryExpiredError)
+            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap();
+          else
+            throw e;
+        }
+      try {
+        await this.syncExplicitFolders();
+      } catch (e) {
+        rlog().error(
           "pull",
-          `meta delta needs ${needBodies} bodies \u2014 refetching full pages`
-        ), noteChanges = (await this.fetchAllNoteChanges(this.lastSync)).changes);
+          `Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        );
       }
-      devLog().log(
-        "pull",
-        `fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
-      ), rlog().info(
-        "pull",
-        `Fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
-      );
-      let applied = 0, skipped = 0, oldestFailedUpdatedAt = null;
-      for (let change of noteChanges) {
-        let resolved = null;
-        try {
-          resolved = await this.resolveChangeBody(change);
-        } catch (e) {
-          skipped++, (oldestFailedUpdatedAt === null || change.updated_at < oldestFailedUpdatedAt) && (oldestFailedUpdatedAt = change.updated_at);
-          let msg = errMsg(e);
-          devLog().log("error", `body fetch failed: ${change.path} \u2014 ${msg}`), rlog().error(
-            "pull",
-            `Body fetch failed (will retry next pull): ${change.path} \u2014 ${msg}`,
-            e instanceof Error ? e.stack : void 0
-          );
-          continue;
-        }
-        try {
-          resolved && await this.applyChange(resolved) && applied++;
-        } catch (e) {
-          skipped++;
-          let msg = errMsg(e);
-          console.error(`Engram Sync: skipping note ${change.path}: ${msg}`), devLog().log("error", `apply skipped: ${change.path} \u2014 ${msg}`), rlog().error(
-            "pull",
-            `Skipped note: ${change.path} \u2014 ${msg}`,
-            e instanceof Error ? e.stack : void 0
-          );
-        }
-      }
-      for (let change of attachResp.changes)
-        try {
-          await this.applyAttachmentChange(change) && applied++;
-        } catch (e) {
-          skipped++;
-          let msg = errMsg(e);
-          console.error(`Engram Sync: skipping attachment ${change.path}: ${msg}`), devLog().log("error", `apply skipped: ${change.path} \u2014 ${msg}`), rlog().error(
-            "pull",
-            `Skipped attachment: ${change.path} \u2014 ${msg}`,
-            e instanceof Error ? e.stack : void 0
-          );
-        }
-      await this.syncExplicitFolders();
-      let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
-      return this.lastSync = oldestFailedUpdatedAt !== null && oldestFailedUpdatedAt < serverTime ? oldestFailedUpdatedAt : serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
-        "pull",
-        `done \u2014 applied ${applied}, skipped ${skipped}, lastSync=${this.lastSync}`
-      ), rlog().info("pull", `Pull done \u2014 applied ${applied}, skipped ${skipped}`), applied;
+      return applied;
     } catch (e) {
-      return console.error("Engram Sync: pull failed", e), devLog().log("error", `pull failed: ${errMsg(e)}`), rlog().error(
+      return console.error("Engram Sync: pull failed", e), rlog().error(
         "pull",
         `Pull failed: ${errMsg(e)}`,
         e instanceof Error ? e.stack : void 0
@@ -5124,6 +5130,109 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
       }
+  }
+  /** Apply one merged cursor-feed entry by dispatching to the existing note /
+   *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
+   *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
+  async applySyncChange(c) {
+    if (c.type === "attachment") {
+      let ac = {
+        path: c.path,
+        mime_type: c.mime_type,
+        size_bytes: c.size_bytes,
+        mtime: c.mtime,
+        updated_at: c.updated_at,
+        deleted: c.deleted
+      };
+      return this.applyAttachmentChange(ac);
+    }
+    let nc = {
+      path: c.path,
+      title: c.title,
+      content: c.content,
+      content_hash: c.content_hash,
+      folder: c.folder,
+      tags: c.tags,
+      mtime: c.mtime,
+      updated_at: c.updated_at,
+      deleted: c.deleted,
+      version: c.version
+    };
+    return this.applyChange(nc);
+  }
+  /** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
+   *  (delete server-deleted, push offline-created — disambiguated by the
+   *  syncState baseline), then a genesis cursor pull delivers/refreshes content
+   *  (3-way merging diverged files via applyChange). Returns count applied. */
+  async bootstrap() {
+    var _a;
+    rlog().info("pull", "Bootstrap \u2014 manifest reconcile + genesis cursor pull");
+    let manifest = await this.api.getManifest();
+    if (!manifest) return this.pullViaCursor(void 0);
+    let serverPaths = /* @__PURE__ */ new Set([
+      ...manifest.notes.map((n) => (0, import_obsidian15.normalizePath)(n.path)),
+      ...manifest.attachments.map((a) => (0, import_obsidian15.normalizePath)(a.path))
+    ]), toPush = [];
+    for (let file of this.app.vault.getFiles()) {
+      if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
+      let np = (0, import_obsidian15.normalizePath)(file.path);
+      if (!serverPaths.has(np))
+        if (this.syncState.has(np))
+          try {
+            await this.app.fileManager.trashFile(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Bootstrap: server-deleted \u2192 trashed ${file.path}`);
+          } catch (e) {
+            rlog().error(
+              "pull",
+              `Bootstrap trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
+              e instanceof Error ? e.stack : void 0
+            );
+          }
+        else
+          toPush.push(file);
+    }
+    let applied = await this.pullViaCursor(void 0);
+    this.getSyncCursor() === null && typeof manifest.change_seq == "number" && (this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID)), await this.saveData({ syncCursor: this.getSyncCursor() }));
+    for (let file of toPush)
+      try {
+        await this.pushFile(file, !0);
+      } catch (e) {
+        rlog().error(
+          "pull",
+          `Bootstrap push failed: ${file.path} \u2014 ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        );
+      }
+    return applied;
+  }
+  /** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
+   *  server returns from seq 0). Applies each entry, persists the cursor after
+   *  every page (at-least-once; applies are idempotent), returns count applied.
+   *  Throws HistoryExpiredError on 410. */
+  async pullViaCursor(startCursor) {
+    let cursor = startCursor, applied = 0;
+    for (let page = 0; page < 1e5; page++) {
+      let resp;
+      try {
+        resp = await this.api.getSyncChanges(cursor, 500);
+      } catch (e) {
+        throw e.status === 410 ? new HistoryExpiredError() : e;
+      }
+      for (let c of resp.changes)
+        try {
+          await this.applySyncChange(c) && applied++;
+        } catch (e) {
+          let msg = errMsg(e);
+          rlog().error(
+            "pull",
+            `Skipped ${c.type} ${c.path} \u2014 ${msg}`,
+            e instanceof Error ? e.stack : void 0
+          );
+        }
+      let last = resp.changes[resp.changes.length - 1];
+      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last && this.setSyncCursor(encodeCursor(last.seq, last.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), !resp.has_more || !resp.next_cursor) break;
+      cursor = resp.next_cursor;
+    }
+    return applied;
   }
   /** Apply a single remote change to the vault, with conflict detection.
    *  Returns true when a file was actually created, modified, or trashed.
@@ -6225,6 +6334,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     this.authProvider = null;
     this.syncEngine = null;
     this.syncLog = new SyncLog();
+    /** Per-install device id sent as X-Device-Id so the backend attributes its
+     *  sync watermark per device. Random UUID minted on first load, persisted
+     *  top-level in PluginData (device-local; NOT a user-facing setting). A
+     *  reinstall/reset mints a new id → one clean re-bootstrap. */
+    this.deviceId = null;
     this.syncInterval = null;
     this.noteStream = null;
     this.statusBarEl = null;
@@ -6247,7 +6361,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
   }
   async onload() {
     var _a;
-    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
+    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
     let remoteLogger = initRemoteLog();
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
@@ -6257,7 +6371,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian17.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      await this.savePluginData(data.lastSync);
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
@@ -6272,7 +6386,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
     let saved = await this.loadData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -6429,11 +6543,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog();
   }
   async loadSettings() {
-    var _a;
+    var _a, _b;
     let data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null;
-    let migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
-    migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, await this.saveData({ ...data, settings: this.settings })), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), await this.saveData({ ...data, settings: this.settings }));
+    let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
+    migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.saveData({ ...data, settings: this.settings, deviceId: this.deviceId });
   }
   async saveSettings() {
     this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
@@ -6480,9 +6594,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     }
   }
   async savePluginData(lastSync, offlineQueue) {
+    var _a, _b;
     await this.saveData({
       settings: this.settings,
       lastSync,
+      // Top-level, device-local; saveData() overwrites data.json wholesale,
+      // so every field must be re-listed here or it's wiped on the next save.
+      deviceId: (_a = this.deviceId) != null ? _a : void 0,
+      // Top-level cursor; like deviceId it must be re-listed here or the
+      // next wholesale saveData() wipes it. null → omit (cursor cleared).
+      syncCursor: (_b = this.syncEngine.getSyncCursor()) != null ? _b : void 0,
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       syncState: this.syncEngine.exportSyncState(),
       syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
