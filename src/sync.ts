@@ -1336,7 +1336,20 @@ export class SyncEngine {
 			// clears syncState + the cursor on a vault change so we re-bootstrap.
 			// pull() is the only sync entry the reconnect catch-up uses, so the
 			// check must live here (not just in fullSync/pullAll).
-			await this.invalidateIfVaultChanged();
+			//
+			// GATED so it only runs when it would actually act — a genuine vault
+			// mismatch with a cursor to invalidate. When the vault is unchanged
+			// (the common case, incl. offline-queue recovery) this is skipped
+			// entirely, so it adds no async tick / timing perturbation to the
+			// hot recovery path.
+			if (
+				this.getSyncCursor() !== null &&
+				this.syncStateVaultId !== null &&
+				this.settings.vaultId != null &&
+				this.syncStateVaultId !== this.settings.vaultId
+			) {
+				await this.invalidateIfVaultChanged();
+			}
 
 			let applied: number;
 			if (!this.getSyncCursor()) {
