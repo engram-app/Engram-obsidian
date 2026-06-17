@@ -1641,6 +1641,8 @@ export class SyncEngine {
 			if (existing) {
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
+				this.syncState.delete(normalized);
+				this.baseStore?.delete(normalized);
 			}
 			return;
 		}

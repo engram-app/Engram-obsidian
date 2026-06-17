@@ -2170,6 +2170,61 @@ describe("SyncEngine WebSocket with kind routing", () => {
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
+
+	test("WebSocket delete with kind=attachment clears syncState for that path", async () => {
+		// Regression: socket-driven delete did not clear syncState, leaving a
+		// stale FNV-1a hash that could wrongly echo-suppress a future push to
+		// the same path. Mirrors the poll-delete convention in applyAttachmentChange.
+		const engine = createEngine();
+		const existingFile = new TFile("Assets/move-src.png");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+
+		// Pre-populate syncState as if the file was previously synced
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(
+			"Assets/move-src.png",
+			{ hash: fnv1a("fake-binary-hash") },
+		);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Assets/move-src.png",
+			timestamp: 1709345678,
+			kind: "attachment",
+		});
+
+		expect(
+			(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.has(
+				"Assets/move-src.png",
+			),
+		).toBe(false);
+	});
+
+	test("WebSocket delete (note, no kind) clears syncState for that path", async () => {
+		// Same regression for the note branch — delete handler is kind-blind so
+		// both notes and attachments were affected. Mirrors the poll-delete
+		// convention in applyChange (lines 1762–1763 in sync.ts).
+		const engine = createEngine();
+		const existingFile = new TFile("Notes/moved.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+
+		// Pre-populate syncState as if the note was previously synced
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(
+			"Notes/moved.md",
+			{ hash: fnv1a("old note content") },
+		);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/moved.md",
+			timestamp: 1709345678,
+		});
+
+		expect(
+			(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.has(
+				"Notes/moved.md",
+			),
+		).toBe(false);
+	});
 });
 
 describe("SyncEngine auth validation", () => {
