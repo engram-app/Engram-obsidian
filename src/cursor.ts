@@ -3,8 +3,5 @@
  *  Used only for the final-page head cursor — mid-stream cursors are the
  *  server-issued opaque next_cursor, passed through untouched. */
 export function encodeCursor(seq: number, id: string): string {
-  return btoa(`${seq}:${id}`)
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
+	return btoa(`${seq}:${id}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
