@@ -4838,6 +4838,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return this.pullRequested = !0, 0;
     this.pulling = !0, this.lastError = "", this.emitStatus(), rlog().info("pull", `Pull started cursor=${(_a = this.getSyncCursor()) != null ? _a : "(bootstrap)"}`);
     try {
+      await this.invalidateIfVaultChanged();
       let applied;
       if (!this.getSyncCursor())
         applied = await this.bootstrap();

@@ -1329,6 +1329,15 @@ export class SyncEngine {
 		this.emitStatus();
 		rlog().info("pull", `Pull started cursor=${this.getSyncCursor() ?? "(bootstrap)"}`);
 		try {
+			// Self-heal a vault swap (e.g. OAuth re-login) BEFORE reading the
+			// cursor: the cursor is per-vault, and a stale cursor from the prior
+			// vault would query the new vault for seq > <foreign seq> and silently
+			// return nothing (the reconnect-catch-up bug). invalidateIfVaultChanged
+			// clears syncState + the cursor on a vault change so we re-bootstrap.
+			// pull() is the only sync entry the reconnect catch-up uses, so the
+			// check must live here (not just in fullSync/pullAll).
+			await this.invalidateIfVaultChanged();
+
 			let applied: number;
 			if (!this.getSyncCursor()) {
 				applied = await this.bootstrap();

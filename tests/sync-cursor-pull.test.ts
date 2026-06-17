@@ -796,4 +796,23 @@ describe("SyncEngine.pull (cursor orchestration)", () => {
 
 		expect(calls).toBe(2); // the coalesced trigger ran a second pull, not dropped
 	});
+
+	test("pull() self-heals a vault swap: stale cursor cleared → bootstrap (not a stale-cursor pull)", async () => {
+		const engine = createEngine();
+		// Synced under vault-A (cursor belongs to A); the active vault is now B
+		// (e.g. an OAuth re-login). A reconnect catch-up calls pull() directly, so
+		// the swap MUST be detected here or the stale A-cursor queries B for
+		// seq > <A's seq> and silently returns nothing.
+		engine.setSyncStateVaultId("vault-A");
+		engine.setSyncCursor("STALE-CURSOR-FROM-A");
+		(engine as unknown as { settings: { vaultId: string } }).settings.vaultId = "vault-B";
+		const bootstrap = spyOn(engine as any, "bootstrap").mockResolvedValue(2);
+		const pullViaCursor = spyOn(engine as any, "pullViaCursor").mockResolvedValue(0);
+
+		await engine.pull();
+
+		expect(engine.getSyncCursor()).toBeNull(); // stale cursor invalidated
+		expect(bootstrap).toHaveBeenCalledTimes(1);
+		expect(pullViaCursor).not.toHaveBeenCalled();
+	});
 });
