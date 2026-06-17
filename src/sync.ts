@@ -4,6 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
+import { encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -33,8 +34,9 @@ import type {
 	NoteStreamEvent,
 	QueueEntry,
 	ReconcileResult,
-	SyncIssueCategory,
 	SyncChange,
+	SyncChangesResponse,
+	SyncIssueCategory,
 	SyncLogEntry,
 	SyncPlan,
 	SyncProgress,
@@ -45,6 +47,16 @@ import type {
  *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
 function isHttpStatus(e: unknown, status: number): boolean {
 	return typeof e === "object" && e !== null && (e as { status?: number }).status === status;
+}
+
+/** Thrown when the backend returns 410 HISTORY_EXPIRED — the cursor is below
+ *  the retention floor (post-compaction). The caller drops the cursor and
+ *  re-bootstraps. Dormant until backend PR D turns on compaction. */
+export class HistoryExpiredError extends Error {
+	constructor() {
+		super("history_expired");
+		this.name = "HistoryExpiredError";
+	}
 }
 
 /** Count distinct parent folders across the given file paths. Files at the
@@ -1886,6 +1898,56 @@ export class SyncEngine {
 			version: c.version,
 		};
 		return this.applyChange(nc);
+	}
+
+	/** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
+	 *  server returns from seq 0). Applies each entry, persists the cursor after
+	 *  every page (at-least-once; applies are idempotent), returns count applied.
+	 *  Throws HistoryExpiredError on 410. */
+	private async pullViaCursor(startCursor: string | undefined): Promise<number> {
+		let cursor = startCursor;
+		let applied = 0;
+
+		for (let page = 0; page < 100_000; page++) {
+			let resp: SyncChangesResponse;
+			try {
+				resp = await this.api.getSyncChanges(cursor, 500);
+			} catch (e) {
+				if ((e as { status?: number }).status === 410) throw new HistoryExpiredError();
+				throw e;
+			}
+
+			for (const c of resp.changes) {
+				try {
+					if (await this.applySyncChange(c)) applied++;
+				} catch (e) {
+					// Permanent local apply failure (e.g. illegal filename): log + skip,
+					// matching legacy pull semantics — one bad entry must not wedge the feed.
+					const msg = errMsg(e);
+					rlog().error(
+						"pull",
+						`Skipped ${c.type} ${c.path} — ${msg}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+				}
+			}
+
+			// Advance the persisted cursor to this page's tip. Mid-stream the server
+			// hands back an opaque next_cursor; on the final page it's null, so encode
+			// the head from the last entry (keeps the watermark moving for PR D GC).
+			const last = resp.changes[resp.changes.length - 1];
+			if (resp.next_cursor) {
+				this.setSyncCursor(resp.next_cursor);
+			} else if (last) {
+				this.setSyncCursor(encodeCursor(last.seq, last.id));
+			}
+			await this.saveData({ syncCursor: this.getSyncCursor() });
+
+			if (!resp.has_more || !resp.next_cursor) break;
+			cursor = resp.next_cursor;
+		}
+
+		return applied;
 	}
 
 	/** Apply a single remote change to the vault, with conflict detection.

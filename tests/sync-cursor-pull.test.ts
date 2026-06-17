@@ -9,8 +9,9 @@
 import { type Mock, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
-import { SyncEngine } from "../src/sync";
-import { DEFAULT_SETTINGS } from "../src/types";
+import { encodeCursor } from "../src/cursor";
+import { HistoryExpiredError, SyncEngine } from "../src/sync";
+import { DEFAULT_SETTINGS, type SyncChange } from "../src/types";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
@@ -180,7 +181,9 @@ describe("SyncEngine syncCursor state", () => {
 		fileManager: {},
 	} as any;
 	const mockApi = {} as unknown as EngramApi;
-	let saveDataSpy: Mock<(data: { lastSync?: string; syncCursor?: string | null }) => Promise<void>>;
+	let saveDataSpy: Mock<
+		(data: { lastSync?: string; syncCursor?: string | null }) => Promise<void>
+	>;
 
 	function createEngine(): SyncEngine {
 		return new SyncEngine(
@@ -223,9 +226,7 @@ describe("SyncEngine syncCursor state", () => {
 		// Cursor points into the OLD vault's feed — must be dropped on switch.
 		expect(engine.getSyncCursor()).toBeNull();
 		// And the clear must be persisted (saveData carries syncCursor:null).
-		expect(saveDataSpy).toHaveBeenLastCalledWith(
-			expect.objectContaining({ syncCursor: null }),
-		);
+		expect(saveDataSpy).toHaveBeenLastCalledWith(expect.objectContaining({ syncCursor: null }));
 	});
 });
 
@@ -314,5 +315,109 @@ describe("SyncEngine applySyncChange dispatch", () => {
 		expect((arg as any).type).toBeUndefined();
 		expect((arg as any).seq).toBeUndefined();
 		expect((arg as any).id).toBeUndefined();
+	});
+});
+
+describe("SyncEngine pullViaCursor", () => {
+	// Same minimal harness, but the api stub now carries a getSyncChanges spy so
+	// we can script the paged feed. applySyncChange is spied on the engine.
+	const mockApp = {
+		vault: { getName: () => "Test Vault" },
+		workspace: {},
+		fileManager: {},
+	} as any;
+	let getSyncChanges: Mock<(cursor?: string, limit?: number) => Promise<any>>;
+	let saveDataSpy: Mock<(data: { syncCursor?: string | null }) => Promise<void>>;
+
+	// Tiny factory for a well-formed note feed entry.
+	function noteEntry(seq: number, path: string): SyncChange {
+		const stem = path.replace(/\.md$/, "");
+		return {
+			type: "note",
+			id: `id-${stem}`,
+			seq,
+			path,
+			title: stem,
+			content: `body-${stem}`,
+			content_hash: `h-${stem}`,
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		};
+	}
+
+	function createEngine(): SyncEngine {
+		const api = { getSyncChanges } as unknown as EngramApi;
+		return new SyncEngine(mockApp, api, { ...DEFAULT_SETTINGS, debounceMs: 10 }, saveDataSpy);
+	}
+
+	beforeEach(() => {
+		getSyncChanges = mock();
+		saveDataSpy = mock().mockResolvedValue(undefined);
+	});
+
+	test("drains all pages, advances cursor, and persists the tip", async () => {
+		const p1a = noteEntry(1, "a.md");
+		const p1b = noteEntry(2, "b.md");
+		const p2 = noteEntry(3, "c.md");
+		getSyncChanges
+			.mockResolvedValueOnce({ changes: [p1a, p1b], next_cursor: "C1", has_more: true })
+			.mockResolvedValueOnce({ changes: [p2], next_cursor: null, has_more: false });
+
+		const engine = createEngine();
+		const applySpy = spyOn(engine, "applySyncChange").mockResolvedValue(true);
+
+		const applied = await (engine as any).pullViaCursor(undefined);
+
+		expect(applied).toBe(3);
+		expect(applySpy).toHaveBeenCalledTimes(3);
+		// First call is a genesis pull (no cursor); second resumes from "C1".
+		expect(getSyncChanges).toHaveBeenCalledTimes(2);
+		expect(getSyncChanges.mock.calls[0][0]).toBeUndefined();
+		expect(getSyncChanges.mock.calls[1][0]).toBe("C1");
+		// Final page has next_cursor:null → cursor advanced to the head of the
+		// last entry so the server watermark reaches the feed tip.
+		expect(engine.getSyncCursor()).toBe(encodeCursor(p2.seq, p2.id));
+		// Persisted after every page (2 pages).
+		expect(saveDataSpy).toHaveBeenCalledTimes(2);
+	});
+
+	test("maps a 410 response to HistoryExpiredError", async () => {
+		getSyncChanges.mockRejectedValueOnce({ status: 410 });
+		const engine = createEngine();
+
+		await expect((engine as any).pullViaCursor("CUR")).rejects.toBeInstanceOf(
+			HistoryExpiredError,
+		);
+	});
+
+	test("skips a permanent apply failure without wedging the feed", async () => {
+		const e1 = noteEntry(1, "a.md");
+		const bad = noteEntry(2, "bad.md");
+		const e3 = noteEntry(3, "c.md");
+		getSyncChanges.mockResolvedValueOnce({
+			changes: [e1, bad, e3],
+			next_cursor: null,
+			has_more: false,
+		});
+
+		const engine = createEngine();
+		const applySpy = spyOn(engine, "applySyncChange").mockImplementation(
+			async (c: SyncChange) => {
+				if (c.path === "bad.md") throw new Error("illegal filename");
+				return true;
+			},
+		);
+
+		const applied = await (engine as any).pullViaCursor(undefined);
+
+		// The two good entries applied; the bad one was logged + skipped, not fatal.
+		expect(applied).toBe(2);
+		expect(applySpy).toHaveBeenCalledTimes(3);
+		// Loop still completed and advanced the cursor to the tip.
+		expect(engine.getSyncCursor()).toBe(encodeCursor(e3.seq, e3.id));
 	});
 });
