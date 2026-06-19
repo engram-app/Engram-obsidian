@@ -2118,7 +2118,9 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
       this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
     }), this.filterToggleEl = searchRow.createSpan({
       cls: "engram-search-filter-toggle clickable-icon"
-    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Hybrid search").setDesc("Blend exact keyword matches with meaning-based results. Off = meaning only.").addToggle(
+    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
+      "Rank results by both exact words and semantic meaning. Off uses meaning only."
+    ).addToggle(
       (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
     ), this.folderEl = this.filtersEl.createEl("input", {
       type: "text",
@@ -2141,7 +2143,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
       () => this.collectVaultTags(),
       () => this.selectedTags,
       (tag) => this.addTag(tag)
-    ), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+    ), parent.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
       this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {

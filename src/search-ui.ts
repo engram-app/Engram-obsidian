@@ -94,8 +94,10 @@ export class SearchPanel {
 		//    the search-type toggle and the folder / tag filters.
 		this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" });
 		new Setting(this.filtersEl)
-			.setName("Hybrid search")
-			.setDesc("Blend exact keyword matches with meaning-based results. Off = meaning only.")
+			.setName("Blend keyword + meaning")
+			.setDesc(
+				"Rank results by both exact words and semantic meaning. Off uses meaning only.",
+			)
 			.addToggle((t) =>
 				t
 					.setValue(this.mode === "hybrid")
@@ -131,6 +133,9 @@ export class SearchPanel {
 			(tag) => this.addTag(tag),
 		);
 
+		// Divider between the search/settings chrome and the results. Results butt
+		// flush against it so rows clip exactly at the line as they scroll.
+		parent.createEl("hr", { cls: "engram-search-results-divider" });
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();
 

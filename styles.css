@@ -43,7 +43,17 @@
 	font-style: italic;
 }
 
+/* Divider above the results. No margin; the results region is pulled up to butt
+   against it (cancelling the panel's 8px flex gap at this one seam) so scrolling
+   rows clip exactly at the line. */
+.engram-search-results-divider {
+	margin: 0;
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
 .engram-search-results {
+	margin-top: -8px;
 	max-height: 400px;
 	overflow-y: auto;
 }
