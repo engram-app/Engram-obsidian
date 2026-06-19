@@ -2040,9 +2040,24 @@ var TagInputSuggest = class extends import_obsidian5.AbstractInputSuggest {
 
 // src/search-ui.ts
 var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
-  { mode: "hybrid", label: "Hybrid" },
-  { mode: "semantic", label: "Semantic" },
-  { mode: "keyword", label: "Keyword" }
+  {
+    mode: "hybrid",
+    label: "Hybrid",
+    hint: "Blends meaning + exact words \u2014 best for most searches.",
+    tooltip: "Blends meaning + exact words \u2014 best default"
+  },
+  {
+    mode: "semantic",
+    label: "Semantic",
+    hint: "Finds notes by meaning, even if they don't share your words.",
+    tooltip: "Find by meaning (AI search)"
+  },
+  {
+    mode: "keyword",
+    label: "Keyword",
+    hint: "Matches exact words and phrases. Works offline.",
+    tooltip: "Exact words & phrases \u2014 works offline"
+  }
 ], SearchPanel = class {
   constructor(parent, ctx, opts) {
     this.selectedTags = [];
@@ -2056,12 +2071,14 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
   }
   build(parent) {
     parent.addClass("engram-search-panel"), this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
-    for (let { mode, label } of MODES)
-      this.toggleEl.createEl("button", {
+    for (let { mode, label, tooltip } of MODES) {
+      let btn = this.toggleEl.createEl("button", {
         text: label,
         cls: `engram-search-mode-btn${mode === this.mode ? " is-active" : ""}`
-      }).addEventListener("click", () => this.setMode(mode));
-    this.folderEl = parent.createEl("input", {
+      });
+      btn.setAttribute("aria-label", tooltip), btn.addEventListener("click", () => this.setMode(mode));
+    }
+    this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" }), this.updateHint(), this.folderEl = parent.createEl("input", {
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
@@ -2114,7 +2131,11 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     this.mode = mode, this.toggleEl.querySelectorAll(".engram-search-mode-btn").forEach((b, i) => {
       let m = MODES[i];
       m && m.mode === mode ? b.classList.add("is-active") : b.classList.remove("is-active");
-    }), (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run();
+    }), this.updateHint(), (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run();
+  }
+  updateHint() {
+    let info = MODES.find((m) => m.mode === this.mode);
+    info && this.hintEl.setText(info.hint);
   }
   parseTags() {
     return this.selectedTags.length ? [...this.selectedTags] : void 0;
