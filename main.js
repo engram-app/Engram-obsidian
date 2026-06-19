@@ -2031,7 +2031,6 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
 ], SearchPanel = class {
   constructor(parent, ctx, opts) {
     this.selectedTags = [];
-    this.previewEl = null;
     this.debounceTimer = null;
     this.lastRunQuery = "";
     this.results = [];
@@ -2067,7 +2066,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       type: "text",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
-    }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.opts.withPreview && (this.previewEl = parent.createDiv({ cls: "engram-search-preview" })), this.renderEmpty(), this.scheduleHandler = () => {
+    }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
       this.debounceTimer && window.clearTimeout(this.debounceTimer);
       let delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
       this.debounceTimer = window.setTimeout(() => void this.run(), delay);
@@ -2133,7 +2132,6 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     return [...set].sort((a, b) => a.localeCompare(b));
   }
   async run() {
-    var _a;
     let gen = ++this.runGeneration, query = this.inputEl.value.trim();
     if (!query) {
       this.lastRunQuery = "", this.results = [], this.selectedIndex = -1, this.renderEmpty();
@@ -2150,15 +2148,14 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       outcome.degraded && new import_obsidian6.Notice("Semantic offline \u2014 keyword results only"), this.results = outcome.results, this.selectedIndex = this.results.length ? 0 : -1, this.renderResults(query);
     } catch (e) {
       if (gen !== this.runGeneration) return;
-      console.error("Engram search failed", e), this.resultsEl.empty(), (_a = this.previewEl) == null || _a.empty(), this.resultsEl.createEl("p", {
+      console.error("Engram search failed", e), this.resultsEl.empty(), this.resultsEl.createEl("p", {
         text: "Search failed \u2014 check connection",
         cls: "engram-search-empty"
       });
     }
   }
   renderEmpty() {
-    var _a;
-    this.resultsEl.empty(), (_a = this.previewEl) == null || _a.empty(), this.resultsEl.createEl("p", {
+    this.resultsEl.empty(), this.resultsEl.createEl("p", {
       text: "Type to search your vault",
       cls: "engram-search-empty"
     });
@@ -2170,9 +2167,8 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       seg.hit ? el.createSpan({ text: seg.text, cls: "engram-search-hl" }) : el.appendText(seg.text);
   }
   renderResults(query) {
-    var _a;
     if (this.resultsEl.empty(), !this.results.length) {
-      this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" }), (_a = this.previewEl) == null || _a.empty();
+      this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
       return;
     }
     this.results.forEach((result, i) => {
@@ -2189,42 +2185,24 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       let lastSlash = result.source_path.lastIndexOf("/"), folder = lastSlash > 0 ? result.source_path.slice(0, lastSlash) : "";
       folder && item.createEl("span", { text: folder, cls: "engram-search-result-path" });
       let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
-      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => {
-        this.selectedIndex = i, this.updateSelection(query);
-      }), item.addEventListener("dblclick", () => this.openResult(result));
+      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => this.openResult(result));
     });
-    let selected = this.results[this.selectedIndex];
-    selected && this.previewEl && this.renderPreview(selected, query);
   }
   /**
-   * Move the selection highlight + preview WITHOUT rebuilding the list DOM.
-   * Toggles `is-selected` on the existing item elements (keeps focus / native
+   * Move the selection highlight WITHOUT rebuilding the list DOM. Toggles
+   * `is-selected` on the existing item elements (keeps focus / native
    * behaviour intact and avoids re-attaching every per-item listener).
    */
-  updateSelection(query) {
+  updateSelection() {
     this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
       el.classList.toggle("is-selected", i === this.selectedIndex);
     });
-    let selected = this.results[this.selectedIndex];
-    selected && this.previewEl && this.renderPreview(selected, query);
-  }
-  renderPreview(result, query) {
-    if (!this.previewEl) return;
-    this.previewEl.empty(), result.heading_path && this.previewEl.createEl("h4", {
-      text: result.heading_path,
-      cls: "engram-search-preview-heading"
-    });
-    let text = this.previewEl.createEl("p", { cls: "engram-search-preview-text" });
-    this.highlightInto(text, result, query), this.previewEl.createEl("button", {
-      text: "Open note",
-      cls: "engram-search-preview-open"
-    }).addEventListener("click", () => this.openResult(result));
   }
   moveSelection(delta) {
     this.results.length && (this.selectedIndex = Math.max(
       0,
       Math.min(this.results.length - 1, this.selectedIndex + delta)
-    ), this.updateSelection(this.inputEl.value.trim()));
+    ), this.updateSelection());
   }
   openSelected() {
     let result = this.results[this.selectedIndex];
@@ -2237,6 +2215,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     return last ? `#${last}` : "";
   }
   openResult(result) {
+    var _a, _b;
     if (!result.source_path) {
       new import_obsidian6.Notice("No source path for this result");
       return;
@@ -2246,7 +2225,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       return;
     }
     let linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
-    this.ctx.app.workspace.openLinkText(linktext, "");
+    this.ctx.app.workspace.openLinkText(linktext, ""), (_b = (_a = this.opts).onResultOpened) == null || _b.call(_a);
   }
 };
 
@@ -2263,9 +2242,9 @@ var SearchModal = class extends import_obsidian7.Modal {
       contentEl,
       { api: this.api, app: this.app },
       {
-        withPreview: !1,
         defaultMode: this.defaultMode,
-        onModeChange: this.onModeChange
+        onModeChange: this.onModeChange,
+        onResultOpened: () => this.close()
       }
     ), this.panel.focus();
   }
@@ -2297,7 +2276,6 @@ var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_o
       this.contentEl,
       { api: this.api, app: this.app },
       {
-        withPreview: !0,
         defaultMode: this.defaultMode,
         onModeChange: this.onModeChange
       }
