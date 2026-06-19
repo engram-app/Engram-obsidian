@@ -2330,7 +2330,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
         cls: "engram-search-result-path"
       });
       let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
-      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => this.openResult(result));
+      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => void this.openResult(result));
     });
   }
   /**
@@ -2359,18 +2359,39 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     let last = (_a = headingPath.split(">").pop()) == null ? void 0 : _a.trim();
     return last ? `#${last}` : "";
   }
-  openResult(result) {
+  async openResult(result) {
     var _a, _b;
     if (!result.source_path) {
       new import_obsidian7.Notice("No source path for this result");
       return;
     }
-    if (!this.ctx.app.vault.getFileByPath(result.source_path)) {
+    let file = this.ctx.app.vault.getFileByPath(result.source_path);
+    if (!file) {
       new import_obsidian7.Notice("Note not synced locally");
       return;
     }
-    let linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
-    this.ctx.app.workspace.openLinkText(linktext, ""), (_b = (_a = this.opts).onResultOpened) == null || _b.call(_a);
+    let match = await this.buildMatchState(file);
+    if (match)
+      await this.ctx.app.workspace.getLeaf(!1).openFile(file, { eState: { match } });
+    else {
+      let linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
+      await this.ctx.app.workspace.openLinkText(linktext, "");
+    }
+    (_b = (_a = this.opts).onResultOpened) == null || _b.call(_a);
+  }
+  /** Compute the native `match` ephemeral state (full content + matched ranges)
+   *  for the current query, or null when there's no literal term hit to jump to. */
+  async buildMatchState(file) {
+    let query = this.lastRunQuery.trim();
+    if (!query) return null;
+    let content;
+    try {
+      content = await this.ctx.app.vault.cachedRead(file);
+    } catch (e) {
+      return null;
+    }
+    let res = (0, import_obsidian7.prepareSimpleSearch)(query)(content);
+    return !res || !res.matches.length ? null : { content, matches: res.matches };
   }
 };
 

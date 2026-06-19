@@ -3,7 +3,7 @@
  * Owns input, mode toggle, filters, results list, keyboard nav, highlight,
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
-import { Notice, getAllTags, setIcon } from "obsidian";
+import { Notice, type TFile, getAllTags, prepareSimpleSearch, setIcon } from "obsidian";
 import { FolderInputSuggest } from "./folder-suggest";
 import { type SearchContext, matchStrengths, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
@@ -406,7 +406,7 @@ export class SearchPanel {
 			const snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
 			this.highlightInto(snippetEl, result, query);
 
-			item.addEventListener("click", () => this.openResult(result));
+			item.addEventListener("click", () => void this.openResult(result));
 		});
 	}
 
@@ -432,7 +432,7 @@ export class SearchPanel {
 
 	private openSelected(): void {
 		const result = this.results[this.selectedIndex];
-		if (result) this.openResult(result);
+		if (result) void this.openResult(result);
 	}
 
 	private headingAnchor(headingPath?: string): string {
@@ -441,7 +441,7 @@ export class SearchPanel {
 		return last ? `#${last}` : "";
 	}
 
-	private openResult(result: UnifiedSearchResult): void {
+	private async openResult(result: UnifiedSearchResult): Promise<void> {
 		if (!result.source_path) {
 			new Notice("No source path for this result");
 			return;
@@ -451,8 +451,36 @@ export class SearchPanel {
 			new Notice("Note not synced locally");
 			return;
 		}
-		const linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
-		void this.ctx.app.workspace.openLinkText(linktext, "");
+		// Lift Obsidian's own global-search behaviour: open the note with an
+		// ephemeral `match` state so the editor scrolls to and flash-highlights the
+		// matched text. prepareSimpleSearch returns ranges in the exact SearchMatches
+		// format the `match` state expects, against the same content we hand back.
+		const match = await this.buildMatchState(file);
+		if (match) {
+			await this.ctx.app.workspace.getLeaf(false).openFile(file, { eState: { match } });
+		} else {
+			// No literal term hit (pure semantic-by-meaning): jump to the heading instead.
+			const linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
+			await this.ctx.app.workspace.openLinkText(linktext, "");
+		}
 		this.opts.onResultOpened?.();
+	}
+
+	/** Compute the native `match` ephemeral state (full content + matched ranges)
+	 *  for the current query, or null when there's no literal term hit to jump to. */
+	private async buildMatchState(
+		file: TFile,
+	): Promise<{ content: string; matches: [number, number][] } | null> {
+		const query = this.lastRunQuery.trim();
+		if (!query) return null;
+		let content: string;
+		try {
+			content = await this.ctx.app.vault.cachedRead(file);
+		} catch {
+			return null;
+		}
+		const res = prepareSimpleSearch(query)(content);
+		if (!res || !res.matches.length) return null;
+		return { content, matches: res.matches };
 	}
 }
