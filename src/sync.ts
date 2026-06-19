@@ -148,6 +148,10 @@ export class SyncEngine {
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
 	private pulling = false;
+	/** A pull() requested while one was already in flight. Set by the re-entry
+	 *  guard, drained in pull()'s finally to run exactly one follow-up pull.
+	 *  Without this, a reconnect catch-up that lands mid-pull is lost (#646). */
+	private pullPending = false;
 	private lastSync = "";
 	/** Opaque cursor marking the plugin's durably-applied position in the
 	 *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
@@ -1311,7 +1315,14 @@ export class SyncEngine {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
 		}
-		if (this.pulling) return 0;
+		// Re-entry: a pull is already running. Record the request and bail —
+		// the finally below re-runs one pull once the current one settles, so a
+		// reconnect catch-up that lands mid-pull isn't dropped (#646). Returns 0
+		// immediately; callers (e.g. onStatusChange) don't await the result.
+		if (this.pulling) {
+			this.pullPending = true;
+			return 0;
+		}
 		this.pulling = true;
 		this.lastError = "";
 		this.emitStatus();
@@ -1384,6 +1395,14 @@ export class SyncEngine {
 			this.pulling = false;
 			this.emitStatus();
 			await this.flushPostPullPushes();
+			// Drain a request that arrived mid-pull. One follow-up covers any
+			// number of coalesced requests; if that rerun itself races another
+			// pull(), the flag is set again and we loop once more — bounded,
+			// since it only re-runs when a request actually landed.
+			if (this.pullPending) {
+				this.pullPending = false;
+				void this.pull();
+			}
 		}
 	}
 

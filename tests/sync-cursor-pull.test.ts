@@ -748,24 +748,36 @@ describe("SyncEngine.pull (cursor orchestration)", () => {
 		expect(engine.getStatus().error).toBe("Pull failed: network down");
 	});
 
-	test("re-entry guard: a second pull while one is in flight returns 0", async () => {
+	test("re-entry coalesces: a pull requested while one is in flight re-runs once after it", async () => {
+		// Regression for #646: the reconnect catch-up (onStatusChange → pull())
+		// could land while a prior pull (e.g. a post-OAuth-swap bootstrap) was
+		// still in flight. The old guard dropped it outright (returned 0 and did
+		// nothing), so the missed events were never fetched. Now the in-flight
+		// guard records a pending request and re-runs the pull once the current
+		// one finishes — the catch-up is coalesced, not lost.
 		const engine = createEngine();
-		let release: (n: number) => void = () => {};
+		const resolvers: Array<(n: number) => void> = [];
 		const bootstrap = spyOn(engine as any, "bootstrap").mockImplementation(
-			() =>
-				new Promise<number>((r) => {
-					release = r;
-				}),
+			() => new Promise<number>((r) => resolvers.push(r)),
 		);
 
-		const first = engine.pull(); // enters, sets pulling=true, awaits bootstrap
-		const second = await engine.pull(); // re-entry — must short-circuit
+		const first = engine.pull(); // enters, pulling=true, awaits bootstrap #1
+		const second = await engine.pull(); // re-entry while in flight
 
+		// Still non-blocking for the caller (onStatusChange doesn't await), but
+		// the request is now remembered rather than discarded.
 		expect(second).toBe(0);
 		expect(bootstrap).toHaveBeenCalledTimes(1);
 
-		release(4);
+		resolvers[0](4); // finish the first pull
 		expect(await first).toBe(4);
+
+		// The coalesced rerun fires after the first completes — bootstrap runs
+		// again, proving the catch-up was not lost.
+		await new Promise((r) => setTimeout(r, 0));
+		expect(bootstrap).toHaveBeenCalledTimes(2);
+
+		resolvers[1]?.(0); // let the rerun settle
 	});
 
 	test("pull() self-heals a vault swap: stale cursor cleared → bootstrap (not a stale-cursor pull)", async () => {
