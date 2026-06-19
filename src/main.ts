@@ -105,6 +105,14 @@ export default class EngramSyncPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 	private settingTab: EngramSyncSettingTab | null = null;
 	private liveConnected = false;
+	// Bumped every setupNoteStream(). connectChannel() captures it and aborts if
+	// it changed before its async getMe() resolved — otherwise a re-auth (e.g.
+	// OAuth swap) that calls setupNoteStream() again while a prior connect is
+	// in flight would let the stale connect spawn a SECOND NoteChannel that was
+	// never disconnected. That orphan reconnects forever with the old identity,
+	// getting `unauthorized` join refusals and churning the socket — dropping
+	// live broadcasts that land in the reconnect gaps (#646).
+	private channelEpoch = 0;
 
 	/** Fires whenever the status bar text/state changes — used by the settings
 	 *  panel to keep its top status row in sync with sync engine + WebSocket
@@ -797,9 +805,11 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	setupNoteStream(): void {
-		// Disconnect existing channel
+		// Disconnect existing channel + invalidate any in-flight connectChannel()
+		// (its async getMe() may still be pending) so it can't spawn a zombie.
 		this.noteStream?.disconnect();
 		this.noteStream = null;
+		this.channelEpoch++;
 
 		const hasAuth = this.settings.apiKey || this.settings.refreshToken;
 		if (!this.settings.apiUrl || !hasAuth) {
@@ -812,7 +822,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
-	private connectChannel(attempt = 0): void {
+	private connectChannel(attempt = 0, epoch = this.channelEpoch): void {
 		const maxAttempts = 5;
 		const baseDelay = 2000;
 
@@ -824,6 +834,12 @@ export default class EngramSyncPlugin extends Plugin {
 		this.api
 			.getMe()
 			.then((user) => {
+				// A newer setupNoteStream() superseded this connect while getMe()
+				// was in flight — abort so we don't create an orphan channel.
+				if (epoch !== this.channelEpoch) {
+					rlog().info("channel", "connectChannel aborted — superseded by newer setup");
+					return;
+				}
 				const channel = new NoteChannel(
 					this.settings.apiUrl,
 					this.settings.apiKey,
@@ -883,9 +899,9 @@ export default class EngramSyncPlugin extends Plugin {
 					`getMe() failed (attempt ${attempt + 1}/${maxAttempts}): ${errMsg(e)}`,
 				);
 
-				if (attempt < maxAttempts - 1) {
+				if (attempt < maxAttempts - 1 && epoch === this.channelEpoch) {
 					const delay = baseDelay * 2 ** attempt;
-					window.setTimeout(() => this.connectChannel(attempt + 1), delay);
+					window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
 				}
 			});
 	}

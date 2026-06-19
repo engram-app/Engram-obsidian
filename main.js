@@ -6349,6 +6349,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     this.statusBarEl = null;
     this.settingTab = null;
     this.liveConnected = !1;
+    // Bumped every setupNoteStream(). connectChannel() captures it and aborts if
+    // it changed before its async getMe() resolved — otherwise a re-auth (e.g.
+    // OAuth swap) that calls setupNoteStream() again while a prior connect is
+    // in flight would let the stale connect spawn a SECOND NoteChannel that was
+    // never disconnected. That orphan reconnects forever with the old identity,
+    // getting `unauthorized` join refusals and churning the socket — dropping
+    // live broadcasts that land in the reconnect gaps (#646).
+    this.channelEpoch = 0;
     /** Fires whenever the status bar text/state changes — used by the settings
      *  panel to keep its top status row in sync with sync engine + WebSocket
      *  connection state without requiring tab navigation. Single-slot. */
@@ -6659,7 +6667,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
   }
   setupNoteStream() {
     var _a;
-    (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null;
+    (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -6668,12 +6676,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
     this.connectChannel();
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
-  connectChannel(attempt = 0) {
+  connectChannel(attempt = 0, epoch = this.channelEpoch) {
     var _a, _b, _c, _d, _e, _f, _g;
     rlog().info(
       "channel",
       `connectChannel(attempt=${attempt}) \u2014 apiKeyLen=${(_b = (_a = this.settings.apiKey) == null ? void 0 : _a.length) != null ? _b : 0} refreshTokenLen=${(_d = (_c = this.settings.refreshToken) == null ? void 0 : _c.length) != null ? _d : 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${(_f = (_e = this.authProvider) == null ? void 0 : _e.constructor.name) != null ? _f : "none"} vaultId=${(_g = this.settings.vaultId) != null ? _g : "null"}`
     ), this.api.getMe().then((user) => {
+      if (epoch !== this.channelEpoch) {
+        rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
+        return;
+      }
       let channel = new NoteChannel(
         this.settings.apiUrl,
         this.settings.apiKey,
@@ -6700,9 +6712,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian17.Plugin
       if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(
         "channel",
         `getMe() failed (attempt ${attempt + 1}/5): ${errMsg(e)}`
-      ), attempt < 4) {
+      ), attempt < 4 && epoch === this.channelEpoch) {
         let delay = 2e3 * 2 ** attempt;
-        window.setTimeout(() => this.connectChannel(attempt + 1), delay);
+        window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
       }
     });
   }
