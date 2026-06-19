@@ -49,12 +49,13 @@ src/
   conflict-modal.ts    Interactive conflict resolution UI
   search-modal.ts      Semantic search modal
   search-view.ts       Persistent search sidebar
-  sync-center-view.ts  Sync dashboard
-  settings.ts + tabs/  Settings UI (Account, Sync Center, Self-hosted, Advanced)
+  cursor.ts            Sync-cursor helpers (cursor-pull + manifest reconcile)
+  sync-center-render.ts  Sync Center dashboard rendering
+  settings.ts + tabs/  Settings UI (tabs/: account, sync-center, self-hosted, advanced, about, start)
   offline-queue.ts     Persistent queue for offline edits
   remote-log.ts        Opt-in lifecycle logging back to the user's own Engram
   …
-tests/                 313 unit tests (Bun + custom Obsidian mocks)
+tests/                 Unit tests (Bun + custom Obsidian mocks) — run `bun test` for the count
 docs/                  Internals, ops, API audit, submission notes
 ```
 
@@ -80,26 +81,20 @@ bun run dev           # esbuild watch mode
 **Tests are the spec. If a test fails, fix the implementation — not the test.**
 
 ```bash
-bun test              # 313 unit tests
+bun test              # full unit-test suite
 bun test --verbose
-bun test --coverage   # ~89% functions, ~97% lines
+bun test --coverage   # check the report for the live coverage number (~89% funcs / ~97% lines)
 ```
 
 ### Test layout
 
-| File | Tests | Covers |
-|------|-------|--------|
-| `tests/sync.test.ts` | 134 | SyncEngine — ignore, modify/delete/rename, pull, WebSocket, echo suppression, status, first sync, 3-way merge, destroy, state export/import |
-| `tests/api.test.ts` | 47 | EngramApi methods, base64, auth headers, URL encoding, error handling, attachments, `pushLogs` |
-| `tests/dev-log.test.ts` | 20 | Ring buffer log, 500-entry cap, singleton lifecycle |
-| `tests/diff.test.ts` | 17 | `computeDiff`, `groupIntoHunks`, `buildMergedContent` |
-| `tests/three-way-merge.test.ts` | 15 | 3-way merge via `diff-match-patch` |
-| `tests/offline-queue.test.ts` | 17 | Enqueue/dequeue, dedup by path, oldest-first, persistence |
-| `tests/remote-log.test.ts` | 15 | Buffer mgmt, flush threshold, ring buffer overflow |
-| `tests/base-store.test.ts` | 13 | BaseStore — last-synced content for 3-way merge base |
-| `tests/channel.test.ts` | 10 | Phoenix channel topic, events, auth flow |
-| `tests/auth.test.ts` | 20 | ApiKeyAuth, OAuthAuth — refresh, dedup, persistence |
-| `tests/search.test.ts` | 5 | `EngramApi.search`, search modal debounce |
+Don't hardcode counts — run `bun test` for the live total and `ls tests/*.test.ts`
+for the file list. The suite spans the SyncEngine (ignore/modify/delete/rename,
+pull, cursor-pull, WebSocket, echo suppression, 3-way merge, state export/import),
+cursor + manifest reconciliation, the API client (incl. batch push + `/sync/changes`),
+the offline queue, auth (ApiKey + OAuth device flow), the Phoenix channel, diff/merge,
+remote logging, plan/limit state, plus compliance tests (manifest, license, README
+disclosures, source/styles hygiene, command IDs).
 
 ### Test config
 
@@ -109,7 +104,7 @@ bun test --coverage   # ~89% functions, ~97% lines
 
 ### Untested files
 
-UI-heavy modules are exercised end-to-end from the backend repo: `settings.ts`, `conflict-modal.ts`, `first-sync-modal.ts`, `search-modal.ts`, `search-view.ts`, `main.ts`.
+UI-heavy modules are exercised end-to-end from the backend repo: `settings.ts`, `conflict-modal.ts`, `search-modal.ts`, `search-view.ts`, `main.ts`.
 
 ## Deploying to your local vault
 
@@ -195,8 +190,8 @@ Anything outside both sets is silently ignored by `isSyncable()`.
 
 ## Contributing
 
-- Doc-only changes (this file, `docs/`, `CLAUDE.md`, `README.md`) can be pushed directly to `main`.
-- Code changes go through a PR. CI must pass and the version must be bumped before merge.
+- **Everything goes through a PR — no exceptions, including doc-only changes.** The old "docs can land on `main` directly" carve-out is rescinded (it drifted into code commits and bypassed the test gate). `main` is protected with `enforce_admins=true`; the release pipeline only fires on PR merge, so direct pushes break the deploy. See `CLAUDE.md` → Git Workflow.
+- Code changes: CI must pass and the version must be bumped before merge.
 - Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:` — subject ≤50 chars.
 - Tests are the spec. Add or update tests alongside code changes; never modify tests to mask a regression.
 

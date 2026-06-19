@@ -2,7 +2,7 @@
 
 ## Background
 
-In v0.3.5, Obsidian crashed with V8 out-of-memory errors when multiple plugins were enabled alongside engram-sync. Root cause: other plugins' startup file modifications flooded the sync engine with push requests before it was ready.
+In v0.3.5, Obsidian crashed with V8 out-of-memory errors when multiple plugins were enabled alongside Engram Vault Sync. Root cause: other plugins' startup file modifications flooded the sync engine with push requests before it was ready.
 
 ## Mitigations (all in place since v0.3.5)
 
