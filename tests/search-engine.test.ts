@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
+import { searchEngram } from "../src/search-engine";
 import { DEFAULT_SETTINGS } from "../src/types";
 import type { SearchResponse } from "../src/types";
-import { searchEngram } from "../src/search-engine";
 
 describe("search settings", () => {
 	it("defaults searchDefaultMode to semantic", () => {
@@ -54,5 +54,79 @@ describe("searchEngram semantic", () => {
 		const api = fakeApi({ query: "", results: [] });
 		const { results } = await searchEngram("semantic", "   ", { api, app: noApp }, {});
 		expect(results).toEqual([]);
+	});
+});
+
+// Deterministic fuzzy: score = higher when match is earlier; one match range.
+const fakeFuzzy = (q: string) => (text: string) => {
+	const i = text.toLowerCase().indexOf(q.toLowerCase());
+	if (i < 0) return null;
+	return { score: 100 - i, matches: [[i, i + q.length] as [number, number]] };
+};
+
+function fakeApp(files: { path: string; content: string; tags?: string[] }[]) {
+	const byPath = new Map(files.map((f) => [f.path, f]));
+	return {
+		vault: {
+			getMarkdownFiles: () => files.map((f) => ({ path: f.path })),
+			cachedRead: async (file: { path: string }) => byPath.get(file.path)!.content,
+		},
+		metadataCache: {
+			getFileCache: (file: { path: string }) => {
+				const tags = byPath.get(file.path)?.tags ?? [];
+				return { tags: tags.map((t) => ({ tag: `#${t}` })), frontmatter: {} };
+			},
+		},
+	} as any;
+}
+
+describe("searchEngram keyword", () => {
+	it("ranks by fuzzy score and builds a highlighted snippet", async () => {
+		const app = fakeApp([
+			{ path: "a.md", content: "nothing relevant here" },
+			{ path: "b.md", content: "the omega story begins" },
+			{ path: "c.md", content: "omega up front" },
+		]);
+		const { results } = await searchEngram(
+			"keyword",
+			"omega",
+			{ api: {} as any, app },
+			{ limit: 10 },
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(results.map((r) => r.source_path)).toEqual(["c.md", "b.md"]);
+		expect(results[0].origin).toBe("keyword");
+		const [s, e] = results[0].matchRanges![0];
+		expect(results[0].text.slice(s, e).toLowerCase()).toBe("omega");
+	});
+
+	it("filters by folder prefix", async () => {
+		const app = fakeApp([
+			{ path: "health/x.md", content: "omega" },
+			{ path: "other/y.md", content: "omega" },
+		]);
+		const { results } = await searchEngram(
+			"keyword",
+			"omega",
+			{ api: {} as any, app },
+			{ folder: "health" },
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(results.map((r) => r.source_path)).toEqual(["health/x.md"]);
+	});
+
+	it("filters by tag (AND across requested tags)", async () => {
+		const app = fakeApp([
+			{ path: "a.md", content: "omega", tags: ["health"] },
+			{ path: "b.md", content: "omega", tags: ["health", "diet"] },
+		]);
+		const { results } = await searchEngram(
+			"keyword",
+			"omega",
+			{ api: {} as any, app },
+			{ tags: ["health", "diet"] },
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(results.map((r) => r.source_path)).toEqual(["b.md"]);
 	});
 });

@@ -80,13 +80,97 @@ export async function searchEngram(
 	return searchHybrid(query, ctx, opts, fuzzy);
 }
 
+function basename(path: string): string {
+	const file = path.split("/").pop() ?? path;
+	return file.endsWith(".md") ? file.slice(0, -3) : file;
+}
+
+function matchesFolder(path: string, folder?: string): boolean {
+	if (!folder) return true;
+	const prefix = folder.endsWith("/") ? folder : `${folder}/`;
+	return path.startsWith(prefix);
+}
+
+function noteTags(app: App, file: { path: string }): Set<string> {
+	// biome-ignore lint/suspicious/noExplicitAny: Obsidian cache shape
+	const cache: any = app.metadataCache.getFileCache(file as any);
+	const out = new Set<string>();
+	for (const t of cache?.tags ?? []) {
+		if (typeof t?.tag === "string") out.add(t.tag.replace(/^#/, ""));
+	}
+	const fmTags = cache?.frontmatter?.tags;
+	if (Array.isArray(fmTags)) for (const t of fmTags) out.add(String(t).replace(/^#/, ""));
+	else if (typeof fmTags === "string") out.add(fmTags.replace(/^#/, ""));
+	return out;
+}
+
+function matchesTags(app: App, file: { path: string }, tags?: string[]): boolean {
+	if (!tags?.length) return true;
+	const have = noteTags(app, file);
+	return tags.every((t) => have.has(t.replace(/^#/, "")));
+}
+
+/** Window a snippet around the first match and rebase ranges into it. */
+function windowSnippet(
+	content: string,
+	matches: [number, number][],
+): { snippetText: string; ranges: [number, number][] } {
+	const first = matches[0];
+	if (!first) return { snippetText: snippet(content), ranges: [] };
+	const start = Math.max(0, first[0] - 40);
+	const end = Math.min(content.length, start + SNIPPET_LEN);
+	const prefix = start > 0 ? "…" : "";
+	const suffix = end < content.length ? "…" : "";
+	const text = prefix + content.slice(start, end) + suffix;
+	const shift = prefix.length - start;
+	const ranges = matches
+		.filter(([s, e]) => s >= start && e <= end)
+		.map(([s, e]) => [s + shift, e + shift] as [number, number]);
+	return { snippetText: text, ranges };
+}
+
 async function searchKeyword(
-	_query: string,
-	_ctx: SearchContext,
-	_opts: SearchOpts,
-	_fuzzy: FuzzyFactory,
+	query: string,
+	ctx: SearchContext,
+	opts: SearchOpts,
+	fuzzy: FuzzyFactory,
 ): Promise<UnifiedSearchResult[]> {
-	return [];
+	const scorer = fuzzy(query);
+	const files = ctx.app.vault
+		.getMarkdownFiles()
+		.filter((f) => matchesFolder(f.path, opts.folder))
+		.filter((f) => matchesTags(ctx.app, f, opts.tags));
+
+	const scored: UnifiedSearchResult[] = [];
+	for (const file of files) {
+		let content: string;
+		try {
+			content = await ctx.app.vault.cachedRead(file);
+		} catch {
+			continue; // unreadable file — skip, never abort the whole search
+		}
+		const title = basename(file.path);
+		const titleHit = scorer(title);
+		const bodyHit = scorer(content);
+		const score = Math.max(
+			titleHit ? titleHit.score + TITLE_BONUS : Number.NEGATIVE_INFINITY,
+			bodyHit ? bodyHit.score : Number.NEGATIVE_INFINITY,
+		);
+		if (score === Number.NEGATIVE_INFINITY) continue;
+		const { snippetText, ranges } = bodyHit
+			? windowSnippet(content, bodyHit.matches)
+			: { snippetText: snippet(content), ranges: [] as [number, number][] };
+		scored.push({
+			source_path: file.path,
+			title,
+			text: snippetText,
+			score,
+			origin: "keyword",
+			matchRanges: ranges,
+		});
+	}
+	scored.sort((a, b) => b.score - a.score);
+	return scored.slice(0, opts.limit ?? DEFAULT_LIMIT);
 }
 
 async function searchHybrid(
