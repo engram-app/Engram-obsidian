@@ -959,8 +959,8 @@ var EngramApi = class _EngramApi {
     let headers = {
       Authorization: `Bearer ${await this.getAuthToken()}`,
       ...extraHeaders
-    };
-    return this.vaultId && (headers["X-Vault-ID"] = this.vaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
+    }, activeVaultId = this.getActiveVaultId();
+    return activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
       url: `${this.baseUrl}${path}`,
       method,
       headers,
