@@ -5,7 +5,7 @@
  */
 import { Notice, getAllTags, setIcon } from "obsidian";
 import { type SearchContext, searchEngram } from "./search-engine";
-import { buildSegments } from "./search-highlight";
+import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
 
@@ -254,11 +254,10 @@ export class SearchPanel {
 		});
 	}
 
-	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, _query: string): void {
-		// Highlight only real match offsets (keyword / hybrid-keyword side).
-		// Semantic results have no literal match, so they render unhighlighted.
-		const ranges = result.matchRanges ?? [];
-		for (const seg of buildSegments(result.text, ranges)) {
+	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, query: string): void {
+		// Recompute whole-word query-term ranges against the displayed excerpt so
+		// every mode (semantic included) highlights matched terms in the snippet.
+		for (const seg of buildSegments(result.text, queryTokenRanges(result.text, query))) {
 			if (seg.hit) {
 				el.createSpan({ text: seg.text, cls: "engram-search-hl" });
 			} else {
@@ -282,16 +281,47 @@ export class SearchPanel {
 				text: result.title || result.source_path || "Untitled",
 				cls: "engram-search-result-title",
 			});
-			if (result.origin === "semantic") {
-				header.createEl("span", {
-					text: `${(result.score * 100).toFixed(0)}%`,
-					cls: "engram-search-result-score",
+			// Provenance chip — only in hybrid mode, where match type is meaningful.
+			if (this.mode === "hybrid" && result.matchType) {
+				const chip = header.createSpan({
+					cls: `engram-search-match engram-search-match-${result.matchType}`,
+				});
+				const icon = chip.createSpan({ cls: "engram-search-match-icon" });
+				setIcon(
+					icon,
+					result.matchType === "keyword"
+						? "case-sensitive"
+						: result.matchType === "both"
+							? "layers"
+							: "sparkles",
+				);
+				chip.createSpan({
+					text:
+						result.matchType === "keyword"
+							? "exact"
+							: result.matchType === "both"
+								? "meaning + exact"
+								: "meaning",
 				});
 			}
+			// Context line: folder · heading-trail (heading-trail drops the note title).
+			const parts: string[] = [];
 			const lastSlash = result.source_path.lastIndexOf("/");
-			const folder = lastSlash > 0 ? result.source_path.slice(0, lastSlash) : "";
-			if (folder) {
-				item.createEl("span", { text: folder, cls: "engram-search-result-path" });
+			if (lastSlash > 0) parts.push(result.source_path.slice(0, lastSlash));
+			if (result.heading_path) {
+				const trail = result.heading_path
+					.split(">")
+					.slice(1)
+					.map((s) => s.trim())
+					.filter(Boolean)
+					.join(" › ");
+				if (trail) parts.push(trail);
+			}
+			if (parts.length) {
+				item.createEl("div", {
+					text: parts.join(" · "),
+					cls: "engram-search-result-path",
+				});
 			}
 			const snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
 			this.highlightInto(snippetEl, result, query);

@@ -64,8 +64,8 @@ export interface UnifiedSearchResult {
 	heading_path?: string;
 	score: number;
 	origin: SearchMode;
-	/** Character offset ranges into `text` to highlight. */
-	matchRanges?: [number, number][];
+	/** How this note matched: semantic vector, keyword/lexical, or both (hybrid). */
+	matchType?: "semantic" | "keyword" | "both";
 }
 
 export const DEFAULT_SETTINGS: EngramSyncSettings = {

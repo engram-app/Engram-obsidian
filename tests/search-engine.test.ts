@@ -97,8 +97,8 @@ describe("searchEngram keyword", () => {
 		);
 		expect(results.map((r) => r.source_path)).toEqual(["c.md", "b.md"]);
 		expect(results[0].origin).toBe("keyword");
-		const [s, e] = results[0].matchRanges![0];
-		expect(results[0].text.slice(s, e).toLowerCase()).toBe("omega");
+		expect(results[0].matchType).toBe("keyword");
+		expect(results[0].text.toLowerCase()).toContain("omega");
 	});
 
 	it("filters by folder prefix", async () => {
@@ -168,8 +168,45 @@ describe("searchEngram hybrid", () => {
 		// b.md appears in both lists → ranked first, exactly once.
 		expect(results.map((r) => r.source_path)).toEqual(["b.md", "a.md"]);
 		expect(results.every((r) => r.origin === "hybrid")).toBe(true);
-		// keyword snippet (with ranges) preferred over the semantic chunk text.
-		expect(results[0].matchRanges?.length).toBeGreaterThan(0);
+		// b.md matched both legs; a.md only the keyword leg.
+		const byPath = new Map(results.map((r) => [r.source_path, r]));
+		expect(byPath.get("b.md")?.matchType).toBe("both");
+		expect(byPath.get("a.md")?.matchType).toBe("keyword");
+		// Semantic chunk text preferred for the snippet when a semantic result exists.
+		expect(byPath.get("b.md")?.text).toBe("semantic chunk for b");
+	});
+
+	it("tags a semantic-only note as matchType 'semantic'", async () => {
+		// "gamma" matches no local file via fakeFuzzy → keyword leg empty;
+		// the backend returns a.md → fused result is semantic-only.
+		const api = {
+			search: async () => ({
+				query: "gamma",
+				results: [
+					{
+						text: "semantic chunk for a",
+						title: "A",
+						heading_path: "Top > A",
+						source_path: "a.md",
+						tags: [],
+						wikilinks: [],
+						score: 0.9,
+						vector_score: 0.9,
+						rerank_score: 0.9,
+					},
+				],
+			}),
+		} as any;
+		const { results } = await searchEngram(
+			"hybrid",
+			"gamma",
+			{ api, app },
+			{ limit: 10 },
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(results.map((r) => r.source_path)).toEqual(["a.md"]);
+		expect(results[0].matchType).toBe("semantic");
+		expect(results[0].text).toBe("semantic chunk for a");
 	});
 
 	it("degrades to keyword-only when the backend throws", async () => {

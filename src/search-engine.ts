@@ -4,6 +4,7 @@
  */
 import { type App, type TFile, getAllTags, prepareSimpleSearch } from "obsidian";
 import type { EngramApi } from "./api";
+import { queryTokenRanges } from "./search-highlight";
 import type { SearchMode, SearchResult, UnifiedSearchResult } from "./types";
 
 export interface SearchContext {
@@ -32,24 +33,39 @@ export interface SearchOutcome {
 }
 
 const DEFAULT_LIMIT = 10;
-const SNIPPET_LEN = 150;
+const EXCERPT_LEN = 200;
 // Used by Task 4 (keyword) and Task 5 (hybrid RRF merge).
 const RRF_K = 60;
 const TITLE_BONUS = 1;
 
-function snippet(text: string | null | undefined): string {
-	const t = (text ?? "").trim();
-	return t.length > SNIPPET_LEN ? `${t.slice(0, SNIPPET_LEN)}…` : t;
+/** A one-line excerpt focused on the query terms. Collapses whitespace, windows
+ *  around the first whole-word query match (or shows the start if none), and
+ *  ellipsizes. Highlighting is recomputed in the UI from the returned text. */
+function excerpt(text: string | null | undefined, query: string): string {
+	const t = (text ?? "").replace(/\s+/g, " ").trim();
+	if (!t) return "";
+	const first = queryTokenRanges(t, query)[0];
+	if (!first) return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN)}…` : t;
+	const start = Math.max(0, first[0] - 30);
+	const end = Math.min(t.length, start + EXCERPT_LEN);
+	return `${start > 0 ? "…" : ""}${t.slice(start, end)}${end < t.length ? "…" : ""}`;
 }
 
-function mapSemantic(results: SearchResult[]): UnifiedSearchResult[] {
+/** Drop a leading YAML frontmatter block so keyword matches/snippets come from
+ *  the note body, not its `---` header. */
+function stripFrontmatter(content: string): string {
+	return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+
+function mapSemantic(results: SearchResult[], query: string): UnifiedSearchResult[] {
 	return results.map((r) => ({
 		source_path: r.source_path ?? r.path ?? "",
 		title: r.title,
-		text: snippet(r.text ?? r.snippet),
+		text: excerpt(r.text ?? r.snippet, query),
 		heading_path: r.heading_path,
 		score: r.score,
 		origin: "semantic",
+		matchType: "semantic",
 	}));
 }
 
@@ -59,7 +75,7 @@ async function searchSemantic(
 	opts: SearchOpts,
 ): Promise<UnifiedSearchResult[]> {
 	const resp = await ctx.api.search(query, opts.limit ?? DEFAULT_LIMIT, opts.tags, opts.folder);
-	return mapSemantic(resp.results);
+	return mapSemantic(resp.results, query);
 }
 
 export async function searchEngram(
@@ -104,25 +120,6 @@ function matchesTags(app: App, file: TFile, tags?: string[]): boolean {
 	return tags.every((t) => have.has(t.replace(/^#/, "")));
 }
 
-/** Window a snippet around the first match and rebase ranges into it. */
-function windowSnippet(
-	content: string,
-	matches: [number, number][],
-): { snippetText: string; ranges: [number, number][] } {
-	const first = matches[0];
-	if (!first) return { snippetText: snippet(content), ranges: [] };
-	const start = Math.max(0, first[0] - 40);
-	const end = Math.min(content.length, start + SNIPPET_LEN);
-	const prefix = start > 0 ? "…" : "";
-	const suffix = end < content.length ? "…" : "";
-	const text = prefix + content.slice(start, end) + suffix;
-	const shift = prefix.length - start;
-	const ranges = matches
-		.filter(([s, e]) => s >= start && e <= end)
-		.map(([s, e]) => [s + shift, e + shift] as [number, number]);
-	return { snippetText: text, ranges };
-}
-
 async function searchKeyword(
 	query: string,
 	ctx: SearchContext,
@@ -143,24 +140,22 @@ async function searchKeyword(
 		} catch {
 			continue; // unreadable file — skip, never abort the whole search
 		}
+		const body = stripFrontmatter(content);
 		const title = basename(file.path);
 		const titleHit = scorer(title);
-		const bodyHit = scorer(content);
+		const bodyHit = scorer(body);
 		const score = Math.max(
 			titleHit ? titleHit.score + TITLE_BONUS : Number.NEGATIVE_INFINITY,
 			bodyHit ? bodyHit.score : Number.NEGATIVE_INFINITY,
 		);
 		if (score === Number.NEGATIVE_INFINITY) continue;
-		const { snippetText, ranges } = bodyHit
-			? windowSnippet(content, bodyHit.matches)
-			: { snippetText: snippet(content), ranges: [] as [number, number][] };
 		scored.push({
 			source_path: file.path,
 			title,
-			text: snippetText,
+			text: excerpt(body, query),
 			score,
 			origin: "keyword",
-			matchRanges: ranges,
+			matchType: "keyword",
 		});
 	}
 	scored.sort((a, b) => b.score - a.score);
@@ -191,7 +186,8 @@ function collapseByNote(results: UnifiedSearchResult[]): UnifiedSearchResult[] {
 	return [...best.values()];
 }
 
-/** Reciprocal-rank fusion on source_path. Keyword side wins for snippet. */
+/** Reciprocal-rank fusion on source_path. Prefers the semantic chunk text
+ *  (curated, heading-aware passage) for the snippet when available. */
 function rrf(
 	keyword: UnifiedSearchResult[],
 	semantic: UnifiedSearchResult[],
@@ -212,15 +208,17 @@ function rrf(
 	for (const [path, score] of scores) {
 		const k = kw.get(path);
 		const s = sem.get(path);
-		const base = k ?? s!; // prefer keyword (carries matchRanges)
+		const matchType: "semantic" | "keyword" | "both" =
+			k && s ? "both" : k ? "keyword" : "semantic";
 		fused.push({
 			source_path: path,
-			title: base.title ?? s?.title,
-			text: base.text,
+			title: (k ?? s)?.title ?? s?.title,
+			// Prefer the semantic chunk text (heading-aware passage); fall back to keyword.
+			text: s?.text ?? (k as UnifiedSearchResult).text,
 			heading_path: s?.heading_path,
 			score,
 			origin: "hybrid",
-			matchRanges: k?.matchRanges,
+			matchType,
 		});
 	}
 	fused.sort((a, b) => b.score - a.score);
@@ -239,7 +237,7 @@ async function searchHybrid(
 		const resp = await ctx.api.search(query, limit, opts.tags, opts.folder);
 		const semanticList = filterResultsByTags(
 			ctx.app,
-			collapseByNote(mapSemantic(resp.results)),
+			collapseByNote(mapSemantic(resp.results, query)),
 			opts.tags,
 		);
 		return { results: rrf(keywordList, semanticList, limit), degraded: false };
