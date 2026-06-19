@@ -5,7 +5,7 @@
  */
 import { Notice, getAllTags, setIcon } from "obsidian";
 import { type SearchContext, searchEngram } from "./search-engine";
-import { buildSegments, queryTokenRanges } from "./search-highlight";
+import { buildSegments } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
 
@@ -259,10 +259,10 @@ export class SearchPanel {
 		});
 	}
 
-	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, query: string): void {
-		const ranges = result.matchRanges?.length
-			? result.matchRanges
-			: queryTokenRanges(result.text, query);
+	private highlightInto(el: HTMLElement, result: UnifiedSearchResult, _query: string): void {
+		// Highlight only real match offsets (keyword / hybrid-keyword side).
+		// Semantic results have no literal match, so they render unhighlighted.
+		const ranges = result.matchRanges ?? [];
 		for (const seg of buildSegments(result.text, ranges)) {
 			if (seg.hit) {
 				el.createSpan({ text: seg.text, cls: "engram-search-hl" });
