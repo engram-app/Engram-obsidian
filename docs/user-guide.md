@@ -36,7 +36,7 @@ You can also tell the plugin to skip specific files or folders — either with a
 
 If you edit the same note in two places before they sync, the plugin tries to merge the changes automatically. Most of the time it just works. When it can't merge safely, you have two options (set in **Settings → Advanced**):
 
-- **Auto** (default) — keep both versions. The plugin saves the other copy as `your-note.conflict.md` so nothing is ever lost.
+- **Auto** (default) — keep both versions. The plugin saves the other copy as `your-note (conflict 2026-06-18).md` (the date it was created) so nothing is ever lost.
 - **Modal** — a window pops up showing both versions side-by-side, and you pick what to keep, chunk by chunk.
 
 ## The Sync Center

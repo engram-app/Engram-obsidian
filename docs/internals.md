@@ -1,14 +1,17 @@
-## Engram Obsidian Sync — Internals Quick Reference
+## Engram Vault Sync — Internals Quick Reference
 
 ### Source Map
 
+> Line counts are rough orientation only — run `wc -l src/*.ts` for current figures (the codebase has grown well past these as features landed).
+
 | File | Lines | Purpose |
 |------|-------|---------|
-| `src/main.ts` | ~470 | Plugin lifecycle, vault event wiring, commands, status bar, settings I/O |
-| `src/sync.ts` | ~1500 | Core sync engine: push, pull, fullSync, debounce, offline queue, conflicts, 3-way merge, request pacer |
-| `src/api.ts` | ~230 | HTTP client wrapping `requestUrl()` for all Engram REST calls |
+| `src/main.ts` | ~1100 | Plugin lifecycle, vault event wiring, commands, status bar, settings I/O |
+| `src/sync.ts` | ~3500 | Core sync engine: push, pull, fullSync, cursor-pull, debounce, offline queue, conflicts, 3-way merge, request pacer |
+| `src/cursor.ts` | — | Sync-cursor helpers (cursor-pull bootstrap + manifest reconciliation) |
+| `src/api.ts` | ~430 | HTTP client wrapping `requestUrl()` for all Engram REST calls |
 | `src/types.ts` | ~270 | All interfaces: settings, API responses, queue entries, sync status |
-| `src/settings.ts` | ~230 | Settings tab UI (PluginSettingTab) |
+| `src/settings.ts` + `src/tabs/` | — | Settings UI (PluginSettingTab) split into per-tab modules (Account, Sync Center, Self-hosted, Advanced, About, Start) |
 | `src/channel.ts` | ~185 | Phoenix WebSocket channel client for real-time sync |
 | `src/conflict-modal.ts` | ~350 | Conflict resolution modal (Keep Local / Keep Remote / Keep Both / Skip) |
 | `src/diff.ts` | ~305 | Line-level diff engine (Myers' algorithm) for conflict resolution |
@@ -17,9 +20,9 @@
 | `src/remote-log.ts` | ~160 | Ships plugin errors and lifecycle events to backend |
 | `src/offline-queue.ts` | ~90 | Persistent offline retry queue (Map-based, dedupes by path, debounced persistence) |
 | `src/dev-log.ts` | ~100 | Dev-only diagnostic ring buffer (compile-time stripped in production) |
-| `src/search-modal.ts` | ~165 | Quick search modal (Mod+Shift+S) — semantic search with debounce, arrow nav |
+| `src/search-modal.ts` | ~165 | Quick search modal — semantic search with debounce, arrow nav (command-palette only, no hotkey) |
 | `src/search-view.ts` | ~220 | Sidebar search view (ItemView) — persistent search panel with preview pane |
-| `src/first-sync-modal.ts` | ~62 | First-sync confirmation modal (Push All / Pull Only / Cancel) |
+| `src/sync-center-render.ts` | — | Sync Center dashboard rendering (paired with `src/tabs/sync-center-tab.ts`) |
 
 ### Class Relationships
 
@@ -38,7 +41,7 @@ EngramSyncPlugin (main.ts)
 │   └── onConflict: (path, local, remote) → ConflictChoice (wired to ConflictModal)
 ├── noteChannel: NoteChannel (channel.ts) — Phoenix WebSocket for real-time sync
 ├── remoteLog: RemoteLog (remote-log.ts) — ships errors/lifecycle to backend
-├── SearchModal (search-modal.ts) — opened via Mod+Shift+S command
+├── SearchModal (search-modal.ts) — opened via the "Semantic search" command (no hotkey)
 ├── SearchView (search-view.ts) — registered as "engram-search-view" ItemView
 ├── devLog: DevLogBuffer (dev-log.ts) — globalThis.__engramLog (dev builds only)
 └── statusBarEl: HTMLElement
@@ -46,10 +49,17 @@ EngramSyncPlugin (main.ts)
 
 ### Settings Defaults
 
+Shape is `EngramSyncSettings` in `src/types.ts` (`DEFAULT_SETTINGS`). Core persisted keys:
+
 ```typescript
-{ apiUrl: "", apiKey: "", ignorePatterns: "", syncIntervalMinutes: 5,
-  debounceMs: 2000, liveSyncEnabled: false, maxFileSizeMB: 5 }
+{ apiUrl: "", apiKey: "", ignorePatterns: "", debounceMs: 2000,
+  conflictViewMode: "unified", remoteLoggingEnabled: false,
+  conflictResolution: "auto", vaultId: null, clientId: "" }
 ```
+
+Optional / runtime-populated fields (absent until set): `remoteVaultName`,
+`refreshToken`, `accessToken`, `accessTokenExpiresAt`, `accessTokenVaultId`,
+`userEmail`, `authMethod`, `planState`.
 
 ### Plugin API Endpoints
 
@@ -60,6 +70,9 @@ All endpoints require `Authorization: Bearer <api_key>`. Path params use `encode
 | `POST` | `/notes` | `{path, content, mtime}` | `{note, chunks_indexed}` |
 | `GET` | `/notes/{path}` | — | Full note content |
 | `GET` | `/notes/changes?since={iso}` | — | `{changes[], server_time}` |
+| `GET` | `/sync/changes?cursor={c}&limit={n}` | cursor (opaque), limit (default 500) | `{changes[], cursor, has_more}` — cursor-pull (PR #109); tombstones included |
+| `GET` | `/sync/manifest` | — | Authoritative `{path, content_hash}` inventory for bootstrap/reconciliation |
+| `POST` | `/notes/batch` | `{notes: [{path, content, mtime}...]}` (≤100) | Bulk push (protocol rev) |
 | `DELETE` | `/notes/{path}` | — | `{deleted, path}` |
 | `GET` | `/folders` | — | Folder tree with note counts |
 | `POST` | `/attachments` | `{path, content_base64, mime_type, mtime}` | `{attachment}` |
@@ -159,6 +172,9 @@ User patterns (from settings textarea, one per line):
 | `pushing` | `Set<path>` | Files currently being pushed (prevents re-entry) |
 | `recentlyPushed` | `Map<path, timeout>` | Echo suppression cooldowns (5s) |
 | `lastSync` | `string` | ISO 8601 timestamp, persisted to plugin data |
+| `syncCursor` | `string \| null` | Opaque cursor for cursor-pull via `GET /sync/changes` (PR #109); persisted under `syncCursor` key. `getSyncCursor()`/`setSyncCursor()` |
+| `syncState` | `Map<path, FileSyncState>` | Per-file synced state (replaced the old `syncedHashes` map). `exportSyncState()`/`importSyncState()` |
+| `syncStateVaultId` | `string \| null` | The server vaultId `syncState`/`lastSync`/`syncCursor` belong to; on vault change the stale state is invalidated |
 | `offline` | `boolean` | Current connectivity state |
 | `healthCheckTimer` | `interval` | 30s poll when offline |
 | `ready` | `boolean` | Event handlers suppressed until true (ready gate) |

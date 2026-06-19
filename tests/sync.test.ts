@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { encodeCursor } from "../src/cursor";
 import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -13,6 +14,13 @@ const mockApi = {
 	// pushes, which is exactly what these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
+	// Cursor feed (B2). Bootstrap + pullViaCursor consume this; default is an
+	// empty single page so tests that don't script it don't crash.
+	getSyncChanges: mock().mockResolvedValue({
+		changes: [],
+		next_cursor: null,
+		has_more: false,
+	}),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -127,6 +135,33 @@ function createEngine(overrides = {}, { ready = true } = {}): SyncEngine {
 	return engine;
 }
 
+/** Build a well-formed cursor-feed note entry (PR B2). pull() now drains the
+ *  ordered /sync/changes feed via bootstrap → pullViaCursor, so pull tests
+ *  script `getSyncChanges` with these instead of the legacy `getChanges`. */
+function syncNoteEntry(overrides: Partial<Record<string, unknown>> = {}) {
+	return {
+		type: "note" as const,
+		id: "id-1",
+		seq: 1,
+		path: "Notes/Entry.md",
+		title: "Entry",
+		content: "# Entry",
+		content_hash: "h-entry",
+		folder: "Notes",
+		tags: [] as string[],
+		mtime: 1709345678,
+		updated_at: "2026-03-01T12:00:00Z",
+		deleted: false,
+		version: 1,
+		...overrides,
+	};
+}
+
+/** A single-page cursor feed response carrying the given entries. */
+function syncPage(changes: unknown[]) {
+	return { changes, next_cursor: null, has_more: false };
+}
+
 beforeEach(() => {
 	jest.clearAllMocks();
 	// Bun's clearAllMocks does NOT clear mockReturnValueOnce queues,
@@ -143,6 +178,13 @@ beforeEach(() => {
 		});
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
 	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockRejectedValue({ status: 404 });
+	// Cursor-feed defaults: empty manifest (no §F reconcile action) + empty
+	// single-page feed, so any pull() not explicitly scripting them is a no-op
+	// bootstrap rather than a crash.
+	(mockApi.getManifest as jest.Mock).mockReset().mockResolvedValue(null);
+	(mockApi.getSyncChanges as jest.Mock)
+		.mockReset()
+		.mockResolvedValue({ changes: [], next_cursor: null, has_more: false });
 });
 
 afterEach(() => {
@@ -309,25 +351,23 @@ describe("SyncEngine.handleRename", () => {
 });
 
 describe("SyncEngine.pull", () => {
-	test("applies remote changes and updates lastSync", async () => {
+	// PR B2: pull() drives the ordered cursor feed. With a persisted cursor it
+	// resumes via pullViaCursor (incremental); with none it bootstraps + genesis
+	// pulls. These tests exercise the incremental path by seeding a cursor, then
+	// scripting getSyncChanges. lastSync is no longer the pull watermark (the
+	// cursor is), so they assert cursor advancement instead.
+	test("applies remote changes from the cursor feed and advances the cursor", async () => {
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
-					path: "Notes/Remote.md",
-					title: "Remote Note",
-					content: "# Remote\n\nFrom MCP",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709345678,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
+		const entry = syncNoteEntry({
+			id: "remote",
+			seq: 5,
+			path: "Notes/Remote.md",
+			title: "Remote Note",
+			content: "# Remote\n\nFrom MCP",
 		});
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([entry]));
 
 		const pulled = await engine.pull();
 
@@ -336,12 +376,13 @@ describe("SyncEngine.pull", () => {
 			"Notes/Remote.md",
 			"# Remote\n\nFrom MCP",
 		);
-		expect(engine.getLastSync()).toBe("2026-03-01T12:00:01Z");
+		// Final page (next_cursor null) → cursor advances to the last entry's head.
+		expect(engine.getSyncCursor()).toBe(encodeCursor(entry.seq, entry.id));
 	});
 
-	test("trashes locally deleted notes from remote", async () => {
+	test("trashes locally deleted notes from the cursor feed", async () => {
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		// Local file content matches its recorded syncedHash — no unsynced
 		// edits — so the remote delete should be honoured (clean delete sync).
@@ -354,21 +395,19 @@ describe("SyncEngine.pull", () => {
 			{ hash: fnv1a(syncedContent) },
 		);
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "del",
+					seq: 6,
 					path: "Notes/ToDelete.md",
 					title: "",
 					content: "",
 					folder: "",
-					tags: [],
-					mtime: 0,
-					updated_at: "2026-03-01T12:00:00Z",
 					deleted: true,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
-		});
+				}),
+			]),
+		);
 
 		await engine.pull();
 
@@ -377,7 +416,7 @@ describe("SyncEngine.pull", () => {
 
 	test("skips tombstone when local file has unsynced edits (resurrection guard)", async () => {
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		// Local file content differs from syncedHash (or no syncState entry) —
 		// user has unsaved edits or recreated the path after another device
@@ -390,21 +429,19 @@ describe("SyncEngine.pull", () => {
 			note: { path: "Notes/Resurrected.md", version: 1 },
 		});
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "res",
+					seq: 7,
 					path: "Notes/Resurrected.md",
 					title: "",
 					content: "",
 					folder: "",
-					tags: [],
-					mtime: 0,
-					updated_at: "2026-03-01T12:00:00Z",
 					deleted: true,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
-		});
+				}),
+			]),
+		);
 
 		await engine.pull();
 
@@ -583,108 +620,89 @@ describe("SyncEngine.handleStreamEvent", () => {
 });
 
 describe("SyncEngine.pull (fresh install)", () => {
-	test("defaults to epoch when lastSync is empty (fresh install pull)", async () => {
+	// PR B2: a fresh install has no cursor → pull() bootstraps (manifest reconcile
+	// + genesis cursor pull). The genesis pull calls getSyncChanges with an
+	// undefined cursor — the cursor-flow equivalent of the legacy "epoch" default.
+	test("genesis pull (no cursor) calls getSyncChanges with undefined cursor", async () => {
 		const engine = createEngine();
-		// Do NOT call setLastSync — simulates a fresh install with no saved state
+		// Do NOT set a cursor — simulates a fresh install with no saved state.
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "existing",
 					path: "Notes/Existing.md",
 					title: "Existing Note",
 					content: "# Existing\n\nAlready on server",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709345678,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-02T00:00:00Z",
-		});
+				}),
+			]),
+		);
 
 		const pulled = await engine.pull();
 
 		expect(pulled).toBe(1);
-		// Should have called getChanges with epoch (the default for empty lastSync)
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
+		// Genesis pull: cursor arg is undefined (server starts from seq 0).
+		expect(mockApi.getSyncChanges).toHaveBeenCalledWith(undefined, expect.any(Number));
 		expect(mockApp.vault.create).toHaveBeenCalledWith(
 			"Notes/Existing.md",
 			"# Existing\n\nAlready on server",
 		);
 	});
 
-	test("fullSync on fresh engine pulls all notes without prior setLastSync", async () => {
+	test("fullSync on fresh engine genesis-pulls all notes without prior cursor", async () => {
 		const engine = createEngine();
-		// Fresh engine — no setLastSync, no prior sync state
+		// Fresh engine — no cursor, no prior sync state.
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "a",
+					seq: 1,
 					path: "Notes/A.md",
 					title: "Note A",
 					content: "# A",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709340000,
-					updated_at: "2026-03-01T10:00:00Z",
-					deleted: false,
-				},
-				{
+				}),
+				syncNoteEntry({
+					id: "b",
+					seq: 2,
 					path: "Notes/B.md",
 					title: "Note B",
 					content: "# B",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709341000,
-					updated_at: "2026-03-01T11:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-02T00:00:00Z",
-		});
+				}),
+			]),
+		);
 
 		const result = await engine.fullSync();
 
 		expect(result.pulled).toBe(2);
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
+		expect(mockApi.getSyncChanges).toHaveBeenCalledWith(undefined, expect.any(Number));
 		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-		// lastSync should be updated for future syncs
-		expect(engine.getLastSync()).toBe("2026-03-02T00:00:00Z");
 	});
 
-	test("pull updates lastSync so subsequent pulls are incremental", async () => {
+	test("first pull bootstraps; the persisted cursor makes the next pull incremental", async () => {
 		const engine = createEngine();
 
-		// First pull — fresh install
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
-					path: "Notes/First.md",
-					title: "First",
-					content: "# First",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709340000,
-					updated_at: "2026-03-01T10:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-01T12:00:00Z",
+		// First pull — fresh install, no cursor → genesis pull (undefined cursor).
+		const first = syncNoteEntry({
+			id: "first",
+			seq: 9,
+			path: "Notes/First.md",
+			title: "First",
+			content: "# First",
 		});
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([first]));
 
 		await engine.pull();
-		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
-		expect(engine.getLastSync()).toBe("2026-03-01T12:00:00Z");
+		expect(mockApi.getSyncChanges).toHaveBeenLastCalledWith(undefined, expect.any(Number));
+		// The genesis pull advances + persists the cursor to the feed tip.
+		const advanced = encodeCursor(first.seq, first.id);
+		expect(engine.getSyncCursor()).toBe(advanced);
 
-		// Second pull — should use the saved timestamp, not epoch
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-02T00:00:00Z",
-		});
+		// Second pull — now has a cursor → resumes the feed from that position.
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
 
 		await engine.pull();
-		expect(mockApi.getChanges).toHaveBeenCalledWith("2026-03-01T12:00:00Z", expect.anything());
+		expect(mockApi.getSyncChanges).toHaveBeenLastCalledWith(advanced, expect.any(Number));
 	});
 });
 
@@ -721,9 +739,9 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	});
 
 	test("status shows syncing during pull", async () => {
-		// Use a slow getChanges to catch the syncing state
+		// Use a slow getSyncChanges (cursor feed) to catch the syncing state.
 		let resolveChanges: (v: any) => void;
-		(mockApi.getChanges as jest.Mock).mockImplementationOnce(
+		(mockApi.getSyncChanges as jest.Mock).mockImplementationOnce(
 			() =>
 				new Promise((r) => {
 					resolveChanges = r;
@@ -731,7 +749,7 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		);
 
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		const statuses: string[] = [];
 		engine.onStatusChange = (s) => statuses.push(s.state);
@@ -742,7 +760,7 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(statuses).toContain("syncing");
 
 		// Resolve the pull
-		resolveChanges!({ changes: [], server_time: "2026-03-01T00:00:00Z" });
+		resolveChanges!({ changes: [], next_cursor: null, has_more: false });
 		await pullPromise;
 
 		// Last emitted status should be idle
@@ -750,10 +768,10 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	});
 
 	test("status shows error after failed pull", async () => {
-		(mockApi.getChanges as jest.Mock).mockRejectedValueOnce(new Error("network error"));
+		(mockApi.getSyncChanges as jest.Mock).mockRejectedValueOnce(new Error("network error"));
 
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		await engine.pull();
 
@@ -765,35 +783,24 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	test("pull skips files that fail to apply and continues", async () => {
 		// Simulate a file with illegal characters (like ? on mobile)
 		// by making vault.create throw for one specific path
-		const goodChange = {
-			path: "Notes/Good.md",
-			title: "Good",
-			content: "# Good\nThis should work",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			updated_at: "2026-03-01T12:00:00Z",
-			deleted: false,
-		};
-		const badChange = {
+		const badEntry = syncNoteEntry({
+			id: "bad",
+			seq: 10,
 			path: "Notes/Bad?.md",
 			title: "Bad",
 			content: "# Bad\nIllegal filename chars",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345679,
-			updated_at: "2026-03-01T12:01:00Z",
-			deleted: false,
-		};
+		});
+		const goodEntry = syncNoteEntry({
+			id: "good",
+			seq: 11,
+			path: "Notes/Good.md",
+			title: "Good",
+			content: "# Good\nThis should work",
+		});
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [badChange, goodChange],
-			server_time: "2026-03-01T12:02:00Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T12:02:00Z",
-		});
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([badEntry, goodEntry]),
+		);
 
 		// vault.create throws on the bad file, succeeds on the good one
 		(mockApp.vault.create as jest.Mock).mockImplementation(async (path: string) => {
@@ -806,7 +813,7 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		});
 
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		const applied = await engine.pull();
 
@@ -814,8 +821,8 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(applied).toBe(1);
 		// vault.create should have been called for both (bad one throws)
 		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-		// lastSync should still be updated (pull succeeded overall)
-		expect(engine.getLastSync()).toBe("2026-03-01T12:02:00Z");
+		// The cursor still advances to the feed tip (one bad entry must not wedge it).
+		expect(engine.getSyncCursor()).toBe(encodeCursor(goodEntry.seq, goodEntry.id));
 		// Status should NOT be error — individual file failures don't fail the pull
 		expect(engine.getStatus().state).not.toBe("error");
 	});
@@ -915,19 +922,16 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	});
 
 	test("error clears on next successful sync", async () => {
-		(mockApi.getChanges as jest.Mock).mockRejectedValueOnce(new Error("fail"));
+		(mockApi.getSyncChanges as jest.Mock).mockRejectedValueOnce(new Error("fail"));
 
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
 		await engine.pull();
 		expect(engine.getStatus().state).toBe("error");
 
 		// Successful pull clears error
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T00:00:00Z",
-		});
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
 
 		await engine.pull();
 		expect(engine.getStatus().state).toBe("idle");
@@ -1764,39 +1768,29 @@ describe("SyncEngine binary push", () => {
 });
 
 describe("SyncEngine pull with attachments", () => {
-	test("pull fetches both note and attachment changes", async () => {
+	test("cursor feed carries both note and attachment entries", async () => {
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
+		// PR B2: the ordered feed merges notes + attachments into one stream.
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", title: "A", content: "# A" }),
 				{
-					path: "Notes/A.md",
-					title: "A",
-					content: "# A",
-					folder: "Notes",
-					tags: [],
-					mtime: 100,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+					type: "attachment",
+					id: "img",
+					seq: 2,
 					path: "Assets/img.png",
 					mime_type: "image/png",
 					size_bytes: 1000,
 					mtime: 100,
 					updated_at: "2026-03-01T12:00:00Z",
 					deleted: false,
+					version: 1,
 				},
-			],
-			server_time: "2026-03-01T12:00:00Z",
-		});
-		// Mock getAttachment for the attachment pull
+			]),
+		);
+		// Attachment entries carry no bytes — applyAttachmentChange fetches them.
 		(mockApi.getAttachment as jest.Mock).mockResolvedValueOnce({
 			path: "Assets/img.png",
 			content_base64: "AQID",
@@ -1809,8 +1803,8 @@ describe("SyncEngine pull with attachments", () => {
 		const pulled = await engine.pull();
 
 		expect(pulled).toBe(2);
-		expect(mockApi.getChanges).toHaveBeenCalled();
-		expect(mockApi.getAttachmentChanges).toHaveBeenCalled();
+		expect(mockApi.getSyncChanges).toHaveBeenCalled();
+		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/img.png");
 		expect(mockApp.vault.create).toHaveBeenCalled(); // note
 		expect(mockApp.vault.createBinary).toHaveBeenCalled(); // attachment
 	});
@@ -1846,27 +1840,19 @@ describe("SyncEngine pull accuracy", () => {
 
 	test("pull returns accurate count when changes are skipped", async () => {
 		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "ws",
 					path: ".obsidian/workspace.json", // ignored path
 					title: "",
 					content: "{}",
 					folder: ".obsidian",
-					tags: [],
-					mtime: 100,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T12:00:00Z",
-		});
+				}),
+			]),
+		);
 
 		const pulled = await engine.pull();
 
@@ -2249,19 +2235,13 @@ describe("SyncEngine auth validation", () => {
 
 	test("fullSync proceeds when auth succeeds", async () => {
 		(mockApi.ping as jest.Mock).mockResolvedValueOnce({ ok: true });
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T00:00:00Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T00:00:00Z",
-		});
+		// fullSync → pull → bootstrap → genesis cursor pull (B2).
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
 		const engine = createEngine();
 
 		const result = await engine.fullSync();
 		expect(result).toEqual({ pulled: 0, pushed: 0 });
-		expect(mockApi.getChanges).toHaveBeenCalled();
+		expect(mockApi.getSyncChanges).toHaveBeenCalled();
 	});
 
 	test("pushAll throws on invalid API key", async () => {
@@ -2730,18 +2710,14 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
 
-		// Start a pull — mock it to return no changes
-		(mockApi.getChanges as jest.Mock).mockImplementation(async () => {
+		// Start a pull — mock the cursor feed to fire a user edit mid-flight.
+		(mockApi.getSyncChanges as jest.Mock).mockImplementation(async () => {
 			// While pull is in progress, simulate a user edit
 			engine.handleModify(file);
-			return { changes: [], server_time: "2026-03-01T12:00:01Z" };
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValue({
-			changes: [],
-			server_time: "2026-01-01T00:00:00Z",
+			return { changes: [], next_cursor: null, has_more: false };
 		});
 
-		engine.setLastSync("2026-01-01T00:00:00Z");
+		engine.setSyncCursor("CUR-0");
 		await engine.pull();
 
 		// The file should NOT have been debounce-pushed (was during pull)
@@ -3002,7 +2978,7 @@ describe("SyncEngine Obsidian API best practices", () => {
 
 		test("pull conflict detection uses cachedRead for local content", async () => {
 			const engine = createEngine();
-			engine.setLastSync("2026-01-01T00:00:00Z");
+			engine.setSyncCursor("CUR-0");
 
 			const existingFile = new TFile("Notes/Conflict.md");
 			mockApp.vault.getFileByPath.mockReturnValueOnce(existingFile);
@@ -3010,26 +2986,19 @@ describe("SyncEngine Obsidian API best practices", () => {
 			mockApp.vault.read.mockClear();
 			mockApp.vault.cachedRead.mockResolvedValueOnce("local content");
 
-			(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-				changes: [
-					{
+			(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+				syncPage([
+					syncNoteEntry({
+						id: "conflict",
 						path: "Notes/Conflict.md",
+						title: "Conflict",
 						content: "remote content",
 						mtime: Date.now() / 1000 + 100,
 						version: 2,
-						deleted: false,
-						title: "Conflict",
-						folder: "Notes",
-						tags: [],
 						updated_at: new Date().toISOString(),
-					},
-				],
-				server_time: new Date().toISOString(),
-			});
-			(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-				changes: [],
-				server_time: new Date().toISOString(),
-			});
+					}),
+				]),
+			);
 
 			await engine.pull();
 
@@ -3041,32 +3010,25 @@ describe("SyncEngine Obsidian API best practices", () => {
 	describe("uses getFileByPath for file lookups", () => {
 		test("pull uses getFileByPath instead of getAbstractFileByPath for notes", async () => {
 			const engine = createEngine();
-			engine.setLastSync("2026-01-01T00:00:00Z");
+			engine.setSyncCursor("CUR-0");
 
 			mockApp.vault.getFileByPath.mockClear();
 			mockApp.vault.getAbstractFileByPath.mockClear();
 			mockApp.vault.getFileByPath.mockReturnValue(null);
 
-			(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-				changes: [
-					{
+			(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+				syncPage([
+					syncNoteEntry({
+						id: "new",
 						path: "Notes/New.md",
+						title: "New",
 						content: "new content",
 						mtime: Date.now() / 1000,
 						version: 1,
-						deleted: false,
-						title: "New",
-						folder: "Notes",
-						tags: [],
 						updated_at: new Date().toISOString(),
-					},
-				],
-				server_time: new Date().toISOString(),
-			});
-			(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-				changes: [],
-				server_time: new Date().toISOString(),
-			});
+					}),
+				]),
+			);
 
 			await engine.pull();
 
@@ -3265,6 +3227,115 @@ describe("SyncEngine IssueStore integration", () => {
 		await (engine as any).pushFile(file, true);
 
 		expect(engine.issues.count()).toBe(0);
+	});
+});
+
+describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
+	test("free text-only: non-text attachment is pre-skipped, no upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
+		// Informational skip is tallied for the batched toast.
+		expect(engine.getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {
+		const engine = createEngine();
+		// .txt isn't in BINARY_EXTENSIONS, so force it through the binary path to
+		// prove the text-MIME parity rule itself allows it (effective MIME text/*).
+		const file = new TFile("note.txt", Date.now());
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		expect((engine as any).preGateAttachment(file)).toBeNull();
+	});
+
+	test("free text-only: a .md note still uploads (notes not pre-gated)", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/Test.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(engine.issues.count()).toBe(0);
+	});
+
+	test("oversize attachment is pre-skipped as too_large", async () => {
+		const engine = createEngine();
+		const file = new TFile("big.png", Date.now(), 500);
+		engine.applyPlanState({
+			tier: "pro",
+			attachmentsTextOnly: false,
+			maxFileBytes: 100,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		const ok = await (engine as any).pushFile(file, true);
+
+		expect(ok).toBe(false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		const issue = engine.issues.get("big.png");
+		expect(issue?.category).toBe("too_large");
+		expect(issue?.sizeBytes).toBe(500);
+	});
+
+	test("bypassPlanSkip (resync) ignores the pre-gate and attempts upload", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		engine.applyPlanState({
+			tier: "free",
+			attachmentsTextOnly: true,
+			maxFileBytes: 10_000_000,
+			attachmentBytesCap: null,
+			updatedAt: 1,
+		});
+
+		// Sanity: a normal push is pre-skipped.
+		await (engine as any).pushFile(file, true);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// Forced bypass (what resyncSkippedAttachments does) must attempt the upload.
+		await (engine as any).pushFile(file, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+
+	test("no planState → no pre-gate (backend decides), upload IS attempted", async () => {
+		const engine = createEngine();
+		const file = new TFile("photo.png", Date.now());
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		// No applyPlanState — planState stays null.
+
+		await (engine as any).pushFile(file, true);
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
 	});
 });
 
@@ -3637,5 +3708,191 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		const toast = __noticeCapture.notices.find((n) => /attachment skipped/.test(n.message));
 		expect(toast).toBeDefined();
 		expect(toast?.message).toContain("1 attachment skipped");
+	});
+
+	function makeQuotaError(): LimitExceededError {
+		return new LimitExceededError(
+			"attachments_quota_exceeded",
+			"https://app.engram.page/settings/billing",
+			"attachment_storage_bytes",
+			1000,
+			1000,
+		);
+	}
+
+	test("quota 402 → skipped (not failed), category=quota, NOT re-queued", async () => {
+		const engine = createEngine();
+		const file = new TFile("Assets/big.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeQuotaError());
+
+		await (engine as any).pushFile(file, true);
+
+		expect(engine.issues.count("quota")).toBe(1);
+		// Terminal — never re-queued.
+		expect(engine.queue.size).toBe(0);
+		// Tallied as a plan-skip, not a failure.
+		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
+	});
+
+	test.each([
+		["needs_pro", () => makeAttachmentLimitedError()],
+		["quota", () => makeQuotaError()],
+	])("plan-limit %s push does NOT call console.error", async (_label, makeErr) => {
+		const engine = createEngine();
+		const file = new TFile("Assets/x.png", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 1024 };
+		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
+		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeErr());
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, true);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	test("a real failure (5xx) STILL calls console.error", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/x.md", Date.now());
+		(file as any).stat = { mtime: Date.now(), size: 100 };
+		mockApp.vault.cachedRead.mockResolvedValue("# x");
+		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce({ status: 502, message: "boom" });
+
+		const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+		try {
+			await (engine as any).pushFile(file, false);
+			expect(spy).toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+});
+
+describe("SyncEngine.applyPlanState / resyncSkippedAttachments", () => {
+	const freePlan = {
+		tier: "free" as const,
+		attachmentsTextOnly: true,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 1,
+	};
+	const proPlan = {
+		tier: "pro" as const,
+		attachmentsTextOnly: false,
+		maxFileBytes: 10_000_000,
+		attachmentBytesCap: null,
+		updatedAt: 2,
+	};
+
+	test("applyPlanState persists via onPlanStatePersist", () => {
+		const engine = createEngine();
+		const saved: unknown[] = [];
+		engine.onPlanStatePersist = (p) => saved.push(p);
+		engine.applyPlanState(proPlan);
+		expect(saved.length).toBe(1);
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("hydratePlanState seeds state without triggering a resync", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+
+		// Hydrating with a paid plan must NOT re-push — prev is null but this is a
+		// reload, not an upgrade.
+		engine.hydratePlanState(proPlan);
+		// Let any (erroneously) scheduled microtasks settle.
+		await Promise.resolve();
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+		expect(engine.getPlanState()).toEqual(proPlan);
+	});
+
+	test("on capability gained, skipped attachments are re-attempted and cleared", async () => {
+		const engine = createEngine();
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		const png = new TFile("a.png");
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(png);
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// free → free: no capability gain, no resync.
+		engine.applyPlanState(freePlan);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// free → pro: text-only true→false = capability gain → resync fires.
+		engine.applyPlanState(proPlan);
+		await engine.resyncSkippedAttachments();
+
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+		expect(engine.issues.get("a.png")).toBeUndefined();
+	});
+
+	test("bypassPlanSkip re-attempts a parked needs_pro attachment (force alone does not)", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "needs_pro",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the
+		// needs_pro entry still short-circuits — no network call, stays quiet.
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
+	});
+
+	test("a parked quota attachment is also short-circuited on a normal re-push, and re-attempted under bypassPlanSkip", async () => {
+		const engine = createEngine();
+		const png = new TFile("a.png");
+		engine.issues.record({
+			path: "a.png",
+			kind: "attachment",
+			category: "quota",
+			message: "x",
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
+		(mockApi.pushAttachment as jest.Mock).mockResolvedValue({ attachment: {} });
+
+		// force=true but bypassPlanSkip=false (the bulk pushAll path): the parked
+		// quota entry is informational, so it short-circuits — no network call,
+		// stays quiet. (Pre-fix this re-uploaded and re-402'd every sync.)
+		await (engine as any).pushFile(png, true, false);
+		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
+
+		// bypassPlanSkip=true (the resync path): short-circuit bypassed, uploads.
+		await (engine as any).pushFile(png, true, true);
+		expect(mockApi.pushAttachment).toHaveBeenCalled();
 	});
 });

@@ -1,4 +1,6 @@
-# CLAUDE.md
+# CLAUDE.md / AGENTS.md
+
+> `AGENTS.md` is a symlink to this file — one source of truth for both Claude Code and other agent runtimes, so they can never drift apart. Edit `CLAUDE.md`.
 
 Obsidian plugin for bidirectional sync with Engram, distributed as "Engram Vault Sync" (plugin id `engram-vault-sync`). One half of the Engram project — backend repo is `engram-app/engram`, plugin repo is `engram-app/Engram-obsidian` (local dir name stayed `engram-obsidian-sync` after rename).
 
@@ -37,7 +39,7 @@ A TypeScript sync client. It does NOT parse markdown, generate embeddings, or ta
 ### Does NOT
 
 - Parse markdown or chunk text (Engram does this)
-- Generate embeddings (Engram does this via Ollama)
+- Generate embeddings (Engram does this — Voyage AI on SaaS; Ollama is self-host only)
 - Talk to Qdrant (Engram does this)
 - Perform search indexing (Engram does this — plugin provides the search UI via `POST /api/search`)
 - Manage auth/users (Engram does this)
@@ -65,27 +67,24 @@ The previous "doc-only changes can land on main" carve-out is rescinded — it d
 **Tests are the spec. If a test fails, fix the app — not the test.**
 
 ```bash
-bun test              # Run all 313 unit tests
+bun test              # Run the full unit-test suite
 bun test --verbose    # Verbose output
-bun test --coverage   # With coverage report (89% funcs, 97% lines)
+bun test --coverage   # With coverage report
 bun run build         # Build the plugin (production)
 ```
 
-### Test files (313 tests across 11 files)
+### Test files
 
-| File | Tests | What it covers |
-|------|-------|----------------|
-| `tests/sync.test.ts` | 134 | SyncEngine: shouldIgnore, handleModify/Delete/Rename, pull, WebSocket events, echo suppression, status tracking, first sync detection, 3-way merge, destroy, sync state export/import, updateSettings, arrayBuffersEqual |
-| `tests/api.test.ts` | 47 | All EngramApi methods, base64 utilities, auth headers, URL encoding, error handling, auth provider integration, attachment methods, pushLogs |
-| `tests/dev-log.test.ts` | 20 | Ring buffer (log, dump, filter, stats, clear), 500-entry cap, singleton lifecycle (init/destroy), noop logger |
-| `tests/diff.test.ts` | 17 | computeDiff, groupIntoHunks, buildMergedContent (line-by-line diff, hunk context, merge choices) |
-| `tests/three-way-merge.test.ts` | 15 | 3-way merge via diff-match-patch: clean merges, overlap detection, fallback behavior |
-| `tests/offline-queue.test.ts` | 17 | Enqueue/dequeue, deduplication by path, oldest-first ordering, load/clear, debounced persistence, coalesced writes, destroy cancels timers |
-| `tests/remote-log.test.ts` | 15 | Buffer management, flush threshold (20 entries), ring buffer overflow (200 cap), flush-on-disable, singleton lifecycle |
-| `tests/base-store.test.ts` | 13 | BaseStore: persist/retrieve last-synced content for 3-way merge base |
-| `tests/channel.test.ts` | 10 | Phoenix channel: topic format, vault_deleted events, updateConfig, isConnected, setAuthProvider, auth token flow |
-| `tests/auth.test.ts` | 20 | ApiKeyAuth, OAuthAuth: token management, refresh, deduplication, persistence |
-| `tests/search.test.ts` | 5 | EngramApi.search, SearchModal debounce |
+Don't hardcode test counts here — they drift. Run `bun test` for the live total,
+and `ls tests/*.test.ts` for the current file list. Coverage roughly tracks
+~89% funcs / ~97% lines but check `bun test --coverage` for the real number.
+
+Broad areas under test: SyncEngine (ignore/modify/delete/rename, pull, cursor-pull,
+WebSocket events, echo suppression, 3-way merge, state export/import), the cursor
++ manifest reconciliation path, the offline queue, the API client (incl. batch
+push + `/sync/changes`), auth (ApiKey + OAuth device flow), the Phoenix channel,
+diff/merge, remote logging, plan/limit state, and a set of compliance tests
+(manifest, license, README disclosures, source/styles hygiene, command IDs).
 
 ### Test configuration
 
@@ -95,7 +94,7 @@ bun run build         # Build the plugin (production)
 
 ### Untested files (UI-heavy — test via E2E in backend repo)
 
-`settings.ts`, `conflict-modal.ts`, `first-sync-modal.ts`, `search-modal.ts`, `search-view.ts`, `main.ts`
+`settings.ts`, `conflict-modal.ts`, `search-modal.ts`, `search-view.ts`, `main.ts`
 
 ## Package Manager
 

@@ -5,7 +5,7 @@ Engram backend. This file covers vulnerabilities in **plugin code** — things
 like credential handling, sync logic, file-write paths, or anything that
 could compromise an Obsidian vault.
 
-For vulnerabilities in the backend service (`app.engram.page`) or REST/MCP
+For vulnerabilities in the backend service (`api.engram.page`) or REST/MCP
 API, see
 [engram-app/engram SECURITY.md](https://github.com/engram-app/engram/blob/main/SECURITY.md).
 

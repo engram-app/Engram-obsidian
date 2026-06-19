@@ -874,6 +874,41 @@
 	margin: 12px 0 0;
 }
 
+/* Three-way completion tally: ✓ synced · ⤳ skipped (plan) · ✕ failed. */
+.engram-progress-summary-tally {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 4px 12px;
+	align-items: baseline;
+}
+
+.engram-progress-tally-synced {
+	color: var(--text-success, var(--text-normal));
+}
+
+/* Calm — plan-skips are expected on Free tier, not errors. Accent, not red. */
+.engram-progress-tally-skipped {
+	color: var(--text-accent);
+}
+
+.engram-progress-tally-failed {
+	color: var(--text-error);
+}
+
+.engram-progress-plan-note {
+	margin: 8px 0 0;
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+}
+
+.engram-progress-upgrade {
+	flex: none;
+}
+
 .engram-progress-hint {
 	margin: 12px 0 0;
 	color: var(--text-muted);
@@ -1074,6 +1109,16 @@ body.is-mobile .engram-support-buttons > a {
 	font-weight: 600;
 }
 
+/* "Not synced on your plan" badge — calm/info, never error-red. */
+.engram-sync-center-plan-badge {
+	background: var(--background-modifier-form-field);
+	color: var(--text-accent);
+	border-radius: 10px;
+	padding: 2px 8px;
+	font-size: 11px;
+	font-weight: 600;
+}
+
 /* "Needs attention" reason card — one per failure reason, inside the section. */
 .engram-sync-center-card {
 	background-color: var(--background-primary);
@@ -1086,6 +1131,20 @@ body.is-mobile .engram-support-buttons > a {
 
 .engram-sync-center-card:last-child {
 	margin-bottom: 0;
+}
+
+/* Calm "Not synced on your plan" variant — info treatment, not error.
+   Overrides the default red left-border with the accent so the card reads
+   as informational rather than broken. */
+.engram-sync-center-card-info {
+	border-left-color: var(--interactive-accent);
+}
+
+/* The plan-skip section itself reuses the section card chrome but signals
+   "informational" via the accent left-border (the default for sections) and a
+   muted heading; no extra error coloring. */
+.engram-sync-center-plan-section .setting-item-heading .setting-item-name {
+	color: var(--text-accent);
 }
 
 .engram-sync-center-card-head {
@@ -1489,6 +1548,17 @@ body.is-mobile .engram-support-buttons > a {
 
 .engram-sync-preview-conflicts-label {
 	color: var(--text-muted);
+}
+
+.engram-sync-preview-skip-note {
+	text-align: center;
+	margin: 0.25em 0 1em 0;
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.engram-sync-preview-skip-note-icon {
+	opacity: 0.8;
 }
 
 .engram-sync-preview-options {

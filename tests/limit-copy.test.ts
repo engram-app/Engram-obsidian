@@ -12,7 +12,15 @@ describe("limit-copy", () => {
 	});
 
 	test("maps attachments_disabled", () => {
-		expect(toastFor("attachments_disabled").toLowerCase()).toMatch(/image.*pdf|upgrade/);
+		expect(toastFor("attachments_disabled").toLowerCase()).toMatch(/attachment.*paid plan/);
+	});
+
+	test("maps attachment_must_be_text (capability copy)", () => {
+		expect(toastFor("attachment_must_be_text").toLowerCase()).toMatch(/notes only.*paid plan/);
+	});
+
+	test("maps attachments_quota_exceeded (quota copy)", () => {
+		expect(toastFor("attachments_quota_exceeded").toLowerCase()).toMatch(/storage is full/);
 	});
 
 	test("falls back for unknown reason", () => {

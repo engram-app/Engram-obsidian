@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { LimitExceededError } from "../src/limit-error";
-import { SyncPreviewState, describeCreateVaultError } from "../src/sync-preview-modal";
+import {
+	SyncPreviewState,
+	countSkippedAttachments,
+	describeCreateVaultError,
+	skippedAttachmentsLine,
+} from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
 
 describe("SyncPreviewState — create-vault sub-view", () => {
@@ -46,6 +51,71 @@ describe("SyncPreviewState — create-vault sub-view", () => {
 		state.enterCreateVault();
 		state.exitVaultPicker();
 		expect(state.creatingVault).toBe(false);
+	});
+});
+
+describe("countSkippedAttachments — plan-gated pre-flight count", () => {
+	function planWith(attachments: string[]): SyncPlan {
+		return {
+			vaultName: "T",
+			serverNoteCount: 0,
+			serverAttachmentCount: 0,
+			serverFolderCount: 0,
+			localNoteCount: 0,
+			localAttachmentCount: 0,
+			localFolderCount: 0,
+			localPaths: [],
+			serverPaths: [],
+			toPush: { notes: [], attachments },
+			toPull: { notes: [], attachments: [] },
+			conflicts: [],
+			toDeleteLocal: [],
+			toDeleteRemote: [],
+		};
+	}
+
+	test("text-only plan counts only non-text attachments being pushed", () => {
+		const plan = planWith(["a.png", "b.pdf", "notes.txt", "style.css", "doc.md"]);
+		// .png + .pdf are non-text → 2; .txt/.css/.md pass the text gate
+		expect(countSkippedAttachments(plan, true)).toBe(2);
+	});
+
+	test("paid plan (text-only false) skips nothing", () => {
+		const plan = planWith(["a.png", "b.pdf"]);
+		expect(countSkippedAttachments(plan, false)).toBe(0);
+	});
+
+	test("text-only plan with only text attachments counts zero", () => {
+		const plan = planWith(["notes.txt", "style.css"]);
+		expect(countSkippedAttachments(plan, true)).toBe(0);
+	});
+
+	test("extension matching is case-insensitive and handles nested paths", () => {
+		const plan = planWith(["sub/dir/Photo.PNG", "x.JPEG"]);
+		expect(countSkippedAttachments(plan, true)).toBe(2);
+	});
+});
+
+describe("skippedAttachmentsLine — pre-flight copy", () => {
+	test("free + non-text attachments: shows a skip note with the count", () => {
+		const line = skippedAttachmentsLine(12);
+		expect(line).not.toBeNull();
+		expect(line).toContain("Free syncs notes only");
+		expect(line).toContain("12");
+	});
+
+	test("zero attachments → no note", () => {
+		expect(skippedAttachmentsLine(0)).toBeNull();
+	});
+
+	test("singular wording for exactly one attachment", () => {
+		const line = skippedAttachmentsLine(1);
+		expect(line).toContain("1 attachment will be skipped");
+		expect(line).not.toContain("attachments");
+	});
+
+	test("plural wording for many attachments", () => {
+		expect(skippedAttachmentsLine(3)).toContain("3 attachments will be skipped");
 	});
 });
 

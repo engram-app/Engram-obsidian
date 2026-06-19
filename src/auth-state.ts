@@ -1,4 +1,19 @@
+import { LEGACY_CLOUD_HOSTS } from "./tabs/urls";
 import type { EngramSyncSettings } from "./types";
+
+/** If `apiUrl` points at a legacy Cloud host (one that used to serve the REST
+ *  API but no longer does — e.g. `app.engram.page`, now the SPA-only Cloudflare
+ *  Pages host that 405s API POSTs), return the canonical `cloudUrl` it should be
+ *  rewritten to. Returns null when no migration is needed (already canonical,
+ *  self-hosted, or empty/unparseable). Pure so loadSettings can apply it without
+ *  the Obsidian stack. Credentials are NOT a backend change here — same backend,
+ *  only the edge hostname moved — so the caller preserves stored auth. */
+export function migrateCloudApiUrl(apiUrl: string, cloudUrl: string): string | null {
+	const origin = completeOrigin(apiUrl);
+	if (!origin) return null;
+	const host = new URL(origin).hostname;
+	return LEGACY_CLOUD_HOSTS.includes(host) ? cloudUrl : null;
+}
 
 /** Returns scheme+host+port for a URL that looks like a *finished* origin
  *  (localhost, IPv4, or a domain with a real-looking TLD). Returns null for

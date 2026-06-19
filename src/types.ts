@@ -1,3 +1,5 @@
+import type { PlanState } from "./plan-state";
+
 /** Plugin settings stored in data.json */
 export interface EngramSyncSettings {
 	/** Engram base URL (e.g. "http://10.0.20.214:8000") */
@@ -42,6 +44,9 @@ export interface EngramSyncSettings {
 	userEmail?: string;
 	/** Active auth method. */
 	authMethod?: "oauth" | "api_key" | null;
+	/** Last-known plan/limit state pushed by the backend over the WebSocket.
+	 *  Null until the first plan event is received (or older backend). */
+	planState?: PlanState | null;
 }
 
 export const DEFAULT_SETTINGS: EngramSyncSettings = {
@@ -54,6 +59,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	conflictResolution: "auto",
 	vaultId: null,
 	clientId: "",
+	planState: null,
 };
 
 /** A note as returned by POST /notes */
@@ -99,6 +105,50 @@ export interface ChangesResponse {
 	/** Protocol rev pagination — absent on pre-rev backends. */
 	has_more?: boolean;
 	next_cursor?: string | null;
+}
+
+/** A note entry from the MERGED ordered feed GET /sync/changes (PR B2).
+ *  `content` is absent on meta-only pages; `content_hash` is the server's
+ *  opaque hash. `seq` is the per-vault monotonic change sequence. */
+export interface SyncNoteChange {
+	type: "note";
+	id: string;
+	seq: number;
+	path: string;
+	title: string;
+	content?: string;
+	content_hash?: string;
+	folder: string;
+	tags: string[];
+	mtime: number;
+	updated_at: string;
+	deleted: boolean;
+	version?: number;
+}
+
+/** An attachment entry from GET /sync/changes — metadata only, no bytes. */
+export interface SyncAttachmentChange {
+	type: "attachment";
+	id: string;
+	seq: number;
+	path: string;
+	mime_type: string;
+	size_bytes: number;
+	mtime: number;
+	updated_at: string;
+	deleted: boolean;
+	version?: number;
+}
+
+/** A single entry in the merged ordered feed — note or attachment, tagged. */
+export type SyncChange = SyncNoteChange | SyncAttachmentChange;
+
+/** Response from GET /sync/changes (merged ordered feed, PR B2).
+ *  `next_cursor` is an opaque token, present only when `has_more` is true. */
+export interface SyncChangesResponse {
+	changes: SyncChange[];
+	next_cursor: string | null;
+	has_more: boolean;
 }
 
 /** Response from DELETE /notes/{path} */
@@ -303,6 +353,7 @@ export type SyncIssueCategory =
 	| "network"
 	| "conflict"
 	| "needs_pro"
+	| "quota"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads
@@ -360,6 +411,11 @@ export interface SyncProgress {
 	current: number;
 	total: number;
 	failed: number;
+	/** Plan-gated / informational attachments that were skipped (not failures).
+	 *  Counted separately from `failed` so the completion summary can show a
+	 *  three-way ✓ synced · ⤳ skipped (plan) · ✕ failed tally. Optional —
+	 *  non-complete phases and older callers omit it (treated as 0). */
+	skipped?: number;
 	/** Current file being processed (optional, for display). */
 	currentPath?: string;
 }
@@ -407,6 +463,9 @@ export interface ManifestResponse {
 	attachments: ManifestEntry[];
 	total_notes: number;
 	total_attachments: number;
+	/** Cursor-pull bootstrap watermark (backend PR B1) — the change seq the
+	 *  manifest reflects, used to seed the cursor for the first delta pull. */
+	change_seq?: number;
 }
 
 /** Response from POST /api/vaults/register */

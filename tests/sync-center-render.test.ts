@@ -178,16 +178,72 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(allText(parent)).toMatch(/Too large/);
 	});
 
-	test("needs_pro card appears before too_large (CATEGORY_ORDER)", () => {
+	test("needs_pro renders the plan section + remediation copy; too_large is a card", () => {
 		const plugin = makeMockPlugin([
 			makeIssue({ path: "Health/big.pdf", category: "too_large", status: 413 }),
 			makeIssue({ path: "Assets/a.png", category: "needs_pro", status: 402 }),
 		]);
 		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
 
+		// The dedicated calm section exists…
+		expect(findByCls(parent, "engram-sync-center-plan-section")).not.toBeNull();
+		// …and the needs_pro card lands in it (info variant, not the red card).
+		const infoCards = findAllByCls(parent, "engram-sync-center-card-info");
+		expect(infoCards.length).toBeGreaterThanOrEqual(1);
+
+		const text = allText(parent);
+		expect(text).toContain("Attachments need a paid plan");
+		// too_large stays an attention card.
 		const titles = findAllByCls(parent, "engram-sync-center-card-title");
-		expect(titles.length).toBeGreaterThanOrEqual(2);
-		expect(titles[0].text).toContain("Attachments need a paid plan");
+		expect(titles.some((t) => t.text.includes("Too large"))).toBe(true);
+	});
+
+	test("a quota (informational) failure renders in the plan section as an info card", () => {
+		const plugin = makeMockPlugin([
+			makeIssue({ path: "Assets/big.png", category: "quota", status: 402 }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(findByCls(parent, "engram-sync-center-plan-section")).not.toBeNull();
+		expect(allText(parent)).toContain("Attachment storage full");
+		// It's an info-styled card, not a red attention card.
+		expect(findAllByCls(parent, "engram-sync-center-card-info").length).toBeGreaterThanOrEqual(
+			1,
+		);
+
+		// With ONLY an informational issue, "Needs attention" shows its empty
+		// placeholder — proving informational did not leak into it.
+		const attentionSection = findByCls(parent, "engram-sync-center-attention-section");
+		expect(attentionSection).not.toBeNull();
+		expect(allText(parent)).toContain("Nothing needs your attention");
+	});
+
+	test("informational issues do NOT render under 'Retrying automatically'", () => {
+		const plugin = makeMockPlugin([
+			makeIssue({ path: "Assets/big.png", category: "quota", status: 402 }),
+		]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const text = allText(parent);
+		expect(text).not.toContain("Temporary errors");
+		// Header counts it as a plan-skip, not "retrying" / "needs attention".
+		expect(text).toContain("1 not on your plan");
+		expect(text).not.toContain("needs attention");
+		expect(text).not.toContain("1 retrying");
+	});
+
+	test("the plan section offers an Upgrade button, not a Retry/Dismiss", () => {
+		const plugin = makeMockPlugin([makeIssue({ category: "needs_pro" })]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		expect(findByCls(parent, "engram-sync-center-plan-section")).not.toBeNull();
+		const buttons = findAllByCls(parent, "mod-cta").filter((b) => b.text === "Upgrade");
+		expect(buttons.length).toBeGreaterThanOrEqual(1);
+		// No "Sync these now" button yet (deferred to a later task).
+		const allButtons = findAllByCls(parent, "engram-sync-center-card-info").flatMap((c) =>
+			findAllByCls(c, "mod-cta"),
+		);
+		expect(allButtons.every((b) => b.text !== "Sync these now")).toBe(true);
 	});
 
 	test("a transient (server) failure renders under 'Retrying automatically', not as a card", () => {
