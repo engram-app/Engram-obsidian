@@ -1782,7 +1782,12 @@ body.is-mobile .engram-support-buttons > a {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.25rem;
-	margin-bottom: 0.25rem;
+	margin: 0.4rem 0;
+}
+
+/* No empty gap when there are no active filters. */
+.engram-search-tag-chips:empty {
+	display: none;
 }
 
 .engram-search-tag-chip {
@@ -1794,6 +1799,7 @@ body.is-mobile .engram-support-buttons > a {
 	color: var(--text-normal);
 	background: var(--background-modifier-hover);
 	border-radius: var(--radius-s);
+	cursor: pointer;
 }
 
 .engram-search-tag-chip-remove {
@@ -1803,6 +1809,6 @@ body.is-mobile .engram-support-buttons > a {
 	line-height: 1;
 }
 
-.engram-search-tag-chip-remove:hover {
+.engram-search-tag-chip:hover .engram-search-tag-chip-remove {
 	color: var(--text-normal);
 }

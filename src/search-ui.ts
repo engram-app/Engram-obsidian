@@ -71,7 +71,6 @@ export class SearchPanel {
 			placeholder: "Filter by folder…",
 			cls: "engram-search-input engram-search-folder-input",
 		});
-		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
 		this.tagEl = parent.createEl("input", {
 			type: "text",
 			placeholder: "Filter by tags…",
@@ -84,7 +83,6 @@ export class SearchPanel {
 			() => this.selectedTags,
 			(tag) => this.addTag(tag),
 		);
-		this.renderTagChips();
 
 		parent.createEl("hr", { cls: "engram-search-divider" });
 
@@ -96,6 +94,10 @@ export class SearchPanel {
 			placeholder: "Search your vault…",
 			cls: "engram-search-input",
 		});
+
+		// Active tag filters render under the search box, above the results.
+		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
+		this.renderTagChips();
 
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();
@@ -191,11 +193,12 @@ export class SearchPanel {
 	private renderTagChips(): void {
 		this.tagChipsEl.empty();
 		for (const tag of this.selectedTags) {
+			// The whole chip is the remove target (the × is just an affordance).
 			const chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
 			chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" });
-			const remove = chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "×" });
-			remove.setAttribute("aria-label", `Remove tag ${tag}`);
-			remove.addEventListener("click", () => this.removeTag(tag));
+			chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "×" });
+			chip.setAttribute("aria-label", `Remove tag ${tag}`);
+			chip.addEventListener("click", () => this.removeTag(tag));
 		}
 	}
 
