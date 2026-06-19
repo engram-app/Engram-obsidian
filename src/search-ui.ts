@@ -9,6 +9,9 @@ import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
 
+const KEYWORD_DEBOUNCE_MS = 200;
+const REMOTE_DEBOUNCE_MS = 550;
+
 const MODES: { mode: SearchMode; label: string }[] = [
 	{ mode: "hybrid", label: "Hybrid" },
 	{ mode: "semantic", label: "Semantic" },
@@ -35,6 +38,7 @@ export class SearchPanel {
 	private previewEl: HTMLElement | null = null;
 	private toggleEl!: HTMLElement;
 	private debounceTimer: number | null = null;
+	private lastRunQuery = "";
 	private results: UnifiedSearchResult[] = [];
 	private selectedIndex = -1;
 	/** Bumped on every run() so a slow earlier search can't clobber a newer render. */
@@ -101,7 +105,8 @@ export class SearchPanel {
 
 		this.scheduleHandler = () => {
 			if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
-			this.debounceTimer = window.setTimeout(() => void this.run(), 300);
+			const delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
+			this.debounceTimer = window.setTimeout(() => void this.run(), delay);
 		};
 		this.inputEl.addEventListener("input", this.scheduleHandler);
 		this.folderEl.addEventListener("input", this.scheduleHandler);
@@ -127,7 +132,13 @@ export class SearchPanel {
 				this.moveSelection(-1);
 			} else if (e.key === "Enter") {
 				e.preventDefault();
-				this.openSelected();
+				const q = this.inputEl.value.trim();
+				if (q && q !== this.lastRunQuery) {
+					if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
+					void this.run();
+				} else {
+					this.openSelected();
+				}
 			}
 		};
 		this.inputEl.addEventListener("keydown", this.keydownHandler);
@@ -205,11 +216,13 @@ export class SearchPanel {
 		const gen = ++this.runGeneration;
 		const query = this.inputEl.value.trim();
 		if (!query) {
+			this.lastRunQuery = "";
 			this.results = [];
 			this.selectedIndex = -1;
 			this.renderEmpty();
 			return;
 		}
+		this.lastRunQuery = query;
 		try {
 			const outcome = await searchEngram(this.mode, query, this.ctx, {
 				limit: 10,

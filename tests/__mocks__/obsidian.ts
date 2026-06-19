@@ -347,7 +347,7 @@ export class AbstractInputSuggest<T> {
 
 /** Test stub. Real ranking is exercised via an injected fuzzy factory in
  *  search-engine tests; this only needs to resolve the import. */
-export function prepareFuzzySearch(
+export function prepareSimpleSearch(
 	query: string,
 ): (text: string) => { score: number; matches: [number, number][] } | null {
 	const q = query.toLowerCase();

@@ -104,6 +104,7 @@
 .engram-search-view-container .engram-search-results {
 	flex: 1;
 	min-height: 0;
+	max-height: none;
 }
 
 /* Preview pane */

@@ -2,7 +2,7 @@
  * Pure search engine: dispatches Semantic / Keyword / Hybrid and normalizes
  * every mode to UnifiedSearchResult[]. No DOM, no Obsidian view code.
  */
-import { type App, type TFile, getAllTags, prepareFuzzySearch } from "obsidian";
+import { type App, type TFile, getAllTags, prepareSimpleSearch } from "obsidian";
 import type { EngramApi } from "./api";
 import type { SearchMode, SearchResult, UnifiedSearchResult } from "./types";
 
@@ -70,7 +70,7 @@ export async function searchEngram(
 	deps: SearchDeps = {},
 ): Promise<SearchOutcome> {
 	if (!query.trim()) return { results: [], degraded: false };
-	const fuzzy = deps.fuzzy ?? prepareFuzzySearch;
+	const fuzzy = deps.fuzzy ?? prepareSimpleSearch;
 	if (mode === "semantic") {
 		return { results: await searchSemantic(query, ctx, opts), degraded: false };
 	}
