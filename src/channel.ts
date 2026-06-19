@@ -16,6 +16,16 @@ const NO_AUTH_RECONNECT_MS = 30_000;
  *  narrower than a real session.
  */
 const AUTH_FAIL_WINDOW_MS = 5_000;
+
+/** Phoenix heartbeat interval. MUST stay well under the server's WebSocket
+ *  idle `:timeout` (Phoenix default 60s): if no frame reaches the server
+ *  within that window it closes the socket server-side (`:local_closed`),
+ *  and any broadcast sent during the client's reconnect gap is lost
+ *  (broadcasts are fire-and-forget to currently-joined sockets). Under load
+ *  the renderer's `setInterval` can fire late, so 15s keeps a 4× margin —
+ *  even a badly-starved tick still beats 60s. Was 30s, which only left 2×
+ *  and let CI's 2-worker load starve a heartbeat past the timeout. */
+const HEARTBEAT_MS = 15_000;
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -226,7 +236,7 @@ export class NoteChannel {
 			if (this.ws?.readyState === WebSocket.OPEN) {
 				this.send([null, String(++this.ref), "phoenix", "heartbeat", {}]);
 			}
-		}, 30_000);
+		}, HEARTBEAT_MS);
 	}
 
 	private handleMessage(raw: string): void {

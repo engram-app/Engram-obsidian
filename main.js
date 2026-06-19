@@ -1280,7 +1280,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, HEARTBEAT_MS = 15e3, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null) {
     this.ws = null;
     this.ref = 0;
@@ -1385,7 +1385,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.heartbeatTimer = window.setInterval(() => {
       var _a;
       ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN && this.send([null, String(++this.ref), "phoenix", "heartbeat", {}]);
-    }, 3e4);
+    }, HEARTBEAT_MS);
   }
   handleMessage(raw) {
     var _a, _b, _c, _d, _e, _f, _g;
