@@ -311,6 +311,26 @@ describe("EngramApi", () => {
 			expect(headers["X-Vault-ID"]).toBeUndefined();
 		});
 
+		test("uses the auth provider's vault (OAuth) even when the vaultId field is null", async () => {
+			// Regression: OAuth installs left this.vaultId empty while the provider
+			// held the bound vault, so vault-scoped REST (e.g. /search) fell back to
+			// the user's default vault server-side. The header must use the active vault.
+			const provider: AuthProvider = {
+				getToken: async () => "oauth-token",
+				getVaultId: () => "engram-vault-id",
+				isAuthenticated: () => true,
+				signOut: () => {},
+			};
+			api.setAuthProvider(provider);
+			api.setVaultId(null);
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
+			} as any);
+			await api.getChanges("2026-01-01T00:00:00Z");
+			expect(mockRequestUrl.mock.calls[0][0].headers["X-Vault-ID"]).toBe("engram-vault-id");
+		});
+
 		test("setVaultId updates the header for subsequent requests", async () => {
 			api.setVaultId("10");
 			mockRequestUrl.mockResolvedValueOnce({
