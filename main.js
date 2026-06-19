@@ -5054,7 +5054,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -5081,7 +5081,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian15.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
-      existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized));
+      existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized));
       return;
     }
     if (event.event_type === "upsert")
@@ -5102,13 +5102,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_c = event.title) != null ? _c : "",
+            title: (_d = event.title) != null ? _d : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_d = event.folder) != null ? _d : "",
-            tags: (_e = event.tags) != null ? _e : [],
-            mtime: (_f = event.mtime) != null ? _f : Date.now(),
-            updated_at: (_g = event.updated_at) != null ? _g : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_e = event.folder) != null ? _e : "",
+            tags: (_f = event.tags) != null ? _f : [],
+            mtime: (_g = event.mtime) != null ? _g : Date.now(),
+            updated_at: (_h = event.updated_at) != null ? _h : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -5118,13 +5118,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_h = note.content_hash) != null ? _h : event.content_hash,
+            content_hash: (_i = note.content_hash) != null ? _i : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_i = note.version) != null ? _i : event.version
+            version: (_j = note.version) != null ? _j : event.version
           });
         }
       } catch (e) {
