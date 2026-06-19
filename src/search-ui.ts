@@ -12,10 +12,25 @@ import type { SearchMode, UnifiedSearchResult } from "./types";
 const KEYWORD_DEBOUNCE_MS = 200;
 const REMOTE_DEBOUNCE_MS = 550;
 
-const MODES: { mode: SearchMode; label: string }[] = [
-	{ mode: "hybrid", label: "Hybrid" },
-	{ mode: "semantic", label: "Semantic" },
-	{ mode: "keyword", label: "Keyword" },
+const MODES: { mode: SearchMode; label: string; hint: string; tooltip: string }[] = [
+	{
+		mode: "hybrid",
+		label: "Hybrid",
+		hint: "Blends meaning + exact words — best for most searches.",
+		tooltip: "Blends meaning + exact words — best default",
+	},
+	{
+		mode: "semantic",
+		label: "Semantic",
+		hint: "Finds notes by meaning, even if they don't share your words.",
+		tooltip: "Find by meaning (AI search)",
+	},
+	{
+		mode: "keyword",
+		label: "Keyword",
+		hint: "Matches exact words and phrases. Works offline.",
+		tooltip: "Exact words & phrases — works offline",
+	},
 ];
 
 export interface SearchPanelOpts {
@@ -37,6 +52,7 @@ export class SearchPanel {
 	private tagChipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
 	private toggleEl!: HTMLElement;
+	private hintEl!: HTMLElement;
 	private debounceTimer: number | null = null;
 	private lastRunQuery = "";
 	private results: UnifiedSearchResult[] = [];
@@ -58,13 +74,18 @@ export class SearchPanel {
 		parent.addClass("engram-search-panel");
 
 		this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
-		for (const { mode, label } of MODES) {
+		for (const { mode, label, tooltip } of MODES) {
 			const btn = this.toggleEl.createEl("button", {
 				text: label,
 				cls: `engram-search-mode-btn${mode === this.mode ? " is-active" : ""}`,
 			});
+			// Obsidian renders a tooltip for any element carrying aria-label.
+			btn.setAttribute("aria-label", tooltip);
 			btn.addEventListener("click", () => this.setMode(mode));
 		}
+		// One-line, always-visible explanation of the selected mode (teaches new users).
+		this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" });
+		this.updateHint();
 
 		this.folderEl = parent.createEl("input", {
 			type: "text",
@@ -166,8 +187,14 @@ export class SearchPanel {
 			if (m && m.mode === mode) b.classList.add("is-active");
 			else b.classList.remove("is-active");
 		});
+		this.updateHint();
 		this.opts.onModeChange?.(mode);
 		void this.run();
+	}
+
+	private updateHint(): void {
+		const info = MODES.find((m) => m.mode === this.mode);
+		if (info) this.hintEl.setText(info.hint);
 	}
 
 	private parseTags(): string[] | undefined {
