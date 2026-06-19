@@ -17,7 +17,7 @@ Works on desktop and mobile. Want everything on your own hardware instead? [Self
 ## What you get
 
 - **Your notes, on every device.** Write on your laptop, it's on your phone — and changes your AI makes show up too.
-- **Find anything by meaning.** Hit the 🔍 icon and describe it: *"our policy on refunds"* surfaces **"Customer support playbook,"** even though the note never says "policy."
+- **Find anything — by meaning or exact words.** Hit the search icon and pick a mode: *Semantic* turns *"our policy on refunds"* into **"Customer support playbook,"** even when the note never says "policy"; *Keyword* matches exact terms locally (works offline, no quota); *Hybrid* blends both.
 - **Your vault is programmable.** A full [REST + WebSocket API](https://engram.page/docs/api) wraps every note — automate, integrate, or build apps on your own knowledge.
 - **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai) — it reads your notes for context and writes new ones back:
 

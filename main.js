@@ -1935,6 +1935,12 @@ async function searchKeyword(query, ctx, opts, fuzzy) {
   }
   return scored.sort((a, b) => b.score - a.score), scored.slice(0, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT);
 }
+function filterResultsByTags(app, results, tags) {
+  return tags != null && tags.length ? results.filter((r) => {
+    let file = app.vault.getFileByPath(r.source_path);
+    return file ? matchesTags(app, file, tags) : !1;
+  }) : results;
+}
 function collapseByNote(results) {
   let best = /* @__PURE__ */ new Map();
   for (let r of results) {
@@ -1973,7 +1979,11 @@ async function searchHybrid(query, ctx, opts, fuzzy) {
   var _a;
   let limit = (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, keywordList = await searchKeyword(query, ctx, opts, fuzzy);
   try {
-    let resp = await ctx.api.search(query, limit, opts.tags, opts.folder), semanticList = collapseByNote(mapSemantic(resp.results));
+    let resp = await ctx.api.search(query, limit, opts.tags, opts.folder), semanticList = filterResultsByTags(
+      ctx.app,
+      collapseByNote(mapSemantic(resp.results)),
+      opts.tags
+    );
     return { results: rrf(keywordList, semanticList, limit), degraded: !1 };
   } catch (e) {
     return { results: keywordList.slice(0, limit), degraded: !0 };
@@ -2109,7 +2119,7 @@ var MODES = [
       header.createEl("span", {
         text: result.title || result.source_path || "Untitled",
         cls: "engram-search-result-title"
-      }), (result.origin === "semantic" || result.origin === "hybrid") && header.createEl("span", {
+      }), result.origin === "semantic" && header.createEl("span", {
         text: `${(result.score * 100).toFixed(0)}%`,
         cls: "engram-search-result-score"
       });
@@ -2160,7 +2170,7 @@ var MODES = [
   headingAnchor(headingPath) {
     var _a;
     if (!headingPath) return "";
-    let last = (_a = headingPath.split(/>|\//).pop()) == null ? void 0 : _a.trim();
+    let last = (_a = headingPath.split(">").pop()) == null ? void 0 : _a.trim();
     return last ? `#${last}` : "";
   }
   openResult(result) {
