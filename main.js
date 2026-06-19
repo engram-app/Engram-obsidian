@@ -2065,7 +2065,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
-    }), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.tagEl = parent.createEl("input", {
+    }), this.tagEl = parent.createEl("input", {
       type: "text",
       placeholder: "Filter by tags\u2026",
       cls: "engram-search-input engram-search-tag-input"
@@ -2075,13 +2075,13 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       () => this.collectVaultTags(),
       () => this.selectedTags,
       (tag) => this.addTag(tag)
-    ), this.renderTagChips(), parent.createEl("hr", { cls: "engram-search-divider" });
+    ), parent.createEl("hr", { cls: "engram-search-divider" });
     let inputWrap = parent.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
     (0, import_obsidian6.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
       type: "text",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
-    }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+    }), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
       this.debounceTimer && window.clearTimeout(this.debounceTimer);
       let delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
       this.debounceTimer = window.setTimeout(() => void this.run(), delay);
@@ -2131,9 +2131,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     this.tagChipsEl.empty();
     for (let tag of this.selectedTags) {
       let chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
-      chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" });
-      let remove = chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "\xD7" });
-      remove.setAttribute("aria-label", `Remove tag ${tag}`), remove.addEventListener("click", () => this.removeTag(tag));
+      chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" }), chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "\xD7" }), chip.setAttribute("aria-label", `Remove tag ${tag}`), chip.addEventListener("click", () => this.removeTag(tag));
     }
   }
   collectVaultTags() {
