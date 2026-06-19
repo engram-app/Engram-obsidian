@@ -4,6 +4,7 @@
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
 import { Notice, getAllTags, setIcon } from "obsidian";
+import { FolderInputSuggest } from "./folder-suggest";
 import { type SearchContext, matchStrengths, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
@@ -96,6 +97,14 @@ export class SearchPanel {
 			placeholder: "Filter by folder…",
 			cls: "engram-search-input engram-search-folder-input",
 		});
+		new FolderInputSuggest(
+			this.ctx.app,
+			this.folderEl,
+			() => this.collectVaultFolders(),
+			() => {
+				void this.run();
+			},
+		);
 		// Active tag filters sit above the tag input so the suggestion dropdown
 		// (which drops below the input) never covers them.
 		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
@@ -247,6 +256,24 @@ export class SearchPanel {
 			const cache = this.ctx.app.metadataCache.getFileCache(file);
 			if (!cache) continue;
 			for (const t of getAllTags(cache) ?? []) set.add(t.replace(/^#/, ""));
+		}
+		return [...set].sort((a, b) => a.localeCompare(b));
+	}
+
+	/** Distinct note-bearing folder paths (each ancestor included) for the folder
+	 *  filter dropdown. Derived from file paths so we only ever suggest folders
+	 *  that actually contain notes the prefix filter can match. */
+	private collectVaultFolders(): string[] {
+		const set = new Set<string>();
+		for (const file of this.ctx.app.vault.getMarkdownFiles()) {
+			const slash = file.path.lastIndexOf("/");
+			if (slash <= 0) continue; // root-level note — no folder to filter on
+			let dir = file.path.slice(0, slash);
+			while (dir) {
+				set.add(dir);
+				const s = dir.lastIndexOf("/");
+				dir = s > 0 ? dir.slice(0, s) : "";
+			}
 		}
 		return [...set].sort((a, b) => a.localeCompare(b));
 	}

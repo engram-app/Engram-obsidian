@@ -1836,6 +1836,22 @@ body.is-mobile .engram-support-buttons > a {
 	border-radius: var(--radius-s);
 }
 
+.engram-folder-suggest-item {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.engram-folder-suggest-icon {
+	display: inline-flex;
+	color: var(--text-muted);
+}
+
+.engram-folder-suggest-icon svg {
+	width: 1em;
+	height: 1em;
+}
+
 .engram-search-divider {
 	margin: 0.5rem 0;
 	border: none;
