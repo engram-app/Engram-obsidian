@@ -92,17 +92,17 @@
 
 .engram-search-match-semantic {
 	color: var(--color-purple);
-	background: hsla(var(--color-purple-hsl, 270 60% 60%) / 0.12);
+	background: rgba(var(--color-purple-rgb), 0.12);
 }
 
 .engram-search-match-keyword {
 	color: var(--color-blue);
-	background: hsla(var(--color-blue-hsl, 210 80% 55%) / 0.12);
+	background: rgba(var(--color-blue-rgb), 0.12);
 }
 
 .engram-search-match-both {
 	color: var(--color-green);
-	background: hsla(var(--color-green-hsl, 140 55% 45%) / 0.12);
+	background: rgba(var(--color-green-rgb), 0.12);
 }
 
 .engram-search-match-icon {
@@ -457,7 +457,7 @@
 	height: 8px;
 	border-radius: 50%;
 	margin-right: 8px;
-	background-color: #888888;
+	background-color: var(--text-muted);
 }
 
 .engram-status-dot.is-error {
