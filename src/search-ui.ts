@@ -92,6 +92,10 @@ export class SearchPanel {
 			placeholder: "Filter by folder…",
 			cls: "engram-search-input engram-search-folder-input",
 		});
+		// Active tag filters sit above the tag input so the suggestion dropdown
+		// (which drops below the input) never covers them.
+		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
+		this.renderTagChips();
 		this.tagEl = parent.createEl("input", {
 			type: "text",
 			placeholder: "Filter by tags…",
@@ -115,10 +119,6 @@ export class SearchPanel {
 			placeholder: "Search your vault…",
 			cls: "engram-search-input",
 		});
-
-		// Active tag filters render under the search box, above the results.
-		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
-		this.renderTagChips();
 
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();

@@ -53,4 +53,13 @@ export class TagInputSuggest extends AbstractInputSuggest<string> {
 		// Re-open the popover for the next tag without making the user type again.
 		this.inputEl.dispatchEvent(new Event("input", { bubbles: true }));
 	}
+
+	/** Match the dropdown width to the tag input so it spans the panel instead of
+	 *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
+	 *  this a harmless no-op if that property ever changes. */
+	open(): void {
+		super.open();
+		const el = (this as unknown as { suggestEl?: HTMLElement }).suggestEl;
+		if (el) el.style.width = `${this.inputEl.offsetWidth}px`;
+	}
 }
