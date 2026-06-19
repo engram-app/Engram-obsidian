@@ -1877,7 +1877,7 @@ async function searchSemantic(query, ctx, opts) {
 async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
   var _a;
   if (!query.trim()) return { results: [], degraded: !1 };
-  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian4.prepareFuzzySearch;
+  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian4.prepareSimpleSearch;
   return mode === "semantic" ? { results: await searchSemantic(query, ctx, opts), degraded: !1 } : mode === "keyword" ? { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: !1 } : searchHybrid(query, ctx, opts, fuzzy);
 }
 function basename(path) {
@@ -2035,7 +2035,7 @@ var TagInputSuggest = class extends import_obsidian5.AbstractInputSuggest {
 };
 
 // src/search-ui.ts
-var MODES = [
+var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
   { mode: "hybrid", label: "Hybrid" },
   { mode: "semantic", label: "Semantic" },
   { mode: "keyword", label: "Keyword" }
@@ -2044,6 +2044,7 @@ var MODES = [
     this.selectedTags = [];
     this.previewEl = null;
     this.debounceTimer = null;
+    this.lastRunQuery = "";
     this.results = [];
     this.selectedIndex = -1;
     /** Bumped on every run() so a slow earlier search can't clobber a newer render. */
@@ -2078,14 +2079,24 @@ var MODES = [
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
     }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.opts.withPreview && (this.previewEl = parent.createDiv({ cls: "engram-search-preview" })), this.renderEmpty(), this.scheduleHandler = () => {
-      this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), 300);
+      this.debounceTimer && window.clearTimeout(this.debounceTimer);
+      let delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
+      this.debounceTimer = window.setTimeout(() => void this.run(), delay);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {
         let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
         raw && (e.preventDefault(), this.addTag(raw), this.tagEl.value = "");
       }
     }, this.tagEl.addEventListener("keydown", this.tagKeydownHandler), this.keydownHandler = (e) => {
-      e.key === "ArrowDown" ? (e.preventDefault(), this.moveSelection(1)) : e.key === "ArrowUp" ? (e.preventDefault(), this.moveSelection(-1)) : e.key === "Enter" && (e.preventDefault(), this.openSelected());
+      if (e.key === "ArrowDown")
+        e.preventDefault(), this.moveSelection(1);
+      else if (e.key === "ArrowUp")
+        e.preventDefault(), this.moveSelection(-1);
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        let q = this.inputEl.value.trim();
+        q && q !== this.lastRunQuery ? (this.debounceTimer && window.clearTimeout(this.debounceTimer), this.run()) : this.openSelected();
+      }
     }, this.inputEl.addEventListener("keydown", this.keydownHandler);
   }
   focus() {
@@ -2136,9 +2147,10 @@ var MODES = [
     var _a;
     let gen = ++this.runGeneration, query = this.inputEl.value.trim();
     if (!query) {
-      this.results = [], this.selectedIndex = -1, this.renderEmpty();
+      this.lastRunQuery = "", this.results = [], this.selectedIndex = -1, this.renderEmpty();
       return;
     }
+    this.lastRunQuery = query;
     try {
       let outcome = await searchEngram(this.mode, query, this.ctx, {
         limit: 10,
