@@ -6,10 +6,19 @@
 }
 
 /* Search — shared between modal and sidebar */
+
+/* One source of vertical rhythm: the panel is a flex column with a uniform gap,
+   so individual controls never set their own stacking margins (which had drifted
+   between 4/6.4/8px). Empty children (e.g. the tag-chip row) collapse the gap. */
+.engram-search-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
 .engram-search-input {
 	width: 100%;
 	padding: 8px 12px;
-	margin-bottom: 8px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 6px;
 	background: var(--background-primary);
@@ -1779,7 +1788,6 @@ body.is-mobile .engram-support-buttons > a {
 .engram-search-mode-toggle {
 	display: flex;
 	gap: 0.25rem;
-	margin-bottom: 0.25rem;
 }
 
 /* Accent-bordered info strip so the active mode's explanation is noticed, not
@@ -1788,7 +1796,6 @@ body.is-mobile .engram-support-buttons > a {
 	display: flex;
 	align-items: center;
 	gap: 0.4rem;
-	margin-bottom: 0.5rem;
 	padding: 0.35rem 0.55rem;
 	font-size: var(--font-ui-small);
 	color: var(--text-normal);
@@ -1853,14 +1860,13 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 .engram-search-divider {
-	margin: 0.5rem 0;
+	margin: 0;
 	border: none;
 	border-top: 1px solid var(--background-modifier-border);
 }
 
 .engram-search-input-wrap {
 	position: relative;
-	margin-bottom: 8px;
 }
 
 .engram-search-input-icon {
@@ -1882,7 +1888,6 @@ body.is-mobile .engram-support-buttons > a {
 	display: flex;
 	flex-wrap: wrap;
 	gap: 0.25rem;
-	margin: 0.4rem 0;
 }
 
 /* No empty gap when there are no active filters. */
