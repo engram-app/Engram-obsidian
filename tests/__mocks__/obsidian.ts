@@ -323,6 +323,28 @@ export function getAllTags(cache: {
 
 export class App {}
 
+/** Test stub for Obsidian's AbstractInputSuggest. Only needs to resolve the
+ *  import + provide setValue/getValue/close so subclasses can extend it; the
+ *  pure suggestion logic is unit-tested directly, not through this base. */
+export class AbstractInputSuggest<T> {
+	protected inputEl: { value: string };
+	constructor(_app: unknown, inputEl: { value: string }) {
+		this.inputEl = inputEl ?? { value: "" };
+	}
+	setValue(value: string): void {
+		this.inputEl.value = value;
+	}
+	getValue(): string {
+		return this.inputEl.value;
+	}
+	close(): void {
+		// no-op stub
+	}
+	getSuggestions(_query: string): T[] | Promise<T[]> {
+		return [];
+	}
+}
+
 /** Test stub. Real ranking is exercised via an injected fuzzy factory in
  *  search-engine tests; this only needs to resolve the import. */
 export function prepareFuzzySearch(

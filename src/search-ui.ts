@@ -3,15 +3,16 @@
  * Owns input, mode toggle, filters, results list, keyboard nav, highlight,
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
-import { Notice } from "obsidian";
+import { Notice, getAllTags, setIcon } from "obsidian";
 import { type SearchContext, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
+import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
 
 const MODES: { mode: SearchMode; label: string }[] = [
+	{ mode: "hybrid", label: "Hybrid" },
 	{ mode: "semantic", label: "Semantic" },
 	{ mode: "keyword", label: "Keyword" },
-	{ mode: "hybrid", label: "Hybrid" },
 ];
 
 export interface SearchPanelOpts {
@@ -58,11 +59,6 @@ export class SearchPanel {
 			btn.addEventListener("click", () => this.setMode(mode));
 		}
 
-		this.inputEl = parent.createEl("input", {
-			type: "text",
-			placeholder: "Search your vault…",
-			cls: "engram-search-input",
-		});
 		this.folderEl = parent.createEl("input", {
 			type: "text",
 			placeholder: "Filter by folder…",
@@ -72,6 +68,23 @@ export class SearchPanel {
 			type: "text",
 			placeholder: "Filter by tags (comma-separated)…",
 			cls: "engram-search-input engram-search-tag-input",
+		});
+		new TagInputSuggest(
+			this.ctx.app,
+			this.tagEl,
+			() => this.collectVaultTags(),
+			() => this.scheduleHandler(),
+		);
+
+		parent.createEl("hr", { cls: "engram-search-divider" });
+
+		const inputWrap = parent.createDiv({ cls: "engram-search-input-wrap" });
+		const iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
+		setIcon(iconEl, "search");
+		this.inputEl = inputWrap.createEl("input", {
+			type: "text",
+			placeholder: "Search your vault…",
+			cls: "engram-search-input",
 		});
 
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
@@ -138,6 +151,16 @@ export class SearchPanel {
 			.map((t) => t.trim().replace(/^#/, ""))
 			.filter(Boolean);
 		return tags.length ? tags : undefined;
+	}
+
+	private collectVaultTags(): string[] {
+		const set = new Set<string>();
+		for (const file of this.ctx.app.vault.getMarkdownFiles()) {
+			const cache = this.ctx.app.metadataCache.getFileCache(file);
+			if (!cache) continue;
+			for (const t of getAllTags(cache) ?? []) set.add(t.replace(/^#/, ""));
+		}
+		return [...set].sort((a, b) => a.localeCompare(b));
 	}
 
 	private async run(): Promise<void> {

@@ -4,8 +4,8 @@ import { DEFAULT_SETTINGS } from "../src/types";
 import type { SearchResponse } from "../src/types";
 
 describe("search settings", () => {
-	it("defaults searchDefaultMode to semantic", () => {
-		expect(DEFAULT_SETTINGS.searchDefaultMode).toBe("semantic");
+	it("defaults searchDefaultMode to hybrid", () => {
+		expect(DEFAULT_SETTINGS.searchDefaultMode).toBe("hybrid");
 	});
 });
 

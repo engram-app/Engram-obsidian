@@ -79,7 +79,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	vaultId: null,
 	clientId: "",
 	planState: null,
-	searchDefaultMode: "semantic",
+	searchDefaultMode: "hybrid",
 };
 
 /** A note as returned by POST /notes */

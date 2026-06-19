@@ -1763,3 +1763,27 @@ body.is-mobile .engram-support-buttons > a {
 	background: var(--text-highlight-bg);
 	border-radius: var(--radius-s);
 }
+
+.engram-search-divider {
+	margin: 0.5rem 0;
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.engram-search-input-wrap {
+	position: relative;
+}
+
+.engram-search-input-icon {
+	position: absolute;
+	left: 0.5rem;
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+.engram-search-input-wrap .engram-search-input {
+	padding-left: 1.85rem;
+}
