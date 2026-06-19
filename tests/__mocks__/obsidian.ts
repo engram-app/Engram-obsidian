@@ -308,3 +308,16 @@ export function setIcon(_el: unknown, _name: string): void {
 }
 
 export class App {}
+
+/** Test stub. Real ranking is exercised via an injected fuzzy factory in
+ *  search-engine tests; this only needs to resolve the import. */
+export function prepareFuzzySearch(
+	query: string,
+): (text: string) => { score: number; matches: [number, number][] } | null {
+	const q = query.toLowerCase();
+	return (text: string) => {
+		const i = text.toLowerCase().indexOf(q);
+		if (i < 0) return null;
+		return { score: 1, matches: [[i, i + q.length]] };
+	};
+}
