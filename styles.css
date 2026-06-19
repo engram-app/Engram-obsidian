@@ -1733,3 +1733,33 @@ body.is-mobile .engram-support-buttons > a {
 	width: 100%;
 	padding: 0.4em;
 }
+
+/* ── Search mode toggle + match highlights ───────────────────── */
+
+.engram-search-mode-toggle {
+	display: flex;
+	gap: 0.25rem;
+	margin-bottom: 0.5rem;
+}
+
+.engram-search-mode-btn {
+	flex: 1;
+	padding: 0.25rem 0.5rem;
+	font-size: var(--font-ui-small);
+	border: 1px solid var(--background-modifier-border);
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+
+.engram-search-mode-btn.is-active {
+	background: var(--interactive-accent);
+	color: var(--text-on-accent);
+	border-color: var(--interactive-accent);
+}
+
+.engram-search-hl {
+	background: var(--text-highlight-bg);
+	border-radius: var(--radius-s);
+}
