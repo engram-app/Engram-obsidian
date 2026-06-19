@@ -2095,27 +2095,7 @@ var TagInputSuggest = class extends import_obsidian6.AbstractInputSuggest {
 };
 
 // src/search-ui.ts
-var SEARCH_DEBOUNCE_MS = 550, MODES = [
-  {
-    mode: "hybrid",
-    label: "Hybrid",
-    // Icons mirror the result provenance pills so the hint teaches the same vocabulary.
-    icon: "layers",
-    hint: "Blends meaning and exact words. Best for most searches.",
-    tooltip: "Blends meaning + exact words \u2014 best default"
-  },
-  {
-    mode: "semantic",
-    label: "Semantic",
-    icon: "sparkles",
-    hint: "Finds notes by meaning, even when they don't share your words.",
-    tooltip: "Find by meaning (AI search)"
-  }
-  // No standalone "keyword" mode: Obsidian's core Search does pure keyword
-  // better (operators, context, regex), and Hybrid already covers exact words
-  // (and degrades to keyword-only when the backend is offline). The keyword
-  // engine still powers Hybrid's fusion — it's just not a user-facing toggle.
-], SearchPanel = class {
+var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchPanel = class {
   constructor(parent, ctx, opts) {
     this.selectedTags = [];
     this.filtersOpen = !1;
@@ -2125,13 +2105,12 @@ var SEARCH_DEBOUNCE_MS = 550, MODES = [
     this.selectedIndex = -1;
     /** Bumped on every run() so a slow earlier search can't clobber a newer render. */
     this.runGeneration = 0;
-    var _a, _b;
-    this.ctx = ctx, this.opts = opts, this.mode = MODES.some((m) => m.mode === opts.defaultMode) ? opts.defaultMode : (_b = (_a = MODES[0]) == null ? void 0 : _a.mode) != null ? _b : "hybrid", this.build(parent);
+    this.ctx = ctx, this.opts = opts, this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid", this.build(parent);
   }
   build(parent) {
     parent.addClass("engram-search-panel");
-    let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" });
-    this.inputEl = inputWrap.createEl("input", {
+    let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
+    (0, import_obsidian7.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
       type: "search",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
@@ -2139,15 +2118,9 @@ var SEARCH_DEBOUNCE_MS = 550, MODES = [
       this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
     }), this.filterToggleEl = searchRow.createSpan({
       cls: "engram-search-filter-toggle clickable-icon"
-    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Toggle filters"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
-    for (let { mode, label, tooltip } of MODES) {
-      let btn = this.toggleEl.createEl("button", {
-        text: label,
-        cls: `engram-search-mode-btn${mode === this.mode ? " is-active" : ""}`
-      });
-      btn.setAttribute("aria-label", tooltip), btn.addEventListener("click", () => this.setMode(mode));
-    }
-    this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" }), this.updateHint(), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), this.folderEl = this.filtersEl.createEl("input", {
+    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Hybrid search").setDesc("Blend exact keyword matches with meaning-based results. Off = meaning only.").addToggle(
+      (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
+    ), this.folderEl = this.filtersEl.createEl("input", {
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
@@ -2195,24 +2168,10 @@ var SEARCH_DEBOUNCE_MS = 550, MODES = [
   }
   setMode(mode) {
     var _a, _b;
-    if (mode === this.mode) return;
-    this.mode = mode, this.toggleEl.querySelectorAll(".engram-search-mode-btn").forEach((b, i) => {
-      let m = MODES[i];
-      m && m.mode === mode ? b.classList.add("is-active") : b.classList.remove("is-active");
-    }), this.updateHint(), (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run();
-  }
-  updateHint() {
-    let info = MODES.find((m) => m.mode === this.mode);
-    if (!info) return;
-    this.hintEl.empty();
-    let icon = this.hintEl.createSpan({ cls: "engram-search-mode-hint-icon" });
-    (0, import_obsidian7.setIcon)(icon, info.icon), this.hintEl.createEl("strong", {
-      cls: "engram-search-mode-hint-label",
-      text: info.label
-    }), this.hintEl.appendText(` \u2014 ${info.hint}`);
+    mode !== this.mode && (this.mode = mode, (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run());
   }
   toggleFilters() {
-    this.filtersOpen = !this.filtersOpen, this.filtersEl.toggleClass("is-hidden", !this.filtersOpen), this.filterToggleEl.toggleClass("is-active", this.filtersOpen), this.filtersOpen && this.folderEl.focus();
+    this.filtersOpen = !this.filtersOpen, this.filtersEl.toggleClass("is-hidden", !this.filtersOpen), this.filterToggleEl.toggleClass("is-active", this.filtersOpen);
   }
   /** Reflect transient input state in the chrome: show the clear button when the
    *  query is non-empty, and mark the filters toggle when a folder/tag filter is

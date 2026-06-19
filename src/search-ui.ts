@@ -3,7 +3,7 @@
  * Owns input, mode toggle, filters, results list, keyboard nav, highlight,
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
-import { Notice, type TFile, getAllTags, prepareSimpleSearch, setIcon } from "obsidian";
+import { Notice, Setting, type TFile, getAllTags, prepareSimpleSearch, setIcon } from "obsidian";
 import { FolderInputSuggest } from "./folder-suggest";
 import { type SearchContext, matchStrengths, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
@@ -12,27 +12,11 @@ import type { SearchMode, UnifiedSearchResult } from "./types";
 
 const SEARCH_DEBOUNCE_MS = 550;
 
-const MODES: { mode: SearchMode; label: string; icon: string; hint: string; tooltip: string }[] = [
-	{
-		mode: "hybrid",
-		label: "Hybrid",
-		// Icons mirror the result provenance pills so the hint teaches the same vocabulary.
-		icon: "layers",
-		hint: "Blends meaning and exact words. Best for most searches.",
-		tooltip: "Blends meaning + exact words — best default",
-	},
-	{
-		mode: "semantic",
-		label: "Semantic",
-		icon: "sparkles",
-		hint: "Finds notes by meaning, even when they don't share your words.",
-		tooltip: "Find by meaning (AI search)",
-	},
-	// No standalone "keyword" mode: Obsidian's core Search does pure keyword
-	// better (operators, context, regex), and Hybrid already covers exact words
-	// (and degrades to keyword-only when the backend is offline). The keyword
-	// engine still powers Hybrid's fusion — it's just not a user-facing toggle.
-];
+// Hybrid (default) blends meaning + exact words; Semantic is meaning-only. No
+// standalone "keyword" mode: Obsidian core Search does pure keyword better, and
+// the keyword engine still powers Hybrid's fusion internally. The choice is a
+// single boolean toggle (hybrid on / off → semantic) styled like native search.
+const SELECTABLE_MODES: SearchMode[] = ["hybrid", "semantic"];
 
 export interface SearchPanelOpts {
 	defaultMode: SearchMode;
@@ -52,8 +36,6 @@ export class SearchPanel {
 	private selectedTags: string[] = [];
 	private tagChipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
-	private toggleEl!: HTMLElement;
-	private hintEl!: HTMLElement;
 	private filtersEl!: HTMLElement;
 	private filterToggleEl!: HTMLElement;
 	private clearEl!: HTMLElement;
@@ -73,19 +55,19 @@ export class SearchPanel {
 		this.opts = opts;
 		// Coerce a persisted mode that's no longer offered (e.g. an old "keyword"
 		// default) to the first available mode so the toggle always has an active button.
-		this.mode = MODES.some((m) => m.mode === opts.defaultMode)
-			? opts.defaultMode
-			: (MODES[0]?.mode ?? "hybrid");
+		this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid";
 		this.build(parent);
 	}
 
 	private build(parent: HTMLElement): void {
 		parent.addClass("engram-search-panel");
 
-		// ── Search row (first item): the query input with an in-field clear button,
-		//    plus a filters toggle — mirroring Obsidian's native .search-row.
+		// ── Search row (first item): a leading magnifier, the query input with an
+		//    in-field clear button, and a settings toggle — mirroring native .search-row.
 		const searchRow = parent.createDiv({ cls: "engram-search-row" });
 		const inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" });
+		const iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
+		setIcon(iconEl, "search");
 		this.inputEl = inputWrap.createEl("input", {
 			type: "search",
 			placeholder: "Search your vault…",
@@ -104,26 +86,21 @@ export class SearchPanel {
 			cls: "engram-search-filter-toggle clickable-icon",
 		});
 		setIcon(this.filterToggleEl, "sliders-horizontal");
-		this.filterToggleEl.setAttribute("aria-label", "Toggle filters");
+		this.filterToggleEl.setAttribute("aria-label", "Search settings");
 		this.filterToggleEl.addEventListener("click", () => this.toggleFilters());
 
-		// ── Search type (Hybrid / Semantic) + its one-line explainer.
-		this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
-		for (const { mode, label, tooltip } of MODES) {
-			const btn = this.toggleEl.createEl("button", {
-				text: label,
-				cls: `engram-search-mode-btn${mode === this.mode ? " is-active" : ""}`,
-			});
-			// Obsidian renders a tooltip for any element carrying aria-label.
-			btn.setAttribute("aria-label", tooltip);
-			btn.addEventListener("click", () => this.setMode(mode));
-		}
-		this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" });
-		this.updateHint();
-
-		// ── Filters panel — collapsed by default, revealed by the filters toggle
-		//    (mirrors native's .search-params hidden behind the settings icon).
+		// ── Settings panel — collapsed by default, revealed by the settings toggle
+		//    (mirrors native's .search-params hidden behind the settings icon). Holds
+		//    the search-type toggle and the folder / tag filters.
 		this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" });
+		new Setting(this.filtersEl)
+			.setName("Hybrid search")
+			.setDesc("Blend exact keyword matches with meaning-based results. Off = meaning only.")
+			.addToggle((t) =>
+				t
+					.setValue(this.mode === "hybrid")
+					.onChange((v) => this.setMode(v ? "hybrid" : "semantic")),
+			);
 		this.folderEl = this.filtersEl.createEl("input", {
 			type: "text",
 			placeholder: "Filter by folder…",
@@ -215,35 +192,14 @@ export class SearchPanel {
 	private setMode(mode: SearchMode): void {
 		if (mode === this.mode) return;
 		this.mode = mode;
-		const btns = this.toggleEl.querySelectorAll(".engram-search-mode-btn");
-		btns.forEach((b, i) => {
-			const m = MODES[i];
-			if (m && m.mode === mode) b.classList.add("is-active");
-			else b.classList.remove("is-active");
-		});
-		this.updateHint();
 		this.opts.onModeChange?.(mode);
 		void this.run();
-	}
-
-	private updateHint(): void {
-		const info = MODES.find((m) => m.mode === this.mode);
-		if (!info) return;
-		this.hintEl.empty();
-		const icon = this.hintEl.createSpan({ cls: "engram-search-mode-hint-icon" });
-		setIcon(icon, info.icon);
-		this.hintEl.createEl("strong", {
-			cls: "engram-search-mode-hint-label",
-			text: info.label,
-		});
-		this.hintEl.appendText(` — ${info.hint}`);
 	}
 
 	private toggleFilters(): void {
 		this.filtersOpen = !this.filtersOpen;
 		this.filtersEl.toggleClass("is-hidden", !this.filtersOpen);
 		this.filterToggleEl.toggleClass("is-active", this.filtersOpen);
-		if (this.filtersOpen) this.folderEl.focus();
 	}
 
 	/** Reflect transient input state in the chrome: show the clear button when the

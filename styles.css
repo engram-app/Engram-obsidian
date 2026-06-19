@@ -1783,60 +1783,7 @@ body.is-mobile .engram-support-buttons > a {
 	padding: 0.4em;
 }
 
-/* ── Search mode toggle + match highlights ───────────────────── */
-
-.engram-search-mode-toggle {
-	display: flex;
-	gap: 0.25rem;
-}
-
-/* Accent-bordered info strip so the active mode's explanation is noticed, not
-   skimmed past. Icon + bold mode name mirror the result provenance pills. */
-.engram-search-mode-hint {
-	display: flex;
-	align-items: center;
-	gap: 0.4rem;
-	padding: 0.35rem 0.55rem;
-	font-size: var(--font-ui-small);
-	color: var(--text-normal);
-	line-height: 1.35;
-	background: var(--background-secondary);
-	border-left: 2px solid var(--interactive-accent);
-	border-radius: var(--radius-s);
-}
-
-.engram-search-mode-hint-icon {
-	display: inline-flex;
-	flex-shrink: 0;
-	color: var(--text-accent);
-}
-
-.engram-search-mode-hint-icon svg {
-	width: 1em;
-	height: 1em;
-}
-
-.engram-search-mode-hint-label {
-	font-weight: 600;
-	color: var(--text-normal);
-}
-
-.engram-search-mode-btn {
-	flex: 1;
-	padding: 0.25rem 0.5rem;
-	font-size: var(--font-ui-small);
-	border: 1px solid var(--background-modifier-border);
-	background: var(--background-secondary);
-	color: var(--text-muted);
-	border-radius: var(--radius-s);
-	cursor: pointer;
-}
-
-.engram-search-mode-btn.is-active {
-	background: var(--interactive-accent);
-	color: var(--text-on-accent);
-	border-color: var(--interactive-accent);
-}
+/* ── Search highlights ───────────────────────────────────────── */
 
 .engram-search-hl {
 	background: var(--text-highlight-bg);
@@ -1872,8 +1819,20 @@ body.is-mobile .engram-support-buttons > a {
 	min-width: 0;
 }
 
-/* Room for the in-field clear button; hide the browser's native one. */
+.engram-search-input-icon {
+	position: absolute;
+	left: 0.5rem;
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+/* Room for the leading magnifier and the trailing clear button; hide the
+   browser's native search clear. */
 .engram-search-input-wrap .engram-search-input {
+	padding-left: 1.85rem;
 	padding-right: 1.8rem;
 }
 

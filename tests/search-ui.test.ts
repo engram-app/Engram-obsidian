@@ -17,7 +17,7 @@ const canRender =
 		"function";
 
 (canRender ? describe : describe.skip)("SearchPanel", () => {
-	it("renders Hybrid + Semantic, coercing a retired keyword default to Hybrid", () => {
+	it("puts the search input first and tucks filters behind the settings toggle", () => {
 		const parent = document.createElement("div");
 		const ctx = {
 			api: { search: async () => ({ query: "", results: [] }) } as never,
@@ -27,11 +27,12 @@ const canRender =
 			// "keyword" is no longer a user-facing mode; it must fall back gracefully.
 			defaultMode: "keyword",
 		});
-		const buttons = parent.querySelectorAll(".engram-search-mode-btn");
-		expect(buttons.length).toBe(2);
-		expect(parent.querySelector(".engram-search-mode-btn.is-active")?.textContent).toBe(
-			"Hybrid",
-		);
+		// Search row is the first child; the filters panel is hidden by default.
+		expect(parent.firstElementChild?.classList.contains("engram-search-row")).toBe(true);
+		expect(parent.querySelector('.engram-search-row input[type="search"]')).not.toBeNull();
+		expect(
+			parent.querySelector(".engram-search-filters")?.classList.contains("is-hidden"),
+		).toBe(true);
 		panel.destroy();
 	});
 });
