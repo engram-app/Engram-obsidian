@@ -1851,29 +1851,16 @@ var import_obsidian8 = require("obsidian");
 var import_obsidian7 = require("obsidian");
 
 // src/folder-suggest.ts
-var import_obsidian4 = require("obsidian");
-function folderSuggestions(allFolders, fragment) {
-  let frag = fragment.trim().toLowerCase();
-  return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
-}
-var FolderInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
-  constructor(app, inputEl, getAllFolders, onPick) {
-    super(app, inputEl), this.inputEl = inputEl, this.getAllFolders = getAllFolders, this.onPick = onPick;
+var import_obsidian5 = require("obsidian");
+
+// src/input-suggest-base.ts
+var import_obsidian4 = require("obsidian"), WidthMatchedInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
+  constructor(app, inputEl) {
+    super(app, inputEl), this.inputEl = inputEl;
   }
-  getSuggestions(query) {
-    return folderSuggestions(this.getAllFolders(), query);
-  }
-  renderSuggestion(value, el) {
-    el.addClass("engram-folder-suggest-item");
-    let icon = el.createSpan({ cls: "engram-folder-suggest-icon" });
-    (0, import_obsidian4.setIcon)(icon, "folder"), el.createSpan({ text: value });
-  }
-  selectSuggestion(value, _evt) {
-    this.setValue(value), this.onPick(value), this.close();
-  }
-  /** Match the dropdown width to the folder input so it spans the panel instead
-   *  of sizing to its content. `suggestEl` is an Obsidian internal — the guard
-   *  keeps this a harmless no-op if that property ever changes. */
+  /** Match the dropdown width to the input so it spans the panel instead of
+   *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
+   *  this a harmless no-op if that property ever changes. */
   open() {
     super.open();
     let el = this.suggestEl;
@@ -1881,8 +1868,30 @@ var FolderInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
   }
 };
 
+// src/folder-suggest.ts
+function folderSuggestions(allFolders, fragment) {
+  let frag = fragment.trim().toLowerCase();
+  return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
+}
+var FolderInputSuggest = class extends WidthMatchedInputSuggest {
+  constructor(app, inputEl, getAllFolders, onPick) {
+    super(app, inputEl), this.getAllFolders = getAllFolders, this.onPick = onPick;
+  }
+  getSuggestions(query) {
+    return folderSuggestions(this.getAllFolders(), query);
+  }
+  renderSuggestion(value, el) {
+    el.addClass("engram-folder-suggest-item");
+    let icon = el.createSpan({ cls: "engram-folder-suggest-icon" });
+    (0, import_obsidian5.setIcon)(icon, "folder"), el.createSpan({ text: value });
+  }
+  selectSuggestion(value, _evt) {
+    this.setValue(value), this.onPick(value), this.close();
+  }
+};
+
 // src/search-engine.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/search-highlight.ts
 function buildSegments(text, ranges) {
@@ -1892,12 +1901,13 @@ function buildSegments(text, ranges) {
     s < cursor || (s > cursor && out.push({ text: text.slice(cursor, s), hit: !1 }), out.push({ text: text.slice(s, e), hit: !0 }), cursor = e);
   return cursor < text.length && out.push({ text: text.slice(cursor), hit: !1 }), out;
 }
+var SCRIPTLESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
 function queryTokenRanges(text, query) {
   let ranges = [];
   for (let raw of query.split(/\s+/)) {
     let token = raw.trim();
     if (token.length < 2) continue;
-    let esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), re = new RegExp(`\\b${esc}\\b`, "gi"), m = re.exec(text);
+    let esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), pattern = SCRIPTLESS.test(token) ? esc : `(?<![\\p{L}\\p{N}_])${esc}(?![\\p{L}\\p{N}_])`, re = new RegExp(pattern, "giu"), m = re.exec(text);
     for (; m !== null; )
       ranges.push([m.index, m.index + m[0].length]), m = re.exec(text);
   }
@@ -1942,8 +1952,9 @@ function mapSemantic(results, query) {
       title: r.title,
       text: excerpt((_c = r.text) != null ? _c : r.snippet, query),
       heading_path: r.heading_path,
-      score: r.score,
-      origin: "semantic",
+      // Guard against a result missing `score` (web-card shapes may omit it):
+      // a non-finite score would propagate NaN through ranking and the strength bar.
+      score: Number.isFinite(r.score) ? r.score : 0,
       matchType: "semantic"
     };
   });
@@ -1956,7 +1967,7 @@ async function searchSemantic(query, ctx, opts) {
 async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
   var _a;
   if (!query.trim()) return { results: [], degraded: !1 };
-  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian5.prepareSimpleSearch;
+  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian6.prepareSimpleSearch;
   return mode === "semantic" ? { results: await searchSemantic(query, ctx, opts), degraded: !1 } : mode === "keyword" ? { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: !1 } : searchHybrid(query, ctx, opts, fuzzy);
 }
 function basename(path) {
@@ -1973,7 +1984,7 @@ function noteTags(app, file) {
   var _a;
   let cache = app.metadataCache.getFileCache(file);
   if (!cache) return /* @__PURE__ */ new Set();
-  let all = (_a = (0, import_obsidian5.getAllTags)(cache)) != null ? _a : [];
+  let all = (_a = (0, import_obsidian6.getAllTags)(cache)) != null ? _a : [];
   return new Set(all.map((t) => t.replace(/^#/, "")));
 }
 function matchesTags(app, file, tags) {
@@ -1989,6 +2000,7 @@ async function searchKeyword(query, ctx, opts, fuzzy) {
     try {
       content = await ctx.app.vault.cachedRead(file);
     } catch (e) {
+      console.warn("Engram search: skipping unreadable file", file.path, e);
       continue;
     }
     let body = stripFrontmatter(content), title = basename(file.path), titleHit = scorer(title), bodyHit = scorer(body), score = Math.max(
@@ -2000,7 +2012,6 @@ async function searchKeyword(query, ctx, opts, fuzzy) {
       title,
       text: excerpt(body, query),
       score,
-      origin: "keyword",
       matchType: "keyword"
     });
   }
@@ -2041,7 +2052,6 @@ function rrf(keyword, semantic, limit) {
       text: (_c = s == null ? void 0 : s.text) != null ? _c : k.text,
       heading_path: s == null ? void 0 : s.heading_path,
       score,
-      origin: "hybrid",
       matchType
     });
   }
@@ -2049,21 +2059,23 @@ function rrf(keyword, semantic, limit) {
 }
 async function searchHybrid(query, ctx, opts, fuzzy) {
   var _a;
-  let limit = (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, keywordList = await searchKeyword(query, ctx, opts, fuzzy);
+  let limit = (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, keywordPromise = searchKeyword(query, ctx, opts, fuzzy), semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder);
+  semanticPromise.catch(() => {
+  });
+  let keywordList = await keywordPromise;
   try {
-    let resp = await ctx.api.search(query, limit, opts.tags, opts.folder), semanticList = filterResultsByTags(
+    let resp = await semanticPromise, semanticList = filterResultsByTags(
       ctx.app,
       collapseByNote(mapSemantic(resp.results, query)),
       opts.tags
     );
     return { results: rrf(keywordList, semanticList, limit), degraded: !1 };
   } catch (e) {
-    return { results: keywordList.slice(0, limit), degraded: !0 };
+    return console.error("Engram hybrid search: semantic leg failed, using keyword only", e), { results: keywordList.slice(0, limit), degraded: !0 };
   }
 }
 
 // src/tag-suggest.ts
-var import_obsidian6 = require("obsidian");
 function tagSuggestions(allTags, fragment, selected) {
   let frag = fragment.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
   return allTags.filter((t) => {
@@ -2071,9 +2083,9 @@ function tagSuggestions(allTags, fragment, selected) {
     return !chosen.has(lc) && (frag === "" || lc.includes(frag));
   }).slice(0, 50);
 }
-var TagInputSuggest = class extends import_obsidian6.AbstractInputSuggest {
+var TagInputSuggest = class extends WidthMatchedInputSuggest {
   constructor(app, inputEl, getAllVaultTags, getSelected, onAddTag) {
-    super(app, inputEl), this.inputEl = inputEl, this.getAllVaultTags = getAllVaultTags, this.getSelected = getSelected, this.onAddTag = onAddTag;
+    super(app, inputEl), this.getAllVaultTags = getAllVaultTags, this.getSelected = getSelected, this.onAddTag = onAddTag;
   }
   getSuggestions(query) {
     return tagSuggestions(this.getAllVaultTags(), query, this.getSelected());
@@ -2083,14 +2095,6 @@ var TagInputSuggest = class extends import_obsidian6.AbstractInputSuggest {
   }
   selectSuggestion(value, _evt) {
     this.onAddTag(value), this.setValue(""), this.inputEl.dispatchEvent(new Event("input", { bubbles: !0 }));
-  }
-  /** Match the dropdown width to the tag input so it spans the panel instead of
-   *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
-   *  this a harmless no-op if that property ever changes. */
-  open() {
-    super.open();
-    let el = this.suggestEl;
-    el && (el.style.width = `${this.inputEl.offsetWidth}px`);
   }
 };
 
@@ -2114,11 +2118,11 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
       type: "search",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
-    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearEl.addEventListener("click", () => {
+    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearHandler = () => {
       this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
-    }), this.filterToggleEl = searchRow.createSpan({
+    }, this.clearEl.addEventListener("click", this.clearHandler), this.filterToggleEl = searchRow.createSpan({
       cls: "engram-search-filter-toggle clickable-icon"
-    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
+    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleHandler = () => this.toggleFilters(), this.filterToggleEl.addEventListener("click", this.filterToggleHandler), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
       "Rank results by both exact words and semantic meaning. Off uses meaning only."
     ).addToggle(
       (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
@@ -2143,7 +2147,9 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
       () => this.collectVaultTags(),
       () => this.selectedTags,
       (tag) => this.addTag(tag)
-    ), parent.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+    );
+    let resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
+    resultsSection.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
       this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {
@@ -2166,7 +2172,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     this.inputEl.focus();
   }
   destroy() {
-    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("keydown", this.tagKeydownHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler);
+    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("keydown", this.tagKeydownHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler), this.clearEl.removeEventListener("click", this.clearHandler), this.filterToggleEl.removeEventListener("click", this.filterToggleHandler);
   }
   setMode(mode) {
     var _a, _b;
@@ -2313,7 +2319,8 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
    */
   updateSelection() {
     this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
-      el.classList.toggle("is-selected", i === this.selectedIndex);
+      let selected = i === this.selectedIndex;
+      el.classList.toggle("is-selected", selected), selected && el.scrollIntoView({ block: "nearest" });
     });
   }
   moveSelection(delta) {
@@ -2361,7 +2368,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     try {
       content = await this.ctx.app.vault.cachedRead(file);
     } catch (e) {
-      return null;
+      return console.warn("Engram search: could not read note for match highlight", file.path, e), null;
     }
     let res = (0, import_obsidian7.prepareSimpleSearch)(query)(content);
     return !res || !res.matches.length ? null : { content, matches: res.matches };

@@ -49,6 +49,8 @@ export class SearchPanel {
 	private scheduleHandler!: () => void;
 	private keydownHandler!: (e: KeyboardEvent) => void;
 	private tagKeydownHandler!: (e: KeyboardEvent) => void;
+	private clearHandler!: () => void;
+	private filterToggleHandler!: () => void;
 
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
@@ -76,18 +78,20 @@ export class SearchPanel {
 		this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" });
 		setIcon(this.clearEl, "x");
 		this.clearEl.setAttribute("aria-label", "Clear search");
-		this.clearEl.addEventListener("click", () => {
+		this.clearHandler = () => {
 			this.inputEl.value = "";
 			this.inputEl.focus();
 			void this.run();
 			this.reflectInputState();
-		});
+		};
+		this.clearEl.addEventListener("click", this.clearHandler);
 		this.filterToggleEl = searchRow.createSpan({
 			cls: "engram-search-filter-toggle clickable-icon",
 		});
 		setIcon(this.filterToggleEl, "sliders-horizontal");
 		this.filterToggleEl.setAttribute("aria-label", "Search settings");
-		this.filterToggleEl.addEventListener("click", () => this.toggleFilters());
+		this.filterToggleHandler = () => this.toggleFilters();
+		this.filterToggleEl.addEventListener("click", this.filterToggleHandler);
 
 		// ── Settings panel — collapsed by default, revealed by the settings toggle
 		//    (mirrors native's .search-params hidden behind the settings icon). Holds
@@ -133,10 +137,12 @@ export class SearchPanel {
 			(tag) => this.addTag(tag),
 		);
 
-		// Divider between the search/settings chrome and the results. Results butt
-		// flush against it so rows clip exactly at the line as they scroll.
-		parent.createEl("hr", { cls: "engram-search-results-divider" });
-		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
+		// Divider + results live in one section so the results butt flush against
+		// the divider (rows clip exactly at the line as they scroll), independent of
+		// the panel's inter-control gap.
+		const resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
+		resultsSection.createEl("hr", { cls: "engram-search-results-divider" });
+		this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();
 
 		this.scheduleHandler = () => {
@@ -192,6 +198,8 @@ export class SearchPanel {
 		this.folderEl.removeEventListener("input", this.scheduleHandler);
 		this.tagEl.removeEventListener("keydown", this.tagKeydownHandler);
 		this.inputEl.removeEventListener("keydown", this.keydownHandler);
+		this.clearEl.removeEventListener("click", this.clearHandler);
+		this.filterToggleEl.removeEventListener("click", this.filterToggleHandler);
 	}
 
 	private setMode(mode: SearchMode): void {
@@ -417,7 +425,11 @@ export class SearchPanel {
 	 */
 	private updateSelection(): void {
 		this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
-			el.classList.toggle("is-selected", i === this.selectedIndex);
+			const selected = i === this.selectedIndex;
+			el.classList.toggle("is-selected", selected);
+			// Keep the highlighted row visible — the list scrolls, so arrowing past
+			// the fold would otherwise move the selection off-screen.
+			if (selected) (el as HTMLElement).scrollIntoView({ block: "nearest" });
 		});
 	}
 
@@ -476,7 +488,11 @@ export class SearchPanel {
 		let content: string;
 		try {
 			content = await this.ctx.app.vault.cachedRead(file);
-		} catch {
+		} catch (e) {
+			// Best-effort jump-to-match; caller falls back to a plain heading open.
+			// Log so a real read failure isn't mistaken for "no match found".
+			// biome-ignore lint/suspicious/noConsole: error boundary
+			console.warn("Engram search: could not read note for match highlight", file.path, e);
 			return null;
 		}
 		const res = prepareSimpleSearch(query)(content);

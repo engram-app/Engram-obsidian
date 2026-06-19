@@ -91,8 +91,9 @@ function mapSemantic(results: SearchResult[], query: string): UnifiedSearchResul
 		title: r.title,
 		text: excerpt(r.text ?? r.snippet, query),
 		heading_path: r.heading_path,
-		score: r.score,
-		origin: "semantic",
+		// Guard against a result missing `score` (web-card shapes may omit it):
+		// a non-finite score would propagate NaN through ranking and the strength bar.
+		score: Number.isFinite(r.score) ? r.score : 0,
 		matchType: "semantic",
 	}));
 }
@@ -165,8 +166,12 @@ async function searchKeyword(
 		let content: string;
 		try {
 			content = await ctx.app.vault.cachedRead(file);
-		} catch {
-			continue; // unreadable file — skip, never abort the whole search
+		} catch (e) {
+			// Skip an unreadable file rather than abort the whole search, but log it
+			// so a real read failure (permissions, corruption) isn't silently lost.
+			// biome-ignore lint/suspicious/noConsole: error boundary
+			console.warn("Engram search: skipping unreadable file", file.path, e);
+			continue;
 		}
 		const body = stripFrontmatter(content);
 		const title = basename(file.path);
@@ -182,7 +187,6 @@ async function searchKeyword(
 			title,
 			text: excerpt(body, query),
 			score,
-			origin: "keyword",
 			matchType: "keyword",
 		});
 	}
@@ -245,7 +249,6 @@ function rrf(
 			text: s?.text ?? (k as UnifiedSearchResult).text,
 			heading_path: s?.heading_path,
 			score,
-			origin: "hybrid",
 			matchType,
 		});
 	}
@@ -260,16 +263,30 @@ async function searchHybrid(
 	fuzzy: FuzzyFactory,
 ): Promise<SearchOutcome> {
 	const limit = opts.limit ?? DEFAULT_LIMIT;
-	const keywordList = await searchKeyword(query, ctx, opts, fuzzy);
+	// Run both legs concurrently: the keyword leg is a local vault scan, the
+	// semantic leg a network round-trip — independent, so total latency is the
+	// slower of the two rather than their sum. The semantic promise is started
+	// here and awaited inside the try so a backend failure degrades gracefully.
+	const keywordPromise = searchKeyword(query, ctx, opts, fuzzy);
+	const semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder);
+	// Attach a handler now so a rejection while the keyword leg is still running
+	// isn't flagged as an unhandled rejection; the real handling is in the try below.
+	semanticPromise.catch(() => undefined);
+	const keywordList = await keywordPromise;
 	try {
-		const resp = await ctx.api.search(query, limit, opts.tags, opts.folder);
+		const resp = await semanticPromise;
 		const semanticList = filterResultsByTags(
 			ctx.app,
 			collapseByNote(mapSemantic(resp.results, query)),
 			opts.tags,
 		);
 		return { results: rrf(keywordList, semanticList, limit), degraded: false };
-	} catch {
+	} catch (e) {
+		// Surface the real cause (auth 401, billing 402, rate-limit 429, 5xx) — the
+		// caller only shows a generic "semantic offline" notice, so without this the
+		// actionable error is invisible.
+		// biome-ignore lint/suspicious/noConsole: error boundary
+		console.error("Engram hybrid search: semantic leg failed, using keyword only", e);
 		return { results: keywordList.slice(0, limit), degraded: true };
 	}
 }

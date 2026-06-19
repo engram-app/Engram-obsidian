@@ -28,4 +28,15 @@ describe("queryTokenRanges", () => {
 	it("skips single-char tokens", () => {
 		expect(queryTokenRanges("a business plan", "a business")).toEqual([[2, 10]]);
 	});
+	it("matches accented words via Unicode-aware boundaries", () => {
+		// ASCII \b fails on é; the term must still match as a whole word.
+		expect(queryTokenRanges("a café opens", "café")).toEqual([[2, 6]]);
+	});
+	it("does not match an accented term inside a larger word", () => {
+		expect(queryTokenRanges("the cafés list", "café")).toEqual([]);
+	});
+	it("matches CJK terms as substrings (no word boundaries)", () => {
+		// "機械" appears at index 0 of "機械学習"; boundary matching would reject it.
+		expect(queryTokenRanges("機械学習の本", "機械")).toEqual([[0, 2]]);
+	});
 });

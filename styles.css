@@ -43,9 +43,15 @@
 	font-style: italic;
 }
 
-/* Divider above the results. No margin; the results region is pulled up to butt
-   against it (cancelling the panel's 8px flex gap at this one seam) so scrolling
-   rows clip exactly at the line. */
+/* Divider + results are one section (no inner gap) so results butt flush against
+   the divider and rows clip exactly at the line — without coupling to the panel's
+   inter-control gap. */
+.engram-search-results-section {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
 .engram-search-results-divider {
 	margin: 0;
 	border: none;
@@ -53,7 +59,6 @@
 }
 
 .engram-search-results {
-	margin-top: -8px;
 	max-height: 400px;
 	overflow-y: auto;
 }
@@ -182,6 +187,10 @@
 	display: flex;
 	flex-direction: column;
 	height: 100%;
+}
+
+.engram-search-view-container .engram-search-results-section {
+	flex: 1;
 }
 
 .engram-search-view-container .engram-search-results {

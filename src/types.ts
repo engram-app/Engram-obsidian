@@ -63,7 +63,6 @@ export interface UnifiedSearchResult {
 	/** Heading trail (semantic / hybrid-semantic side only). */
 	heading_path?: string;
 	score: number;
-	origin: SearchMode;
 	/** How this note matched: semantic vector, keyword/lexical, or both (hybrid). */
 	matchType?: "semantic" | "keyword" | "both";
 }

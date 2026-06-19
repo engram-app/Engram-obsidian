@@ -76,7 +76,6 @@ describe("searchEngram semantic", () => {
 			source_path: "health/fish.md",
 			title: "Fish",
 			heading_path: "Health > Oils",
-			origin: "semantic",
 			score: 0.8,
 		});
 		expect(results[0].text).toBe("omega-3 oils help");
@@ -128,7 +127,6 @@ describe("searchEngram keyword", () => {
 			{ fuzzy: fakeFuzzy },
 		);
 		expect(results.map((r) => r.source_path)).toEqual(["c.md", "b.md"]);
-		expect(results[0].origin).toBe("keyword");
 		expect(results[0].matchType).toBe("keyword");
 		expect(results[0].text.toLowerCase()).toContain("omega");
 	});
@@ -199,7 +197,6 @@ describe("searchEngram hybrid", () => {
 		expect(degraded).toBe(false);
 		// b.md appears in both lists → ranked first, exactly once.
 		expect(results.map((r) => r.source_path)).toEqual(["b.md", "a.md"]);
-		expect(results.every((r) => r.origin === "hybrid")).toBe(true);
 		// b.md matched both legs; a.md only the keyword leg.
 		const byPath = new Map(results.map((r) => [r.source_path, r]));
 		expect(byPath.get("b.md")?.matchType).toBe("both");
@@ -339,7 +336,6 @@ describe("searchEngram semantic — backend web-card shape (path/snippet)", () =
 			title: "Fish",
 			heading_path: "Health > Oils",
 			text: "omega-3 oils help",
-			origin: "semantic",
 			score: 0.8,
 		});
 	});

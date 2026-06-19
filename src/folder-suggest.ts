@@ -2,7 +2,8 @@
  * Folder filter autocomplete for the search panel. `folderSuggestions` is pure
  * and unit-tested; `FolderInputSuggest` wires it into Obsidian's native popover.
  */
-import { AbstractInputSuggest, type App, setIcon } from "obsidian";
+import { type App, setIcon } from "obsidian";
+import { WidthMatchedInputSuggest } from "./input-suggest-base";
 
 /** Vault folder paths matching `fragment` (case-insensitive substring), capped. */
 export function folderSuggestions(allFolders: string[], fragment: string): string[] {
@@ -12,8 +13,7 @@ export function folderSuggestions(allFolders: string[], fragment: string): strin
 
 /** Obsidian-native suggestion popover for the single-value folder filter: pick a
  *  folder, drop it into the input, and trigger a search. */
-export class FolderInputSuggest extends AbstractInputSuggest<string> {
-	private inputEl: HTMLInputElement;
+export class FolderInputSuggest extends WidthMatchedInputSuggest<string> {
 	private getAllFolders: () => string[];
 	private onPick: (folder: string) => void;
 
@@ -24,7 +24,6 @@ export class FolderInputSuggest extends AbstractInputSuggest<string> {
 		onPick: (folder: string) => void,
 	) {
 		super(app, inputEl);
-		this.inputEl = inputEl;
 		this.getAllFolders = getAllFolders;
 		this.onPick = onPick;
 	}
@@ -44,14 +43,5 @@ export class FolderInputSuggest extends AbstractInputSuggest<string> {
 		this.setValue(value);
 		this.onPick(value);
 		this.close();
-	}
-
-	/** Match the dropdown width to the folder input so it spans the panel instead
-	 *  of sizing to its content. `suggestEl` is an Obsidian internal — the guard
-	 *  keeps this a harmless no-op if that property ever changes. */
-	open(): void {
-		super.open();
-		const el = (this as unknown as { suggestEl?: HTMLElement }).suggestEl;
-		if (el) el.style.width = `${this.inputEl.offsetWidth}px`;
 	}
 }
