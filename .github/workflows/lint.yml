@@ -10,7 +10,7 @@ jobs:
     name: TODO drift
     runs-on: [self-hosted, linux, x64, isolated]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Forbid TODO*.md files
         run: |
@@ -51,7 +51,7 @@ jobs:
     name: CLAUDE.md staleness
     runs-on: [self-hosted, linux, x64, isolated]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Scan CLAUDE.md files for known-stale facts
         run: |
