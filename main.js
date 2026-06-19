@@ -1851,28 +1851,59 @@ var import_obsidian7 = require("obsidian");
 var import_obsidian6 = require("obsidian");
 
 // src/search-engine.ts
-var import_obsidian4 = require("obsidian"), DEFAULT_LIMIT = 10, SNIPPET_LEN = 150, RRF_K = 60, TITLE_BONUS = 1;
-function snippet(text) {
-  let t = (text != null ? text : "").trim();
-  return t.length > SNIPPET_LEN ? `${t.slice(0, SNIPPET_LEN)}\u2026` : t;
+var import_obsidian4 = require("obsidian");
+
+// src/search-highlight.ts
+function buildSegments(text, ranges) {
+  if (!ranges.length) return [{ text, hit: !1 }];
+  let sorted = [...ranges].sort((a, b) => a[0] - b[0]), out = [], cursor = 0;
+  for (let [s, e] of sorted)
+    s < cursor || (s > cursor && out.push({ text: text.slice(cursor, s), hit: !1 }), out.push({ text: text.slice(s, e), hit: !0 }), cursor = e);
+  return cursor < text.length && out.push({ text: text.slice(cursor), hit: !1 }), out;
 }
-function mapSemantic(results) {
+function queryTokenRanges(text, query) {
+  let ranges = [];
+  for (let raw of query.split(/\s+/)) {
+    let token = raw.trim();
+    if (token.length < 2) continue;
+    let esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), re = new RegExp(`\\b${esc}\\b`, "gi"), m = re.exec(text);
+    for (; m !== null; )
+      ranges.push([m.index, m.index + m[0].length]), m = re.exec(text);
+  }
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
+
+// src/search-engine.ts
+var DEFAULT_LIMIT = 10, EXCERPT_LEN = 200, RRF_K = 60, TITLE_BONUS = 1;
+function excerpt(text, query) {
+  let t = (text != null ? text : "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  let first = queryTokenRanges(t, query)[0];
+  if (!first) return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN)}\u2026` : t;
+  let start = Math.max(0, first[0] - 30), end = Math.min(t.length, start + EXCERPT_LEN);
+  return `${start > 0 ? "\u2026" : ""}${t.slice(start, end)}${end < t.length ? "\u2026" : ""}`;
+}
+function stripFrontmatter(content) {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+function mapSemantic(results, query) {
   return results.map((r) => {
     var _a, _b, _c;
     return {
       source_path: (_b = (_a = r.source_path) != null ? _a : r.path) != null ? _b : "",
       title: r.title,
-      text: snippet((_c = r.text) != null ? _c : r.snippet),
+      text: excerpt((_c = r.text) != null ? _c : r.snippet, query),
       heading_path: r.heading_path,
       score: r.score,
-      origin: "semantic"
+      origin: "semantic",
+      matchType: "semantic"
     };
   });
 }
 async function searchSemantic(query, ctx, opts) {
   var _a;
   let resp = await ctx.api.search(query, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, opts.tags, opts.folder);
-  return mapSemantic(resp.results);
+  return mapSemantic(resp.results, query);
 }
 async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
   var _a;
@@ -1902,12 +1933,6 @@ function matchesTags(app, file, tags) {
   let have = noteTags(app, file);
   return tags.every((t) => have.has(t.replace(/^#/, "")));
 }
-function windowSnippet(content, matches) {
-  let first = matches[0];
-  if (!first) return { snippetText: snippet(content), ranges: [] };
-  let start = Math.max(0, first[0] - 40), end = Math.min(content.length, start + SNIPPET_LEN), prefix = start > 0 ? "\u2026" : "", suffix = end < content.length ? "\u2026" : "", text = prefix + content.slice(start, end) + suffix, shift = prefix.length - start, ranges = matches.filter(([s, e]) => s >= start && e <= end).map(([s, e]) => [s + shift, e + shift]);
-  return { snippetText: text, ranges };
-}
 async function searchKeyword(query, ctx, opts, fuzzy) {
   var _a;
   let scorer = fuzzy(query), files = ctx.app.vault.getMarkdownFiles().filter((f) => matchesFolder(f.path, opts.folder)).filter((f) => matchesTags(ctx.app, f, opts.tags)), scored = [];
@@ -1918,19 +1943,17 @@ async function searchKeyword(query, ctx, opts, fuzzy) {
     } catch (e) {
       continue;
     }
-    let title = basename(file.path), titleHit = scorer(title), bodyHit = scorer(content), score = Math.max(
+    let body = stripFrontmatter(content), title = basename(file.path), titleHit = scorer(title), bodyHit = scorer(body), score = Math.max(
       titleHit ? titleHit.score + TITLE_BONUS : Number.NEGATIVE_INFINITY,
       bodyHit ? bodyHit.score : Number.NEGATIVE_INFINITY
     );
-    if (score === Number.NEGATIVE_INFINITY) continue;
-    let { snippetText, ranges } = bodyHit ? windowSnippet(content, bodyHit.matches) : { snippetText: snippet(content), ranges: [] };
-    scored.push({
+    score !== Number.NEGATIVE_INFINITY && scored.push({
       source_path: file.path,
       title,
-      text: snippetText,
+      text: excerpt(body, query),
       score,
       origin: "keyword",
-      matchRanges: ranges
+      matchType: "keyword"
     });
   }
   return scored.sort((a, b) => b.score - a.score), scored.slice(0, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT);
@@ -1951,7 +1974,7 @@ function collapseByNote(results) {
   return [...best.values()];
 }
 function rrf(keyword, semantic, limit) {
-  var _a;
+  var _a, _b, _c;
   let scores = /* @__PURE__ */ new Map(), kw = /* @__PURE__ */ new Map(), sem = /* @__PURE__ */ new Map();
   keyword.forEach((r, i) => {
     var _a2;
@@ -1962,15 +1985,16 @@ function rrf(keyword, semantic, limit) {
   });
   let fused = [];
   for (let [path, score] of scores) {
-    let k = kw.get(path), s = sem.get(path), base = k != null ? k : s;
+    let k = kw.get(path), s = sem.get(path), matchType = k && s ? "both" : k ? "keyword" : "semantic";
     fused.push({
       source_path: path,
-      title: (_a = base.title) != null ? _a : s == null ? void 0 : s.title,
-      text: base.text,
+      title: (_b = (_a = k != null ? k : s) == null ? void 0 : _a.title) != null ? _b : s == null ? void 0 : s.title,
+      // Prefer the semantic chunk text (heading-aware passage); fall back to keyword.
+      text: (_c = s == null ? void 0 : s.text) != null ? _c : k.text,
       heading_path: s == null ? void 0 : s.heading_path,
       score,
       origin: "hybrid",
-      matchRanges: k == null ? void 0 : k.matchRanges
+      matchType
     });
   }
   return fused.sort((a, b) => b.score - a.score), fused.slice(0, limit);
@@ -1981,22 +2005,13 @@ async function searchHybrid(query, ctx, opts, fuzzy) {
   try {
     let resp = await ctx.api.search(query, limit, opts.tags, opts.folder), semanticList = filterResultsByTags(
       ctx.app,
-      collapseByNote(mapSemantic(resp.results)),
+      collapseByNote(mapSemantic(resp.results, query)),
       opts.tags
     );
     return { results: rrf(keywordList, semanticList, limit), degraded: !1 };
   } catch (e) {
     return { results: keywordList.slice(0, limit), degraded: !0 };
   }
-}
-
-// src/search-highlight.ts
-function buildSegments(text, ranges) {
-  if (!ranges.length) return [{ text, hit: !1 }];
-  let sorted = [...ranges].sort((a, b) => a[0] - b[0]), out = [], cursor = 0;
-  for (let [s, e] of sorted)
-    s < cursor || (s > cursor && out.push({ text: text.slice(cursor, s), hit: !1 }), out.push({ text: text.slice(s, e), hit: !0 }), cursor = e);
-  return cursor < text.length && out.push({ text: text.slice(cursor), hit: !1 }), out;
 }
 
 // src/tag-suggest.ts
@@ -2160,10 +2175,8 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       cls: "engram-search-empty"
     });
   }
-  highlightInto(el, result, _query) {
-    var _a;
-    let ranges = (_a = result.matchRanges) != null ? _a : [];
-    for (let seg of buildSegments(result.text, ranges))
+  highlightInto(el, result, query) {
+    for (let seg of buildSegments(result.text, queryTokenRanges(result.text, query)))
       seg.hit ? el.createSpan({ text: seg.text, cls: "engram-search-hl" }) : el.appendText(seg.text);
   }
   renderResults(query) {
@@ -2175,15 +2188,29 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       let item = this.resultsEl.createDiv({
         cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`
       }), header = item.createDiv({ cls: "engram-search-result-header" });
-      header.createEl("span", {
+      if (header.createEl("span", {
         text: result.title || result.source_path || "Untitled",
         cls: "engram-search-result-title"
-      }), result.origin === "semantic" && header.createEl("span", {
-        text: `${(result.score * 100).toFixed(0)}%`,
-        cls: "engram-search-result-score"
+      }), this.mode === "hybrid" && result.matchType) {
+        let chip = header.createSpan({
+          cls: `engram-search-match engram-search-match-${result.matchType}`
+        }), icon = chip.createSpan({ cls: "engram-search-match-icon" });
+        (0, import_obsidian6.setIcon)(
+          icon,
+          result.matchType === "keyword" ? "case-sensitive" : result.matchType === "both" ? "layers" : "sparkles"
+        ), chip.createSpan({
+          text: result.matchType === "keyword" ? "exact" : result.matchType === "both" ? "meaning + exact" : "meaning"
+        });
+      }
+      let parts = [], lastSlash = result.source_path.lastIndexOf("/");
+      if (lastSlash > 0 && parts.push(result.source_path.slice(0, lastSlash)), result.heading_path) {
+        let trail = result.heading_path.split(">").slice(1).map((s) => s.trim()).filter(Boolean).join(" \u203A ");
+        trail && parts.push(trail);
+      }
+      parts.length && item.createEl("div", {
+        text: parts.join(" \xB7 "),
+        cls: "engram-search-result-path"
       });
-      let lastSlash = result.source_path.lastIndexOf("/"), folder = lastSlash > 0 ? result.source_path.slice(0, lastSlash) : "";
-      folder && item.createEl("span", { text: folder, cls: "engram-search-result-path" });
       let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
       this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => this.openResult(result));
     });
