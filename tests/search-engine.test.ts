@@ -238,3 +238,57 @@ describe("searchEngram hybrid tag consistency", () => {
 		expect(paths).not.toContain("onlyhealth.md"); // OR-leaked note excluded
 	});
 });
+
+describe("searchEngram semantic — backend web-card shape (path/snippet)", () => {
+	it("maps path→source_path and snippet→text without throwing", async () => {
+		const api = {
+			search: async () => ({
+				results: [
+					{
+						id: "n1",
+						path: "health/fish.md",
+						title: "Fish",
+						folder: "health",
+						heading_path: "Health > Oils",
+						snippet: "  omega-3 oils help  ",
+						score: 0.8,
+						match_count: 2,
+					},
+				],
+			}),
+		} as any;
+		const { results, degraded } = await searchEngram(
+			"semantic",
+			"omega",
+			{ api, app: {} as any },
+			{ limit: 5 },
+		);
+		expect(degraded).toBe(false);
+		expect(results).toHaveLength(1);
+		expect(results[0]).toMatchObject({
+			source_path: "health/fish.md",
+			title: "Fish",
+			heading_path: "Health > Oils",
+			text: "omega-3 oils help",
+			origin: "semantic",
+			score: 0.8,
+		});
+	});
+
+	it("does not throw when a result has neither text nor snippet", async () => {
+		const api = {
+			search: async () => ({
+				results: [{ path: "a.md", title: "A", score: 0.5 }],
+			}),
+		} as any;
+		const { results, degraded } = await searchEngram(
+			"semantic",
+			"q",
+			{ api, app: {} as any },
+			{},
+		);
+		expect(degraded).toBe(false);
+		expect(results[0].text).toBe("");
+		expect(results[0].source_path).toBe("a.md");
+	});
+});

@@ -224,17 +224,25 @@ export interface SearchRequest {
 	folder?: string;
 }
 
-/** A single search result from Engram. */
+/** A single search result from Engram's `POST /api/search`.
+ *  The grouped/web-card response uses `path` + `snippet`; older/raw-chunk
+ *  responses use `source_path` + `text`. The plugin tolerates both. */
 export interface SearchResult {
-	text: string;
+	/** Web-card shape (current backend). */
+	path?: string;
+	snippet?: string;
+	/** Raw-chunk shape (older / api-contract.md). */
+	text?: string;
+	source_path?: string;
 	title?: string;
 	heading_path?: string;
-	source_path?: string;
-	tags: string[];
-	wikilinks: string[];
+	folder?: string;
+	tags?: string[];
+	wikilinks?: string[];
 	score: number;
-	vector_score: number;
-	rerank_score: number;
+	vector_score?: number;
+	rerank_score?: number;
+	match_count?: number;
 }
 
 /** Response from POST /search */

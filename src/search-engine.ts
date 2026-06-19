@@ -37,16 +37,16 @@ const SNIPPET_LEN = 150;
 const RRF_K = 60;
 const TITLE_BONUS = 1;
 
-function snippet(text: string): string {
-	const t = text.trim();
+function snippet(text: string | null | undefined): string {
+	const t = (text ?? "").trim();
 	return t.length > SNIPPET_LEN ? `${t.slice(0, SNIPPET_LEN)}…` : t;
 }
 
 function mapSemantic(results: SearchResult[]): UnifiedSearchResult[] {
 	return results.map((r) => ({
-		source_path: r.source_path ?? "",
+		source_path: r.source_path ?? r.path ?? "",
 		title: r.title,
-		text: snippet(r.text),
+		text: snippet(r.text ?? r.snippet),
 		heading_path: r.heading_path,
 		score: r.score,
 		origin: "semantic",
