@@ -1853,16 +1853,16 @@ var import_obsidian6 = require("obsidian");
 // src/search-engine.ts
 var import_obsidian4 = require("obsidian"), DEFAULT_LIMIT = 10, SNIPPET_LEN = 150, RRF_K = 60, TITLE_BONUS = 1;
 function snippet(text) {
-  let t = text.trim();
+  let t = (text != null ? text : "").trim();
   return t.length > SNIPPET_LEN ? `${t.slice(0, SNIPPET_LEN)}\u2026` : t;
 }
 function mapSemantic(results) {
   return results.map((r) => {
-    var _a;
+    var _a, _b, _c;
     return {
-      source_path: (_a = r.source_path) != null ? _a : "",
+      source_path: (_b = (_a = r.source_path) != null ? _a : r.path) != null ? _b : "",
       title: r.title,
-      text: snippet(r.text),
+      text: snippet((_c = r.text) != null ? _c : r.snippet),
       heading_path: r.heading_path,
       score: r.score,
       origin: "semantic"
@@ -2012,33 +2012,25 @@ function queryTokenRanges(text, query) {
 
 // src/tag-suggest.ts
 var import_obsidian5 = require("obsidian");
-function tagSuggestions(allTags, inputValue) {
-  var _a;
-  let parts = inputValue.split(","), fragment = ((_a = parts[parts.length - 1]) != null ? _a : "").trim().replace(/^#/, "").toLowerCase(), chosen = new Set(
-    parts.slice(0, -1).map((p) => p.trim().replace(/^#/, "").toLowerCase()).filter(Boolean)
-  );
+function tagSuggestions(allTags, fragment, selected) {
+  let frag = fragment.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
   return allTags.filter((t) => {
     let lc = t.replace(/^#/, "").toLowerCase();
-    return !chosen.has(lc) && (fragment === "" || lc.includes(fragment));
+    return !chosen.has(lc) && (frag === "" || lc.includes(frag));
   }).slice(0, 50);
 }
-function applyTagSuggestion(inputValue, picked) {
-  let prior = inputValue.split(",").slice(0, -1).map((p) => p.trim()).filter(Boolean);
-  return prior.push(picked.replace(/^#/, "")), `${prior.join(", ")}, `;
-}
 var TagInputSuggest = class extends import_obsidian5.AbstractInputSuggest {
-  constructor(app, inputEl, getAllVaultTags, onPick) {
-    super(app, inputEl), this.getAllVaultTags = getAllVaultTags, this.onPick = onPick;
+  constructor(app, inputEl, getAllVaultTags, getSelected, onAddTag) {
+    super(app, inputEl), this.inputEl = inputEl, this.getAllVaultTags = getAllVaultTags, this.getSelected = getSelected, this.onAddTag = onAddTag;
   }
   getSuggestions(query) {
-    return tagSuggestions(this.getAllVaultTags(), query);
+    return tagSuggestions(this.getAllVaultTags(), query, this.getSelected());
   }
   renderSuggestion(value, el) {
     el.setText(`#${value.replace(/^#/, "")}`);
   }
   selectSuggestion(value, _evt) {
-    let input = this.getValue();
-    this.setValue(applyTagSuggestion(input, value)), this.onPick(), this.close();
+    this.onAddTag(value), this.setValue(""), this.inputEl.dispatchEvent(new Event("input", { bubbles: !0 }));
   }
 };
 
@@ -2049,6 +2041,7 @@ var MODES = [
   { mode: "keyword", label: "Keyword" }
 ], SearchPanel = class {
   constructor(parent, ctx, opts) {
+    this.selectedTags = [];
     this.previewEl = null;
     this.debounceTimer = null;
     this.results = [];
@@ -2068,16 +2061,17 @@ var MODES = [
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
-    }), this.tagEl = parent.createEl("input", {
+    }), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.tagEl = parent.createEl("input", {
       type: "text",
-      placeholder: "Filter by tags (comma-separated)\u2026",
+      placeholder: "Filter by tags\u2026",
       cls: "engram-search-input engram-search-tag-input"
     }), new TagInputSuggest(
       this.ctx.app,
       this.tagEl,
       () => this.collectVaultTags(),
-      () => this.scheduleHandler()
-    ), parent.createEl("hr", { cls: "engram-search-divider" });
+      () => this.selectedTags,
+      (tag) => this.addTag(tag)
+    ), this.renderTagChips(), parent.createEl("hr", { cls: "engram-search-divider" });
     let inputWrap = parent.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
     (0, import_obsidian6.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
       type: "text",
@@ -2085,7 +2079,12 @@ var MODES = [
       cls: "engram-search-input"
     }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.opts.withPreview && (this.previewEl = parent.createDiv({ cls: "engram-search-preview" })), this.renderEmpty(), this.scheduleHandler = () => {
       this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), 300);
-    }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagEl.addEventListener("input", this.scheduleHandler), this.keydownHandler = (e) => {
+    }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
+      if (e.key === "Enter" || e.key === ",") {
+        let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
+        raw && (e.preventDefault(), this.addTag(raw), this.tagEl.value = "");
+      }
+    }, this.tagEl.addEventListener("keydown", this.tagKeydownHandler), this.keydownHandler = (e) => {
       e.key === "ArrowDown" ? (e.preventDefault(), this.moveSelection(1)) : e.key === "ArrowUp" ? (e.preventDefault(), this.moveSelection(-1)) : e.key === "Enter" && (e.preventDefault(), this.openSelected());
     }, this.inputEl.addEventListener("keydown", this.keydownHandler);
   }
@@ -2093,7 +2092,7 @@ var MODES = [
     this.inputEl.focus();
   }
   destroy() {
-    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("input", this.scheduleHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler);
+    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("keydown", this.tagKeydownHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler);
   }
   setMode(mode) {
     var _a, _b;
@@ -2104,10 +2103,24 @@ var MODES = [
     }), (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run();
   }
   parseTags() {
-    let raw = this.tagEl.value.trim();
-    if (!raw) return;
-    let tags = raw.split(",").map((t) => t.trim().replace(/^#/, "")).filter(Boolean);
-    return tags.length ? tags : void 0;
+    return this.selectedTags.length ? [...this.selectedTags] : void 0;
+  }
+  addTag(tag) {
+    let clean = tag.replace(/^#/, "").trim();
+    if (!clean) return;
+    this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase()) || this.selectedTags.push(clean), this.renderTagChips(), this.tagEl.focus(), this.run();
+  }
+  removeTag(tag) {
+    this.selectedTags = this.selectedTags.filter((t) => t !== tag), this.renderTagChips(), this.run();
+  }
+  renderTagChips() {
+    this.tagChipsEl.empty();
+    for (let tag of this.selectedTags) {
+      let chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
+      chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" });
+      let remove = chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "\xD7" });
+      remove.setAttribute("aria-label", `Remove tag ${tag}`), remove.addEventListener("click", () => this.removeTag(tag));
+    }
   }
   collectVaultTags() {
     var _a;
