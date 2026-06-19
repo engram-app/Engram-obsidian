@@ -173,11 +173,66 @@ async function searchKeyword(
 	return scored.slice(0, opts.limit ?? DEFAULT_LIMIT);
 }
 
+/** Keep the highest-scoring result per note; drop empty paths. */
+function collapseByNote(results: UnifiedSearchResult[]): UnifiedSearchResult[] {
+	const best = new Map<string, UnifiedSearchResult>();
+	for (const r of results) {
+		if (!r.source_path) continue;
+		const prev = best.get(r.source_path);
+		if (!prev || r.score > prev.score) best.set(r.source_path, r);
+	}
+	return [...best.values()];
+}
+
+/** Reciprocal-rank fusion on source_path. Keyword side wins for snippet. */
+function rrf(
+	keyword: UnifiedSearchResult[],
+	semantic: UnifiedSearchResult[],
+	limit: number,
+): UnifiedSearchResult[] {
+	const scores = new Map<string, number>();
+	const kw = new Map<string, UnifiedSearchResult>();
+	const sem = new Map<string, UnifiedSearchResult>();
+	keyword.forEach((r, i) => {
+		scores.set(r.source_path, (scores.get(r.source_path) ?? 0) + 1 / (RRF_K + i));
+		kw.set(r.source_path, r);
+	});
+	semantic.forEach((r, i) => {
+		scores.set(r.source_path, (scores.get(r.source_path) ?? 0) + 1 / (RRF_K + i));
+		sem.set(r.source_path, r);
+	});
+	const fused: UnifiedSearchResult[] = [];
+	for (const [path, score] of scores) {
+		const k = kw.get(path);
+		const s = sem.get(path);
+		const base = k ?? s!; // prefer keyword (carries matchRanges)
+		fused.push({
+			source_path: path,
+			title: base.title ?? s?.title,
+			text: base.text,
+			heading_path: s?.heading_path,
+			score,
+			origin: "hybrid",
+			matchRanges: k?.matchRanges,
+		});
+	}
+	fused.sort((a, b) => b.score - a.score);
+	return fused.slice(0, limit);
+}
+
 async function searchHybrid(
-	_query: string,
-	_ctx: SearchContext,
-	_opts: SearchOpts,
-	_fuzzy: FuzzyFactory,
+	query: string,
+	ctx: SearchContext,
+	opts: SearchOpts,
+	fuzzy: FuzzyFactory,
 ): Promise<SearchOutcome> {
-	return { results: [], degraded: false };
+	const limit = opts.limit ?? DEFAULT_LIMIT;
+	const keywordList = await searchKeyword(query, ctx, opts, fuzzy);
+	try {
+		const resp = await ctx.api.search(query, limit, opts.tags, opts.folder);
+		const semanticList = collapseByNote(mapSemantic(resp.results));
+		return { results: rrf(keywordList, semanticList, limit), degraded: false };
+	} catch {
+		return { results: keywordList.slice(0, limit), degraded: true };
+	}
 }

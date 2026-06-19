@@ -130,3 +130,61 @@ describe("searchEngram keyword", () => {
 		expect(results.map((r) => r.source_path)).toEqual(["b.md"]);
 	});
 });
+
+describe("searchEngram hybrid", () => {
+	const app = fakeApp([
+		{ path: "a.md", content: "omega alpha" },
+		{ path: "b.md", content: "omega beta" },
+	]);
+
+	it("fuses semantic + keyword on source_path and dedupes notes", async () => {
+		const api = {
+			search: async () => ({
+				query: "omega",
+				results: [
+					{
+						text: "semantic chunk for b",
+						title: "B",
+						heading_path: "Top > B",
+						source_path: "b.md",
+						tags: [],
+						wikilinks: [],
+						score: 0.9,
+						vector_score: 0.9,
+						rerank_score: 0.9,
+					},
+				],
+			}),
+		} as any;
+		const { results, degraded } = await searchEngram(
+			"hybrid",
+			"omega",
+			{ api, app },
+			{ limit: 10 },
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(degraded).toBe(false);
+		// b.md appears in both lists → ranked first, exactly once.
+		expect(results.map((r) => r.source_path)).toEqual(["b.md", "a.md"]);
+		expect(results.every((r) => r.origin === "hybrid")).toBe(true);
+		// keyword snippet (with ranges) preferred over the semantic chunk text.
+		expect(results[0].matchRanges?.length).toBeGreaterThan(0);
+	});
+
+	it("degrades to keyword-only when the backend throws", async () => {
+		const api = {
+			search: async () => {
+				throw new Error("offline");
+			},
+		} as any;
+		const { results, degraded } = await searchEngram(
+			"hybrid",
+			"omega",
+			{ api, app },
+			{},
+			{ fuzzy: fakeFuzzy },
+		);
+		expect(degraded).toBe(true);
+		expect(results.map((r) => r.source_path).sort()).toEqual(["a.md", "b.md"]);
+	});
+});
