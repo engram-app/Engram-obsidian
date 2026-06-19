@@ -2,7 +2,7 @@
  * Pure search engine: dispatches Semantic / Keyword / Hybrid and normalizes
  * every mode to UnifiedSearchResult[]. No DOM, no Obsidian view code.
  */
-import { type App, prepareFuzzySearch } from "obsidian";
+import { type App, type TFile, getAllTags, prepareFuzzySearch } from "obsidian";
 import type { EngramApi } from "./api";
 import type { SearchMode, SearchResult, UnifiedSearchResult } from "./types";
 
@@ -49,7 +49,7 @@ function mapSemantic(results: SearchResult[]): UnifiedSearchResult[] {
 		text: snippet(r.text),
 		heading_path: r.heading_path,
 		score: r.score,
-		origin: "semantic" as SearchMode,
+		origin: "semantic",
 	}));
 }
 
@@ -70,7 +70,7 @@ export async function searchEngram(
 	deps: SearchDeps = {},
 ): Promise<SearchOutcome> {
 	if (!query.trim()) return { results: [], degraded: false };
-	const fuzzy = deps.fuzzy ?? (prepareFuzzySearch as unknown as FuzzyFactory);
+	const fuzzy = deps.fuzzy ?? prepareFuzzySearch;
 	if (mode === "semantic") {
 		return { results: await searchSemantic(query, ctx, opts), degraded: false };
 	}
@@ -91,20 +91,14 @@ function matchesFolder(path: string, folder?: string): boolean {
 	return path.startsWith(prefix);
 }
 
-function noteTags(app: App, file: { path: string }): Set<string> {
-	// biome-ignore lint/suspicious/noExplicitAny: Obsidian cache shape
-	const cache: any = app.metadataCache.getFileCache(file as any);
-	const out = new Set<string>();
-	for (const t of cache?.tags ?? []) {
-		if (typeof t?.tag === "string") out.add(t.tag.replace(/^#/, ""));
-	}
-	const fmTags = cache?.frontmatter?.tags;
-	if (Array.isArray(fmTags)) for (const t of fmTags) out.add(String(t).replace(/^#/, ""));
-	else if (typeof fmTags === "string") out.add(fmTags.replace(/^#/, ""));
-	return out;
+function noteTags(app: App, file: TFile): Set<string> {
+	const cache = app.metadataCache.getFileCache(file);
+	if (!cache) return new Set();
+	const all = getAllTags(cache) ?? [];
+	return new Set(all.map((t) => t.replace(/^#/, "")));
 }
 
-function matchesTags(app: App, file: { path: string }, tags?: string[]): boolean {
+function matchesTags(app: App, file: TFile, tags?: string[]): boolean {
 	if (!tags?.length) return true;
 	const have = noteTags(app, file);
 	return tags.every((t) => have.has(t.replace(/^#/, "")));

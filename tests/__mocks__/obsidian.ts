@@ -307,6 +307,20 @@ export function setIcon(_el: unknown, _name: string): void {
 	// nothing we test asserts against the rendered icon.
 }
 
+/** Mirrors Obsidian's getAllTags: merges inline cache tags + frontmatter tags,
+ *  each returned with a leading '#'. Returns null when there are none. */
+export function getAllTags(cache: {
+	tags?: { tag: string }[];
+	frontmatter?: { tags?: unknown };
+}): string[] | null {
+	const out: string[] = [];
+	for (const t of cache?.tags ?? []) out.push(t.tag);
+	const fm = cache?.frontmatter?.tags;
+	if (Array.isArray(fm)) for (const t of fm) out.push(`#${String(t).replace(/^#/, "")}`);
+	else if (typeof fm === "string") out.push(`#${fm.replace(/^#/, "")}`);
+	return out.length ? out : null;
+}
+
 export class App {}
 
 /** Test stub. Real ranking is exercised via an injected fuzzy factory in
