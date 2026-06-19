@@ -143,8 +143,14 @@ export class EngramApi {
 			Authorization: `Bearer ${token}`,
 			...extraHeaders,
 		};
-		if (this.vaultId) {
-			headers["X-Vault-ID"] = this.vaultId;
+		// Use the *active* vault (OAuth provider's bound vault, or the raw field
+		// for API-key auth) — NOT the raw this.vaultId. For OAuth installs the
+		// field can be empty while the provider holds the real vault, which made
+		// vault-scoped REST calls (notably /search) fall back to the user's
+		// default vault server-side (VaultPlug defaults when X-Vault-ID is absent).
+		const activeVaultId = this.getActiveVaultId();
+		if (activeVaultId) {
+			headers["X-Vault-ID"] = activeVaultId;
 		}
 		if (this.deviceId) {
 			headers["X-Device-Id"] = this.deviceId;

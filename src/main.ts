@@ -31,6 +31,7 @@ import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
 	type FileSyncState,
+	type SearchMode,
 	type SyncPreviewContext,
 	type SyncStatus,
 } from "./types";
@@ -92,6 +93,12 @@ interface PluginData {
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
+	/** Persist the user's chosen search mode as the new default. Passed to the
+	 *  search view + modal so a mode switch in either surface sticks. */
+	private persistSearchMode = (mode: SearchMode): void => {
+		this.settings.searchDefaultMode = mode;
+		void this.saveSettings();
+	};
 	authProvider: AuthProvider | null = null;
 	syncEngine: SyncEngine = null!;
 	syncLog: SyncLog = new SyncLog();
@@ -359,13 +366,27 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 
 		// Register search view
-		this.registerView(SEARCH_VIEW_TYPE, (leaf) => new SearchView(leaf, this.api));
+		this.registerView(
+			SEARCH_VIEW_TYPE,
+			(leaf) =>
+				new SearchView(
+					leaf,
+					this.api,
+					this.settings.searchDefaultMode,
+					this.persistSearchMode,
+				),
+		);
 
 		this.addCommand({
 			id: "search",
 			name: "Semantic search",
 			callback: () => {
-				new SearchModal(this.app, this.api).open();
+				new SearchModal(
+					this.app,
+					this.api,
+					this.settings.searchDefaultMode,
+					this.persistSearchMode,
+				).open();
 			},
 		});
 
@@ -386,7 +407,7 @@ export default class EngramSyncPlugin extends Plugin {
 			},
 		});
 
-		this.addRibbonIcon("search", "Engram search", async () => {
+		this.addRibbonIcon("brain-circuit", "Engram search", async () => {
 			const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
 			if (existing[0]) {
 				void this.app.workspace.revealLeaf(existing[0]);

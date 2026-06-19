@@ -47,6 +47,24 @@ export interface EngramSyncSettings {
 	/** Last-known plan/limit state pushed by the backend over the WebSocket.
 	 *  Null until the first plan event is received (or older backend). */
 	planState?: PlanState | null;
+	/** Default mode for the search panel's toggle. */
+	searchDefaultMode: SearchMode;
+}
+
+/** Which search backend the panel uses. */
+export type SearchMode = "semantic" | "keyword" | "hybrid";
+
+/** A normalized, note-level search result shared across all modes. */
+export interface UnifiedSearchResult {
+	source_path: string;
+	title?: string;
+	/** Snippet text shown in the result list / preview. */
+	text: string;
+	/** Heading trail (semantic / hybrid-semantic side only). */
+	heading_path?: string;
+	score: number;
+	/** How this note matched: semantic vector, keyword/lexical, or both (hybrid). */
+	matchType?: "semantic" | "keyword" | "both";
 }
 
 export const DEFAULT_SETTINGS: EngramSyncSettings = {
@@ -60,6 +78,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	vaultId: null,
 	clientId: "",
 	planState: null,
+	searchDefaultMode: "hybrid",
 };
 
 /** A note as returned by POST /notes */
@@ -204,17 +223,25 @@ export interface SearchRequest {
 	folder?: string;
 }
 
-/** A single search result from Engram. */
+/** A single search result from Engram's `POST /api/search`.
+ *  The grouped/web-card response uses `path` + `snippet`; older/raw-chunk
+ *  responses use `source_path` + `text`. The plugin tolerates both. */
 export interface SearchResult {
-	text: string;
+	/** Web-card shape (current backend). */
+	path?: string;
+	snippet?: string;
+	/** Raw-chunk shape (older / api-contract.md). */
+	text?: string;
+	source_path?: string;
 	title?: string;
 	heading_path?: string;
-	source_path?: string;
-	tags: string[];
-	wikilinks: string[];
+	folder?: string;
+	tags?: string[];
+	wikilinks?: string[];
 	score: number;
-	vector_score: number;
-	rerank_score: number;
+	vector_score?: number;
+	rerank_score?: number;
+	match_count?: number;
 }
 
 /** Response from POST /search */

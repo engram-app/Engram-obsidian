@@ -6,10 +6,19 @@
 }
 
 /* Search — shared between modal and sidebar */
+
+/* One source of vertical rhythm: the panel is a flex column with a uniform gap,
+   so individual controls never set their own stacking margins (which had drifted
+   between 4/6.4/8px). Empty children (e.g. the tag-chip row) collapse the gap. */
+.engram-search-panel {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
 .engram-search-input {
 	width: 100%;
 	padding: 8px 12px;
-	margin-bottom: 8px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 6px;
 	background: var(--background-primary);
@@ -34,13 +43,28 @@
 	font-style: italic;
 }
 
+/* Divider + results are one section (no inner gap) so results butt flush against
+   the divider and rows clip exactly at the line — without coupling to the panel's
+   inter-control gap. */
+.engram-search-results-section {
+	display: flex;
+	flex-direction: column;
+	min-height: 0;
+}
+
+.engram-search-results-divider {
+	margin: 0;
+	border: none;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
 .engram-search-results {
 	max-height: 400px;
 	overflow-y: auto;
 }
 
 .engram-search-result-item {
-	padding: 8px 12px;
+	padding: 10px 12px;
 	border-radius: 4px;
 	cursor: pointer;
 	border-bottom: 1px solid var(--background-modifier-border);
@@ -53,8 +77,8 @@
 
 .engram-search-result-header {
 	display: flex;
-	justify-content: space-between;
 	align-items: center;
+	gap: 0.4rem;
 }
 
 .engram-search-result-title {
@@ -62,26 +86,90 @@
 	color: var(--text-normal);
 }
 
+/* Own row: provenance pill + match-strength meter. */
+.engram-search-result-meta {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 4px;
+}
+
 .engram-search-result-path {
 	display: block;
 	font-size: 0.8em;
 	color: var(--text-muted);
+	margin-top: 4px;
 }
 
-.engram-search-result-score {
-	font-size: 0.75em;
-	color: var(--text-muted);
-	background: var(--background-modifier-border);
-	padding: 1px 6px;
-	border-radius: 10px;
+/* Provenance pill — colored + worded so the hybrid blend isn't easy to miss. */
+.engram-search-match {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
 	flex-shrink: 0;
+	padding: 0.05rem 0.45rem;
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	border-radius: 999px;
+	border: 1px solid currentcolor;
+}
+
+.engram-search-match-semantic {
+	color: var(--color-purple);
+	background: rgba(var(--color-purple-rgb), 0.12);
+}
+
+.engram-search-match-keyword {
+	color: var(--color-blue);
+	background: rgba(var(--color-blue-rgb), 0.12);
+}
+
+.engram-search-match-both {
+	color: var(--color-green);
+	background: rgba(var(--color-green-rgb), 0.12);
+}
+
+.engram-search-match-icon {
+	display: inline-flex;
+}
+
+.engram-search-match-icon svg {
+	width: 0.85em;
+	height: 0.85em;
+}
+
+/* Relative match-strength meter. */
+.engram-search-strength {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.engram-search-strength-bar {
+	width: 48px;
+	height: 4px;
+	border-radius: 999px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.engram-search-strength-fill {
+	display: block;
+	height: 100%;
+	border-radius: 999px;
+	background: var(--interactive-accent);
+}
+
+.engram-search-strength-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
 }
 
 .engram-search-result-snippet {
 	font-size: 0.85em;
 	color: var(--text-muted);
-	margin: 4px 0 0;
-	line-height: 1.4;
+	margin: 6px 0 0;
+	line-height: 1.45;
 }
 
 /* Modal overrides */
@@ -101,36 +189,16 @@
 	height: 100%;
 }
 
+.engram-search-view-container .engram-search-results-section {
+	flex: 1;
+}
+
 .engram-search-view-container .engram-search-results {
 	flex: 1;
 	min-height: 0;
+	max-height: none;
 }
 
-/* Preview pane */
-.engram-search-preview {
-	border-top: 1px solid var(--background-modifier-border);
-	padding-top: 8px;
-	margin-top: 8px;
-	max-height: 200px;
-	overflow-y: auto;
-}
-
-.engram-search-preview-heading {
-	font-size: 0.9em;
-	color: var(--text-muted);
-	margin: 0 0 4px;
-}
-
-.engram-search-preview-text {
-	font-size: 0.85em;
-	line-height: 1.5;
-	white-space: pre-wrap;
-}
-
-.engram-search-preview-open {
-	margin-top: 8px;
-	font-size: 0.85em;
-}
 
 /* ── Conflict resolution modal ─────────────────────────────────── */
 
@@ -417,7 +485,7 @@
 	height: 8px;
 	border-radius: 50%;
 	margin-right: 8px;
-	background-color: #888888;
+	background-color: var(--text-muted);
 }
 
 .engram-status-dot.is-error {
@@ -1056,7 +1124,7 @@ body.is-mobile .engram-support-buttons > a {
 	border-radius: 8px;
 	padding: 10px 14px;
 	margin-bottom: 12px;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+	box-shadow: var(--shadow-s);
 }
 
 .engram-sync-center-dot {
@@ -1192,7 +1260,7 @@ body.is-mobile .engram-support-buttons > a {
 	border-radius: 8px;
 	padding: 10px 12px;
 	margin-bottom: 14px;
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+	box-shadow: var(--shadow-s);
 }
 
 .engram-sync-center-action-btn {
@@ -1207,7 +1275,7 @@ body.is-mobile .engram-support-buttons > a {
 	margin-bottom: 14px;
 	border: 1px solid var(--background-modifier-border);
 	border-left: 3px solid var(--interactive-accent);
-	box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
+	box-shadow: var(--shadow-s);
 }
 
 /* Obsidian Setting heading inside our section card — strip its own
@@ -1732,4 +1800,124 @@ body.is-mobile .engram-support-buttons > a {
 .engram-sync-preview-new-vault-input {
 	width: 100%;
 	padding: 0.4em;
+}
+
+/* ── Search highlights ───────────────────────────────────────── */
+
+.engram-search-hl {
+	background: var(--text-highlight-bg);
+	border-radius: var(--radius-s);
+}
+
+.engram-folder-suggest-item {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.engram-folder-suggest-icon {
+	display: inline-flex;
+	color: var(--text-muted);
+}
+
+.engram-folder-suggest-icon svg {
+	width: 1em;
+	height: 1em;
+}
+
+/* Search row: input grows, filters toggle sits at the end (native .search-row). */
+.engram-search-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
+}
+
+.engram-search-input-wrap {
+	position: relative;
+	flex: 1;
+	min-width: 0;
+}
+
+.engram-search-input-icon {
+	position: absolute;
+	left: 0.5rem;
+	top: 50%;
+	transform: translateY(-50%);
+	display: flex;
+	color: var(--text-muted);
+	pointer-events: none;
+}
+
+/* Room for the leading magnifier and the trailing clear button; hide the
+   browser's native search clear. */
+.engram-search-input-wrap .engram-search-input {
+	padding-left: 1.85rem;
+	padding-right: 1.8rem;
+}
+
+.engram-search-input::-webkit-search-cancel-button {
+	appearance: none;
+}
+
+.engram-search-clear {
+	position: absolute;
+	right: 0.25rem;
+	top: 50%;
+	transform: translateY(-50%);
+	display: none;
+	color: var(--text-muted);
+}
+
+.engram-search-clear.is-visible {
+	display: inline-flex;
+}
+
+/* Filters toggle: accent-tinted while the panel is open or a filter is active. */
+.engram-search-filter-toggle.is-active,
+.engram-search-filter-toggle.has-filters {
+	color: var(--text-accent);
+}
+
+.engram-search-filters {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.engram-search-filters.is-hidden {
+	display: none;
+}
+
+.engram-search-tag-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+}
+
+/* No empty gap when there are no active filters. */
+.engram-search-tag-chips:empty {
+	display: none;
+}
+
+.engram-search-tag-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.1rem 0.4rem;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+	cursor: pointer;
+}
+
+.engram-search-tag-chip-remove {
+	display: inline-flex;
+	cursor: pointer;
+	color: var(--text-muted);
+	line-height: 1;
+}
+
+.engram-search-tag-chip:hover .engram-search-tag-chip-remove {
+	color: var(--text-normal);
 }
