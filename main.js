@@ -2036,6 +2036,14 @@ var TagInputSuggest = class extends import_obsidian5.AbstractInputSuggest {
   selectSuggestion(value, _evt) {
     this.onAddTag(value), this.setValue(""), this.inputEl.dispatchEvent(new Event("input", { bubbles: !0 }));
   }
+  /** Match the dropdown width to the tag input so it spans the panel instead of
+   *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
+   *  this a harmless no-op if that property ever changes. */
+  open() {
+    super.open();
+    let el = this.suggestEl;
+    el && (el.style.width = `${this.inputEl.offsetWidth}px`);
+  }
 };
 
 // src/search-ui.ts
@@ -2082,7 +2090,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
-    }), this.tagEl = parent.createEl("input", {
+    }), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.tagEl = parent.createEl("input", {
       type: "text",
       placeholder: "Filter by tags\u2026",
       cls: "engram-search-input engram-search-tag-input"
@@ -2098,7 +2106,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       type: "text",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
-    }), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+    }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
       this.debounceTimer && window.clearTimeout(this.debounceTimer);
       let delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
       this.debounceTimer = window.setTimeout(() => void this.run(), delay);
