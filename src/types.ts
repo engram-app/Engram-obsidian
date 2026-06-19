@@ -47,6 +47,25 @@ export interface EngramSyncSettings {
 	/** Last-known plan/limit state pushed by the backend over the WebSocket.
 	 *  Null until the first plan event is received (or older backend). */
 	planState?: PlanState | null;
+	/** Default mode for the search panel's toggle. */
+	searchDefaultMode: SearchMode;
+}
+
+/** Which search backend the panel uses. */
+export type SearchMode = "semantic" | "keyword" | "hybrid";
+
+/** A normalized, note-level search result shared across all modes. */
+export interface UnifiedSearchResult {
+	source_path: string;
+	title?: string;
+	/** Snippet text shown in the result list / preview. */
+	text: string;
+	/** Heading trail (semantic / hybrid-semantic side only). */
+	heading_path?: string;
+	score: number;
+	origin: SearchMode;
+	/** Character offset ranges into `text` to highlight. */
+	matchRanges?: [number, number][];
 }
 
 export const DEFAULT_SETTINGS: EngramSyncSettings = {
@@ -60,6 +79,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	vaultId: null,
 	clientId: "",
 	planState: null,
+	searchDefaultMode: "semantic",
 };
 
 /** A note as returned by POST /notes */
