@@ -1998,17 +1998,6 @@ function buildSegments(text, ranges) {
     s < cursor || (s > cursor && out.push({ text: text.slice(cursor, s), hit: !1 }), out.push({ text: text.slice(s, e), hit: !0 }), cursor = e);
   return cursor < text.length && out.push({ text: text.slice(cursor), hit: !1 }), out;
 }
-function queryTokenRanges(text, query) {
-  let lower = text.toLowerCase(), ranges = [];
-  for (let tokenRaw of query.split(/\s+/)) {
-    let token = tokenRaw.toLowerCase().trim();
-    if (!token) continue;
-    let from = 0, i = lower.indexOf(token, from);
-    for (; i >= 0; )
-      ranges.push([i, i + token.length]), from = i + token.length, i = lower.indexOf(token, from);
-  }
-  return ranges.sort((a, b) => a[0] - b[0]);
-}
 
 // src/tag-suggest.ts
 var import_obsidian5 = require("obsidian");
@@ -2174,9 +2163,9 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       cls: "engram-search-empty"
     });
   }
-  highlightInto(el, result, query) {
+  highlightInto(el, result, _query) {
     var _a;
-    let ranges = (_a = result.matchRanges) != null && _a.length ? result.matchRanges : queryTokenRanges(result.text, query);
+    let ranges = (_a = result.matchRanges) != null ? _a : [];
     for (let seg of buildSegments(result.text, ranges))
       seg.hit ? el.createSpan({ text: seg.text, cls: "engram-search-hl" }) : el.appendText(seg.text);
   }
