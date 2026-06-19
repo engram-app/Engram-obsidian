@@ -1,7 +1,7 @@
 {
 	"id": "engram-vault-sync",
 	"name": "Engram Vault Sync",
-	"version": "1.8.3",
+	"version": "1.8.4",
 	"minAppVersion": "1.7.2",
 	"description": "Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.",
 	"author": "Rasbandit",
