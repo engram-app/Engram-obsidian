@@ -33,7 +33,25 @@ export interface SearchOutcome {
 }
 
 const DEFAULT_LIMIT = 10;
-const EXCERPT_LEN = 200;
+const EXCERPT_LEN = 140;
+// Weakest hit still matched — floor its displayed strength here so it never
+// reads as "0% / no match". Top of the set always maps to 100.
+const STRENGTH_FLOOR = 40;
+
+/** Relative match strength (0-100) for display, min-max normalized across the
+ *  current result set. Mode-agnostic: works for backend cosine, Obsidian fuzzy
+ *  (negative), and RRF scores alike because it's purely relative — never an
+ *  absolute probability. Equal/single scores all read 100. */
+export function matchStrengths(scores: number[]): number[] {
+	if (!scores.length) return [];
+	const max = Math.max(...scores);
+	const min = Math.min(...scores);
+	const range = max - min;
+	if (range === 0) return scores.map(() => 100);
+	return scores.map((s) =>
+		Math.round(STRENGTH_FLOOR + ((s - min) / range) * (100 - STRENGTH_FLOOR)),
+	);
+}
 // Used by Task 4 (keyword) and Task 5 (hybrid RRF merge).
 const RRF_K = 60;
 const TITLE_BONUS = 1;
@@ -45,9 +63,19 @@ function excerpt(text: string | null | undefined, query: string): string {
 	const t = (text ?? "").replace(/\s+/g, " ").trim();
 	if (!t) return "";
 	const first = queryTokenRanges(t, query)[0];
-	if (!first) return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN)}…` : t;
-	const start = Math.max(0, first[0] - 30);
-	const end = Math.min(t.length, start + EXCERPT_LEN);
+	if (!first)
+		return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN).replace(/\s+$/, "")}…` : t;
+	let start = Math.max(0, first[0] - 24);
+	let end = Math.min(t.length, start + EXCERPT_LEN);
+	// Snap the cut points to word boundaries so neither edge chops a word.
+	if (start > 0) {
+		const sp = t.indexOf(" ", start);
+		if (sp !== -1 && sp < first[0]) start = sp + 1;
+	}
+	if (end < t.length) {
+		const sp = t.lastIndexOf(" ", end);
+		if (sp > first[1]) end = sp;
+	}
 	return `${start > 0 ? "…" : ""}${t.slice(start, end)}${end < t.length ? "…" : ""}`;
 }
 

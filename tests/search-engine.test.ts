@@ -1,11 +1,43 @@
 import { describe, expect, it } from "bun:test";
-import { searchEngram } from "../src/search-engine";
+import { matchStrengths, searchEngram } from "../src/search-engine";
 import { DEFAULT_SETTINGS } from "../src/types";
 import type { SearchResponse } from "../src/types";
 
 describe("search settings", () => {
 	it("defaults searchDefaultMode to hybrid", () => {
 		expect(DEFAULT_SETTINGS.searchDefaultMode).toBe("hybrid");
+	});
+});
+
+describe("matchStrengths", () => {
+	it("returns empty for no scores", () => {
+		expect(matchStrengths([])).toEqual([]);
+	});
+
+	it("gives a single result full strength", () => {
+		expect(matchStrengths([0.42])).toEqual([100]);
+	});
+
+	it("gives equal scores full strength (no spread to rank)", () => {
+		expect(matchStrengths([5, 5, 5])).toEqual([100, 100, 100]);
+	});
+
+	it("maps the top score to 100 and floors the weakest into the band", () => {
+		const [top, , bottom] = matchStrengths([0.9, 0.5, 0.1]);
+		expect(top).toBe(100);
+		expect(bottom).toBe(40); // display floor — weakest still matched, never 0%
+	});
+
+	it("is purely relative, so negative fuzzy scores rank like any other", () => {
+		// Obsidian's prepareSimpleSearch yields negative scores; higher = better.
+		expect(matchStrengths([-2, -20])).toEqual([100, 40]);
+	});
+
+	it("ranks monotonically with the score", () => {
+		const s = matchStrengths([10, 8, 6, 4]);
+		expect(s[0]).toBeGreaterThan(s[1]);
+		expect(s[1]).toBeGreaterThan(s[2]);
+		expect(s[2]).toBeGreaterThan(s[3]);
 	});
 });
 

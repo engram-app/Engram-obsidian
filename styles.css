@@ -40,7 +40,7 @@
 }
 
 .engram-search-result-item {
-	padding: 8px 12px;
+	padding: 10px 12px;
 	border-radius: 4px;
 	cursor: pointer;
 	border-bottom: 1px solid var(--background-modifier-border);
@@ -62,22 +62,47 @@
 	color: var(--text-normal);
 }
 
+/* Own row: provenance pill + match-strength meter. */
+.engram-search-result-meta {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+	margin-top: 4px;
+}
+
 .engram-search-result-path {
 	display: block;
 	font-size: 0.8em;
 	color: var(--text-muted);
+	margin-top: 4px;
 }
 
+/* Provenance pill — colored + worded so the hybrid blend isn't easy to miss. */
 .engram-search-match {
 	display: inline-flex;
 	align-items: center;
-	gap: 0.2rem;
+	gap: 0.25rem;
 	flex-shrink: 0;
-	padding: 0 0.35rem;
+	padding: 0.05rem 0.45rem;
 	font-size: var(--font-ui-smaller);
-	color: var(--text-muted);
-	background: var(--background-modifier-hover);
-	border-radius: var(--radius-s);
+	font-weight: 600;
+	border-radius: 999px;
+	border: 1px solid currentcolor;
+}
+
+.engram-search-match-semantic {
+	color: var(--color-purple);
+	background: hsla(var(--color-purple-hsl, 270 60% 60%) / 0.12);
+}
+
+.engram-search-match-keyword {
+	color: var(--color-blue);
+	background: hsla(var(--color-blue-hsl, 210 80% 55%) / 0.12);
+}
+
+.engram-search-match-both {
+	color: var(--color-green);
+	background: hsla(var(--color-green-hsl, 140 55% 45%) / 0.12);
 }
 
 .engram-search-match-icon {
@@ -89,11 +114,38 @@
 	height: 0.85em;
 }
 
+/* Relative match-strength meter. */
+.engram-search-strength {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.4rem;
+}
+
+.engram-search-strength-bar {
+	width: 48px;
+	height: 4px;
+	border-radius: 999px;
+	background: var(--background-modifier-border);
+	overflow: hidden;
+}
+
+.engram-search-strength-fill {
+	display: block;
+	height: 100%;
+	border-radius: 999px;
+	background: var(--interactive-accent);
+}
+
+.engram-search-strength-label {
+	font-size: var(--font-ui-smaller);
+	color: var(--text-muted);
+}
+
 .engram-search-result-snippet {
 	font-size: 0.85em;
 	color: var(--text-muted);
-	margin: 4px 0 0;
-	line-height: 1.4;
+	margin: 6px 0 0;
+	line-height: 1.45;
 }
 
 /* Modal overrides */

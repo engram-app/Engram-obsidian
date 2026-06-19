@@ -1874,13 +1874,30 @@ function queryTokenRanges(text, query) {
 }
 
 // src/search-engine.ts
-var DEFAULT_LIMIT = 10, EXCERPT_LEN = 200, RRF_K = 60, TITLE_BONUS = 1;
+var DEFAULT_LIMIT = 10, EXCERPT_LEN = 140, STRENGTH_FLOOR = 40;
+function matchStrengths(scores) {
+  if (!scores.length) return [];
+  let max = Math.max(...scores), min = Math.min(...scores), range = max - min;
+  return range === 0 ? scores.map(() => 100) : scores.map(
+    (s) => Math.round(STRENGTH_FLOOR + (s - min) / range * (100 - STRENGTH_FLOOR))
+  );
+}
+var RRF_K = 60, TITLE_BONUS = 1;
 function excerpt(text, query) {
   let t = (text != null ? text : "").replace(/\s+/g, " ").trim();
   if (!t) return "";
   let first = queryTokenRanges(t, query)[0];
-  if (!first) return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN)}\u2026` : t;
-  let start = Math.max(0, first[0] - 30), end = Math.min(t.length, start + EXCERPT_LEN);
+  if (!first)
+    return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN).replace(/\s+$/, "")}\u2026` : t;
+  let start = Math.max(0, first[0] - 24), end = Math.min(t.length, start + EXCERPT_LEN);
+  if (start > 0) {
+    let sp = t.indexOf(" ", start);
+    sp !== -1 && sp < first[0] && (start = sp + 1);
+  }
+  if (end < t.length) {
+    let sp = t.lastIndexOf(" ", end);
+    sp > first[1] && (end = sp);
+  }
   return `${start > 0 ? "\u2026" : ""}${t.slice(start, end)}${end < t.length ? "\u2026" : ""}`;
 }
 function stripFrontmatter(content) {
@@ -2211,24 +2228,33 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
       return;
     }
+    let strengths = matchStrengths(this.results.map((r) => r.score));
     this.results.forEach((result, i) => {
+      var _a;
       let item = this.resultsEl.createDiv({
         cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`
-      }), header = item.createDiv({ cls: "engram-search-result-header" });
-      if (header.createEl("span", {
+      });
+      item.createDiv({ cls: "engram-search-result-header" }).createEl("span", {
         text: result.title || result.source_path || "Untitled",
         cls: "engram-search-result-title"
-      }), this.mode === "hybrid" && result.matchType) {
-        let chip = header.createSpan({
+      });
+      let meta = item.createDiv({ cls: "engram-search-result-meta" });
+      if (this.mode === "hybrid" && result.matchType) {
+        let pill = meta.createSpan({
           cls: `engram-search-match engram-search-match-${result.matchType}`
-        }), icon = chip.createSpan({ cls: "engram-search-match-icon" });
+        }), icon = pill.createSpan({ cls: "engram-search-match-icon" });
         (0, import_obsidian6.setIcon)(
           icon,
           result.matchType === "keyword" ? "case-sensitive" : result.matchType === "both" ? "layers" : "sparkles"
-        ), chip.createSpan({
+        ), pill.createSpan({
           text: result.matchType === "keyword" ? "exact" : result.matchType === "both" ? "meaning + exact" : "meaning"
         });
       }
+      let pct = (_a = strengths[i]) != null ? _a : 100, strength = meta.createSpan({ cls: "engram-search-strength" }), bar = strength.createSpan({ cls: "engram-search-strength-bar" });
+      bar.createSpan({ cls: "engram-search-strength-fill" }).style.width = `${pct}%`, strength.createSpan({
+        cls: "engram-search-strength-label",
+        text: `match strength: ${pct}%`
+      });
       let parts = [], lastSlash = result.source_path.lastIndexOf("/");
       if (lastSlash > 0 && parts.push(result.source_path.slice(0, lastSlash)), result.heading_path) {
         let trail = result.heading_path.split(">").slice(1).map((s) => s.trim()).filter(Boolean).join(" \u203A ");

@@ -4,7 +4,7 @@
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
 import { Notice, getAllTags, setIcon } from "obsidian";
-import { type SearchContext, searchEngram } from "./search-engine";
+import { type SearchContext, matchStrengths, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
@@ -302,6 +302,8 @@ export class SearchPanel {
 			this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
 			return;
 		}
+		// Relative strength across the displayed set — drives the per-result bar.
+		const strengths = matchStrengths(this.results.map((r) => r.score));
 		this.results.forEach((result, i) => {
 			const item = this.resultsEl.createDiv({
 				cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`,
@@ -311,12 +313,13 @@ export class SearchPanel {
 				text: result.title || result.source_path || "Untitled",
 				cls: "engram-search-result-title",
 			});
-			// Provenance chip — only in hybrid mode, where match type is meaningful.
+			// Meta row (its own line): provenance pill (hybrid only) + match strength.
+			const meta = item.createDiv({ cls: "engram-search-result-meta" });
 			if (this.mode === "hybrid" && result.matchType) {
-				const chip = header.createSpan({
+				const pill = meta.createSpan({
 					cls: `engram-search-match engram-search-match-${result.matchType}`,
 				});
-				const icon = chip.createSpan({ cls: "engram-search-match-icon" });
+				const icon = pill.createSpan({ cls: "engram-search-match-icon" });
 				setIcon(
 					icon,
 					result.matchType === "keyword"
@@ -325,7 +328,7 @@ export class SearchPanel {
 							? "layers"
 							: "sparkles",
 				);
-				chip.createSpan({
+				pill.createSpan({
 					text:
 						result.matchType === "keyword"
 							? "exact"
@@ -334,6 +337,14 @@ export class SearchPanel {
 								: "meaning",
 				});
 			}
+			const pct = strengths[i] ?? 100;
+			const strength = meta.createSpan({ cls: "engram-search-strength" });
+			const bar = strength.createSpan({ cls: "engram-search-strength-bar" });
+			bar.createSpan({ cls: "engram-search-strength-fill" }).style.width = `${pct}%`;
+			strength.createSpan({
+				cls: "engram-search-strength-label",
+				text: `match strength: ${pct}%`,
+			});
 			// Context line: folder · heading-trail (heading-trail drops the note title).
 			const parts: string[] = [];
 			const lastSlash = result.source_path.lastIndexOf("/");
