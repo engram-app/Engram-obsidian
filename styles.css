@@ -1789,3 +1789,32 @@ body.is-mobile .engram-support-buttons > a {
 	padding-left: 1.85rem;
 	margin-bottom: 0;
 }
+
+.engram-search-tag-chips {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.25rem;
+	margin-bottom: 0.25rem;
+}
+
+.engram-search-tag-chip {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.25rem;
+	padding: 0.1rem 0.4rem;
+	font-size: var(--font-ui-smaller);
+	color: var(--text-normal);
+	background: var(--background-modifier-hover);
+	border-radius: var(--radius-s);
+}
+
+.engram-search-tag-chip-remove {
+	display: inline-flex;
+	cursor: pointer;
+	color: var(--text-muted);
+	line-height: 1;
+}
+
+.engram-search-tag-chip-remove:hover {
+	color: var(--text-normal);
+}

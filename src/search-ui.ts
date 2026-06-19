@@ -29,6 +29,8 @@ export class SearchPanel {
 	private inputEl!: HTMLInputElement;
 	private folderEl!: HTMLInputElement;
 	private tagEl!: HTMLInputElement;
+	private selectedTags: string[] = [];
+	private tagChipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
 	private previewEl: HTMLElement | null = null;
 	private toggleEl!: HTMLElement;
@@ -39,6 +41,7 @@ export class SearchPanel {
 	private runGeneration = 0;
 	private scheduleHandler!: () => void;
 	private keydownHandler!: (e: KeyboardEvent) => void;
+	private tagKeydownHandler!: (e: KeyboardEvent) => void;
 
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
@@ -64,17 +67,20 @@ export class SearchPanel {
 			placeholder: "Filter by folder…",
 			cls: "engram-search-input engram-search-folder-input",
 		});
+		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
 		this.tagEl = parent.createEl("input", {
 			type: "text",
-			placeholder: "Filter by tags (comma-separated)…",
+			placeholder: "Filter by tags…",
 			cls: "engram-search-input engram-search-tag-input",
 		});
 		new TagInputSuggest(
 			this.ctx.app,
 			this.tagEl,
 			() => this.collectVaultTags(),
-			() => this.scheduleHandler(),
+			() => this.selectedTags,
+			(tag) => this.addTag(tag),
 		);
+		this.renderTagChips();
 
 		parent.createEl("hr", { cls: "engram-search-divider" });
 
@@ -99,7 +105,18 @@ export class SearchPanel {
 		};
 		this.inputEl.addEventListener("input", this.scheduleHandler);
 		this.folderEl.addEventListener("input", this.scheduleHandler);
-		this.tagEl.addEventListener("input", this.scheduleHandler);
+
+		this.tagKeydownHandler = (e: KeyboardEvent) => {
+			if (e.key === "Enter" || e.key === ",") {
+				const raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
+				if (raw) {
+					e.preventDefault();
+					this.addTag(raw);
+					this.tagEl.value = "";
+				}
+			}
+		};
+		this.tagEl.addEventListener("keydown", this.tagKeydownHandler);
 
 		this.keydownHandler = (e) => {
 			if (e.key === "ArrowDown") {
@@ -126,7 +143,7 @@ export class SearchPanel {
 		this.runGeneration++;
 		this.inputEl.removeEventListener("input", this.scheduleHandler);
 		this.folderEl.removeEventListener("input", this.scheduleHandler);
-		this.tagEl.removeEventListener("input", this.scheduleHandler);
+		this.tagEl.removeEventListener("keydown", this.tagKeydownHandler);
 		this.inputEl.removeEventListener("keydown", this.keydownHandler);
 	}
 
@@ -144,13 +161,34 @@ export class SearchPanel {
 	}
 
 	private parseTags(): string[] | undefined {
-		const raw = this.tagEl.value.trim();
-		if (!raw) return undefined;
-		const tags = raw
-			.split(",")
-			.map((t) => t.trim().replace(/^#/, ""))
-			.filter(Boolean);
-		return tags.length ? tags : undefined;
+		return this.selectedTags.length ? [...this.selectedTags] : undefined;
+	}
+
+	private addTag(tag: string): void {
+		const clean = tag.replace(/^#/, "").trim();
+		if (!clean) return;
+		const exists = this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase());
+		if (!exists) this.selectedTags.push(clean);
+		this.renderTagChips();
+		this.tagEl.focus();
+		void this.run();
+	}
+
+	private removeTag(tag: string): void {
+		this.selectedTags = this.selectedTags.filter((t) => t !== tag);
+		this.renderTagChips();
+		void this.run();
+	}
+
+	private renderTagChips(): void {
+		this.tagChipsEl.empty();
+		for (const tag of this.selectedTags) {
+			const chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
+			chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" });
+			const remove = chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "×" });
+			remove.setAttribute("aria-label", `Remove tag ${tag}`);
+			remove.addEventListener("click", () => this.removeTag(tag));
+		}
 	}
 
 	private collectVaultTags(): string[] {
