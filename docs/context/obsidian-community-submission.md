@@ -6,12 +6,12 @@ _Last verified: 2026-05-15_
 **Working — new flow as of 2026-05-12.** GitHub PR submission to `obsidianmd/obsidian-releases` is deprecated. Use https://community.obsidian.md/ Developer Dashboard instead.
 
 ## What This Is
-How to submit (and re-submit new versions of) the Engram Sync plugin to the official Obsidian Community Plugins directory.
+How to submit (and re-submit new versions of) the Engram Vault Sync plugin to the official Obsidian Community Plugins directory.
 
 ## Environment
 - Submission flow: Obsidian Community site (https://community.obsidian.md/)
 - Requires: Obsidian account + GitHub account linked
-- Repo currently at `engram-app/Engram-obsidian` — planned migration to `Engram-App/...` org (re-submit with new `repo` field after move)
+- Repo at `engram-app/Engram-obsidian` (migration to the `engram-app` org is done)
 - Reviewer runs `eslint-plugin-obsidianmd` automated rules on every release tag
 
 ## Connection
@@ -45,7 +45,7 @@ Just push a release to GitHub with matching tag. Automated review runs automatic
 ### Local pre-check before push
 ```bash
 bun run lint:obsidian       # eslint-plugin-obsidianmd via slim config
-bun test                    # 412 tests
+bun test                    # full plugin test suite
 bun run build               # tsc + esbuild
 ```
 Or via dashboard: "Run preview scan" on any branch/tag/commit.
@@ -128,29 +128,18 @@ We had `eslint@^10.3.0` in devDeps; `eslint-plugin-obsidianmd@0.3.0` transitivel
 2. Added `legacy-peer-deps=true` to `.npmrc` — same resolution behavior as bun, lets npm install proceed despite the eslint@10 vs eslint@^9-peer conflict.
 3. Committed `package-lock.json` — sandbox now uses the exact resolved tree we use locally.
 
-Verified locally: `bun test` (718 pass), `bun run build` (clean), `bun run lint:obsidian` (0 warnings).
+Verified locally: `bun test` (all pass), `bun run build` (clean), `bun run lint:obsidian` (0 warnings).
 
 **Next:** push, run dashboard preview scan, compare warning count. If still >0 the next lever is downgrading `eslint-plugin-obsidianmd` to `0.2.9` (and probably `eslint` to `^9`) to match obsidian-tasks exactly.
 
 ### CSS validator catches patterns our biome/eslint missed
 Dashboard validates `styles.css` for: `:has()` (broad invalidation hurts render perf), `!important`, multicolumn props (partial Obsidian support), 3-digit hex shorthand. We mirror this locally with `stylelint` + `.stylelintrc.json`. CI step in `ci.yml` is `Lint CSS (stylelint, mirrors dashboard CSS checks)`. To avoid `:has()`, apply parent classes via JS (`setting.settingEl.addClass(...)`) instead of relying on the selector — see `engram-setting-api-key`/`engram-setting-vault-name`/`engram-setting-support` for the pattern.
 
-### 6 known false positives in our UI strings
-The `obsidianmd/ui/sentence-case` rule misfires on URLs / canonical literals. Suppressed per-line with justification comments — see source for full reasoning:
-1. `src/tabs/advanced-tab.ts:107` — `github.com/engram-app/Engram-obsidian` (literal URL)
-2. `src/tabs/self-hosted-tab.ts:25` — `github.com/engram-app/engram` (literal URL)
-3. `src/tabs/self-hosted-tab.ts:31` — `http://10.0.20.214:8000` (lowercase scheme per RFC 3986)
-4. `src/tabs/self-hosted-tab.ts:34` — `http://localhost:8000` placeholder (lowercase scheme)
-5. `src/tabs/self-hosted-tab.ts:88` — `OAuth` (canonical per RFC 6749, rule wants `OAUTH`)
-6. `src/tabs/self-hosted-tab.ts:143` — `engram_abc123...` (literal token format example)
-
-All marked with `// eslint-disable-next-line obsidianmd/ui/sentence-case -- <reason>`.
-
 ### Brand-name capitulation
 We lowercase `engram` mid-sentence in 4 places (e.g. "Switched to engram cloud") to match the rule's treatment of "Obsidian" (which is in their brand whitelist). Reads as a typo, but passes the bot cleanly — chosen over defending each instance manually. Locations: `src/tabs/account-tab.ts:25`, `src/tabs/self-hosted-tab.ts:21,31,63,65,88,127,128,141`. New `Engram` mid-string in UI should likewise be lowercase.
 
 ### Closed-source plugins not accepted (for now)
-Per FAQ: new closed-source plugins are not accepted into the new directory. Existing ones grandfathered. Engram Sync is MIT — fine.
+Per FAQ: new closed-source plugins are not accepted into the new directory. Existing ones grandfathered. Engram Vault Sync is MIT — fine.
 
 ### `minAppVersion` will be re-flagged if you use newer APIs
 We bumped to `1.7.2` for `Workspace.revealLeaf`. If you adopt newer API, `obsidianmd/no-unsupported-api` will flag and tell you exactly which version each call needs.
