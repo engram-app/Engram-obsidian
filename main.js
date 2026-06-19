@@ -2095,7 +2095,7 @@ var TagInputSuggest = class extends import_obsidian6.AbstractInputSuggest {
 };
 
 // src/search-ui.ts
-var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
+var SEARCH_DEBOUNCE_MS = 550, MODES = [
   {
     mode: "hybrid",
     label: "Hybrid",
@@ -2110,27 +2110,36 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
     icon: "sparkles",
     hint: "Finds notes by meaning, even when they don't share your words.",
     tooltip: "Find by meaning (AI search)"
-  },
-  {
-    mode: "keyword",
-    label: "Keyword",
-    icon: "case-sensitive",
-    hint: "Matches exact words and phrases. Works offline.",
-    tooltip: "Exact words & phrases \u2014 works offline"
   }
+  // No standalone "keyword" mode: Obsidian's core Search does pure keyword
+  // better (operators, context, regex), and Hybrid already covers exact words
+  // (and degrades to keyword-only when the backend is offline). The keyword
+  // engine still powers Hybrid's fusion — it's just not a user-facing toggle.
 ], SearchPanel = class {
   constructor(parent, ctx, opts) {
     this.selectedTags = [];
+    this.filtersOpen = !1;
     this.debounceTimer = null;
     this.lastRunQuery = "";
     this.results = [];
     this.selectedIndex = -1;
     /** Bumped on every run() so a slow earlier search can't clobber a newer render. */
     this.runGeneration = 0;
-    this.ctx = ctx, this.opts = opts, this.mode = opts.defaultMode, this.build(parent);
+    var _a, _b;
+    this.ctx = ctx, this.opts = opts, this.mode = MODES.some((m) => m.mode === opts.defaultMode) ? opts.defaultMode : (_b = (_a = MODES[0]) == null ? void 0 : _a.mode) != null ? _b : "hybrid", this.build(parent);
   }
   build(parent) {
-    parent.addClass("engram-search-panel"), this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
+    parent.addClass("engram-search-panel");
+    let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" });
+    this.inputEl = inputWrap.createEl("input", {
+      type: "search",
+      placeholder: "Search your vault\u2026",
+      cls: "engram-search-input"
+    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearEl.addEventListener("click", () => {
+      this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
+    }), this.filterToggleEl = searchRow.createSpan({
+      cls: "engram-search-filter-toggle clickable-icon"
+    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Toggle filters"), this.filterToggleEl.addEventListener("click", () => this.toggleFilters()), this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
     for (let { mode, label, tooltip } of MODES) {
       let btn = this.toggleEl.createEl("button", {
         text: label,
@@ -2138,7 +2147,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       });
       btn.setAttribute("aria-label", tooltip), btn.addEventListener("click", () => this.setMode(mode));
     }
-    this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" }), this.updateHint(), this.folderEl = parent.createEl("input", {
+    this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" }), this.updateHint(), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), this.folderEl = this.filtersEl.createEl("input", {
       type: "text",
       placeholder: "Filter by folder\u2026",
       cls: "engram-search-input engram-search-folder-input"
@@ -2149,7 +2158,7 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       () => {
         this.run();
       }
-    ), this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.tagEl = parent.createEl("input", {
+    ), this.tagChipsEl = this.filtersEl.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.tagEl = this.filtersEl.createEl("input", {
       type: "text",
       placeholder: "Filter by tags\u2026",
       cls: "engram-search-input engram-search-tag-input"
@@ -2159,16 +2168,8 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       () => this.collectVaultTags(),
       () => this.selectedTags,
       (tag) => this.addTag(tag)
-    ), parent.createEl("hr", { cls: "engram-search-divider" });
-    let inputWrap = parent.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
-    (0, import_obsidian7.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
-      type: "text",
-      placeholder: "Search your vault\u2026",
-      cls: "engram-search-input"
-    }), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
-      this.debounceTimer && window.clearTimeout(this.debounceTimer);
-      let delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
-      this.debounceTimer = window.setTimeout(() => void this.run(), delay);
+    ), this.resultsEl = parent.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {
         let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
@@ -2210,16 +2211,27 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
       text: info.label
     }), this.hintEl.appendText(` \u2014 ${info.hint}`);
   }
+  toggleFilters() {
+    this.filtersOpen = !this.filtersOpen, this.filtersEl.toggleClass("is-hidden", !this.filtersOpen), this.filterToggleEl.toggleClass("is-active", this.filtersOpen), this.filtersOpen && this.folderEl.focus();
+  }
+  /** Reflect transient input state in the chrome: show the clear button when the
+   *  query is non-empty, and mark the filters toggle when a folder/tag filter is
+   *  active (so applied filters aren't invisible while the panel is collapsed). */
+  reflectInputState() {
+    this.clearEl.toggleClass("is-visible", this.inputEl.value.length > 0);
+    let hasFilters = this.folderEl.value.trim().length > 0 || this.selectedTags.length > 0;
+    this.filterToggleEl.toggleClass("has-filters", hasFilters);
+  }
   parseTags() {
     return this.selectedTags.length ? [...this.selectedTags] : void 0;
   }
   addTag(tag) {
     let clean = tag.replace(/^#/, "").trim();
     if (!clean) return;
-    this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase()) || this.selectedTags.push(clean), this.renderTagChips(), this.tagEl.focus(), this.run();
+    this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase()) || this.selectedTags.push(clean), this.renderTagChips(), this.reflectInputState(), this.tagEl.focus(), this.run();
   }
   removeTag(tag) {
-    this.selectedTags = this.selectedTags.filter((t) => t !== tag), this.renderTagChips(), this.run();
+    this.selectedTags = this.selectedTags.filter((t) => t !== tag), this.renderTagChips(), this.reflectInputState(), this.run();
   }
   renderTagChips() {
     this.tagChipsEl.empty();

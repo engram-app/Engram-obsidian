@@ -10,8 +10,7 @@ import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
 
-const KEYWORD_DEBOUNCE_MS = 200;
-const REMOTE_DEBOUNCE_MS = 550;
+const SEARCH_DEBOUNCE_MS = 550;
 
 const MODES: { mode: SearchMode; label: string; icon: string; hint: string; tooltip: string }[] = [
 	{
@@ -29,13 +28,10 @@ const MODES: { mode: SearchMode; label: string; icon: string; hint: string; tool
 		hint: "Finds notes by meaning, even when they don't share your words.",
 		tooltip: "Find by meaning (AI search)",
 	},
-	{
-		mode: "keyword",
-		label: "Keyword",
-		icon: "case-sensitive",
-		hint: "Matches exact words and phrases. Works offline.",
-		tooltip: "Exact words & phrases — works offline",
-	},
+	// No standalone "keyword" mode: Obsidian's core Search does pure keyword
+	// better (operators, context, regex), and Hybrid already covers exact words
+	// (and degrades to keyword-only when the backend is offline). The keyword
+	// engine still powers Hybrid's fusion — it's just not a user-facing toggle.
 ];
 
 export interface SearchPanelOpts {
@@ -58,6 +54,10 @@ export class SearchPanel {
 	private resultsEl!: HTMLElement;
 	private toggleEl!: HTMLElement;
 	private hintEl!: HTMLElement;
+	private filtersEl!: HTMLElement;
+	private filterToggleEl!: HTMLElement;
+	private clearEl!: HTMLElement;
+	private filtersOpen = false;
 	private debounceTimer: number | null = null;
 	private lastRunQuery = "";
 	private results: UnifiedSearchResult[] = [];
@@ -71,13 +71,43 @@ export class SearchPanel {
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
 		this.opts = opts;
-		this.mode = opts.defaultMode;
+		// Coerce a persisted mode that's no longer offered (e.g. an old "keyword"
+		// default) to the first available mode so the toggle always has an active button.
+		this.mode = MODES.some((m) => m.mode === opts.defaultMode)
+			? opts.defaultMode
+			: (MODES[0]?.mode ?? "hybrid");
 		this.build(parent);
 	}
 
 	private build(parent: HTMLElement): void {
 		parent.addClass("engram-search-panel");
 
+		// ── Search row (first item): the query input with an in-field clear button,
+		//    plus a filters toggle — mirroring Obsidian's native .search-row.
+		const searchRow = parent.createDiv({ cls: "engram-search-row" });
+		const inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" });
+		this.inputEl = inputWrap.createEl("input", {
+			type: "search",
+			placeholder: "Search your vault…",
+			cls: "engram-search-input",
+		});
+		this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" });
+		setIcon(this.clearEl, "x");
+		this.clearEl.setAttribute("aria-label", "Clear search");
+		this.clearEl.addEventListener("click", () => {
+			this.inputEl.value = "";
+			this.inputEl.focus();
+			void this.run();
+			this.reflectInputState();
+		});
+		this.filterToggleEl = searchRow.createSpan({
+			cls: "engram-search-filter-toggle clickable-icon",
+		});
+		setIcon(this.filterToggleEl, "sliders-horizontal");
+		this.filterToggleEl.setAttribute("aria-label", "Toggle filters");
+		this.filterToggleEl.addEventListener("click", () => this.toggleFilters());
+
+		// ── Search type (Hybrid / Semantic) + its one-line explainer.
 		this.toggleEl = parent.createDiv({ cls: "engram-search-mode-toggle" });
 		for (const { mode, label, tooltip } of MODES) {
 			const btn = this.toggleEl.createEl("button", {
@@ -88,11 +118,13 @@ export class SearchPanel {
 			btn.setAttribute("aria-label", tooltip);
 			btn.addEventListener("click", () => this.setMode(mode));
 		}
-		// One-line, always-visible explanation of the selected mode (teaches new users).
 		this.hintEl = parent.createDiv({ cls: "engram-search-mode-hint" });
 		this.updateHint();
 
-		this.folderEl = parent.createEl("input", {
+		// ── Filters panel — collapsed by default, revealed by the filters toggle
+		//    (mirrors native's .search-params hidden behind the settings icon).
+		this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" });
+		this.folderEl = this.filtersEl.createEl("input", {
 			type: "text",
 			placeholder: "Filter by folder…",
 			cls: "engram-search-input engram-search-folder-input",
@@ -107,9 +139,9 @@ export class SearchPanel {
 		);
 		// Active tag filters sit above the tag input so the suggestion dropdown
 		// (which drops below the input) never covers them.
-		this.tagChipsEl = parent.createDiv({ cls: "engram-search-tag-chips" });
+		this.tagChipsEl = this.filtersEl.createDiv({ cls: "engram-search-tag-chips" });
 		this.renderTagChips();
-		this.tagEl = parent.createEl("input", {
+		this.tagEl = this.filtersEl.createEl("input", {
 			type: "text",
 			placeholder: "Filter by tags…",
 			cls: "engram-search-input engram-search-tag-input",
@@ -122,24 +154,13 @@ export class SearchPanel {
 			(tag) => this.addTag(tag),
 		);
 
-		parent.createEl("hr", { cls: "engram-search-divider" });
-
-		const inputWrap = parent.createDiv({ cls: "engram-search-input-wrap" });
-		const iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
-		setIcon(iconEl, "search");
-		this.inputEl = inputWrap.createEl("input", {
-			type: "text",
-			placeholder: "Search your vault…",
-			cls: "engram-search-input",
-		});
-
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
 		this.renderEmpty();
 
 		this.scheduleHandler = () => {
+			this.reflectInputState();
 			if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
-			const delay = this.mode === "keyword" ? KEYWORD_DEBOUNCE_MS : REMOTE_DEBOUNCE_MS;
-			this.debounceTimer = window.setTimeout(() => void this.run(), delay);
+			this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
 		};
 		this.inputEl.addEventListener("input", this.scheduleHandler);
 		this.folderEl.addEventListener("input", this.scheduleHandler);
@@ -218,6 +239,22 @@ export class SearchPanel {
 		this.hintEl.appendText(` — ${info.hint}`);
 	}
 
+	private toggleFilters(): void {
+		this.filtersOpen = !this.filtersOpen;
+		this.filtersEl.toggleClass("is-hidden", !this.filtersOpen);
+		this.filterToggleEl.toggleClass("is-active", this.filtersOpen);
+		if (this.filtersOpen) this.folderEl.focus();
+	}
+
+	/** Reflect transient input state in the chrome: show the clear button when the
+	 *  query is non-empty, and mark the filters toggle when a folder/tag filter is
+	 *  active (so applied filters aren't invisible while the panel is collapsed). */
+	private reflectInputState(): void {
+		this.clearEl.toggleClass("is-visible", this.inputEl.value.length > 0);
+		const hasFilters = this.folderEl.value.trim().length > 0 || this.selectedTags.length > 0;
+		this.filterToggleEl.toggleClass("has-filters", hasFilters);
+	}
+
 	private parseTags(): string[] | undefined {
 		return this.selectedTags.length ? [...this.selectedTags] : undefined;
 	}
@@ -228,6 +265,7 @@ export class SearchPanel {
 		const exists = this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase());
 		if (!exists) this.selectedTags.push(clean);
 		this.renderTagChips();
+		this.reflectInputState();
 		this.tagEl.focus();
 		void this.run();
 	}
@@ -235,6 +273,7 @@ export class SearchPanel {
 	private removeTag(tag: string): void {
 		this.selectedTags = this.selectedTags.filter((t) => t !== tag);
 		this.renderTagChips();
+		this.reflectInputState();
 		void this.run();
 	}
 

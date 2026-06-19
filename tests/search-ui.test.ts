@@ -17,19 +17,20 @@ const canRender =
 		"function";
 
 (canRender ? describe : describe.skip)("SearchPanel", () => {
-	it("renders a 3-option mode toggle defaulting to the given mode", () => {
+	it("renders Hybrid + Semantic, coercing a retired keyword default to Hybrid", () => {
 		const parent = document.createElement("div");
 		const ctx = {
 			api: { search: async () => ({ query: "", results: [] }) } as never,
 			app: {} as never,
 		};
 		const panel = new SearchPanel(parent, ctx, {
+			// "keyword" is no longer a user-facing mode; it must fall back gracefully.
 			defaultMode: "keyword",
 		});
 		const buttons = parent.querySelectorAll(".engram-search-mode-btn");
-		expect(buttons.length).toBe(3);
+		expect(buttons.length).toBe(2);
 		expect(parent.querySelector(".engram-search-mode-btn.is-active")?.textContent).toBe(
-			"Keyword",
+			"Hybrid",
 		);
 		panel.destroy();
 	});

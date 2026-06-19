@@ -1859,29 +1859,55 @@ body.is-mobile .engram-support-buttons > a {
 	height: 1em;
 }
 
-.engram-search-divider {
-	margin: 0;
-	border: none;
-	border-top: 1px solid var(--background-modifier-border);
+/* Search row: input grows, filters toggle sits at the end (native .search-row). */
+.engram-search-row {
+	display: flex;
+	align-items: center;
+	gap: 4px;
 }
 
 .engram-search-input-wrap {
 	position: relative;
+	flex: 1;
+	min-width: 0;
 }
 
-.engram-search-input-icon {
+/* Room for the in-field clear button; hide the browser's native one. */
+.engram-search-input-wrap .engram-search-input {
+	padding-right: 1.8rem;
+}
+
+.engram-search-input::-webkit-search-cancel-button {
+	appearance: none;
+}
+
+.engram-search-clear {
 	position: absolute;
-	left: 0.5rem;
+	right: 0.25rem;
 	top: 50%;
 	transform: translateY(-50%);
-	display: flex;
+	display: none;
 	color: var(--text-muted);
-	pointer-events: none;
 }
 
-.engram-search-input-wrap .engram-search-input {
-	padding-left: 1.85rem;
-	margin-bottom: 0;
+.engram-search-clear.is-visible {
+	display: inline-flex;
+}
+
+/* Filters toggle: accent-tinted while the panel is open or a filter is active. */
+.engram-search-filter-toggle.is-active,
+.engram-search-filter-toggle.has-filters {
+	color: var(--text-accent);
+}
+
+.engram-search-filters {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.engram-search-filters.is-hidden {
+	display: none;
 }
 
 .engram-search-tag-chips {
