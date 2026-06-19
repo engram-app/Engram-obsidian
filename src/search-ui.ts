@@ -34,6 +34,10 @@ export class SearchPanel {
 	private debounceTimer: number | null = null;
 	private results: UnifiedSearchResult[] = [];
 	private selectedIndex = -1;
+	/** Bumped on every run() so a slow earlier search can't clobber a newer render. */
+	private runGeneration = 0;
+	private scheduleHandler!: () => void;
+	private keydownHandler!: (e: KeyboardEvent) => void;
 
 	constructor(parent: HTMLElement, ctx: SearchContext, opts: SearchPanelOpts) {
 		this.ctx = ctx;
@@ -76,15 +80,15 @@ export class SearchPanel {
 		}
 		this.renderEmpty();
 
-		const schedule = () => {
+		this.scheduleHandler = () => {
 			if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
 			this.debounceTimer = window.setTimeout(() => void this.run(), 300);
 		};
-		this.inputEl.addEventListener("input", schedule);
-		this.folderEl.addEventListener("input", schedule);
-		this.tagEl.addEventListener("input", schedule);
+		this.inputEl.addEventListener("input", this.scheduleHandler);
+		this.folderEl.addEventListener("input", this.scheduleHandler);
+		this.tagEl.addEventListener("input", this.scheduleHandler);
 
-		this.inputEl.addEventListener("keydown", (e) => {
+		this.keydownHandler = (e) => {
 			if (e.key === "ArrowDown") {
 				e.preventDefault();
 				this.moveSelection(1);
@@ -95,7 +99,8 @@ export class SearchPanel {
 				e.preventDefault();
 				this.openSelected();
 			}
-		});
+		};
+		this.inputEl.addEventListener("keydown", this.keydownHandler);
 	}
 
 	focus(): void {
@@ -104,6 +109,12 @@ export class SearchPanel {
 
 	destroy(): void {
 		if (this.debounceTimer) window.clearTimeout(this.debounceTimer);
+		// Invalidate any in-flight run() so a late resolve can't touch detached DOM.
+		this.runGeneration++;
+		this.inputEl.removeEventListener("input", this.scheduleHandler);
+		this.folderEl.removeEventListener("input", this.scheduleHandler);
+		this.tagEl.removeEventListener("input", this.scheduleHandler);
+		this.inputEl.removeEventListener("keydown", this.keydownHandler);
 	}
 
 	private setMode(mode: SearchMode): void {
@@ -130,6 +141,7 @@ export class SearchPanel {
 	}
 
 	private async run(): Promise<void> {
+		const gen = ++this.runGeneration;
 		const query = this.inputEl.value.trim();
 		if (!query) {
 			this.results = [];
@@ -143,6 +155,8 @@ export class SearchPanel {
 				folder: this.folderEl.value.trim() || undefined,
 				tags: this.parseTags(),
 			});
+			// A newer run() (or destroy) superseded us — discard this stale result.
+			if (gen !== this.runGeneration) return;
 			if (outcome.degraded) {
 				new Notice("Semantic offline — keyword results only");
 			}
@@ -150,6 +164,7 @@ export class SearchPanel {
 			this.selectedIndex = this.results.length ? 0 : -1;
 			this.renderResults(query);
 		} catch (e) {
+			if (gen !== this.runGeneration) return;
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram search failed", e);
 			this.resultsEl.empty();
@@ -205,7 +220,8 @@ export class SearchPanel {
 					cls: "engram-search-result-score",
 				});
 			}
-			const folder = result.source_path.replace(/\/[^/]+$/, "");
+			const lastSlash = result.source_path.lastIndexOf("/");
+			const folder = lastSlash > 0 ? result.source_path.slice(0, lastSlash) : "";
 			if (folder) {
 				item.createEl("span", { text: folder, cls: "engram-search-result-path" });
 			}
@@ -214,10 +230,22 @@ export class SearchPanel {
 
 			item.addEventListener("click", () => {
 				this.selectedIndex = i;
-				this.renderResults(query);
-				if (this.previewEl) this.renderPreview(result, query);
+				this.updateSelection(query);
 			});
 			item.addEventListener("dblclick", () => this.openResult(result));
+		});
+		const selected = this.results[this.selectedIndex];
+		if (selected && this.previewEl) this.renderPreview(selected, query);
+	}
+
+	/**
+	 * Move the selection highlight + preview WITHOUT rebuilding the list DOM.
+	 * Toggles `is-selected` on the existing item elements (keeps focus / native
+	 * behaviour intact and avoids re-attaching every per-item listener).
+	 */
+	private updateSelection(query: string): void {
+		this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
+			el.classList.toggle("is-selected", i === this.selectedIndex);
 		});
 		const selected = this.results[this.selectedIndex];
 		if (selected && this.previewEl) this.renderPreview(selected, query);
@@ -247,7 +275,7 @@ export class SearchPanel {
 			0,
 			Math.min(this.results.length - 1, this.selectedIndex + delta),
 		);
-		this.renderResults(this.inputEl.value.trim());
+		this.updateSelection(this.inputEl.value.trim());
 	}
 
 	private openSelected(): void {
