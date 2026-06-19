@@ -4065,6 +4065,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
     this.pulling = !1;
+    /** A pull() requested while one was already in flight. Set by the re-entry
+     *  guard, drained in pull()'s finally to run exactly one follow-up pull.
+     *  Without this, a reconnect catch-up that lands mid-pull is lost (#646). */
+    this.pullPending = !1;
     this.lastSync = "";
     /** Opaque cursor marking the plugin's durably-applied position in the
      *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
@@ -4829,7 +4833,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
-    if (this.pulling) return 0;
+    if (this.pulling)
+      return this.pullPending = !0, 0;
     this.pulling = !0, this.lastError = "", this.emitStatus(), rlog().info("pull", `Pull started cursor=${(_a = this.getSyncCursor()) != null ? _a : "(bootstrap)"}`);
     try {
       this.getSyncCursor() !== null && this.syncStateVaultId !== null && this.settings.vaultId != null && this.syncStateVaultId !== this.settings.vaultId && await this.invalidateIfVaultChanged();
@@ -4862,7 +4867,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         e instanceof Error ? e.stack : void 0
       ), this.lastError = e instanceof Error ? `Pull failed: ${e.message}` : "Pull failed", 0;
     } finally {
-      this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes();
+      this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes(), this.pullPending && (this.pullPending = !1, this.pull());
     }
   }
   /** Push any files that were modified during pull. Echo suppression will
