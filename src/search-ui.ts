@@ -19,10 +19,11 @@ const MODES: { mode: SearchMode; label: string }[] = [
 ];
 
 export interface SearchPanelOpts {
-	withPreview: boolean;
 	defaultMode: SearchMode;
 	/** Persist a mode change (e.g. write to plugin settings). */
 	onModeChange?: (mode: SearchMode) => void;
+	/** Called after a result is opened (e.g. so the modal can close itself). */
+	onResultOpened?: () => void;
 }
 
 export class SearchPanel {
@@ -35,7 +36,6 @@ export class SearchPanel {
 	private selectedTags: string[] = [];
 	private tagChipsEl!: HTMLElement;
 	private resultsEl!: HTMLElement;
-	private previewEl: HTMLElement | null = null;
 	private toggleEl!: HTMLElement;
 	private debounceTimer: number | null = null;
 	private lastRunQuery = "";
@@ -98,9 +98,6 @@ export class SearchPanel {
 		});
 
 		this.resultsEl = parent.createDiv({ cls: "engram-search-results" });
-		if (this.opts.withPreview) {
-			this.previewEl = parent.createDiv({ cls: "engram-search-preview" });
-		}
 		this.renderEmpty();
 
 		this.scheduleHandler = () => {
@@ -242,7 +239,6 @@ export class SearchPanel {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram search failed", e);
 			this.resultsEl.empty();
-			this.previewEl?.empty();
 			this.resultsEl.createEl("p", {
 				text: "Search failed — check connection",
 				cls: "engram-search-empty",
@@ -252,7 +248,6 @@ export class SearchPanel {
 
 	private renderEmpty(): void {
 		this.resultsEl.empty();
-		this.previewEl?.empty();
 		this.resultsEl.createEl("p", {
 			text: "Type to search your vault",
 			cls: "engram-search-empty",
@@ -276,7 +271,6 @@ export class SearchPanel {
 		this.resultsEl.empty();
 		if (!this.results.length) {
 			this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
-			this.previewEl?.empty();
 			return;
 		}
 		this.results.forEach((result, i) => {
@@ -302,45 +296,19 @@ export class SearchPanel {
 			const snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
 			this.highlightInto(snippetEl, result, query);
 
-			item.addEventListener("click", () => {
-				this.selectedIndex = i;
-				this.updateSelection(query);
-			});
-			item.addEventListener("dblclick", () => this.openResult(result));
+			item.addEventListener("click", () => this.openResult(result));
 		});
-		const selected = this.results[this.selectedIndex];
-		if (selected && this.previewEl) this.renderPreview(selected, query);
 	}
 
 	/**
-	 * Move the selection highlight + preview WITHOUT rebuilding the list DOM.
-	 * Toggles `is-selected` on the existing item elements (keeps focus / native
+	 * Move the selection highlight WITHOUT rebuilding the list DOM. Toggles
+	 * `is-selected` on the existing item elements (keeps focus / native
 	 * behaviour intact and avoids re-attaching every per-item listener).
 	 */
-	private updateSelection(query: string): void {
+	private updateSelection(): void {
 		this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
 			el.classList.toggle("is-selected", i === this.selectedIndex);
 		});
-		const selected = this.results[this.selectedIndex];
-		if (selected && this.previewEl) this.renderPreview(selected, query);
-	}
-
-	private renderPreview(result: UnifiedSearchResult, query: string): void {
-		if (!this.previewEl) return;
-		this.previewEl.empty();
-		if (result.heading_path) {
-			this.previewEl.createEl("h4", {
-				text: result.heading_path,
-				cls: "engram-search-preview-heading",
-			});
-		}
-		const text = this.previewEl.createEl("p", { cls: "engram-search-preview-text" });
-		this.highlightInto(text, result, query);
-		const openBtn = this.previewEl.createEl("button", {
-			text: "Open note",
-			cls: "engram-search-preview-open",
-		});
-		openBtn.addEventListener("click", () => this.openResult(result));
 	}
 
 	private moveSelection(delta: number): void {
@@ -349,7 +317,7 @@ export class SearchPanel {
 			0,
 			Math.min(this.results.length - 1, this.selectedIndex + delta),
 		);
-		this.updateSelection(this.inputEl.value.trim());
+		this.updateSelection();
 	}
 
 	private openSelected(): void {
@@ -375,5 +343,6 @@ export class SearchPanel {
 		}
 		const linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
 		void this.ctx.app.workspace.openLinkText(linktext, "");
+		this.opts.onResultOpened?.();
 	}
 }

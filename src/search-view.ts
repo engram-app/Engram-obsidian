@@ -46,7 +46,6 @@ export class SearchView extends ItemView {
 			this.contentEl,
 			{ api: this.api, app: this.app },
 			{
-				withPreview: true,
 				defaultMode: this.defaultMode,
 				onModeChange: this.onModeChange,
 			},

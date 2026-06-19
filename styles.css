@@ -107,31 +107,6 @@
 	max-height: none;
 }
 
-/* Preview pane */
-.engram-search-preview {
-	border-top: 1px solid var(--background-modifier-border);
-	padding-top: 8px;
-	margin-top: 8px;
-	max-height: 200px;
-	overflow-y: auto;
-}
-
-.engram-search-preview-heading {
-	font-size: 0.9em;
-	color: var(--text-muted);
-	margin: 0 0 4px;
-}
-
-.engram-search-preview-text {
-	font-size: 0.85em;
-	line-height: 1.5;
-	white-space: pre-wrap;
-}
-
-.engram-search-preview-open {
-	margin-top: 8px;
-	font-size: 0.85em;
-}
 
 /* ── Conflict resolution modal ─────────────────────────────────── */
 

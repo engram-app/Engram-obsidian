@@ -24,7 +24,6 @@ const canRender =
 			app: {} as never,
 		};
 		const panel = new SearchPanel(parent, ctx, {
-			withPreview: false,
 			defaultMode: "keyword",
 		});
 		const buttons = parent.querySelectorAll(".engram-search-mode-btn");

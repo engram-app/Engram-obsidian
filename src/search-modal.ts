@@ -32,9 +32,9 @@ export class SearchModal extends Modal {
 			contentEl,
 			{ api: this.api, app: this.app },
 			{
-				withPreview: false,
 				defaultMode: this.defaultMode,
 				onModeChange: this.onModeChange,
+				onResultOpened: () => this.close(),
 			},
 		);
 		this.panel.focus();
