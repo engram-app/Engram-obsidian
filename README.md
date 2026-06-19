@@ -1,86 +1,71 @@
 # Engram Vault Sync
 
-[![CI](https://github.com/engram-app/Engram-obsidian/actions/workflows/ci.yml/badge.svg)](https://github.com/engram-app/Engram-obsidian/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/engram-app/Engram-obsidian/actions/workflows/codeql.yml/badge.svg)](https://github.com/engram-app/Engram-obsidian/actions/workflows/codeql.yml)
 [![Latest Release](https://img.shields.io/github/v/release/engram-app/Engram-obsidian?label=release)](https://github.com/engram-app/Engram-obsidian/releases/latest)
 [![Obsidian Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=8b6cb1&label=downloads&query=%24%5B%22engram-vault-sync%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=engram-vault-sync)
-
-[![Last commit](https://img.shields.io/github/last-commit/engram-app/Engram-obsidian)](https://github.com/engram-app/Engram-obsidian/commits/main)
-[![Stars](https://img.shields.io/github/stars/engram-app/Engram-obsidian?style=flat)](https://github.com/engram-app/Engram-obsidian/stargazers)
-[![License](https://img.shields.io/badge/license-PolyForm_SB_1.0-blue)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Sponsor](https://img.shields.io/github/sponsors/engram-app?label=Sponsor&logo=GitHub&color=ea4aaa)](https://github.com/sponsors/engram-app)
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_a_coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/engrams_sync)
 
-![Engram Vault Sync — your notes are your AI's memory, synced everywhere and read by your AI](assets/vault-banner.gif)
+![Engram Vault Sync — your notes are your AI's memory, synced everywhere, read and written by your AI](assets/vault-banner.gif)
 
-Your vault is full of things you've figured out, half-written ideas, and notes you'll never find again. This plugin turns it into something your AI assistant can actually use — and keeps it in sync everywhere you write.
+**Sync your vault everywhere — and let any AI read and write it.** Your notes become memory your AI can search, cite, and build on.
 
-Ask Claude *"what did I decide about the kitchen reno?"* and it answers from your own notes. Search *"how do I deal with stress"* and find the note you wrote about anxiety, even though you never used that word. Edit on your laptop, pick up on your phone.
+**[Start free at engram.page →](https://engram.page)**  No credit card, ready in minutes.
 
-Works on desktop and mobile.
+Works on desktop and mobile. Want everything on your own hardware instead? [Self-host it](https://engram.page/docs/self-host/).
 
 ## What you get
 
-- **Your notes, on every device.** Write on your laptop, it's on your phone. Changes your AI makes show up too.
-- **Search by meaning, not keywords.** Describe what you're after in plain language and the right note surfaces — no need to remember the exact title or words.
-- **An AI that knows your vault.** Connect Claude, Cursor, ChatGPT, or any other AI app and ask questions about your own notes. It can add new ones, too.
+- **Your notes, on every device.** Write on your laptop, it's on your phone — and changes your AI makes show up too.
+- **Find anything by meaning.** Hit the 🔍 icon and describe it: *"our policy on refunds"* surfaces **"Customer support playbook,"** even though the note never says "policy."
+- **Your vault is programmable.** A full [REST + WebSocket API](https://engram.page/docs/api) wraps every note — automate, integrate, or build apps on your own knowledge.
+- **Your AI works *inside* your vault.** Connect Claude, Cursor, or ChatGPT over [MCP](#connect-your-ai) — it reads your notes for context and writes new ones back:
 
-Nothing is ever silently overwritten, edits made offline sync when you reconnect, and your notes only ever go to the Engram server you choose — no third parties, no tracking.
+```text
+You      Pull together what we know about the Henderson account.
 
-## Try semantic search
+Claude   🔎  searched your vault → "Henderson"  ·  found 4 notes
+         They're mid-renewal, flagged onboarding gaps in Q2,
+         and asked about the analytics add-on.
 
-Press `Ctrl/Cmd + P`, run **Engram: Semantic search**, and just describe what you're looking for:
+You      Make a note focusing on the renewal risks.
 
-> *"that recipe with the brown butter"* → finds it, even titled "Saturday pasta"
-> *"reasons we picked Postgres"* → finds your architecture note
-> *"feeling burned out"* → finds your journal entry from last month
+Claude   📝  created "Henderson — renewal risks"  ✓
+         Linked it to the four source notes.
+```
 
-Or click the 🔍 icon to keep a search sidebar open while you write.
+Nothing is ever silently overwritten. Offline edits sync when you reconnect. Your notes go only to Engram — never a third party, no tracking.
 
-## You'll need an Engram account
+## Setup
 
-This plugin is the Obsidian half of Engram. The other half does the syncing, searching, and AI connection. Two ways to get it:
+**1. Install + Enable.** Find **Engram Vault Sync** in *Community plugins → Browse* and install it.
 
-- **Hosted** — sign up at **[engram.page](https://engram.page)**. Works in minutes, free tier available, nothing to install.
-- **Run it yourself** — Engram is source-available and Docker-ready. Host it on your own machine and your notes never leave your hardware. Setup lives at **[github.com/engram-app/engram](https://github.com/engram-app/engram)**.
+**2. Get an Engram account.** Hosted at **[engram.page](https://engram.page)** (free tier, nothing to install) — or self-host the [source-available backend](https://github.com/engram-app/engram) so your notes never leave your hardware.
 
-Either way you'll get a URL and a sign-in — that's what goes in the plugin settings.
-
-## Install
-
-1. Open **Settings → Community plugins → Browse**.
-2. Search for **Engram Vault Sync**.
-3. **Install**, then **Enable**.
-
-Requires Obsidian 1.7.2 or newer.
-
-## Get started in 3 steps
-
-1. **Get an account** at [engram.page](https://engram.page) (or self-host).
-2. **Open the plugin settings** — *Settings → Engram Vault Sync*. Enter your Engram URL and sign in.
-3. **First sync** — the plugin walks you through it. Nothing is sent until you confirm.
+**3. Connect.** Open *Settings → Engram Vault Sync*. **Hosted:** click **Sign in** on the Cloud tab. **Self-hosted:** add your server URL and key on the Self-hosted tab. Either way the plugin walks you through the first sync — nothing is sent until you confirm.
 
 After that, syncing just happens as you work.
 
-## Privacy & network use
+## Connect your AI
 
-- **Network use** — the plugin only talks to the Engram server you configure. Nothing else.
-- **Account required** — you connect with an Engram account, by signing in (OAuth) or pasting an API key.
-- **Payment required for full access** — on the hosted service ([engram.page](https://engram.page)), a free tier is available; paid tiers raise storage and search limits. See [engram.page](https://engram.page) for current pricing. Self-hosting is free for the plugin and the open-source backend.
-- **No telemetry, no analytics.** Optional remote logging (off by default) sends error and lifecycle events only to the Engram server you configure, never to a third party.
-- **Hosted-service privacy policy** — [engram.page/privacy](https://engram.page/privacy) covers what the hosted backend stores and how. Self-hosted deployments are governed by whoever runs the server.
+Engram speaks **MCP (Model Context Protocol)** — the open standard Claude, Cursor, ChatGPT, and other apps use to reach external tools. Plug in once and your AI can search your notes, write new ones, and update existing ones, straight from your own vault.
 
-More detail is in the [user guide](docs/user-guide.md).
+Point your client at the Engram MCP server (`https://mcp.engram.page` on the hosted service) — step-by-step guides for each app are in the **[integration docs](https://engram.page/docs/integrations)**.
 
-## Need more?
+## Privacy
 
-- **[User guide](docs/user-guide.md)** — connecting AI assistants, what gets synced, handling conflicts, the Sync Center, privacy, and troubleshooting.
-- **[Developer guide](DEV.md)** — building from source, architecture, and the release process.
+- **Network use & accounts.** The plugin talks only to your Engram server — nothing else, no middlemen. You connect with your Engram account via OAuth sign-in or an API key.
+- **No telemetry.** Optional remote logging (off by default) sends error/lifecycle events only to your server.
+- **Hosted privacy** — see [engram.page/privacy](https://engram.page/privacy). Paid tiers raise storage/search limits; self-hosting is free.
+
+## More
+
+- **[Connect your AI](https://engram.page/docs/integrations)** — MCP setup for Claude, Cursor, ChatGPT, Windsurf, and more.
+- **[API reference](https://engram.page/docs/api)** — build on the REST + WebSocket API.
+- **[User guide](docs/user-guide.md)** — AI assistants, conflicts, the Sync Center, troubleshooting.
+- **[Developer guide](DEV.md)** — build from source, architecture, releases.
 - **Something wrong?** [Open an issue](https://github.com/engram-app/Engram-obsidian/issues).
-
-## Support
-
-If this plugin saves you time, you can [buy me a coffee on Ko-fi](https://ko-fi.com/rasbandit). Optional and appreciated.
+- **Like it?** Support development via [GitHub Sponsors](https://github.com/sponsors/engram-app) or [Ko-fi](https://ko-fi.com/engrams_sync). Optional and appreciated.
 
 ## License
 
