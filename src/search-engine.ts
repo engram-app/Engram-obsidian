@@ -167,6 +167,19 @@ async function searchKeyword(
 	return scored.slice(0, opts.limit ?? DEFAULT_LIMIT);
 }
 
+/** AND-filter results by tags using local note metadata (drops notes absent locally). */
+function filterResultsByTags(
+	app: App,
+	results: UnifiedSearchResult[],
+	tags?: string[],
+): UnifiedSearchResult[] {
+	if (!tags?.length) return results;
+	return results.filter((r) => {
+		const file = app.vault.getFileByPath(r.source_path);
+		return file ? matchesTags(app, file, tags) : false;
+	});
+}
+
 /** Keep the highest-scoring result per note; drop empty paths. */
 function collapseByNote(results: UnifiedSearchResult[]): UnifiedSearchResult[] {
 	const best = new Map<string, UnifiedSearchResult>();
@@ -224,7 +237,11 @@ async function searchHybrid(
 	const keywordList = await searchKeyword(query, ctx, opts, fuzzy);
 	try {
 		const resp = await ctx.api.search(query, limit, opts.tags, opts.folder);
-		const semanticList = collapseByNote(mapSemantic(resp.results));
+		const semanticList = filterResultsByTags(
+			ctx.app,
+			collapseByNote(mapSemantic(resp.results)),
+			opts.tags,
+		);
 		return { results: rrf(keywordList, semanticList, limit), degraded: false };
 	} catch {
 		return { results: keywordList.slice(0, limit), degraded: true };

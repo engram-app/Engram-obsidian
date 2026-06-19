@@ -70,6 +70,7 @@ function fakeApp(files: { path: string; content: string; tags?: string[] }[]) {
 		vault: {
 			getMarkdownFiles: () => files.map((f) => ({ path: f.path })),
 			cachedRead: async (file: { path: string }) => byPath.get(file.path)!.content,
+			getFileByPath: (path: string) => (byPath.has(path) ? { path } : null),
 		},
 		metadataCache: {
 			getFileCache: (file: { path: string }) => {
@@ -186,5 +187,54 @@ describe("searchEngram hybrid", () => {
 		);
 		expect(degraded).toBe(true);
 		expect(results.map((r) => r.source_path).sort()).toEqual(["a.md", "b.md"]);
+	});
+});
+
+describe("searchEngram hybrid tag consistency", () => {
+	it("AND-filters the semantic side client-side (no OR leakage)", async () => {
+		const app = fakeApp([
+			{ path: "both.md", content: "omega", tags: ["health", "diet"] },
+			{ path: "onlyhealth.md", content: "zzz", tags: ["health"] }, // keyword won't match "omega"
+		]);
+		// Backend (OR) returns onlyhealth.md even though it lacks "diet":
+		const api = {
+			search: async () => ({
+				query: "omega",
+				results: [
+					{
+						text: "semantic",
+						title: "OnlyHealth",
+						heading_path: "",
+						source_path: "onlyhealth.md",
+						tags: [],
+						wikilinks: [],
+						score: 0.9,
+						vector_score: 0.9,
+						rerank_score: 0.9,
+					},
+					{
+						text: "semantic",
+						title: "Both",
+						heading_path: "",
+						source_path: "both.md",
+						tags: [],
+						wikilinks: [],
+						score: 0.7,
+						vector_score: 0.7,
+						rerank_score: 0.7,
+					},
+				],
+			}),
+		} as any;
+		const { results } = await searchEngram(
+			"hybrid",
+			"omega",
+			{ api, app },
+			{ tags: ["health", "diet"] },
+			{ fuzzy: fakeFuzzy },
+		);
+		const paths = results.map((r) => r.source_path);
+		expect(paths).toContain("both.md");
+		expect(paths).not.toContain("onlyhealth.md"); // OR-leaked note excluded
 	});
 });

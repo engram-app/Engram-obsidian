@@ -214,7 +214,7 @@ export class SearchPanel {
 				text: result.title || result.source_path || "Untitled",
 				cls: "engram-search-result-title",
 			});
-			if (result.origin === "semantic" || result.origin === "hybrid") {
+			if (result.origin === "semantic") {
 				header.createEl("span", {
 					text: `${(result.score * 100).toFixed(0)}%`,
 					cls: "engram-search-result-score",
@@ -285,7 +285,7 @@ export class SearchPanel {
 
 	private headingAnchor(headingPath?: string): string {
 		if (!headingPath) return "";
-		const last = headingPath.split(/>|\//).pop()?.trim();
+		const last = headingPath.split(">").pop()?.trim();
 		return last ? `#${last}` : "";
 	}
 
