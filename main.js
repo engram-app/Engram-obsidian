@@ -2068,18 +2068,22 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
   {
     mode: "hybrid",
     label: "Hybrid",
-    hint: "Blends meaning + exact words \u2014 best for most searches.",
+    // Icons mirror the result provenance pills so the hint teaches the same vocabulary.
+    icon: "layers",
+    hint: "Blends meaning and exact words. Best for most searches.",
     tooltip: "Blends meaning + exact words \u2014 best default"
   },
   {
     mode: "semantic",
     label: "Semantic",
-    hint: "Finds notes by meaning, even if they don't share your words.",
+    icon: "sparkles",
+    hint: "Finds notes by meaning, even when they don't share your words.",
     tooltip: "Find by meaning (AI search)"
   },
   {
     mode: "keyword",
     label: "Keyword",
+    icon: "case-sensitive",
     hint: "Matches exact words and phrases. Works offline.",
     tooltip: "Exact words & phrases \u2014 works offline"
   }
@@ -2160,7 +2164,13 @@ var KEYWORD_DEBOUNCE_MS = 200, REMOTE_DEBOUNCE_MS = 550, MODES = [
   }
   updateHint() {
     let info = MODES.find((m) => m.mode === this.mode);
-    info && this.hintEl.setText(info.hint);
+    if (!info) return;
+    this.hintEl.empty();
+    let icon = this.hintEl.createSpan({ cls: "engram-search-mode-hint-icon" });
+    (0, import_obsidian6.setIcon)(icon, info.icon), this.hintEl.createEl("strong", {
+      cls: "engram-search-mode-hint-label",
+      text: info.label
+    }), this.hintEl.appendText(` \u2014 ${info.hint}`);
   }
   parseTags() {
     return this.selectedTags.length ? [...this.selectedTags] : void 0;

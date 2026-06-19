@@ -12,22 +12,26 @@ import type { SearchMode, UnifiedSearchResult } from "./types";
 const KEYWORD_DEBOUNCE_MS = 200;
 const REMOTE_DEBOUNCE_MS = 550;
 
-const MODES: { mode: SearchMode; label: string; hint: string; tooltip: string }[] = [
+const MODES: { mode: SearchMode; label: string; icon: string; hint: string; tooltip: string }[] = [
 	{
 		mode: "hybrid",
 		label: "Hybrid",
-		hint: "Blends meaning + exact words — best for most searches.",
+		// Icons mirror the result provenance pills so the hint teaches the same vocabulary.
+		icon: "layers",
+		hint: "Blends meaning and exact words. Best for most searches.",
 		tooltip: "Blends meaning + exact words — best default",
 	},
 	{
 		mode: "semantic",
 		label: "Semantic",
-		hint: "Finds notes by meaning, even if they don't share your words.",
+		icon: "sparkles",
+		hint: "Finds notes by meaning, even when they don't share your words.",
 		tooltip: "Find by meaning (AI search)",
 	},
 	{
 		mode: "keyword",
 		label: "Keyword",
+		icon: "case-sensitive",
 		hint: "Matches exact words and phrases. Works offline.",
 		tooltip: "Exact words & phrases — works offline",
 	},
@@ -194,7 +198,15 @@ export class SearchPanel {
 
 	private updateHint(): void {
 		const info = MODES.find((m) => m.mode === this.mode);
-		if (info) this.hintEl.setText(info.hint);
+		if (!info) return;
+		this.hintEl.empty();
+		const icon = this.hintEl.createSpan({ cls: "engram-search-mode-hint-icon" });
+		setIcon(icon, info.icon);
+		this.hintEl.createEl("strong", {
+			cls: "engram-search-mode-hint-label",
+			text: info.label,
+		});
+		this.hintEl.appendText(` — ${info.hint}`);
 	}
 
 	private parseTags(): string[] | undefined {
