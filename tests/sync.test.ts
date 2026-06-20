@@ -1661,6 +1661,37 @@ describe("SyncEngine offline queue integration", () => {
 		await f3;
 	});
 
+	test("flushQueue drains entries enqueued mid-flight (no lost update)", async () => {
+		const engine = createEngine();
+		engine.queue.load([
+			{ path: "Notes/A.md", action: "upsert", content: "A", mtime: 100, timestamp: 1 },
+		]);
+
+		// Pushing A enqueues B mid-drain — mimics retryFailedNow queuing an entry
+		// (or a file edit landing) while a flush is already in-flight. B is NOT in
+		// the first pass's snapshot; the re-loop must still drain it.
+		let pushedA = false;
+		(mockApi.pushNote as jest.Mock).mockReset().mockImplementation(async (path: string) => {
+			if (path === "Notes/A.md" && !pushedA) {
+				pushedA = true;
+				await engine.queue.enqueue({
+					path: "Notes/B.md",
+					action: "upsert",
+					content: "B",
+					mtime: 200,
+					timestamp: 2,
+				});
+			}
+			return { note: {}, chunks_indexed: 1 };
+		});
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/A.md", "A", 100);
+		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/B.md", "B", 200);
+		expect(engine.queue.size).toBe(0);
+	});
+
 	test("flushQueue stops on failure and goes offline", async () => {
 		const engine = createEngine();
 

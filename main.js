@@ -6438,17 +6438,32 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  fire-and-forget while other callers (post-pull catch-up, retryFailedNow,
    *  and the e2e `restore_online` helper) may also await one. Two passes over
    *  the same queue snapshot race: they double-push the same entries (each
-   *  duplicate now 409s server-side) and, when a push errors, one pass trips
-   *  `maybeGoOffline()` + `break` mid-drain — so the queue oscillates and never
-   *  empties (root cause of the test_24 offline-replay flake). Coalesce to a
-   *  single in-flight drain; concurrent callers join it instead of competing.
-   *  Mirrors the "coalesce concurrent pulls" fix (#119). */
+   *  duplicate collides on the server's note-path index) and, when a push
+   *  errors, one pass trips `maybeGoOffline()` + `break` mid-drain — so the
+   *  queue oscillates and never empties (root cause of the test_24
+   *  offline-replay flake). Coalesce to a single in-flight drain; concurrent
+   *  callers join it instead of competing. Mirrors the "coalesce concurrent
+   *  pulls" fix (#119). */
   flushQueue() {
     if (this.flushInFlight) return this.flushInFlight;
-    let pending = this.runFlushQueue().finally(() => {
+    let pending = this.drainUntilStable().finally(() => {
       this.flushInFlight = null;
     });
     return this.flushInFlight = pending, pending;
+  }
+  /** Drain in re-snapshotting passes until the queue is empty or a pass makes
+   *  no progress / goes offline. Because callers coalesce onto one in-flight
+   *  flush, an entry enqueued WHILE a flush runs (e.g. retryFailedNow queues
+   *  then calls flushQueue, or a file edit lands mid-drain) would otherwise sit
+   *  stranded until the next unrelated trigger — its snapshot predates the
+   *  entry. Re-looping lets the active drain pick it up. */
+  async drainUntilStable() {
+    let total = 0;
+    for (; this.queue.size > 0; ) {
+      let flushed = await this.runFlushQueue();
+      if (total += flushed, flushed === 0 || this.offline) break;
+    }
+    return total;
   }
   async runFlushQueue() {
     var _a, _b, _c, _d;
