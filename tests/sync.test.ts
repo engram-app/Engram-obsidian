@@ -1628,6 +1628,39 @@ describe("SyncEngine offline queue integration", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/C.md", "C", 300);
 	});
 
+	test("concurrent flushQueue calls coalesce — no double-push", async () => {
+		const engine = createEngine();
+
+		engine.queue.load([
+			{ path: "Notes/A.md", action: "upsert", content: "A", mtime: 100, timestamp: 1 },
+			{ path: "Notes/B.md", action: "upsert", content: "B", mtime: 200, timestamp: 2 },
+		]);
+
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+
+		// goOnline() fires a flush fire-and-forget while the caller also awaits one
+		// (the e2e restore_online pattern). Both called synchronously: the second
+		// must join the first's in-flight drain rather than start a competing pass
+		// over the same snapshot (which would re-push every entry → server 409s and
+		// a stalled queue — the test_24 flake).
+		const f1 = engine.flushQueue();
+		const f2 = engine.flushQueue();
+		expect(f1).toBe(f2);
+
+		await Promise.all([f1, f2]);
+
+		// Each entry pushed exactly once, queue fully drained.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
+		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/A.md", "A", 100);
+		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/B.md", "B", 200);
+		expect(engine.queue.size).toBe(0);
+
+		// A subsequent flush starts fresh (the in-flight latch cleared).
+		const f3 = engine.flushQueue();
+		expect(f3).not.toBe(f1);
+		await f3;
+	});
+
 	test("flushQueue stops on failure and goes offline", async () => {
 		const engine = createEngine();
 

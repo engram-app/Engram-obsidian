@@ -4451,6 +4451,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.healthCheckTimer = null;
     /** Consecutive failed health probes — drives exponential backoff. */
     this.healthCheckFailures = 0;
+    /** In-flight queue flush, for single-flight coalescing (see flushQueue). */
+    this.flushInFlight = null;
     this.ready = !1;
     /** When true, all sync actions (file events, stream events, bulk methods)
      *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -6432,7 +6434,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return this.flushQueue();
   }
-  async flushQueue() {
+  /** Single-flight wrapper around the queue drain. `goOnline()` fires a flush
+   *  fire-and-forget while other callers (post-pull catch-up, retryFailedNow,
+   *  and the e2e `restore_online` helper) may also await one. Two passes over
+   *  the same queue snapshot race: they double-push the same entries (each
+   *  duplicate now 409s server-side) and, when a push errors, one pass trips
+   *  `maybeGoOffline()` + `break` mid-drain — so the queue oscillates and never
+   *  empties (root cause of the test_24 offline-replay flake). Coalesce to a
+   *  single in-flight drain; concurrent callers join it instead of competing.
+   *  Mirrors the "coalesce concurrent pulls" fix (#119). */
+  flushQueue() {
+    if (this.flushInFlight) return this.flushInFlight;
+    let pending = this.runFlushQueue().finally(() => {
+      this.flushInFlight = null;
+    });
+    return this.flushInFlight = pending, pending;
+  }
+  async runFlushQueue() {
     var _a, _b, _c, _d;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
