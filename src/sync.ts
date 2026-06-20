@@ -164,6 +164,8 @@ export class SyncEngine {
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
+	/** In-flight queue flush, for single-flight coalescing (see flushQueue). */
+	private flushInFlight: Promise<number> | null = null;
 	private ready = false;
 	/** When true, all sync actions (file events, stream events, bulk methods)
 	 *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -3464,7 +3466,44 @@ export class SyncEngine {
 		return this.flushQueue();
 	}
 
-	async flushQueue(): Promise<number> {
+	/** Single-flight wrapper around the queue drain. `goOnline()` fires a flush
+	 *  fire-and-forget while other callers (post-pull catch-up, retryFailedNow,
+	 *  and the e2e `restore_online` helper) may also await one. Two passes over
+	 *  the same queue snapshot race: they double-push the same entries (each
+	 *  duplicate collides on the server's note-path index) and, when a push
+	 *  errors, one pass trips `maybeGoOffline()` + `break` mid-drain — so the
+	 *  queue oscillates and never empties (root cause of the test_24
+	 *  offline-replay flake). Coalesce to a single in-flight drain; concurrent
+	 *  callers join it instead of competing. Mirrors the "coalesce concurrent
+	 *  pulls" fix (#119). */
+	flushQueue(): Promise<number> {
+		if (this.flushInFlight) return this.flushInFlight;
+		const pending = this.drainUntilStable().finally(() => {
+			this.flushInFlight = null;
+		});
+		this.flushInFlight = pending;
+		return pending;
+	}
+
+	/** Drain in re-snapshotting passes until the queue is empty or a pass makes
+	 *  no progress / goes offline. Because callers coalesce onto one in-flight
+	 *  flush, an entry enqueued WHILE a flush runs (e.g. retryFailedNow queues
+	 *  then calls flushQueue, or a file edit lands mid-drain) would otherwise sit
+	 *  stranded until the next unrelated trigger — its snapshot predates the
+	 *  entry. Re-looping lets the active drain pick it up. */
+	private async drainUntilStable(): Promise<number> {
+		let total = 0;
+		while (this.queue.size > 0) {
+			const flushed = await this.runFlushQueue();
+			total += flushed;
+			// Stop on no progress (queue empty or all remaining entries failing)
+			// or once a push tripped maybeGoOffline — don't hammer the server.
+			if (flushed === 0 || this.offline) break;
+		}
+		return total;
+	}
+
+	private async runFlushQueue(): Promise<number> {
 		const entries = this.queue.all();
 		if (entries.length === 0) return 0;
 		devLog().log("queue", `flush start — ${entries.length} entries`);
