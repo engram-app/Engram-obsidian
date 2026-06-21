@@ -33,7 +33,7 @@ describe("repo — required files exist at root", () => {
 		"esbuild.config.mjs",
 		"version-bump.mjs",
 		"tsconfig.json",
-		"eslint.config.mjs",
+		"eslint.config.mts",
 		".stylelintrc.json",
 	])("`%s` is present", (path) => {
 		expect(exists(path)).toBe(true);
