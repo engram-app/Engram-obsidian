@@ -39,10 +39,10 @@ export class SyncLogModal extends Modal {
 
 		if (entries.length === 0) return;
 
-		const list = contentEl.createEl("div", { cls: "engram-sync-log-list" });
+		const list = contentEl.createDiv({ cls: "engram-sync-log-list" });
 
 		for (const entry of entries) {
-			const row = list.createEl("div", { cls: "engram-sync-log-entry" });
+			const row = list.createDiv({ cls: "engram-sync-log-entry" });
 
 			const time = entry.timestamp.toLocaleTimeString([], {
 				hour: "2-digit",
@@ -53,12 +53,12 @@ export class SyncLogModal extends Modal {
 			const status = entry.result === "ok" ? "✓" : entry.result === "error" ? "✗" : "⏭";
 
 			const line = `${time}  ${icon} ${entry.action.padEnd(8)} ${entry.path}  ${status}`;
-			const span = row.createEl("span", { text: line });
+			const span = row.createSpan({ text: line });
 
 			if (entry.result === "error") {
 				span.addClass("engram-sync-log-entry-error");
 				if (entry.error) {
-					row.createEl("div", {
+					row.createDiv({
 						text: `         └ ${entry.error}`,
 						cls: "engram-sync-log-error",
 					});
@@ -66,7 +66,7 @@ export class SyncLogModal extends Modal {
 			}
 
 			if (entry.details) {
-				row.createEl("div", {
+				row.createDiv({
 					text: `         └ ${entry.details}`,
 					cls: "engram-sync-log-detail",
 				});
