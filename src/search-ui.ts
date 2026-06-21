@@ -356,7 +356,7 @@ export class SearchPanel {
 				cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`,
 			});
 			const header = item.createDiv({ cls: "engram-search-result-header" });
-			header.createEl("span", {
+			header.createSpan({
 				text: result.title || result.source_path || "Untitled",
 				cls: "engram-search-result-title",
 			});
@@ -406,7 +406,7 @@ export class SearchPanel {
 				if (trail) parts.push(trail);
 			}
 			if (parts.length) {
-				item.createEl("div", {
+				item.createDiv({
 					text: parts.join(" · "),
 					cls: "engram-search-result-path",
 				});

@@ -397,7 +397,7 @@ function renderIgnoredRow(
 	const row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
 
 	const main = row.createDiv({ cls: "engram-sync-center-issue-main" });
-	main.createEl("div", { cls: "engram-sync-center-issue-path", text: path });
+	main.createDiv({ cls: "engram-sync-center-issue-path", text: path });
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
 
