@@ -2,8 +2,9 @@
 main.js
 *.js.map
 
-# npm
+# bun is our package manager — no npm lockfile tracked
 node_modules/
+package-lock.json
 
 # IDE
 .idea/
