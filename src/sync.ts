@@ -678,6 +678,7 @@ export class SyncEngine {
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
 
 			try {
+				await this.paceRequest();
 				await this.api.createFolder(path);
 				await this.explicitFolders.add(path);
 			} catch (e) {

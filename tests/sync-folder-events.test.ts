@@ -308,6 +308,32 @@ describe("SyncEngine.seedEmptyFolders", () => {
 		expect(mockApi.createFolder).toHaveBeenCalledWith("Fine");
 		expect(explicit.has("Fine")).toBe(true);
 	});
+
+	test("seeds a folder whose only note is ignored", async () => {
+		const { engine } = await createEngine();
+		// A per-file ignore makes the .md inside it non-syncable → folder is empty
+		// from the server's view → must be seeded.
+		(engine as unknown as { ignoredFiles: Set<string> }).ignoredFiles.add("Foo/skip.md");
+		setVaultFolders([new TFolder("Foo", [new TFile("Foo/skip.md")])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).toHaveBeenCalledWith("Foo");
+	});
+
+	test("paces each marker POST through the rate limiter", async () => {
+		const { engine } = await createEngine();
+		const pace = jest.spyOn(
+			engine as unknown as { paceRequest(): Promise<void> },
+			"paceRequest",
+		);
+		setVaultFolders([new TFolder("A", []), new TFolder("B", [])]);
+
+		await engine.seedEmptyFolders();
+
+		// One pace per POSTed folder — never an unthrottled burst.
+		expect(pace).toHaveBeenCalledTimes(2);
+	});
 });
 
 // File-export hint so the test runner sees this file. Tests also serve as

@@ -4803,7 +4803,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (0, import_obsidian19.normalizePath)(f.path);
       if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
         try {
-          await this.api.createFolder(path), await this.explicitFolders.add(path);
+          await this.paceRequest(), await this.api.createFolder(path), await this.explicitFolders.add(path);
         } catch (e) {
           devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
         }
