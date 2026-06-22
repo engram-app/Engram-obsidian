@@ -9,7 +9,11 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -1609,9 +1613,9 @@ var ConflictModal = class extends import_obsidian2.Modal {
     let header = root.createEl("header", { cls: "engram-conflict-header" }), title = this.info.vaultName ? `Sync Conflict \u2014 ${this.info.vaultName}` : "Sync Conflict";
     header.createEl("h2", { text: title }), header.createEl("code", { text: this.info.path, cls: "engram-conflict-path" });
     let meta = header.createEl("aside", { cls: "engram-conflict-meta" });
-    meta.createEl("span", {
+    meta.createSpan({
       text: `Local: ${this.fmtDate(this.info.localMtime)} \xB7 ${this.info.localContent.length} chars`
-    }), meta.createEl("span", {
+    }), meta.createSpan({
       text: `Remote: ${this.fmtDate(this.info.remoteMtime)} \xB7 ${this.info.remoteContent.length} chars`
     });
   }
@@ -1631,7 +1635,7 @@ var ConflictModal = class extends import_obsidian2.Modal {
     }), sideBySideBtn.addEventListener("click", () => {
       this.viewMode = "side-by-side", sideBySideBtn.addClass("is-active"), unifiedBtn.removeClass("is-active"), this.onViewModeChange("side-by-side"), this.renderDiff();
     }), this.hunks.length > 0) {
-      let bulkGroup = bar.createEl("span", { cls: "engram-conflict-bulk" }), allLocalBtn = bulkGroup.createEl("button", {
+      let bulkGroup = bar.createSpan({ cls: "engram-conflict-bulk" }), allLocalBtn = bulkGroup.createEl("button", {
         text: "All local",
         cls: "mod-warning"
       }), allRemoteBtn = bulkGroup.createEl("button", { text: "All remote" });
@@ -1728,7 +1732,7 @@ var ConflictModal = class extends import_obsidian2.Modal {
   }
   renderHunkControls(parent, hunk) {
     let controls = parent.createEl("nav", { cls: "engram-conflict-hunk-controls" });
-    controls.createEl("span", {
+    controls.createSpan({
       text: `Hunk ${hunk.id + 1}`,
       cls: "engram-conflict-hunk-label"
     });
@@ -1750,7 +1754,7 @@ var ConflictModal = class extends import_obsidian2.Modal {
   // ── Merge editor ────────────────────────────────────────────────
   renderMergeEditor(root) {
     let section = root.createEl("section", { cls: "engram-conflict-merge" }), header = section.createEl("header", { cls: "engram-conflict-merge-header" });
-    header.createEl("h3", { text: "Merge result" }), header.createEl("span", {
+    header.createEl("h3", { text: "Merge result" }), header.createSpan({
       text: "Edit the merged content below, or use hunk controls above",
       cls: "engram-conflict-merge-hint"
     }), this.mergeEditor = section.createEl("textarea", {
@@ -2150,7 +2154,9 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     );
     let resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
     resultsSection.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
-      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
+      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => {
+        this.run();
+      }, SEARCH_DEBOUNCE_MS);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {
         let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
@@ -2278,7 +2284,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
       let item = this.resultsEl.createDiv({
         cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`
       });
-      item.createDiv({ cls: "engram-search-result-header" }).createEl("span", {
+      item.createDiv({ cls: "engram-search-result-header" }).createSpan({
         text: result.title || result.source_path || "Untitled",
         cls: "engram-search-result-title"
       });
@@ -2304,12 +2310,14 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
         let trail = result.heading_path.split(">").slice(1).map((s) => s.trim()).filter(Boolean).join(" \u203A ");
         trail && parts.push(trail);
       }
-      parts.length && item.createEl("div", {
+      parts.length && item.createDiv({
         text: parts.join(" \xB7 "),
         cls: "engram-search-result-path"
       });
       let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
-      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => void this.openResult(result));
+      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => {
+        this.openResult(result);
+      });
     });
   }
   /**
@@ -3523,7 +3531,7 @@ function renderIgnored(parent, plugin, refresh) {
 }
 function renderIgnoredRow(parent, plugin, refresh, path) {
   let row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
-  row.createDiv({ cls: "engram-sync-center-issue-main" }).createEl("div", { cls: "engram-sync-center-issue-path", text: path });
+  row.createDiv({ cls: "engram-sync-center-issue-main" }).createDiv({ cls: "engram-sync-center-issue-path", text: path });
   let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
   actions.createEl("button", { text: "Open" }).addEventListener("click", () => openFile(plugin, path)), actions.createEl("button", { text: "Restore", cls: "mod-cta" }).addEventListener("click", () => {
     restoreFile(plugin, path, refresh);
@@ -4778,6 +4786,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.explicitFolders.delete(path);
       }
   }
+  /** First-sync seeding: POST an explicit marker for every local folder whose
+   *  entire subtree holds NO syncable file. The server derives a folder only
+   *  from notes pushed into it, so a truly-empty folder — or one containing
+   *  only non-syncable types (.txt, .excalidraw, …) — would otherwise never
+   *  appear in the web UI after a first sync. Folders with a syncable note
+   *  anywhere beneath them are skipped: they surface via that note, and the
+   *  web app synthesizes their ancestors. Best-effort — a per-folder server
+   *  error is warn-logged and seeding continues (matches handleFolderCreate). */
+  async seedEmptyFolders() {
+    var _a, _b, _c;
+    if (!this.explicitFolders) return;
+    let loaded = (_c = (_b = (_a = this.app.vault).getAllLoadedFiles) == null ? void 0 : _b.call(_a)) != null ? _c : [];
+    for (let f of loaded) {
+      if (!(f instanceof import_obsidian19.TFolder)) continue;
+      let path = (0, import_obsidian19.normalizePath)(f.path);
+      if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
+        try {
+          await this.api.createFolder(path), await this.explicitFolders.add(path);
+        } catch (e) {
+          devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+        }
+    }
+  }
+  /** True if any descendant file (at any depth) is syncable and not ignored. */
+  subtreeHasSyncableFile(folder) {
+    for (let child of folder.children)
+      if (child instanceof import_obsidian19.TFolder) {
+        if (this.subtreeHasSyncableFile(child)) return !0;
+      } else if (child instanceof import_obsidian19.TFile && this.isSyncable(child) && !this.shouldIgnore(child.path))
+        return !0;
+    return !1;
+  }
   /** Acquire a push slot, blocking if at max concurrency. */
   async acquirePushSlot() {
     if (this.activePushCount < this.maxConcurrentPushes) {
@@ -5579,7 +5619,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-    return applied;
+    return await this.seedEmptyFolders(), applied;
   }
   /** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
    *  server returns from seq 0). Applies each entry, persists the cursor after
@@ -6708,17 +6748,17 @@ var import_obsidian20 = require("obsidian"), ACTION_ICONS = {
     }).setText(
       entries.length === 0 ? "No sync activity this session." : `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`
     ), entries.length === 0) return;
-    let list = contentEl.createEl("div", { cls: "engram-sync-log-list" });
+    let list = contentEl.createDiv({ cls: "engram-sync-log-list" });
     for (let entry of entries) {
-      let row = list.createEl("div", { cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
+      let row = list.createDiv({ cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit"
-      }), icon = (_a = ACTION_ICONS[entry.action]) != null ? _a : "?", status = entry.result === "ok" ? "\u2713" : entry.result === "error" ? "\u2717" : "\u23ED", line = `${time}  ${icon} ${entry.action.padEnd(8)} ${entry.path}  ${status}`, span = row.createEl("span", { text: line });
-      entry.result === "error" && (span.addClass("engram-sync-log-entry-error"), entry.error && row.createEl("div", {
+      }), icon = (_a = ACTION_ICONS[entry.action]) != null ? _a : "?", status = entry.result === "ok" ? "\u2713" : entry.result === "error" ? "\u2717" : "\u23ED", line = `${time}  ${icon} ${entry.action.padEnd(8)} ${entry.path}  ${status}`, span = row.createSpan({ text: line });
+      entry.result === "error" && (span.addClass("engram-sync-log-entry-error"), entry.error && row.createDiv({
         text: `         \u2514 ${entry.error}`,
         cls: "engram-sync-log-error"
-      })), entry.details && row.createEl("div", {
+      })), entry.details && row.createDiv({
         text: `         \u2514 ${entry.details}`,
         cls: "engram-sync-log-detail"
       });

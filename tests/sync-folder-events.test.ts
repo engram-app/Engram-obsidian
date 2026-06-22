@@ -214,6 +214,102 @@ describe("SyncEngine.handleFolderDelete", () => {
 	});
 });
 
+// ---------------------------------------------------------------------------
+// seedEmptyFolders — first-sync seeding of folders the server can't derive
+// ---------------------------------------------------------------------------
+//
+// The server only learns a folder exists when a note is pushed into it (or an
+// explicit marker is POSTed). A folder whose entire subtree holds NO syncable
+// file — truly empty, or containing only non-syncable types (.txt, .excalidraw)
+// — would therefore never appear in the web UI after a first sync. seedEmptyFolders
+// walks the local vault and POSTs a marker for exactly those folders.
+
+describe("SyncEngine.seedEmptyFolders", () => {
+	/** Point the engine's folder enumeration at a fixed tree. */
+	function setVaultFolders(folders: TFolder[]) {
+		mockApp.vault.getAllLoadedFiles = mock().mockReturnValue(folders);
+	}
+
+	test("seeds a truly-empty folder", async () => {
+		const { engine, explicit } = await createEngine();
+		setVaultFolders([new TFolder("EmptyDir", [])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).toHaveBeenCalledWith("EmptyDir");
+		expect(explicit.has("EmptyDir")).toBe(true);
+	});
+
+	test("seeds a folder containing only non-syncable files (.txt)", async () => {
+		const { engine } = await createEngine();
+		const onlyTxt = new TFolder("OnlyTxt", [new TFile("OnlyTxt/a.txt")]);
+		setVaultFolders([onlyTxt]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).toHaveBeenCalledWith("OnlyTxt");
+	});
+
+	test("does NOT seed a folder containing a syncable note", async () => {
+		const { engine } = await createEngine();
+		const withNote = new TFolder("WithNote", [new TFile("WithNote/n.md")]);
+		setVaultFolders([withNote]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).not.toHaveBeenCalledWith("WithNote");
+	});
+
+	test("does NOT seed an ancestor whose syncable file is nested deeper", async () => {
+		const { engine } = await createEngine();
+		// Parent -> Child -> n.md. The note creates folder Parent/Child server-side;
+		// Parent appears via the SPA's ancestor synthesis. No marker needed for either.
+		const child = new TFolder("Parent/Child", [new TFile("Parent/Child/n.md")]);
+		const parent = new TFolder("Parent", [child]);
+		setVaultFolders([parent, child]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).not.toHaveBeenCalled();
+	});
+
+	test("skips ignored folders and the vault root", async () => {
+		const { engine } = await createEngine();
+		setVaultFolders([
+			new TFolder("/", []),
+			new TFolder("", []),
+			new TFolder(".obsidian/plugins/foo", []),
+			new TFolder(".trash/old", []),
+		]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).not.toHaveBeenCalled();
+	});
+
+	test("skips folders already in the explicit set (idempotent)", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Known");
+		setVaultFolders([new TFolder("Known", [])]);
+
+		await engine.seedEmptyFolders();
+
+		expect(mockApi.createFolder).not.toHaveBeenCalled();
+	});
+
+	test("non-fatal on server error — keeps going, not recorded", async () => {
+		const { engine, explicit } = await createEngine();
+		(mockApi.createFolder as jest.Mock).mockRejectedValueOnce({ status: 500 });
+		setVaultFolders([new TFolder("Brittle", []), new TFolder("Fine", [])]);
+
+		await expect(engine.seedEmptyFolders()).resolves.toBeUndefined();
+		expect(explicit.has("Brittle")).toBe(false);
+		// The error on "Brittle" must not abort seeding of "Fine".
+		expect(mockApi.createFolder).toHaveBeenCalledWith("Fine");
+		expect(explicit.has("Fine")).toBe(true);
+	});
+});
+
 // File-export hint so the test runner sees this file. Tests also serve as
 // documentation of the engine's folder contract.
 test("module loaded", () => {
