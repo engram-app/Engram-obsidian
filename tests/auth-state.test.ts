@@ -153,6 +153,23 @@ describe("withClearedAuth", () => {
 		expect(cleared.vaultId).toBeNull();
 	});
 
+	test("clears the cached access token triplet (backend-scoped)", () => {
+		// A cached access token is signed by — and only valid against — the
+		// backend that minted it. On a backend switch it MUST be dropped, or it
+		// gets replayed against the new origin and is rejected with a signature
+		// error (stale stage token presented to prod → WS reconnect loop).
+		const cleared = withClearedAuth(
+			fullSettings({
+				accessToken: "stage_signed_jwt",
+				accessTokenExpiresAt: 1782252724000,
+				accessTokenVaultId: "stage-vault",
+			}),
+		);
+		expect(cleared.accessToken).toBeUndefined();
+		expect(cleared.accessTokenExpiresAt).toBeUndefined();
+		expect(cleared.accessTokenVaultId).toBeUndefined();
+	});
+
 	test("preserves apiUrl, clientId, and unrelated settings", () => {
 		const before = fullSettings({
 			apiUrl: "http://engram.ax",
@@ -182,11 +199,13 @@ describe("withClearedAuth", () => {
 function makeTarget(overrides: Partial<EngramSyncSettings> = {}): ApiUrlSwitchTarget & {
 	api: { setAuthProvider: ReturnType<typeof mock> };
 	noteStream: { disconnect: ReturnType<typeof mock> } | null;
+	resetAuthProvider: ReturnType<typeof mock>;
 } {
 	return {
 		settings: fullSettings(overrides),
 		api: { setAuthProvider: mock(() => {}) },
 		noteStream: { disconnect: mock(() => {}) },
+		resetAuthProvider: mock(() => {}),
 	};
 }
 
@@ -202,6 +221,7 @@ describe("applyApiUrlChange", () => {
 		expect(target.settings.vaultId).toBe("1");
 		expect(target.api.setAuthProvider).not.toHaveBeenCalled();
 		expect(target.noteStream?.disconnect).not.toHaveBeenCalled();
+		expect(target.resetAuthProvider).not.toHaveBeenCalled();
 		expect(save).toHaveBeenCalledTimes(1);
 	});
 
@@ -229,7 +249,17 @@ describe("applyApiUrlChange", () => {
 		expect(target.settings.vaultId).toBeNull();
 		expect(target.api.setAuthProvider).toHaveBeenCalledWith(null);
 		expect(target.noteStream?.disconnect).toHaveBeenCalledTimes(1);
+		expect(target.resetAuthProvider).toHaveBeenCalledTimes(1);
 		expect(save).toHaveBeenCalledTimes(1);
+	});
+
+	test("different origin: resets the live in-memory auth provider", async () => {
+		// The stale provider holds an old-backend-signed access token in memory;
+		// without this it replays against the new origin → signature_error loop.
+		const target = makeTarget({ apiUrl: "https://staging.engram.page" });
+		const save = mock(async () => {});
+		await applyApiUrlChange(target, "https://api.engram.page", save);
+		expect(target.resetAuthProvider).toHaveBeenCalledTimes(1);
 	});
 
 	test("partial URL (still typing): updates apiUrl, preserves auth, returns false", async () => {
