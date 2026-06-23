@@ -657,6 +657,53 @@ export class SyncEngine {
 		}
 	}
 
+	/** First-sync seeding: POST an explicit marker for every local folder whose
+	 *  entire subtree holds NO syncable file. The server derives a folder only
+	 *  from notes pushed into it, so a truly-empty folder — or one containing
+	 *  only non-syncable types (.txt, .excalidraw, …) — would otherwise never
+	 *  appear in the web UI after a first sync. Folders with a syncable note
+	 *  anywhere beneath them are skipped: they surface via that note, and the
+	 *  web app synthesizes their ancestors. Best-effort — a per-folder server
+	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
+	async seedEmptyFolders(): Promise<void> {
+		if (!this.explicitFolders) return;
+
+		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
+		for (const f of loaded) {
+			if (!(f instanceof TFolder)) continue;
+			const path = normalizePath(f.path);
+			if (!path || path === "/") continue; // vault root
+			if (this.shouldIgnore(path)) continue;
+			if (this.explicitFolders.has(path)) continue; // already tracked
+			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
+
+			try {
+				await this.paceRequest();
+				await this.api.createFolder(path);
+				await this.explicitFolders.add(path);
+			} catch (e) {
+				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+				rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+			}
+		}
+	}
+
+	/** True if any descendant file (at any depth) is syncable and not ignored. */
+	private subtreeHasSyncableFile(folder: TFolder): boolean {
+		for (const child of folder.children) {
+			if (child instanceof TFolder) {
+				if (this.subtreeHasSyncableFile(child)) return true;
+			} else if (
+				child instanceof TFile &&
+				this.isSyncable(child) &&
+				!this.shouldIgnore(child.path)
+			) {
+				return true;
+			}
+		}
+		return false;
+	}
+
 	/** Acquire a push slot, blocking if at max concurrency. */
 	private async acquirePushSlot(): Promise<void> {
 		if (this.activePushCount < this.maxConcurrentPushes) {
@@ -1927,6 +1974,11 @@ export class SyncEngine {
 				);
 			}
 		}
+
+		// Seed markers for folders the server can't derive (empty, or holding only
+		// non-syncable files). getFiles() above never sees folders, so without this
+		// a pre-existing vault's empty folders never reach the server. Best-effort.
+		await this.seedEmptyFolders();
 
 		return applied;
 	}
