@@ -23,6 +23,18 @@ pre-commit:
       run: bun biome check --write {staged_files}
       stage_fixed: true
 
+    # Block em-dash (—) and en-dash (–) in user-facing prose docs — an AI-slop
+    # tell. Use , : ; ( ) or rephrase. Mirrors the CI gate in lint.yml.
+    # Dev-internal docs (docs/internals.md, docs/engram-ops.md) are exempt.
+    - name: no-em-dash-docs
+      glob: "{README.md,DEV.md,docs/user-guide.md}"
+      run: |
+        if grep -lP '[\x{2013}\x{2014}]' {staged_files} >/dev/null 2>&1; then
+          echo "✖ em/en dash (— or –) found in prose docs. Use , : ; ( ) or rephrase:"
+          grep -nP '[\x{2013}\x{2014}]' {staged_files} || true
+          exit 1
+        fi
+
 pre-push:
   jobs:
     - name: tests-and-version-bump

@@ -1,10 +1,10 @@
-# Engram Vault Sync — Developer Guide
+# Engram Vault Sync: Developer Guide
 
 Implementation and contributor notes for Engram Vault Sync, the Obsidian plugin that syncs your vault with an [Engram](https://github.com/engram-app/engram) server. For the end-user overview, see [README.md](README.md).
 
 ## Architecture
 
-The plugin is a thin sync client. It watches the vault for changes, pushes them to an Engram server over REST, and pulls remote changes on startup, on a timer, and in real time over a WebSocket channel. It does **no** AI work itself — no markdown parsing, no embedding generation, no vector search. All of that lives on the Engram backend.
+The plugin is a thin sync client. It watches the vault for changes, pushes them to an Engram server over REST, and pulls remote changes on startup, on a timer, and in real time over a WebSocket channel. It does **no** AI work itself. No markdown parsing, no embedding generation, no vector search. All of that lives on the Engram backend.
 
 ```
 ┌──────────┐     ┌──────────────────────────┐     ┌───────────────────┐
@@ -19,28 +19,28 @@ The Engram backend is an Elixir/Phoenix app that stores notes in PostgreSQL, gen
 
 ### What this plugin is responsible for
 
-1. **Watch vault events** — `app.vault.on("create" | "modify" | "delete" | "rename")`.
-2. **Push changes** — `POST /notes`, `POST /attachments`, `DELETE /notes/:path`.
-3. **Pull changes** — `GET /notes/changes` on startup, on a timer, and via WebSocket push.
-4. **Apply remote changes locally** — files created or edited via MCP or other devices.
-5. **Settings UI** — Engram URL, auth, ignore patterns, conflict resolution.
+1. **Watch vault events**: `app.vault.on("create" | "modify" | "delete" | "rename")`.
+2. **Push changes**: `POST /notes`, `POST /attachments`, `DELETE /notes/:path`.
+3. **Pull changes**: `GET /notes/changes` on startup, on a timer, and via WebSocket push.
+4. **Apply remote changes locally**: files created or edited via MCP or other devices.
+5. **Settings UI**: Engram URL, auth, ignore patterns, conflict resolution.
 
 ### What it explicitly is not responsible for
 
 - Parsing markdown or chunking text (Engram does this).
 - Generating embeddings (Engram does this via Voyage or Ollama).
 - Talking to Qdrant (Engram does this).
-- Indexing for search (Engram does this — the plugin only calls `POST /search`).
+- Indexing for search (Engram does this; the plugin only calls `POST /search`).
 - Auth or user management (Engram does this).
 
-Internals beyond this overview — class map, sync algorithm, type definitions — are documented in [`docs/internals.md`](docs/internals.md). CDP and Obsidian remote debugging are covered in [`docs/engram-ops.md`](docs/engram-ops.md).
+Internals beyond this overview (class map, sync algorithm, type definitions) are documented in [`docs/internals.md`](docs/internals.md). CDP and Obsidian remote debugging are covered in [`docs/engram-ops.md`](docs/engram-ops.md).
 
 ## Repo layout
 
 ```
 src/
-  main.ts              Plugin entry — registers commands, views, ribbon, status bar
-  sync.ts              SyncEngine — push/pull/merge orchestration
+  main.ts              Plugin entry: registers commands, views, ribbon, status bar
+  sync.ts              SyncEngine: push/pull/merge orchestration
   api.ts               REST client for the Engram backend
   channel.ts           Phoenix WebSocket channel for real-time pushes
   auth.ts              ApiKeyAuth and OAuthAuth providers
@@ -55,15 +55,15 @@ src/
   offline-queue.ts     Persistent queue for offline edits
   remote-log.ts        Opt-in lifecycle logging back to the user's own Engram
   …
-tests/                 Unit tests (Bun + custom Obsidian mocks) — run `bun test` for the count
+tests/                 Unit tests (Bun + custom Obsidian mocks); run `bun test` for the count
 docs/                  Internals, ops, API audit, submission notes
 ```
 
 ## Toolchain
 
-- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm` — the only exception is `npm version patch|minor|major`, which needs npm's lifecycle hooks to run `version-bump.mjs`.
+- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm`; the only exception is `npm version patch|minor|major`, which needs npm's lifecycle hooks to run `version-bump.mjs`.
 - **Bundler:** esbuild (`esbuild.config.mjs`).
-- **Type check:** TypeScript (`tsc -noEmit`) — runs as part of `bun run build`.
+- **Type check:** TypeScript (`tsc -noEmit`); runs as part of `bun run build`.
 - **Lint/format:** Biome (`bun run lint`, `bun run format`) plus an Obsidian-specific ESLint pass (`bun run lint:obsidian`).
 - **Styles:** Stylelint over `styles.css`.
 - **Git hooks:** Lefthook (auto-installed via `bun run prepare`).
@@ -78,7 +78,7 @@ bun run dev           # esbuild watch mode
 
 ## Testing
 
-**Tests are the spec. If a test fails, fix the implementation — not the test.**
+**Tests are the spec. If a test fails, fix the implementation, not the test.**
 
 ```bash
 bun test              # full unit-test suite
@@ -88,7 +88,7 @@ bun test --coverage   # check the report for the live coverage number (~89% func
 
 ### Test layout
 
-Don't hardcode counts — run `bun test` for the live total and `ls tests/*.test.ts`
+Don't hardcode counts; run `bun test` for the live total and `ls tests/*.test.ts`
 for the file list. The suite spans the SyncEngine (ignore/modify/delete/rename,
 pull, cursor-pull, WebSocket, echo suppression, 3-way merge, state export/import),
 cursor + manifest reconciliation, the API client (incl. batch push + `/sync/changes`),
@@ -136,7 +136,7 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
    npm version patch     # or minor / major
    ```
    This updates `package.json`, runs `version-bump.mjs` to sync `manifest.json` + `versions.json`, and commits the change.
-2. **Open a PR.** Each push to that PR triggers `rc-release.yml` and publishes `X.Y.Z-rc.N` as a GitHub pre-release — BRAT users can pin to that frozen version for testing.
+2. **Open a PR.** Each push to that PR triggers `rc-release.yml` and publishes `X.Y.Z-rc.N` as a GitHub pre-release; BRAT users can pin to that frozen version for testing.
 3. **Merge.** `release.yml` removes the RC tags/pre-releases, tags `X.Y.Z` on the merge commit, and publishes the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached.
 
 ### Branch protection
@@ -190,9 +190,9 @@ Anything outside both sets is silently ignored by `isSyncable()`.
 
 ## Contributing
 
-- **Everything goes through a PR — no exceptions, including doc-only changes.** The old "docs can land on `main` directly" carve-out is rescinded (it drifted into code commits and bypassed the test gate). `main` is protected with `enforce_admins=true`; the release pipeline only fires on PR merge, so direct pushes break the deploy. See `CLAUDE.md` → Git Workflow.
+- **Everything goes through a PR: no exceptions, including doc-only changes.** The old "docs can land on `main` directly" carve-out is rescinded (it drifted into code commits and bypassed the test gate). `main` is protected with `enforce_admins=true`; the release pipeline only fires on PR merge, so direct pushes break the deploy. See `CLAUDE.md` → Git Workflow.
 - Code changes: CI must pass and the version must be bumped before merge.
-- Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:` — subject ≤50 chars.
+- Conventional Commits: `feat:`, `fix:`, `chore:`, `docs:`, `refactor:`, `test:`; subject ≤50 chars.
 - Tests are the spec. Add or update tests alongside code changes; never modify tests to mask a regression.
 
 ## Multi-repo notes

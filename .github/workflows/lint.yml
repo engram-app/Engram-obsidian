@@ -47,6 +47,23 @@ jobs:
           fi
           echo "OK — no checkbox-as-TODO in root markdown."
 
+      - name: Forbid em/en dashes in prose docs
+        run: |
+          set -euo pipefail
+          # Em-dash (—, U+2014) and en-dash (–, U+2013) are an AI-slop tell.
+          # Banned in user-facing prose docs — use , : ; ( ) or rephrase.
+          # Dev-internal docs (docs/internals.md, docs/engram-ops.md) are
+          # intentionally exempt: they use `| — |` table-placeholder cells and
+          # code-fence annotations where a dash is legitimate.
+          files="README.md DEV.md docs/user-guide.md"
+          violations=$(grep -lP '[\x{2013}\x{2014}]' $files 2>/dev/null || true)
+          if [ -n "$violations" ]; then
+            echo "::error::Found em/en dashes in prose docs. Replace with , : ; or ( ):"
+            grep -nP '[\x{2013}\x{2014}]' $files || true
+            exit 1
+          fi
+          echo "OK - no em/en dashes in prose docs."
+
   claude-md-staleness:
     name: CLAUDE.md staleness
     runs-on: [self-hosted, linux, x64, isolated]
