@@ -164,6 +164,8 @@ export class SyncEngine {
 	private healthCheckTimer: number | null = null;
 	/** Consecutive failed health probes — drives exponential backoff. */
 	private healthCheckFailures = 0;
+	/** In-flight queue flush, for single-flight coalescing (see flushQueue). */
+	private flushInFlight: Promise<number> | null = null;
 	private ready = false;
 	/** When true, all sync actions (file events, stream events, bulk methods)
 	 *  short-circuit to a no-op. Controlled by the plugin layer based on
@@ -653,6 +655,53 @@ export class SyncEngine {
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
+	}
+
+	/** First-sync seeding: POST an explicit marker for every local folder whose
+	 *  entire subtree holds NO syncable file. The server derives a folder only
+	 *  from notes pushed into it, so a truly-empty folder — or one containing
+	 *  only non-syncable types (.txt, .excalidraw, …) — would otherwise never
+	 *  appear in the web UI after a first sync. Folders with a syncable note
+	 *  anywhere beneath them are skipped: they surface via that note, and the
+	 *  web app synthesizes their ancestors. Best-effort — a per-folder server
+	 *  error is warn-logged and seeding continues (matches handleFolderCreate). */
+	async seedEmptyFolders(): Promise<void> {
+		if (!this.explicitFolders) return;
+
+		const loaded = this.app.vault.getAllLoadedFiles?.() ?? [];
+		for (const f of loaded) {
+			if (!(f instanceof TFolder)) continue;
+			const path = normalizePath(f.path);
+			if (!path || path === "/") continue; // vault root
+			if (this.shouldIgnore(path)) continue;
+			if (this.explicitFolders.has(path)) continue; // already tracked
+			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
+
+			try {
+				await this.paceRequest();
+				await this.api.createFolder(path);
+				await this.explicitFolders.add(path);
+			} catch (e) {
+				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+				rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+			}
+		}
+	}
+
+	/** True if any descendant file (at any depth) is syncable and not ignored. */
+	private subtreeHasSyncableFile(folder: TFolder): boolean {
+		for (const child of folder.children) {
+			if (child instanceof TFolder) {
+				if (this.subtreeHasSyncableFile(child)) return true;
+			} else if (
+				child instanceof TFile &&
+				this.isSyncable(child) &&
+				!this.shouldIgnore(child.path)
+			) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Acquire a push slot, blocking if at max concurrency. */
@@ -1925,6 +1974,11 @@ export class SyncEngine {
 				);
 			}
 		}
+
+		// Seed markers for folders the server can't derive (empty, or holding only
+		// non-syncable files). getFiles() above never sees folders, so without this
+		// a pre-existing vault's empty folders never reach the server. Best-effort.
+		await this.seedEmptyFolders();
 
 		return applied;
 	}
@@ -3464,7 +3518,44 @@ export class SyncEngine {
 		return this.flushQueue();
 	}
 
-	async flushQueue(): Promise<number> {
+	/** Single-flight wrapper around the queue drain. `goOnline()` fires a flush
+	 *  fire-and-forget while other callers (post-pull catch-up, retryFailedNow,
+	 *  and the e2e `restore_online` helper) may also await one. Two passes over
+	 *  the same queue snapshot race: they double-push the same entries (each
+	 *  duplicate collides on the server's note-path index) and, when a push
+	 *  errors, one pass trips `maybeGoOffline()` + `break` mid-drain — so the
+	 *  queue oscillates and never empties (root cause of the test_24
+	 *  offline-replay flake). Coalesce to a single in-flight drain; concurrent
+	 *  callers join it instead of competing. Mirrors the "coalesce concurrent
+	 *  pulls" fix (#119). */
+	flushQueue(): Promise<number> {
+		if (this.flushInFlight) return this.flushInFlight;
+		const pending = this.drainUntilStable().finally(() => {
+			this.flushInFlight = null;
+		});
+		this.flushInFlight = pending;
+		return pending;
+	}
+
+	/** Drain in re-snapshotting passes until the queue is empty or a pass makes
+	 *  no progress / goes offline. Because callers coalesce onto one in-flight
+	 *  flush, an entry enqueued WHILE a flush runs (e.g. retryFailedNow queues
+	 *  then calls flushQueue, or a file edit lands mid-drain) would otherwise sit
+	 *  stranded until the next unrelated trigger — its snapshot predates the
+	 *  entry. Re-looping lets the active drain pick it up. */
+	private async drainUntilStable(): Promise<number> {
+		let total = 0;
+		while (this.queue.size > 0) {
+			const flushed = await this.runFlushQueue();
+			total += flushed;
+			// Stop on no progress (queue empty or all remaining entries failing)
+			// or once a push tripped maybeGoOffline — don't hammer the server.
+			if (flushed === 0 || this.offline) break;
+		}
+		return total;
+	}
+
+	private async runFlushQueue(): Promise<number> {
 		const entries = this.queue.all();
 		if (entries.length === 0) return 0;
 		devLog().log("queue", `flush start — ${entries.length} entries`);

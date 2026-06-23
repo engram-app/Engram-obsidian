@@ -83,10 +83,10 @@ export class ConflictModal extends Modal {
 		header.createEl("code", { text: this.info.path, cls: "engram-conflict-path" });
 
 		const meta = header.createEl("aside", { cls: "engram-conflict-meta" });
-		meta.createEl("span", {
+		meta.createSpan({
 			text: `Local: ${this.fmtDate(this.info.localMtime)} · ${this.info.localContent.length} chars`,
 		});
-		meta.createEl("span", {
+		meta.createSpan({
 			text: `Remote: ${this.fmtDate(this.info.remoteMtime)} · ${this.info.remoteContent.length} chars`,
 		});
 	}
@@ -125,7 +125,7 @@ export class ConflictModal extends Modal {
 		});
 
 		if (this.hunks.length > 0) {
-			const bulkGroup = bar.createEl("span", { cls: "engram-conflict-bulk" });
+			const bulkGroup = bar.createSpan({ cls: "engram-conflict-bulk" });
 			const allLocalBtn = bulkGroup.createEl("button", {
 				text: "All local",
 				cls: "mod-warning",
@@ -278,7 +278,7 @@ export class ConflictModal extends Modal {
 
 	private renderHunkControls(parent: HTMLElement, hunk: DiffHunk): void {
 		const controls = parent.createEl("nav", { cls: "engram-conflict-hunk-controls" });
-		controls.createEl("span", {
+		controls.createSpan({
 			text: `Hunk ${hunk.id + 1}`,
 			cls: "engram-conflict-hunk-label",
 		});
@@ -315,7 +315,7 @@ export class ConflictModal extends Modal {
 		const section = root.createEl("section", { cls: "engram-conflict-merge" });
 		const header = section.createEl("header", { cls: "engram-conflict-merge-header" });
 		header.createEl("h3", { text: "Merge result" });
-		header.createEl("span", {
+		header.createSpan({
 			text: "Edit the merged content below, or use hunk controls above",
 			cls: "engram-conflict-merge-hint",
 		});

@@ -3,7 +3,7 @@
  *
  * Mirrors a subset of `eslint-plugin-obsidianmd` rules at the *file-text* level
  * (regex / substring) so that:
- *   1. A misconfigured eslint.config.mjs cannot silently disable them.
+ *   1. A misconfigured eslint.config.mts cannot silently disable them.
  *   2. They run in <100ms with `bun test`, not seconds with ESLint.
  *   3. The test suite documents the intent, with rule references.
  *
