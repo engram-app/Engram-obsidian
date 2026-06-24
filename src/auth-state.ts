@@ -81,6 +81,12 @@ export function withClearedAuth(settings: EngramSyncSettings): EngramSyncSetting
 		userEmail: undefined,
 		authMethod: null,
 		vaultId: null,
+		// The cached access token (plus its expiry + vault binding) is signed by
+		// the minting backend and only valid there. Leaving it set lets a backend
+		// switch replay a stale token against the new origin → signature_error.
+		accessToken: undefined,
+		accessTokenExpiresAt: undefined,
+		accessTokenVaultId: undefined,
 	};
 }
 
@@ -91,6 +97,12 @@ export interface ApiUrlSwitchTarget {
 	settings: EngramSyncSettings;
 	api: { setAuthProvider: (provider: null) => void };
 	noteStream: { disconnect: () => void } | null;
+	/** Drop the plugin's in-memory auth provider. The cleared settings only stop
+	 *  a *future* (post-reload) provider from being rebuilt with stale auth; the
+	 *  live provider object holds an old-backend-signed access token in memory and
+	 *  would replay it against the new origin until reload. Resetting it makes a
+	 *  backend switch behave like a fresh load. */
+	resetAuthProvider: () => void;
 }
 
 /** What renderAccountTab should do given the current settings and cloud URL.
@@ -121,7 +133,9 @@ export function cloudTabAction(
 
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
  *  backend origin, wipe backend-scoped auth state, null out the API auth
- *  provider, and disconnect the live note stream — then persist via `save`.
+ *  provider, reset the live in-memory auth provider (so a stale old-backend
+ *  access token can't be replayed against the new origin), and disconnect the
+ *  live note stream — then persist via `save`.
  *  Returns true when auth was cleared. Mutates `target.settings` in place so
  *  external references (SyncEngine, etc.) keep observing the same object. */
 export async function applyApiUrlChange(
@@ -136,6 +150,7 @@ export async function applyApiUrlChange(
 		// which fields are backend-scoped, so any future addition stays one-place.
 		Object.assign(target.settings, withClearedAuth(target.settings));
 		target.api.setAuthProvider(null);
+		target.resetAuthProvider();
 		target.noteStream?.disconnect();
 	}
 	target.settings.apiUrl = newUrl;

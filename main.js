@@ -9,11 +9,7 @@ var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf, __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function() {
-  try {
-    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-  } catch (e) {
-    throw mod = 0, e;
-  }
+  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -775,7 +771,13 @@ function withClearedAuth(settings) {
     refreshToken: void 0,
     userEmail: void 0,
     authMethod: null,
-    vaultId: null
+    vaultId: null,
+    // The cached access token (plus its expiry + vault binding) is signed by
+    // the minting backend and only valid there. Leaving it set lets a backend
+    // switch replay a stale token against the new origin → signature_error.
+    accessToken: void 0,
+    accessTokenExpiresAt: void 0,
+    accessTokenVaultId: void 0
   };
 }
 function cloudTabAction(settings, cloudUrl) {
@@ -785,7 +787,7 @@ async function applyApiUrlChange(target, newUrl, save) {
   var _a;
   if (target.settings.apiUrl === newUrl) return !1;
   let cleared = isBackendChange(target.settings.apiUrl, newUrl);
-  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
+  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
 }
 
 // src/limit-error.ts
@@ -2154,9 +2156,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     );
     let resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
     resultsSection.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
-      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => {
-        this.run();
-      }, SEARCH_DEBOUNCE_MS);
+      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => void this.run(), SEARCH_DEBOUNCE_MS);
     }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
       if (e.key === "Enter" || e.key === ",") {
         let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
@@ -2315,9 +2315,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
         cls: "engram-search-result-path"
       });
       let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
-      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => {
-        this.openResult(result);
-      });
+      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => void this.openResult(result));
     });
   }
   /**
@@ -3829,7 +3827,10 @@ function renderEngramUrlSetting(ctx) {
         {
           settings: plugin.settings,
           api: plugin.api,
-          noteStream: plugin.noteStream
+          noteStream: plugin.noteStream,
+          resetAuthProvider: () => {
+            plugin.authProvider = null;
+          }
         },
         pendingUrl.trim(),
         () => plugin.saveSettings()
@@ -3979,7 +3980,10 @@ async function renderAccountTab(ctx) {
           {
             settings: plugin.settings,
             api: plugin.api,
-            noteStream: plugin.noteStream
+            noteStream: plugin.noteStream,
+            resetAuthProvider: () => {
+              plugin.authProvider = null;
+            }
           },
           ENGRAM_CLOUD_URL,
           () => plugin.saveSettings()
@@ -3992,7 +3996,10 @@ async function renderAccountTab(ctx) {
     {
       settings: plugin.settings,
       api: plugin.api,
-      noteStream: plugin.noteStream
+      noteStream: plugin.noteStream,
+      resetAuthProvider: () => {
+        plugin.authProvider = null;
+      }
     },
     ENGRAM_CLOUD_URL,
     () => plugin.saveSettings()

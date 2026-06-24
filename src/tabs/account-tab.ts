@@ -32,6 +32,9 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 								settings: plugin.settings,
 								api: plugin.api,
 								noteStream: plugin.noteStream,
+								resetAuthProvider: () => {
+									plugin.authProvider = null;
+								},
 							},
 							ENGRAM_CLOUD_URL,
 							() => plugin.saveSettings(),
@@ -49,6 +52,9 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 				settings: plugin.settings,
 				api: plugin.api,
 				noteStream: plugin.noteStream,
+				resetAuthProvider: () => {
+					plugin.authProvider = null;
+				},
 			},
 			ENGRAM_CLOUD_URL,
 			() => plugin.saveSettings(),

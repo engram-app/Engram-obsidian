@@ -122,6 +122,9 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 							settings: plugin.settings,
 							api: plugin.api,
 							noteStream: plugin.noteStream,
+							resetAuthProvider: () => {
+								plugin.authProvider = null;
+							},
 						},
 						pendingUrl.trim(),
 						() => plugin.saveSettings(),
