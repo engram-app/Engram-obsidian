@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { SyncEngine, routeModify } from "../src/sync";
+import { SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // ---------------------------------------------------------------------------
@@ -22,7 +22,6 @@ describe("routeModify helper", () => {
 		const result = await routeModify(
 			{ isMarkdown: true, path: "n.md", readContent: async () => "body" },
 			{ applyLocalEdit } as any,
-			{ pushNote } as any,
 		);
 		expect(result).toBe(true);
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
@@ -36,7 +35,6 @@ describe("routeModify helper", () => {
 		const result = await routeModify(
 			{ isMarkdown: false, path: "img.png", readContent: async () => "" },
 			{ applyLocalEdit } as any,
-			{ pushNote } as any,
 		);
 		expect(result).toBe(false);
 		expect(applyLocalEdit).not.toHaveBeenCalled();
@@ -207,5 +205,72 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 
 		// applyLocalEdit should NOT be called because the echo is suppressed
 		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// reconcileColdStart — disk-changed-while-app-was-closed CRDT reconcile
+// ---------------------------------------------------------------------------
+
+describe("reconcileColdStart", () => {
+	test("disk diverged from Y.Doc: applyLocalEdit called, no corruption callback", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "line one");
+		let corrupted = false;
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "line one\nline two" },
+			{ applyLocalEdit, getText } as any,
+			() => {
+				corrupted = true;
+			},
+		);
+		expect(applyLocalEdit).toHaveBeenCalledWith("n.md", "line one\nline two");
+		expect(corrupted).toBe(false);
+	});
+
+	test("disk matches Y.Doc: applyLocalEdit NOT called (already in sync)", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "same content");
+		let corrupted = false;
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "same content" },
+			{ applyLocalEdit, getText } as any,
+			() => {
+				corrupted = true;
+			},
+		);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(corrupted).toBe(false);
+	});
+
+	test("getText throws (corrupted doc): onCorruption called, applyLocalEdit NOT called", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => {
+			throw new Error("decode failed");
+		});
+		let corrupted = false;
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "some content" },
+			{ applyLocalEdit, getText } as any,
+			() => {
+				corrupted = true;
+			},
+		);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(corrupted).toBe(true);
+	});
+
+	test("CRDT does NOT invoke conflict modal on normal cold-start divergence", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "old content");
+		let conflictModalShown = false;
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "old content\nnew line" },
+			{ applyLocalEdit, getText } as any,
+			() => {
+				conflictModalShown = true;
+			},
+		);
+		expect(conflictModalShown).toBe(false);
 	});
 });

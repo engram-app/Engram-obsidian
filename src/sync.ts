@@ -52,12 +52,33 @@ import type {
 export async function routeModify(
 	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
 	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
-	_api: { pushNote: (...a: unknown[]) => Promise<unknown> },
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
 	const content = await file.readContent();
 	await crdt.applyLocalEdit(file.path, content);
 	return true;
+}
+
+/** At startup, the on-disk file may have changed while the app was closed
+ *  (external editor, another sync app, OS). For a synced note this is NOT a
+ *  3-way merge: diff the disk content into the Y.Doc as a local edit. The CRDT
+ *  converges it with any remote history once the handshake runs. The conflict
+ *  modal is only a last resort if the doc itself cannot be opened/decoded. */
+export async function reconcileColdStart(
+	file: { path: string; diskContent: string },
+	crdt: {
+		applyLocalEdit: (path: string, content: string) => Promise<void>;
+		getText: (path: string) => Promise<string>;
+	},
+	onCorruption: () => void,
+): Promise<void> {
+	try {
+		const current = await crdt.getText(file.path);
+		if (current === file.diskContent) return; // already in sync
+		await crdt.applyLocalEdit(file.path, file.diskContent);
+	} catch {
+		onCorruption(); // surface the existing ConflictModal only on decode failure
+	}
 }
 
 /** Check if an error is an HTTP response with the given status code.
@@ -929,7 +950,6 @@ export class SyncEngine {
 					const consumed = await routeModify(
 						{ isMarkdown: true, path: file.path, readContent: async () => content },
 						this.crdt,
-						this.api,
 					);
 					if (consumed) {
 						success = true;

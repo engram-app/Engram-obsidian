@@ -566,6 +566,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
 		void this.crdtManager?.destroy();
+		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
+		// open resources; the WebSocket it dispatches over is owned by the Phoenix
+		// channel and torn down via noteStream?.disconnect().
 		if (this.syncInterval) {
 			window.clearInterval(this.syncInterval);
 			this.syncInterval = null;
