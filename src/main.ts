@@ -952,6 +952,19 @@ export default class EngramSyncPlugin extends Plugin {
 								`Catch-up pull on reconnect failed: ${errMsg(e)}`,
 							);
 						});
+					} else {
+						// On disconnect the crdt: topic is also gone. Clear the CRDT
+						// manager from the SyncEngine so markdown saves fall back to
+						// the legacy pushNote path until the crdt: topic re-joins on
+						// the next connection. This is the graceful-degradation gate:
+						// non-CRDT backends never fire onCrdtJoined and therefore never
+						// set the manager, but we also reset here defensively in case
+						// the channel drops mid-session.
+						this.syncEngine.setCrdtManager(null);
+						rlog().info(
+							"crdt",
+							"Disconnected — CRDT routing cleared, legacy path active",
+						);
 					}
 				};
 
@@ -985,6 +998,13 @@ export default class EngramSyncPlugin extends Plugin {
 				// topic join is silently a no-op, CRDT updates go nowhere, AND
 				// the legacy pushNote path is suppressed — so this.crdt must stay
 				// null to let the legacy path continue working.
+				//
+				// Graceful degradation: the CrdtManager and CrdtChannel are wired
+				// eagerly (so they're ready to handle frames), but `setCrdtManager`
+				// is deferred to `channel.onCrdtJoined` — only called once the
+				// server acknowledges the `crdt:` topic join. Against a non-CRDT
+				// backend the join errors out, onCrdtJoined never fires, and the
+				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
 				if (this.settings.vaultId) {
 					const dbPrefix = this.settings.vaultId;
 					this.crdtManager = new CrdtManager({
@@ -1022,7 +1042,17 @@ export default class EngramSyncPlugin extends Plugin {
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						void this.crdtChannel?.handleFrame(path, b64);
 					};
-					this.syncEngine.setCrdtManager(this.crdtManager);
+					// Deferred activation: only engage CRDT routing in the SyncEngine
+					// after the server confirms the crdt: topic join. Against a non-CRDT
+					// backend this never fires and setCrdtManager stays null → every
+					// markdown save uses the legacy pushNote path (graceful degradation).
+					channel.onCrdtJoined = () => {
+						rlog().info(
+							"crdt",
+							"crdt: topic joined — activating CRDT routing in SyncEngine",
+						);
+						this.syncEngine.setCrdtManager(this.crdtManager);
+					};
 				} else {
 					rlog().info(
 						"crdt",

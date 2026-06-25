@@ -1304,6 +1304,11 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.reconnectMs = 1e3;
     this.maxReconnectMs = 6e4;
     this.connected = !1;
+    /** True only when the `crdt:` topic join has been acknowledged by the server.
+     *  Reset on every disconnect so it re-gates on the next connection. A backend
+     *  that does not serve the crdt: topic replies with an error (handled below),
+     *  keeping this false — which allows the legacy pushNote path to remain active. */
+    this.crdtJoined = !1;
     this.authProvider = null;
     this.onEvent = null;
     this.onStatusChange = null;
@@ -1314,6 +1319,12 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.onPlanState = null;
     /** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
     this.onCrdtMessage = null;
+    /** Fired when the `crdt:` topic join is acknowledged by the server.
+     *  Use this to activate CRDT routing in the SyncEngine — only wire
+     *  `setCrdtManager` after this fires, so the legacy pushNote path stays
+     *  active against non-CRDT backends (which reply with a join error and
+     *  never fire this callback). */
+    this.onCrdtJoined = null;
     this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
@@ -1347,10 +1358,16 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.setConnected(!1), rlog().info("channel", "Channel disconnected");
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), rlog().info("channel", "Channel disconnected");
   }
   isConnected() {
     return this.connected;
+  }
+  /** True only when the `crdt:` topic join has been acknowledged by the server.
+   *  The SyncEngine uses this to decide whether to route markdown saves through
+   *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
+  isCrdtConnected() {
+    return this.crdtJoined;
   }
   // ---------------------------------------------------------------------------
   // Private
@@ -1414,7 +1431,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     }, 3e4);
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1425,30 +1442,30 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     let [, , topic, event, payload] = msg;
     if (event === "phx_reply") {
       let status = payload.status;
-      if (status === "ok") {
+      if (status === "ok")
         if (topic === this.topic && !this.connected)
           this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`);
         else if (topic === this.userTopic) {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
-        }
-      } else status === "error" && rlog().error(
+        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
+      else status === "error" && rlog().error(
         "channel",
         `Channel join error on ${topic}: ${JSON.stringify(payload)}`
       );
       return;
     }
     if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_b = this.onPlanState) == null || _b.call(this, payload);
+      rlog().info("channel", "Received subscription_activated event"), (_c = this.onPlanState) == null || _c.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_c = this.onVaultDeleted) == null || _c.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_d = this.onVaultDeleted) == null || _d.call(this);
       return;
     }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_d = this.onCrdtMessage) == null || _d.call(this, docId, b64));
+      docId && b64 && ((_e = this.onCrdtMessage) == null || _e.call(this, docId, b64));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1456,7 +1473,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_e = p.kind) != null ? _e : "note",
+        kind: (_f = p.kind) != null ? _f : "note",
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -1466,10 +1483,10 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_f = this.onEvent) == null || _f.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_g = this.onEvent) == null || _g.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_g = payload.notes) != null ? _g : [];
+      let notes = (_h = payload.notes) != null ? _h : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1485,7 +1502,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_h = this.onEvent) == null || _h.call(this, streamEvent);
+        (_i = this.onEvent) == null || _i.call(this, streamEvent);
       }
     }
   }
@@ -1495,7 +1512,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
   }
   setConnected(value) {
     var _a;
-    this.connected !== value && (this.connected = value, (_a = this.onStatusChange) == null || _a.call(this, value));
+    this.connected !== value && (this.connected = value, value || (this.crdtJoined = !1), (_a = this.onStatusChange) == null || _a.call(this, value));
   }
   clearTimers() {
     this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null);
@@ -13956,12 +13973,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
         var _a2;
-        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected && ((_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
+        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? ((_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
           console.error("Engram Sync: catch-up pull failed", e), rlog().error(
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
-        }));
+        })) : (this.syncEngine.setCrdtManager(null), rlog().info("crdt", "Disconnected \u2014 CRDT routing cleared, legacy path active"));
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
@@ -14006,7 +14023,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
-        }, this.syncEngine.setCrdtManager(this.crdtManager);
+        }, channel.onCrdtJoined = () => {
+          rlog().info(
+            "crdt",
+            "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
+          ), this.syncEngine.setCrdtManager(this.crdtManager);
+        };
       } else
         rlog().info(
           "crdt",

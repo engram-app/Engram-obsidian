@@ -281,7 +281,7 @@ export class SyncEngine {
 	 *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
 	private crdt: CrdtManager | null = null;
 
-	setCrdtManager(mgr: CrdtManager): void {
+	setCrdtManager(mgr: CrdtManager | null): void {
 		this.crdt = mgr;
 	}
 

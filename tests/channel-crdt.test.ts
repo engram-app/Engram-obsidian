@@ -182,3 +182,197 @@ describe("NoteChannel inbound crdt_msg", () => {
 		channel.disconnect();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// isCrdtConnected / onCrdtJoined — graceful degradation gate
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
+	test("isCrdtConnected() is false before the crdt: topic join is acknowledged", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		// Before any phx_reply for the crdt topic
+		expect(channel.isCrdtConnected()).toBe(false);
+
+		channel.disconnect();
+	});
+
+	test("isCrdtConnected() is true after crdt: topic join ok", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+
+		expect(channel.isCrdtConnected()).toBe(true);
+
+		channel.disconnect();
+	});
+
+	test("isCrdtConnected() stays false when the crdt: topic join errors (non-CRDT backend)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "unmatched topic" } },
+		]);
+
+		expect(channel.isCrdtConnected()).toBe(false);
+
+		channel.disconnect();
+	});
+
+	test("onCrdtJoined fires exactly once when crdt: topic join ok", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		const joined = mock();
+		channel.onCrdtJoined = joined;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+
+		expect(joined).toHaveBeenCalledTimes(1);
+
+		channel.disconnect();
+	});
+
+	test("onCrdtJoined does NOT fire when the crdt: topic join errors", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		const joined = mock();
+		channel.onCrdtJoined = joined;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "unmatched topic" } },
+		]);
+
+		expect(joined).not.toHaveBeenCalled();
+
+		channel.disconnect();
+	});
+
+	test("onCrdtJoined does NOT fire when vaultId is null (crdt topic not joined)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
+		const joined = mock();
+		channel.onCrdtJoined = joined;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(joined).not.toHaveBeenCalled();
+
+		channel.disconnect();
+	});
+
+	test("isCrdtConnected() resets to false after disconnect", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+		expect(channel.isCrdtConnected()).toBe(true);
+
+		// Simulate disconnect via onStatusChange (setConnected(false))
+		// In tests we call disconnect() which clears onclose to prevent reconnect
+		// and calls setConnected(false) via disconnect().
+		// We need to simulate a ws close instead to trigger the same path.
+		channel.disconnect();
+
+		expect(channel.isCrdtConnected()).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Graceful degradation integration: SyncEngine + NoteChannel join gate
+// The key invariant: CRDT routing is only active when onCrdtJoined has fired.
+// Against a non-CRDT backend the join errors; setCrdtManager is never called;
+// legacy pushNote handles all markdown saves.
+// ---------------------------------------------------------------------------
+
+describe("Graceful degradation: setCrdtManager deferred to onCrdtJoined", () => {
+	test("onCrdtJoined wires setCrdtManager; before join, manager is not wired", async () => {
+		// Simulate the pattern from main.ts: wire onCrdtJoined to call setCrdtManager
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		let managerWired = false;
+		channel.onCrdtJoined = () => {
+			managerWired = true;
+		};
+
+		// Before join acknowledgement: manager not wired
+		expect(managerWired).toBe(false);
+		expect(channel.isCrdtConnected()).toBe(false);
+
+		// Server acknowledges crdt: join
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+
+		// After join: callback fired, manager wired
+		expect(managerWired).toBe(true);
+		expect(channel.isCrdtConnected()).toBe(true);
+
+		channel.disconnect();
+	});
+
+	test("crdt: join error → onCrdtJoined never fires → manager stays null (non-CRDT backend)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		let managerWired = false;
+		channel.onCrdtJoined = () => {
+			managerWired = true;
+		};
+
+		// Backend does not support CRDT: join error
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "unmatched topic" } },
+		]);
+
+		// Graceful degradation: onCrdtJoined never fired, manager stays null
+		expect(managerWired).toBe(false);
+		expect(channel.isCrdtConnected()).toBe(false);
+
+		channel.disconnect();
+	});
+});

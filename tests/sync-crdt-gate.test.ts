@@ -426,3 +426,110 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Graceful degradation: channel join gate (simulates main.ts onCrdtJoined pattern)
+//
+// These tests prove the key invariant: CRDT routing (setCrdtManager) is only
+// activated AFTER the crdt: topic join succeeds. A non-CRDT backend never fires
+// the join callback → setCrdtManager stays null → legacy path handles everything.
+// ---------------------------------------------------------------------------
+
+describe("Graceful degradation: channel join gate — CRDT not connected", () => {
+	test("with crdt NOT connected (manager null), .md edit goes through pushNote (legacy)", async () => {
+		const engine = createEngine();
+		// Simulates: vaultId known but crdt: topic join has not been acknowledged yet
+		// (or backend errored on join) — manager is null, legacy path active.
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+
+	test("with crdt NOT connected (manager null), inbound note_changed for .md IS applied via applyChange (legacy)", async () => {
+		const engine = createEngine();
+		// No manager set — simulates pre-join or non-CRDT-backend state
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/remote.md",
+			timestamp: Date.now(),
+			content: "# From server",
+			title: "remote",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Legacy applyChange must run — file should be created on disk
+		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/remote.md", "# From server");
+	});
+
+	test("after onCrdtJoined fires (setCrdtManager called), CRDT path is active and legacy is gated", async () => {
+		const engine = createEngine();
+
+		// Simulate the sequence from main.ts: manager is wired only after join
+		const applyLocalEdit = mock(async () => {});
+		const manager = { applyLocalEdit } as any;
+
+		// Before join: manager not set
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+
+		// onCrdtJoined fires (crdt: topic join succeeded)
+		engine.setCrdtManager(manager);
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// CRDT path active — applyLocalEdit called, pushNote NOT called
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("after disconnect (setCrdtManager(null)), .md edits revert to pushNote (legacy)", async () => {
+		const engine = createEngine();
+
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		// Simulate channel disconnect: clear manager (mirrors onStatusChange false handler)
+		engine.setCrdtManager(null);
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Legacy path active after disconnect
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("after disconnect (setCrdtManager(null)), inbound note_changed for .md IS applied via legacy applyChange", async () => {
+		const engine = createEngine();
+
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		// Simulate disconnect
+		engine.setCrdtManager(null);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/remote.md",
+			timestamp: Date.now(),
+			content: "# After reconnect",
+			title: "remote",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Legacy must apply the change now that CRDT is down
+		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/remote.md", "# After reconnect");
+	});
+});
