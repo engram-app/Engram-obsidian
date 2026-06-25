@@ -13,7 +13,8 @@ export interface CrdtChannelOptions {
 }
 
 function toB64(bytes: Uint8Array): string {
-	return btoa(String.fromCharCode(...bytes));
+	// Avoid spread-into-String.fromCharCode which stack-overflows on large updates.
+	return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
 }
 
 function fromB64(b64: string): Uint8Array {

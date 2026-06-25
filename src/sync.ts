@@ -4,6 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
+import type { CrdtManager } from "./crdt/manager";
 import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
@@ -42,6 +43,22 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
+
+/**
+ * Pure routing helper: for a markdown note, apply the disk content into the
+ * CRDT doc (no full-document POST); for binary files, return false so the
+ * caller falls through to the existing attachment push path.
+ */
+export async function routeModify(
+	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
+	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
+	_api: { pushNote: (...a: unknown[]) => Promise<unknown> },
+): Promise<boolean> {
+	if (!file.isMarkdown) return false;
+	const content = await file.readContent();
+	await crdt.applyLocalEdit(file.path, content);
+	return true;
+}
 
 /** Check if an error is an HTTP response with the given status code.
  *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
@@ -222,6 +239,30 @@ export class SyncEngine {
 
 	/** Optional sync log — receives an entry for each push/pull outcome. */
 	syncLog: SyncLog | null = null;
+
+	/** Optional CRDT manager — when set, markdown saves route through it instead
+	 *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
+	 *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
+	private crdt: CrdtManager | null = null;
+
+	setCrdtManager(mgr: CrdtManager): void {
+		this.crdt = mgr;
+	}
+
+	/** Write a remote-merged CRDT result to disk.
+	 *  Calls markRecentlyPushed first so the resulting vault.modify event is
+	 *  suppressed by the recentlyPushed guard in handleModify.
+	 *  Safe to call from main.ts — does not expose the private markRecentlyPushed. */
+	async flushFromCrdt(path: string, content: string): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+		if (!(file instanceof TFile)) return;
+		this.markRecentlyPushed(path);
+		try {
+			await this.app.vault.modify(file, content);
+		} catch (e) {
+			rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
+		}
+	}
 
 	/** Persistent record of files that failed to sync, with reason. Surfaced
 	 *  in the Sync Center "Issues" panel and used to short-circuit the offline
@@ -499,6 +540,11 @@ export class SyncEngine {
 		// But real user edits can happen too — queue them for post-pull push.
 		if (this.pulling) {
 			this.pendingPostPullPushes.add(file.path);
+			return;
+		}
+		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
+		if (this.recentlyPushed.has(file.path)) {
+			rlog().info("sync", `Modify echo skip (recently pushed): ${file.path}`);
 			return;
 		}
 
@@ -874,6 +920,25 @@ export class SyncEngine {
 				this.syncState.set(normalizePath(file.path), { hash });
 			} else {
 				const content = await this.app.vault.cachedRead(file);
+
+				// CRDT path: route markdown saves through CrdtManager when wired.
+				// diffIntoYText produces minimal ops; the Y.Doc update listener
+				// forwards the diff to the server via CrdtChannel. No full-document
+				// POST, no version field — the CRDT update IS the transmission.
+				if (this.crdt) {
+					const consumed = await routeModify(
+						{ isMarkdown: true, path: file.path, readContent: async () => content },
+						this.crdt,
+						this.api,
+					);
+					if (consumed) {
+						success = true;
+						devLog().log("push", `crdt ok: ${file.path}`);
+						rlog().info("push", `CRDT push ok: ${file.path}`);
+						return true;
+					}
+				}
+
 				// Echo suppression — skip pushing if content matches what the
 				// sync engine last wrote (pull/WebSocket). Prevents the pull→push loop
 				// where vault.modify() triggers handleModify() for every pulled file.

@@ -31,6 +31,7 @@ export class NoteChannel {
 	private ref = 0;
 	private readonly joinRef = "1";
 	private readonly userJoinRef = "2";
+	private readonly crdtJoinRef = "3";
 	private heartbeatTimer: number | null = null;
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
@@ -49,6 +50,8 @@ export class NoteChannel {
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
 	onPlanState: ((plan: unknown) => void) | null = null;
+	/** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
+	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 
 	constructor(baseUrl: string, apiKey: string, userId: string, vaultId: string | null = null) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
@@ -92,6 +95,18 @@ export class NoteChannel {
 
 	private get userTopic(): string {
 		return `user:${this.userId}`;
+	}
+
+	private get crdtTopic(): string | null {
+		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+	}
+
+	/** Send a CRDT update frame to the server on the crdt topic.
+	 *  No-op when vaultId is null (crdt topic not joined). */
+	sendCrdt(docId: string, b64: string): void {
+		const t = this.crdtTopic;
+		if (!t) return;
+		this.send([null, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
 	}
 
 	async connect(): Promise<void> {
@@ -219,6 +234,13 @@ export class NoteChannel {
 		// backend that doesn't serve this topic simply replies with an error
 		// (handled below) without affecting the sync channel.
 		this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
+		// Best-effort: join the CRDT topic for real-time CRDT frame exchange.
+		// Only joined when vaultId is known; a backend that doesn't serve this
+		// topic replies with an error (handled gracefully below).
+		const crdtT = this.crdtTopic;
+		if (crdtT) {
+			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", {}]);
+		}
 	}
 
 	private startHeartbeat(): void {
@@ -283,6 +305,15 @@ export class NoteChannel {
 		if (event === "vault_deleted") {
 			rlog().info("channel", "Received vault_deleted event");
 			this.onVaultDeleted?.();
+			return;
+		}
+
+		if (event === "crdt_msg" && payload) {
+			const docId = payload.doc_id as string | undefined;
+			const b64 = payload.b64 as string | undefined;
+			if (docId && b64) {
+				this.onCrdtMessage?.(docId, b64);
+			}
 			return;
 		}
 

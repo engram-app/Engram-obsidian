@@ -37,6 +37,8 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
+import { CrdtChannel } from "./crdt/channel";
+import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
@@ -133,6 +135,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 	private baseStore: BaseStore | null = null;
 	private explicitFolders: ExplicitFolders | null = null;
+	private crdtManager: CrdtManager | null = null;
+	private crdtChannel: CrdtChannel | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -561,6 +565,7 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.baseStore?.save();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
+		void this.crdtManager?.destroy();
 		if (this.syncInterval) {
 			window.clearInterval(this.syncInterval);
 			this.syncInterval = null;
@@ -910,6 +915,28 @@ export default class EngramSyncPlugin extends Plugin {
 				if (this.authProvider) {
 					this.noteStream.setAuthProvider(this.authProvider);
 				}
+
+				// Wire CRDT transport through this channel.
+				// dbPrefix === vaultId so doc_id = "{vaultId}/{path}" matches the
+				// backend's path_hmac resolution. Must be set before connect() so
+				// the crdt topic join fires at openSocket time.
+				const dbPrefix = this.settings.vaultId ?? "default";
+				this.crdtManager = new CrdtManager({
+					dbPrefix,
+					onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
+					onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+				});
+				this.crdtChannel = new CrdtChannel({
+					manager: this.crdtManager,
+					send: (docId, frame) => channel.sendCrdt(docId, frame),
+				});
+				channel.onCrdtMessage = (docId, b64) => {
+					const prefix = `${dbPrefix}/`;
+					const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+					void this.crdtChannel?.handleFrame(path, b64);
+				};
+				this.syncEngine.setCrdtManager(this.crdtManager);
+
 				void channel.connect();
 			})
 			.catch((e) => {
