@@ -4413,6 +4413,20 @@ async function routeModify(file, crdt) {
   let content = await file.readContent();
   return await crdt.applyLocalEdit(file.path, content), !0;
 }
+async function reconcileColdStart(file, crdt, onCorruption) {
+  let current;
+  try {
+    current = await crdt.getText(file.path);
+  } catch (e) {
+    onCorruption();
+    return;
+  }
+  if (current !== file.diskContent)
+    try {
+      await crdt.applyLocalEdit(file.path, file.diskContent);
+    } catch (e) {
+    }
+}
 function isHttpStatus(e, status) {
   return typeof e == "object" && e !== null && e.status === status;
 }
@@ -13150,7 +13164,7 @@ function diffIntoYText(text2, incoming) {
 }
 
 // src/crdt/manager.ts
-var REMOTE_ORIGIN = "remote", CrdtManager = class {
+var REMOTE_ORIGIN = "remote", _CrdtManager = class _CrdtManager {
   constructor(opts) {
     /** Keyed by docId (= `dbPrefix/path`). */
     this.docs = /* @__PURE__ */ new Map();
@@ -13221,9 +13235,33 @@ var REMOTE_ORIGIN = "remote", CrdtManager = class {
     for (let [id2, e] of this.docs)
       e.doc.destroy(), await e.persistence.destroy(), this.docs.delete(id2);
   }
-  // ---------------------------------------------------------------------------
-  // Private helpers
-  // ---------------------------------------------------------------------------
+  /**
+   * Flatten the doc to a single-client-ID snapshot ONLY when both axes of the
+   * two-dimensional bloat threshold are crossed (spec §11 + backend AND gate):
+   *
+   *   - Encoded state > 500 KB  **AND**
+   *   - Distinct client-IDs > 1000
+   *
+   * A large single-author doc or a many-client but tiny doc is left alone.
+   * Flatten-on-bloat is a local-durability / IndexedDB-size guard, NOT the
+   * primary convergence mechanism. The plugin pushes the flattened state with a
+   * local origin so the server adopts the new lineage rather than re-expanding.
+   *
+   * **Correctness caveat:** flatten breaks CRDT lineage. A device that flattens
+   * and one that did not will re-merge as two distinct histories on the next
+   * handshake. The high threshold keeps flatten rare; the backend is the
+   * convergence authority (it also flattens per spec §4.2) and adopts the
+   * plugin's reset lineage when it receives the local-origin update.
+   *
+   * Returns true if the doc was flattened, false if the threshold was not met.
+   */
+  async flattenIfBloated(path) {
+    let e = await this.entry(path), encoded = encodeStateAsUpdate(e.doc), clientIds = decodeStateVector(encodeStateVector(e.doc)).size;
+    if (encoded.length < _CrdtManager.MAX_CONTENT_BYTES || clientIds < _CrdtManager.MAX_CLIENT_IDS)
+      return !1;
+    let plaintext = e.text.toString(), id2 = this.docId(path);
+    return e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2), (await this.entry(path)).text.insert(0, plaintext), !0;
+  }
   /**
    * Return a cached Entry, or open a new Y.Doc + IndexeddbPersistence and
    * await `whenSynced` so all stored updates are replayed before the caller
@@ -13241,7 +13279,13 @@ var REMOTE_ORIGIN = "remote", CrdtManager = class {
     if (cached)
       return await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(id2, doc2), text2 = doc2.getText("content");
-    doc2.on("update", (update, origin) => {
+    persistence.on(
+      "error",
+      (err) => {
+        var _a, _b;
+        return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, path, err);
+      }
+    ), doc2.on("update", (update, origin) => {
       origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
     }), doc2.on("update", (_u, origin) => {
       origin === REMOTE_ORIGIN && this.opts.onFlushToDisk(path, text2.toJSON());
@@ -13259,6 +13303,16 @@ var REMOTE_ORIGIN = "remote", CrdtManager = class {
     return text2.length > 0;
   }
 };
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+/**
+ * Two-dimensional bloat threshold (spec §11 + backend AND gate).
+ * Both axes must be crossed; a large single-author doc or a many-client
+ * but tiny doc is left alone.
+ */
+_CrdtManager.MAX_CONTENT_BYTES = 5e5, _CrdtManager.MAX_CLIENT_IDS = 1e3;
+var CrdtManager = _CrdtManager;
 
 // src/crdt/channel.ts
 var MESSAGE_SYNC = 0;
@@ -13322,6 +13376,36 @@ var CrdtChannel = class {
     if (readVarUint(decoder) !== MESSAGE_SYNC) return;
     let replyEncoder = createEncoder();
     writeVarUint(replyEncoder, MESSAGE_SYNC), readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
+  }
+};
+
+// src/crdt/enrollment.ts
+var CrdtEnrollment = class {
+  constructor(opts) {
+    /** Paths that have already received a `startSync` call this session. */
+    this.enrolled = /* @__PURE__ */ new Set();
+    this.startSync = opts.startSync, this.resetSync = opts.resetSync;
+  }
+  /**
+   * Enroll `path` if it hasn't been enrolled this session. Calling multiple
+   * times for the same path is idempotent — `startSync` fires exactly once.
+   */
+  enroll(path) {
+    this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path));
+  }
+  /**
+   * Clear the enrollment record for `path` and call `resetSync` on the channel
+   * so the once-per-doc guard is also lifted. Call on channel reconnect so the
+   * state-vector handshake re-fires with fresh server state.
+   */
+  reset(path) {
+    this.enrolled.delete(path), this.resetSync(path);
+  }
+  /** Clear all enrollments (use when the channel is torn down). */
+  resetAll() {
+    for (let path of this.enrolled)
+      this.resetSync(path);
+    this.enrolled.clear();
   }
 };
 
@@ -13490,6 +13574,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
     this.explicitFolders = null;
     this.crdtManager = null;
     this.crdtChannel = null;
+    this.crdtEnrollment = null;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -13529,6 +13614,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
     saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
+      })
+    ), this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        var _a2;
+        let file = this.app.workspace.getActiveFile();
+        file instanceof import_obsidian21.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
@@ -13672,7 +13763,30 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         } catch (e) {
           console.error("Engram Sync: startup setup failed", e), rlog().error("lifecycle", `Startup setup failed: ${errMsg(e)}`);
         }
-      if (this.syncEngine.setReady(), !!registered)
+      if (this.syncEngine.setReady(), this.crdtManager) {
+        let markdownFiles = this.app.vault.getMarkdownFiles();
+        for (let file of markdownFiles) {
+          let crdt = this.crdtManager;
+          this.app.vault.cachedRead(file).then(
+            (diskContent) => reconcileColdStart(
+              { path: file.path, diskContent },
+              crdt,
+              () => {
+                rlog().warn(
+                  "crdt",
+                  `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                );
+              }
+            )
+          ).catch((e) => {
+            rlog().warn(
+              "crdt",
+              `reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`
+            );
+          });
+        }
+      }
+      if (registered)
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
@@ -13836,12 +13950,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected && this.syncEngine.pull().catch((e) => {
+        var _a3;
+        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected && ((_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
           console.error("Engram Sync: catch-up pull failed", e), rlog().error(
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
-        });
+        }));
       }, channel.onVaultDeleted = () => {
         var _a3;
         new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
@@ -13856,10 +13971,25 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
           var _a3;
           return (_a3 = this.crdtChannel) == null ? void 0 : _a3.sendUpdateRaw(docId, update);
         },
-        onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
+        onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+        onPersistError: (path, err) => {
+          rlog().warn(
+            "crdt",
+            `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
+          );
+        }
       }), this.crdtChannel = new CrdtChannel({
         manager: this.crdtManager,
         send: (docId, frame) => channel.sendCrdt(docId, frame)
+      }), this.crdtEnrollment = new CrdtEnrollment({
+        startSync: (path) => {
+          var _a3, _b2;
+          return (_b2 = (_a3 = this.crdtChannel) == null ? void 0 : _a3.startSync(path)) != null ? _b2 : Promise.resolve();
+        },
+        resetSync: (path) => {
+          var _a3;
+          return (_a3 = this.crdtChannel) == null ? void 0 : _a3.resetSync(path);
+        }
       }), channel.onCrdtMessage = (docId, b64) => {
         var _a3;
         let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;

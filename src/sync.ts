@@ -63,7 +63,14 @@ export async function routeModify(
  *  (external editor, another sync app, OS). For a synced note this is NOT a
  *  3-way merge: diff the disk content into the Y.Doc as a local edit. The CRDT
  *  converges it with any remote history once the handshake runs. The conflict
- *  modal is only a last resort if the doc itself cannot be opened/decoded. */
+ *  modal is only a last resort if the doc itself cannot be opened/decoded.
+ *
+ *  The try/catch is split into two distinct error categories:
+ *  - `getText` (decode) failure → `onCorruption` — the Y.Doc state is unreadable
+ *    and the user must intervene via the conflict modal.
+ *  - `applyLocalEdit` (write) failure → swallowed — a transient storage write error
+ *    must not masquerade as CRDT corruption and trigger the conflict modal. The CRDT
+ *    handshake will converge the state once connectivity is restored. */
 export async function reconcileColdStart(
 	file: { path: string; diskContent: string },
 	crdt: {
@@ -72,12 +79,19 @@ export async function reconcileColdStart(
 	},
 	onCorruption: () => void,
 ): Promise<void> {
+	let current: string;
 	try {
-		const current = await crdt.getText(file.path);
-		if (current === file.diskContent) return; // already in sync
-		await crdt.applyLocalEdit(file.path, file.diskContent);
+		current = await crdt.getText(file.path);
 	} catch {
 		onCorruption(); // surface the existing ConflictModal only on decode failure
+		return;
+	}
+	if (current === file.diskContent) return; // already in sync
+	try {
+		await crdt.applyLocalEdit(file.path, file.diskContent);
+	} catch {
+		// Storage write failure: do not masquerade as corruption. The CRDT
+		// handshake will converge the state once connectivity is restored.
 	}
 }
 

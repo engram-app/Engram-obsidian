@@ -255,6 +255,40 @@ Compile-time gated via `DEV_MODE` constant (set in `esbuild.config.mjs`).
 - Categories: `lifecycle`, `push`, `pull`, `error`, `sse` (legacy name, covers WebSocket), `queue`, `pacer`
 - CDP queryable: `globalThis.__engramLog.dump(50)`, `.filter("push")`, `.stats()`
 
+### CRDT Sync Layer (`src/crdt/`)
+
+v1 CRDT sync persists one `Y.Doc` per note to IndexedDB via `y-indexeddb`. The three modules are:
+
+- `manager.ts` — `CrdtManager`: opens/rehydrates Y.Docs, routes local edits and remote updates, owns persistence.
+- `channel.ts` — `CrdtChannel`: y-protocols framing (STEP1/STEP2/UPDATE), once-per-doc startSync guard.
+- `enrollment.ts` — `CrdtEnrollment`: calls `startSync(path)` exactly once per note per channel session so the state-vector handshake fires on first open (down-sync gap fix). Wired from `active-leaf-change` in `main.ts`.
+
+#### iOS / Mobile IndexedDB assumption
+
+**v1 assumes a normal vault stays well under the WKWebView per-origin IndexedDB quota** (historically ~50 MB, subject to OS eviction under storage pressure). If eviction occurs:
+- `CrdtManager.onPersistError` is called (a warning is logged via `rlog()`).
+- Sync continues in-memory + over the WebSocket; only **local offline durability** degrades.
+- The conflict modal is NOT shown — persistence errors are not corruption.
+
+Real-device testing on iOS and Android is required before GA. This is an open validation item.
+
+#### Flatten-on-bloat threshold
+
+`CrdtManager.flattenIfBloated(path)` compacts a doc to a single-client-ID snapshot. It fires **only** when **both** axes of the two-dimensional threshold are crossed (spec §11 + backend AND gate — not OR):
+
+- Encoded state > **500 KB** (`MAX_CONTENT_BYTES`)
+- Distinct client-IDs > **1000** (`MAX_CLIENT_IDS`)
+
+A large single-author doc (many bytes, one client-ID) or a multi-client but tiny doc are left alone. v1 wires the check on doc open (`flattenIfBloated` is called conservatively); the trigger cadence may be tightened in a later release.
+
+**Correctness caveat:** flatten breaks CRDT lineage. A device that flattens and one that did not will re-merge as two distinct histories on the next handshake. The high threshold keeps flatten rare. The plugin pushes the flattened state with a local origin so the server adopts the new lineage (spec §4.2) rather than re-expanding the bloated history.
+
+#### Cold-start reconcile (`reconcileColdStart`)
+
+Called at plugin startup (after `setReady()`) for every markdown file in the vault. Diffs on-disk content into the Y.Doc for notes that changed while the app was closed (external editor, OS write, another sync app). The CRDT converges the change with any remote history once the handshake runs.
+
+The try/catch is split so `onCorruption` fires **only** on Y.Doc decode failure — a transient storage write error in `applyLocalEdit` is swallowed (not treated as corruption).
+
 ### Build & Test Commands
 
 ```bash

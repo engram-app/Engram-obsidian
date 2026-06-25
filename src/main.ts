@@ -4,7 +4,7 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, TFolder, requestUrl } from "obsidian";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFile, TFolder, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -23,7 +23,7 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { SyncEngine } from "./sync";
+import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import { SyncProgressModal } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
@@ -38,6 +38,7 @@ import {
 
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
+import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { ExplicitFolders } from "./explicit-folders";
@@ -137,6 +138,7 @@ export default class EngramSyncPlugin extends Plugin {
 	private explicitFolders: ExplicitFolders | null = null;
 	private crdtManager: CrdtManager | null = null;
 	private crdtChannel: CrdtChannel | null = null;
+	private crdtEnrollment: CrdtEnrollment | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -279,6 +281,22 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				this.syncEngine.handleModify(file);
+			}),
+		);
+
+		// Task 7B: enroll each opened markdown note into the CRDT handshake so the
+		// state-vector exchange fires and the note pulls remote history (down-sync).
+		// `active-leaf-change` fires whenever the user switches tabs/panes — we
+		// filter to the active file and enroll once per path per channel session.
+		// The once-per-doc guard inside CrdtEnrollment and CrdtChannel ensures the
+		// STEP1 handshake fires exactly once even if the same note is opened
+		// repeatedly, and resets on channel reconnect for a fresh handshake.
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				const file = this.app.workspace.getActiveFile();
+				if (file instanceof TFile && file.extension === "md") {
+					this.crdtEnrollment?.enroll(file.path);
+				}
 			}),
 		);
 		this.registerEvent(
@@ -524,6 +542,38 @@ export default class EngramSyncPlugin extends Plugin {
 			// (`syncBlocked`) independently controls whether handlers push;
 			// readiness must not depend on a user-driven modal choice.
 			this.syncEngine.setReady();
+
+			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
+			// doc for any markdown file that changed while the app was closed
+			// (external editor, another sync app, OS). Runs after readiness is
+			// set so the resulting applyLocalEdit fires normally through the CRDT
+			// route. Only runs when a CrdtManager is available (auth configured).
+			if (this.crdtManager) {
+				const markdownFiles = this.app.vault.getMarkdownFiles();
+				for (const file of markdownFiles) {
+					const crdt = this.crdtManager;
+					this.app.vault
+						.cachedRead(file)
+						.then((diskContent) =>
+							reconcileColdStart(
+								{ path: file.path, diskContent },
+								crdt,
+								() => {
+									rlog().warn(
+										"crdt",
+										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+									);
+								},
+							),
+						)
+						.catch((e) => {
+							rlog().warn(
+								"crdt",
+								`reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`,
+							);
+						});
+				}
+			}
 
 			if (!registered) return;
 
@@ -885,6 +935,9 @@ export default class EngramSyncPlugin extends Plugin {
 					this.updateStatusBar(this.syncEngine.getStatus());
 					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {
+						// Reset all CRDT enrollments so a fresh startSync STEP1
+						// handshake fires for each open note after reconnect.
+						this.crdtEnrollment?.resetAll();
 						this.syncEngine.pull().catch((e) => {
 							// biome-ignore lint/suspicious/noConsole: error boundary
 							console.error("Engram Sync: catch-up pull failed", e);
@@ -928,10 +981,24 @@ export default class EngramSyncPlugin extends Plugin {
 					dbPrefix,
 					onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
 					onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+					onPersistError: (path, err) => {
+						rlog().warn(
+							"crdt",
+							`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
+						);
+					},
 				});
 				this.crdtChannel = new CrdtChannel({
 					manager: this.crdtManager,
 					send: (docId, frame) => channel.sendCrdt(docId, frame),
+				});
+				// Enrollment tracker: calls startSync(path) exactly once per note
+				// per channel session so the state-vector handshake fires and the
+				// note pulls remote CRDT state (the down-sync gap). Reset on
+				// reconnect so a fresh handshake fires with updated server state.
+				this.crdtEnrollment = new CrdtEnrollment({
+					startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
+					resetSync: (path) => this.crdtChannel?.resetSync(path),
 				});
 				channel.onCrdtMessage = (docId, b64) => {
 					const prefix = `${dbPrefix}/`;

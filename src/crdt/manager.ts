@@ -27,6 +27,19 @@ export interface CrdtManagerOptions {
 	 * came from the server, so it must NOT be re-sent).
 	 */
 	onFlushToDisk: (path: string, content: string) => Promise<void>;
+	/**
+	 * Called when IndexedDB persistence fails (e.g. iOS quota exceeded).
+	 * Sync continues in-memory + over the WS; only local durability is
+	 * degraded. If omitted, errors are silently swallowed (not thrown into the
+	 * sync loop).
+	 *
+	 * **iOS note:** WKWebView IndexedDB is subject to a per-origin quota
+	 * (historically ~50 MB, eviction under storage pressure). Normal vaults
+	 * stay well under this; large vaults may hit eviction, in which case sync
+	 * continues over the WS but offline durability degrades. Real-device
+	 * testing (iOS + Android) is required before GA.
+	 */
+	onPersistError?: (path: string, err: unknown) => void;
 }
 
 interface Entry {
@@ -130,9 +143,76 @@ export class CrdtManager {
 		}
 	}
 
+	/**
+	 * Flatten the doc to a single-client-ID snapshot ONLY when both axes of the
+	 * two-dimensional bloat threshold are crossed (spec §11 + backend AND gate):
+	 *
+	 *   - Encoded state > 500 KB  **AND**
+	 *   - Distinct client-IDs > 1000
+	 *
+	 * A large single-author doc or a many-client but tiny doc is left alone.
+	 * Flatten-on-bloat is a local-durability / IndexedDB-size guard, NOT the
+	 * primary convergence mechanism. The plugin pushes the flattened state with a
+	 * local origin so the server adopts the new lineage rather than re-expanding.
+	 *
+	 * **Correctness caveat:** flatten breaks CRDT lineage. A device that flattens
+	 * and one that did not will re-merge as two distinct histories on the next
+	 * handshake. The high threshold keeps flatten rare; the backend is the
+	 * convergence authority (it also flattens per spec §4.2) and adopts the
+	 * plugin's reset lineage when it receives the local-origin update.
+	 *
+	 * Returns true if the doc was flattened, false if the threshold was not met.
+	 */
+	async flattenIfBloated(path: string): Promise<boolean> {
+		const e = await this.entry(path);
+		const encoded = Y.encodeStateAsUpdate(e.doc);
+		const clientIds = Y.decodeStateVector(Y.encodeStateVector(e.doc)).size;
+
+		// AND gate: leave the doc alone unless it is BOTH big AND multi-client.
+		if (
+			encoded.length < CrdtManager.MAX_CONTENT_BYTES ||
+			clientIds < CrdtManager.MAX_CLIENT_IDS
+		) {
+			return false;
+		}
+
+		const plaintext = e.text.toString();
+
+		// Tear down the bloated entry entirely (clears both IDB and the in-memory
+		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
+		// applying the fresh update on top of the existing doc merges the two
+		// histories and re-inflates the content.
+		const id = this.docId(path);
+		e.doc.destroy();
+		await e.persistence.clearData();
+		await e.persistence.destroy();
+		this.docs.delete(id);
+
+		// Re-open a clean entry for this path. `entry()` mints a new Y.Doc +
+		// IndexeddbPersistence and awaits whenSynced (IDB is now empty).
+		const fresh = await this.entry(path);
+
+		// Seed the flattened plaintext with LOCAL origin so the update fires
+		// onUpdate → CrdtChannel.sendUpdateRaw. CRITICAL: must NOT use REMOTE_ORIGIN
+		// — the flattened state is a brand-new lineage the server has never seen and
+		// must be sent. If we applied it as remote the observer would suppress it, the
+		// server would keep its old pre-flatten state, and the next handshake would
+		// re-merge the bloat right back (spec §4.2).
+		fresh.text.insert(0, plaintext); // local origin → propagated to the server
+		return true;
+	}
+
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	/**
+	 * Two-dimensional bloat threshold (spec §11 + backend AND gate).
+	 * Both axes must be crossed; a large single-author doc or a many-client
+	 * but tiny doc is left alone.
+	 */
+	private static readonly MAX_CONTENT_BYTES = 500_000;
+	private static readonly MAX_CLIENT_IDS = 1000;
 
 	/**
 	 * Return a cached Entry, or open a new Y.Doc + IndexeddbPersistence and
@@ -157,6 +237,12 @@ export class CrdtManager {
 		const doc = new Y.Doc();
 		const persistence = new IndexeddbPersistence(id, doc);
 		const text = doc.getText("content");
+
+		// Surface IndexedDB quota / storage errors via onPersistError instead of
+		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
+		// historically ~50 MB; eviction under storage pressure degrades local
+		// durability but sync continues in-memory + over the WS.
+		persistence.on("error" as never, (err: unknown) => this.opts.onPersistError?.(path, err));
 
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {
