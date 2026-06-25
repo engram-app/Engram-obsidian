@@ -54,6 +54,14 @@ export interface EngramSyncSettings {
 /** Which search backend the panel uses. */
 export type SearchMode = "semantic" | "keyword" | "hybrid";
 
+/** Metadata for a CRDT-managed note doc. */
+export interface CrdtDocMeta {
+	/** Vault-scoped doc id used for the IndexedDB store name and the channel topic key. */
+	docId: string;
+	/** Vault path (key the SyncEngine uses). */
+	path: string;
+}
+
 /** A normalized, note-level search result shared across all modes. */
 export interface UnifiedSearchResult {
 	source_path: string;
