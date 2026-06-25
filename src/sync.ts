@@ -1930,6 +1930,13 @@ export class SyncEngine {
 						},
 						attachment.content_base64,
 					);
+				} else if (this.crdt && event.path.endsWith(".md")) {
+					// C1: CRDT owns markdown content for this session — the crdt: topic
+					// delivers updates via CrdtChannel/flushFromCrdt. The legacy
+					// note_changed/upsert path must not double-write the body or run
+					// threeWayMerge/ConflictModal, which would create a feedback loop
+					// (disk write re-enters handleModify → applyLocalEdit).
+					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
@@ -2205,6 +2212,17 @@ export class SyncEngine {
 		const content = change.content;
 		if (content === undefined) {
 			throw new Error(`applyChange: missing content for ${change.path}`);
+		}
+
+		// C1: CRDT-managed markdown — the crdt: topic owns the body. Skip the
+		// legacy disk-write, threeWayMerge, and ConflictModal for markdown notes
+		// when CRDT is active. This prevents the dual-write hazard where a
+		// note_changed broadcast and the crdt: update both try to write the same
+		// file. Deletes (handled above) and attachments (routed via
+		// applyAttachmentChange) are unaffected.
+		if (this.crdt && normalized.endsWith(".md")) {
+			rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
+			return false;
 		}
 
 		// Create or update the file

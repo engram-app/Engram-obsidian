@@ -5604,7 +5604,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (event.content !== void 0)
+        } else if (this.crdt && event.path.endsWith(".md"))
+          rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+        else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
             title: (_d = event.title) != null ? _d : "",
@@ -5777,6 +5779,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
+    if (this.crdt && normalized.endsWith(".md"))
+      return rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`), !1;
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
@@ -13918,8 +13922,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
     this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
-    var _a;
-    (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.channelEpoch++;
+    var _a, _b, _c;
+    (_a = this.crdtManager) == null || _a.destroy(), this.crdtManager = null, this.crdtChannel = null, (_b = this.crdtEnrollment) == null || _b.resetAll(), this.crdtEnrollment = null, (_c = this.noteStream) == null || _c.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -13934,7 +13938,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       "channel",
       `connectChannel(attempt=${attempt}) \u2014 apiKeyLen=${(_b = (_a = this.settings.apiKey) == null ? void 0 : _a.length) != null ? _b : 0} refreshTokenLen=${(_d = (_c = this.settings.refreshToken) == null ? void 0 : _c.length) != null ? _d : 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${(_f = (_e = this.authProvider) == null ? void 0 : _e.constructor.name) != null ? _f : "none"} vaultId=${(_g = this.settings.vaultId) != null ? _g : "null"}`
     ), this.api.getMe().then((user) => {
-      var _a2;
       if (epoch !== this.channelEpoch) {
         rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
         return;
@@ -13945,61 +13948,67 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         user.id,
         this.settings.vaultId
       );
-      channel.onEvent = (event) => {
+      if (channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        var _a3;
-        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected && ((_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
+        var _a2;
+        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected && ((_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
           console.error("Engram Sync: catch-up pull failed", e), rlog().error(
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
         }));
       }, channel.onVaultDeleted = () => {
-        var _a3;
-        new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
+        var _a2;
+        new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider);
-      let dbPrefix = (_a2 = this.settings.vaultId) != null ? _a2 : "default";
-      this.crdtManager = new CrdtManager({
-        dbPrefix,
-        onUpdate: (docId, update) => {
-          var _a3;
-          return (_a3 = this.crdtChannel) == null ? void 0 : _a3.sendUpdateRaw(docId, update);
-        },
-        onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
-        onPersistError: (path, err) => {
-          rlog().warn(
-            "crdt",
-            `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
-          );
-        }
-      }), this.crdtChannel = new CrdtChannel({
-        manager: this.crdtManager,
-        send: (docId, frame) => channel.sendCrdt(docId, frame)
-      }), this.crdtEnrollment = new CrdtEnrollment({
-        startSync: (path) => {
-          var _a3, _b2;
-          return (_b2 = (_a3 = this.crdtChannel) == null ? void 0 : _a3.startSync(path)) != null ? _b2 : Promise.resolve();
-        },
-        resetSync: (path) => {
-          var _a3;
-          return (_a3 = this.crdtChannel) == null ? void 0 : _a3.resetSync(path);
-        },
-        // After the handshake fires, compact any bloated docs. This is a
-        // no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
-        // so it is safe to run on every note open.
-        onAfterEnroll: async (path) => {
-          var _a3;
-          await ((_a3 = this.crdtManager) == null ? void 0 : _a3.flattenIfBloated(path));
-        }
-      }), channel.onCrdtMessage = (docId, b64) => {
-        var _a3;
-        let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-        (_a3 = this.crdtChannel) == null || _a3.handleFrame(path, b64);
-      }, this.syncEngine.setCrdtManager(this.crdtManager), channel.connect();
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.vaultId) {
+        let dbPrefix = this.settings.vaultId;
+        this.crdtManager = new CrdtManager({
+          dbPrefix,
+          onUpdate: (docId, update) => {
+            var _a2;
+            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
+          },
+          onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          onPersistError: (path, err) => {
+            rlog().warn(
+              "crdt",
+              `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
+            );
+          }
+        }), this.crdtChannel = new CrdtChannel({
+          manager: this.crdtManager,
+          send: (docId, frame) => channel.sendCrdt(docId, frame)
+        }), this.crdtEnrollment = new CrdtEnrollment({
+          startSync: (path) => {
+            var _a2, _b2;
+            return (_b2 = (_a2 = this.crdtChannel) == null ? void 0 : _a2.startSync(path)) != null ? _b2 : Promise.resolve();
+          },
+          resetSync: (path) => {
+            var _a2;
+            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.resetSync(path);
+          },
+          // After the handshake fires, compact any bloated docs. This is a
+          // no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
+          // so it is safe to run on every note open.
+          onAfterEnroll: async (path) => {
+            var _a2;
+            await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(path));
+          }
+        }), channel.onCrdtMessage = (docId, b64) => {
+          var _a2;
+          let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+          (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
+        }, this.syncEngine.setCrdtManager(this.crdtManager);
+      } else
+        rlog().info(
+          "crdt",
+          "vaultId is null \u2014 CRDT disabled; legacy pushNote path active"
+        );
+      channel.connect();
     }).catch((e) => {
       if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(
         "channel",

@@ -880,6 +880,16 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	setupNoteStream(): void {
+		// Tear down any existing CRDT instances before disconnecting the channel.
+		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
+		// IndexeddbPersistence listeners — each overwrites the references but the
+		// old objects stay alive with their observers still firing.
+		void this.crdtManager?.destroy();
+		this.crdtManager = null;
+		this.crdtChannel = null;
+		this.crdtEnrollment?.resetAll();
+		this.crdtEnrollment = null;
+
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
 		this.noteStream?.disconnect();
@@ -969,45 +979,56 @@ export default class EngramSyncPlugin extends Plugin {
 				}
 
 				// Wire CRDT transport through this channel.
-				// dbPrefix === vaultId so doc_id = "{vaultId}/{path}" matches the
-				// backend's path_hmac resolution. Must be set before connect() so
-				// the crdt topic join fires at openSocket time.
-				const dbPrefix = this.settings.vaultId ?? "default";
-				this.crdtManager = new CrdtManager({
-					dbPrefix,
-					onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
-					onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
-					onPersistError: (path, err) => {
-						rlog().warn(
-							"crdt",
-							`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
-						);
-					},
-				});
-				this.crdtChannel = new CrdtChannel({
-					manager: this.crdtManager,
-					send: (docId, frame) => channel.sendCrdt(docId, frame),
-				});
-				// Enrollment tracker: calls startSync(path) exactly once per note
-				// per channel session so the state-vector handshake fires and the
-				// note pulls remote CRDT state (the down-sync gap). Reset on
-				// reconnect so a fresh handshake fires with updated server state.
-				this.crdtEnrollment = new CrdtEnrollment({
-					startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
-					resetSync: (path) => this.crdtChannel?.resetSync(path),
-					// After the handshake fires, compact any bloated docs. This is a
-					// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
-					// so it is safe to run on every note open.
-					onAfterEnroll: async (path) => {
-						await this.crdtManager?.flattenIfBloated(path);
-					},
-				});
-				channel.onCrdtMessage = (docId, b64) => {
-					const prefix = `${dbPrefix}/`;
-					const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-					void this.crdtChannel?.handleFrame(path, b64);
-				};
-				this.syncEngine.setCrdtManager(this.crdtManager);
+				// Only wire when vaultId is known: the crdt: topic is keyed by
+				// vaultId and the doc_id = "{vaultId}/{path}" must match the
+				// backend's path_hmac resolution. Without a vaultId the crdt:
+				// topic join is silently a no-op, CRDT updates go nowhere, AND
+				// the legacy pushNote path is suppressed — so this.crdt must stay
+				// null to let the legacy path continue working.
+				if (this.settings.vaultId) {
+					const dbPrefix = this.settings.vaultId;
+					this.crdtManager = new CrdtManager({
+						dbPrefix,
+						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
+						onFlushToDisk: (path, content) =>
+							this.syncEngine.flushFromCrdt(path, content),
+						onPersistError: (path, err) => {
+							rlog().warn(
+								"crdt",
+								`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
+							);
+						},
+					});
+					this.crdtChannel = new CrdtChannel({
+						manager: this.crdtManager,
+						send: (docId, frame) => channel.sendCrdt(docId, frame),
+					});
+					// Enrollment tracker: calls startSync(path) exactly once per note
+					// per channel session so the state-vector handshake fires and the
+					// note pulls remote CRDT state (the down-sync gap). Reset on
+					// reconnect so a fresh handshake fires with updated server state.
+					this.crdtEnrollment = new CrdtEnrollment({
+						startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
+						resetSync: (path) => this.crdtChannel?.resetSync(path),
+						// After the handshake fires, compact any bloated docs. This is a
+						// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
+						// so it is safe to run on every note open.
+						onAfterEnroll: async (path) => {
+							await this.crdtManager?.flattenIfBloated(path);
+						},
+					});
+					channel.onCrdtMessage = (docId, b64) => {
+						const prefix = `${dbPrefix}/`;
+						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+						void this.crdtChannel?.handleFrame(path, b64);
+					};
+					this.syncEngine.setCrdtManager(this.crdtManager);
+				} else {
+					rlog().info(
+						"crdt",
+						"vaultId is null — CRDT disabled; legacy pushNote path active",
+					);
+				}
 
 				void channel.connect();
 			})
