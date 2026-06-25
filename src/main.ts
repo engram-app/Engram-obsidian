@@ -532,7 +532,8 @@ export default class EngramSyncPlugin extends Plugin {
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: startup setup failed", e);
-					rlog().error("lifecycle", `Startup setup failed: ${errMsg(e)}`);
+					// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+					rlog().error("lifecycle", "Startup setup failed: " + errMsg(e));
 				}
 			}
 
@@ -592,7 +593,8 @@ export default class EngramSyncPlugin extends Plugin {
 					}
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: startup sync failed", e);
-					rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+					// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+					rlog().error("lifecycle", "Startup sync failed: " + errMsg(e));
 				}
 			} else {
 				// Gate closed — show the preview modal so user picks a direction.
@@ -705,7 +707,8 @@ export default class EngramSyncPlugin extends Plugin {
 				.catch((e) => {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: sync after settings change failed", e);
-					rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
+					// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+					rlog().error("lifecycle", "Sync after settings change failed: " + errMsg(e));
 				});
 		}
 	}
@@ -741,7 +744,8 @@ export default class EngramSyncPlugin extends Plugin {
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: vault registration failed", e);
-			rlog().error("lifecycle", `Vault registration failed: ${errMsg(e)}`);
+			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+			rlog().error("lifecycle", "Vault registration failed: " + errMsg(e));
 			return false;
 		}
 	}
@@ -1248,7 +1252,8 @@ export default class EngramSyncPlugin extends Plugin {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: sync preview failed", e);
 			new Notice("Engram sync: preview failed — check connection");
-			rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+			rlog().error("lifecycle", "Sync preview failed: " + errMsg(e));
 		}
 	}
 

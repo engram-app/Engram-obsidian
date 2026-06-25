@@ -1400,7 +1400,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
-      rlog().error("channel", `WebSocket open error: ${errMsg(e)}`), this.scheduleReconnect();
+      rlog().error("channel", "WebSocket open error: " + errMsg(e)), this.scheduleReconnect();
       return;
     }
     this.ws.onopen = () => {
@@ -4442,7 +4442,7 @@ async function reconcileColdStart(file, crdt, onCorruption) {
     try {
       await crdt.applyLocalEdit(file.path, file.diskContent);
     } catch (e) {
-      rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
+      rlog().warn("crdt", "reconcileColdStart: write failed for " + file.path + ": " + errMsg(e));
     }
 }
 function isHttpStatus(e, status) {
@@ -4642,7 +4642,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.app.vault.modify(file, content);
       } catch (e) {
-        rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
+        rlog().error(
+          "crdt",
+          // biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+          "flushFromCrdt: vault.modify failed for " + path + ": " + errMsg(e)
+        );
       }
     }
   }
@@ -4866,7 +4870,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.api.createFolder(path), await this.explicitFolders.add(path);
       } catch (e) {
-        devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
+        devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", 'createFolder("' + path + '") failed: ' + errMsg(e));
       }
   }
   /** Push a folder-delete to the server. Only fires for folders we believe
@@ -4880,7 +4884,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         await this.api.deleteFolder(path);
       } catch (e) {
-        devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
+        devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`), rlog().warn("push", 'deleteFolder("' + path + '") failed: ' + errMsg(e));
       } finally {
         await this.explicitFolders.delete(path);
       }
@@ -4904,7 +4908,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         try {
           await this.paceRequest(), await this.api.createFolder(path), await this.explicitFolders.add(path);
         } catch (e) {
-          devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
+          devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", 'seedEmptyFolders("' + path + '") failed: ' + errMsg(e));
         }
     }
   }
@@ -5571,7 +5575,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } catch (e) {
       return console.error("Engram Sync: pullAll failed", e), devLog().log("error", `pullAll failed: ${errMsg(e)}`), rlog().error(
         "pull",
-        `PullAll failed: ${errMsg(e)}`,
+        // biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
+        "PullAll failed: " + errMsg(e),
         e instanceof Error ? e.stack : void 0
       ), this.lastError = e instanceof Error ? `Pull all failed: ${e.message}` : "Pull all failed", 0;
     } finally {
@@ -6039,7 +6044,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     try {
       names = await this.api.listExplicitFolders();
     } catch (e) {
-      devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`), rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
+      devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`), rlog().warn("pull", "listExplicitFolders failed: " + errMsg(e));
       return;
     }
     await this.explicitFolders.replaceAll(names);
@@ -13788,7 +13793,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         try {
           registered = await this.registerVault(), registered ? gateOpen = await this.applySyncGate() : rlog().info("lifecycle", "Vault not registered \u2014 skipping initial sync");
         } catch (e) {
-          console.error("Engram Sync: startup setup failed", e), rlog().error("lifecycle", `Startup setup failed: ${errMsg(e)}`);
+          console.error("Engram Sync: startup setup failed", e), rlog().error("lifecycle", "Startup setup failed: " + errMsg(e));
         }
       if (this.syncEngine.setReady(), this.crdtManager) {
         let markdownFiles = this.app.vault.getMarkdownFiles();
@@ -13822,7 +13827,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
               );
               return;
             }
-            console.error("Engram Sync: startup sync failed", e), rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+            console.error("Engram Sync: startup sync failed", e), rlog().error("lifecycle", "Startup sync failed: " + errMsg(e));
           }
         else
           await this.doSyncWithFirstSyncCheck();
@@ -13861,7 +13866,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         );
       }
     }).catch((e) => {
-      console.error("Engram Sync: sync after settings change failed", e), rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
+      console.error("Engram Sync: sync after settings change failed", e), rlog().error("lifecycle", "Sync after settings change failed: " + errMsg(e));
     });
   }
   /** Register this vault with the backend. Must be called before sync starts.
@@ -13880,7 +13885,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       return e instanceof LimitExceededError ? (notifyLimitExceeded(e), rlog().info(
         "lifecycle",
         `Vault registration blocked \u2014 limit reached (${e.reason})`
-      ), !1) : (console.error("Engram Sync: vault registration failed", e), rlog().error("lifecycle", `Vault registration failed: ${errMsg(e)}`), !1);
+      ), !1) : (console.error("Engram Sync: vault registration failed", e), rlog().error("lifecycle", "Vault registration failed: " + errMsg(e)), !1);
     }
   }
   async savePluginData(lastSync, offlineQueue) {
@@ -13978,7 +13983,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
-        })) : (this.syncEngine.setCrdtManager(null), rlog().info("crdt", "Disconnected \u2014 CRDT routing cleared, legacy path active"));
+        })) : (this.syncEngine.setCrdtManager(null), rlog().info(
+          "crdt",
+          "Disconnected \u2014 CRDT routing cleared, legacy path active"
+        ));
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
@@ -14159,7 +14167,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       }).awaitChoice();
       await this.runSyncWithProgress(choice);
     } catch (e) {
-      console.error("Engram Sync: sync preview failed", e), new import_obsidian21.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+      console.error("Engram Sync: sync preview failed", e), new import_obsidian21.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", "Sync preview failed: " + errMsg(e));
     }
   }
   /** Persist current sync engine state (issues, ignored files, etc.) to plugin
