@@ -963,7 +963,11 @@ export class SyncEngine {
 				// POST, no version field — the CRDT update IS the transmission.
 				if (this.crdt) {
 					const consumed = await routeModify(
-						{ isMarkdown: true, path: file.path, readContent: async () => content },
+						{
+							isMarkdown: file.extension === "md",
+							path: file.path,
+							readContent: async () => content,
+						},
 						this.crdt,
 					);
 					if (consumed) {

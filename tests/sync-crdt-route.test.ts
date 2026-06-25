@@ -174,6 +174,33 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
+
+	test(".canvas modify uses legacy pushNote, NOT applyLocalEdit, even when CRDT is wired", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		const file = new TFile("Canvases/board.canvas");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+
+	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		const file = new TFile("Canvases/overview.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledWith("Canvases/overview.md", "body");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
 });
 
 describe("SyncEngine.flushFromCrdt echo suppression", () => {

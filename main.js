@@ -4999,7 +4999,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } else {
         let content = await this.app.vault.cachedRead(file);
         if (this.crdt && await routeModify(
-          { isMarkdown: !0, path: file.path, readContent: async () => content },
+          {
+            isMarkdown: file.extension === "md",
+            path: file.path,
+            readContent: async () => content
+          },
           this.crdt
         ))
           return success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
