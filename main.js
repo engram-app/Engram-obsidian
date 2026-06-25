@@ -4425,6 +4425,7 @@ async function reconcileColdStart(file, crdt, onCorruption) {
     try {
       await crdt.applyLocalEdit(file.path, file.diskContent);
     } catch (e) {
+      rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
     }
 }
 function isHttpStatus(e, status) {
@@ -13259,7 +13260,7 @@ var REMOTE_ORIGIN = "remote", _CrdtManager = class _CrdtManager {
     let e = await this.entry(path), encoded = encodeStateAsUpdate(e.doc), clientIds = decodeStateVector(encodeStateVector(e.doc)).size;
     if (encoded.length < _CrdtManager.MAX_CONTENT_BYTES || clientIds < _CrdtManager.MAX_CLIENT_IDS)
       return !1;
-    let plaintext = e.text.toString(), id2 = this.docId(path);
+    let plaintext = e.text.toJSON(), id2 = this.docId(path);
     return e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2), (await this.entry(path)).text.insert(0, plaintext), !0;
   }
   /**
@@ -13279,13 +13280,10 @@ var REMOTE_ORIGIN = "remote", _CrdtManager = class _CrdtManager {
     if (cached)
       return await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(id2, doc2), text2 = doc2.getText("content");
-    persistence.on(
-      "error",
-      (err) => {
-        var _a, _b;
-        return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, path, err);
-      }
-    ), doc2.on("update", (update, origin) => {
+    persistence.on("error", (err) => {
+      var _a, _b;
+      return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, path, err);
+    }), doc2.on("update", (update, origin) => {
       origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
     }), doc2.on("update", (_u, origin) => {
       origin === REMOTE_ORIGIN && this.opts.onFlushToDisk(path, text2.toJSON());
@@ -13384,14 +13382,18 @@ var CrdtEnrollment = class {
   constructor(opts) {
     /** Paths that have already received a `startSync` call this session. */
     this.enrolled = /* @__PURE__ */ new Set();
-    this.startSync = opts.startSync, this.resetSync = opts.resetSync;
+    this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll;
   }
   /**
    * Enroll `path` if it hasn't been enrolled this session. Calling multiple
-   * times for the same path is idempotent — `startSync` fires exactly once.
+   * times for the same path is idempotent — `startSync` fires exactly once,
+   * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
    */
   enroll(path) {
-    this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path));
+    this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path).then(() => {
+      var _a;
+      return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, path);
+    }));
   }
   /**
    * Clear the enrollment record for `path` and call `resetSync` on the channel
@@ -13768,16 +13770,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         for (let file of markdownFiles) {
           let crdt = this.crdtManager;
           this.app.vault.cachedRead(file).then(
-            (diskContent) => reconcileColdStart(
-              { path: file.path, diskContent },
-              crdt,
-              () => {
-                rlog().warn(
-                  "crdt",
-                  `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
-                );
-              }
-            )
+            (diskContent) => reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
+              rlog().warn(
+                "crdt",
+                `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+              );
+            })
           ).catch((e) => {
             rlog().warn(
               "crdt",
@@ -13989,6 +13987,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         resetSync: (path) => {
           var _a3;
           return (_a3 = this.crdtChannel) == null ? void 0 : _a3.resetSync(path);
+        },
+        // After the handshake fires, compact any bloated docs. This is a
+        // no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
+        // so it is safe to run on every note open.
+        onAfterEnroll: async (path) => {
+          var _a3;
+          await ((_a3 = this.crdtManager) == null ? void 0 : _a3.flattenIfBloated(path));
         }
       }), channel.onCrdtMessage = (docId, b64) => {
         var _a3;

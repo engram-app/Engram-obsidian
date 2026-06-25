@@ -89,9 +89,10 @@ export async function reconcileColdStart(
 	if (current === file.diskContent) return; // already in sync
 	try {
 		await crdt.applyLocalEdit(file.path, file.diskContent);
-	} catch {
+	} catch (e) {
 		// Storage write failure: do not masquerade as corruption. The CRDT
 		// handshake will converge the state once connectivity is restored.
+		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
 	}
 }
 

@@ -555,16 +555,12 @@ export default class EngramSyncPlugin extends Plugin {
 					this.app.vault
 						.cachedRead(file)
 						.then((diskContent) =>
-							reconcileColdStart(
-								{ path: file.path, diskContent },
-								crdt,
-								() => {
-									rlog().warn(
-										"crdt",
-										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
-									);
-								},
-							),
+							reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
+								rlog().warn(
+									"crdt",
+									`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+								);
+							}),
 						)
 						.catch((e) => {
 							rlog().warn(
@@ -999,6 +995,12 @@ export default class EngramSyncPlugin extends Plugin {
 				this.crdtEnrollment = new CrdtEnrollment({
 					startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
 					resetSync: (path) => this.crdtChannel?.resetSync(path),
+					// After the handshake fires, compact any bloated docs. This is a
+					// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
+					// so it is safe to run on every note open.
+					onAfterEnroll: async (path) => {
+						await this.crdtManager?.flattenIfBloated(path);
+					},
 				});
 				channel.onCrdtMessage = (docId, b64) => {
 					const prefix = `${dbPrefix}/`;

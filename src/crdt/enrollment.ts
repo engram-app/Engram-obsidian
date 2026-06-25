@@ -20,23 +20,34 @@ export class CrdtEnrollment {
 
 	private readonly startSync: (path: string) => Promise<void>;
 	private readonly resetSync: (path: string) => void;
+	/**
+	 * Optional post-enroll hook: called once after `startSync` resolves for a
+	 * path. Wired to `CrdtManager.flattenIfBloated` so a bloated doc is
+	 * compacted on open. It is a no-op below the AND threshold (≥500 KB AND
+	 * ≥1000 client-IDs), so the cost on normal docs is negligible.
+	 */
+	private readonly onAfterEnroll?: (path: string) => Promise<void>;
 
 	constructor(opts: {
 		startSync: (path: string) => Promise<void>;
 		resetSync: (path: string) => void;
+		/** Called once after startSync resolves — wire to flattenIfBloated. */
+		onAfterEnroll?: (path: string) => Promise<void>;
 	}) {
 		this.startSync = opts.startSync;
 		this.resetSync = opts.resetSync;
+		this.onAfterEnroll = opts.onAfterEnroll;
 	}
 
 	/**
 	 * Enroll `path` if it hasn't been enrolled this session. Calling multiple
-	 * times for the same path is idempotent — `startSync` fires exactly once.
+	 * times for the same path is idempotent — `startSync` fires exactly once,
+	 * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
 	 */
 	enroll(path: string): void {
 		if (this.enrolled.has(path)) return;
 		this.enrolled.add(path);
-		void this.startSync(path);
+		void this.startSync(path).then(() => this.onAfterEnroll?.(path));
 	}
 
 	/**

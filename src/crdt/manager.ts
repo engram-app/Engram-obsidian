@@ -176,7 +176,7 @@ export class CrdtManager {
 			return false;
 		}
 
-		const plaintext = e.text.toString();
+		const plaintext = e.text.toJSON();
 
 		// Tear down the bloated entry entirely (clears both IDB and the in-memory
 		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
@@ -242,7 +242,7 @@ export class CrdtManager {
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
 		// historically ~50 MB; eviction under storage pressure degrades local
 		// durability but sync continues in-memory + over the WS.
-		persistence.on("error" as never, (err: unknown) => this.opts.onPersistError?.(path, err));
+		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(path, err));
 
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {

@@ -1,8 +1,9 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as Y from "yjs";
 import { CrdtChannel } from "../../src/crdt/channel";
 import { CrdtManager } from "../../src/crdt/manager";
+import { rlog } from "../../src/remote-log";
 import { reconcileColdStart } from "../../src/sync";
 
 function makeManager(captured: Uint8Array[] = []) {
@@ -238,5 +239,31 @@ describe("reconcileColdStart catch-split", () => {
 			},
 		);
 		expect(corrupted).toBe(true);
+	});
+
+	test("write failure logs a warn via rlog (observable, not silent)", async () => {
+		// rlog() returns the noop logger before initRemoteLog — spy on its warn
+		// method to capture calls made by reconcileColdStart's write-fail catch.
+		const logger = rlog();
+		const warnSpy = spyOn(logger, "warn");
+
+		const getText = async () => "old content";
+		const applyLocalEdit = async () => {
+			throw new Error("storage write failed");
+		};
+
+		await reconcileColdStart(
+			{ path: "fail.md", diskContent: "new content" },
+			{ getText, applyLocalEdit },
+			() => {},
+		);
+
+		// The warn must have been called with category "crdt" and mention the path.
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		const [cat, msg] = warnSpy.mock.calls[0] as [string, string];
+		expect(cat).toBe("crdt");
+		expect(msg).toContain("fail.md");
+
+		warnSpy.mockRestore();
 	});
 });

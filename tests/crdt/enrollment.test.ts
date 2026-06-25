@@ -89,3 +89,72 @@ describe("CrdtEnrollment.resetAll", () => {
 		expect(startSyncCalls).toHaveLength(4);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Task 8C: onAfterEnroll — flattenIfBloated is called after startSync resolves
+// ---------------------------------------------------------------------------
+
+describe("CrdtEnrollment.onAfterEnroll", () => {
+	test("enrollment triggers onAfterEnroll (flatten check) once per path after startSync", async () => {
+		const afterEnrollCalls: string[] = [];
+
+		const enrollment = new CrdtEnrollment({
+			startSync: async (path) => {
+				// Simulate an async handshake
+				await new Promise((r) => setTimeout(r, 0));
+				return;
+			},
+			resetSync: () => {},
+			onAfterEnroll: async (path) => {
+				afterEnrollCalls.push(path);
+			},
+		});
+
+		enrollment.enroll("note.md");
+		// Second call is idempotent — onAfterEnroll must NOT run twice.
+		enrollment.enroll("note.md");
+
+		// Let startSync + onAfterEnroll settle.
+		await new Promise((r) => setTimeout(r, 10));
+
+		// onAfterEnroll fires exactly once after startSync.
+		expect(afterEnrollCalls).toEqual(["note.md"]);
+	});
+
+	test("onAfterEnroll fires per path (not shared across paths)", async () => {
+		const afterEnrollCalls: string[] = [];
+
+		const enrollment = new CrdtEnrollment({
+			startSync: async () => {},
+			resetSync: () => {},
+			onAfterEnroll: async (path) => {
+				afterEnrollCalls.push(path);
+			},
+		});
+
+		enrollment.enroll("a.md");
+		enrollment.enroll("b.md");
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(afterEnrollCalls).toHaveLength(2);
+		expect(afterEnrollCalls).toContain("a.md");
+		expect(afterEnrollCalls).toContain("b.md");
+	});
+
+	test("enrollment without onAfterEnroll option works (backward compat)", async () => {
+		const startSyncCalls: string[] = [];
+
+		const enrollment = new CrdtEnrollment({
+			startSync: async (path) => {
+				startSyncCalls.push(path);
+			},
+			resetSync: () => {},
+			// onAfterEnroll omitted — must not throw
+		});
+
+		enrollment.enroll("note.md");
+		await new Promise((r) => setTimeout(r, 10));
+
+		expect(startSyncCalls).toEqual(["note.md"]);
+	});
+});
