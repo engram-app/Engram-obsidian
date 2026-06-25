@@ -8,6 +8,8 @@ Obsidian plugin for bidirectional sync with Engram, distributed as "Engram Vault
 project: engram-obsidian
 goal: income
 value: financial-freedom
+worklog_vault: Engram
+worklog_path: 90 Work Log/todd
 
 ## Issue Tracker
 
