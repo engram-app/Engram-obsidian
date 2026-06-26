@@ -13551,7 +13551,7 @@ var EmailCaptureState = class {
       contentEl.createEl("h2", { text: "You're on the list \u2014 thanks for your patience. \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
       return;
     }
-    contentEl.createEl("h2", { text: "Engram vault sync is still in development" }), contentEl.createEl("p", {
+    contentEl.createEl("h2", { text: "Engram is still in active development" }), contentEl.createEl("p", {
       text: "This plugin and its backend aren't ready for everyday use yet \u2014 sync may be incomplete and things will change. We're building fast. Leave your email and we'll tell you the moment it's ready. No spam, just launch news."
     });
     let input = contentEl.createEl("input", {

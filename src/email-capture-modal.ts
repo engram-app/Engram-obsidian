@@ -82,7 +82,7 @@ export class EmailCaptureModal extends Modal {
 			return;
 		}
 
-		contentEl.createEl("h2", { text: "Engram vault sync is still in development" });
+		contentEl.createEl("h2", { text: "Engram is still in active development" });
 		contentEl.createEl("p", {
 			text:
 				"This plugin and its backend aren't ready for everyday use yet — sync may be " +
