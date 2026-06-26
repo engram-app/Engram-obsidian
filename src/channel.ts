@@ -24,11 +24,13 @@ const AUTH_FAIL_WINDOW_MS = 5_000;
  *  the sync join reply; this constant is the crash-safe floor. */
 export const RECONNECT_JITTER_DEFAULT_MS = 5_000;
 /** Hard ceiling on any server-advertised jitter window — guards against a
- *  malformed/hostile join reply making the client hang. */
+ *  malformed/hostile join reply making the client hang. Non-positive windows
+ *  (including zero) are rejected, forcing the client to fall back to the default
+ *  floor rather than silently disabling jitter. */
 export const RECONNECT_JITTER_MAX_MS = 60_000;
 
 export function clampReconnectJitter(raw: unknown): number | null {
-	if (typeof raw !== "number" || !Number.isFinite(raw) || raw < 0) return null;
+	if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
 	return Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
 

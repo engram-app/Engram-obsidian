@@ -42,6 +42,8 @@ describe("clampReconnectJitter", () => {
     expect(clampReconnectJitter(NaN)).toBeNull();
     expect(clampReconnectJitter("5000")).toBeNull();
   });
+  test("rejects zero (coalesces to default, not no-jitter)", () =>
+    expect(clampReconnectJitter(0)).toBeNull());
 });
 
 describe("fullJitterDelay", () => {
