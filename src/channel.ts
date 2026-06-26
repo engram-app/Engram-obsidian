@@ -16,6 +16,28 @@ const NO_AUTH_RECONNECT_MS = 30_000;
  *  narrower than a real session.
  */
 const AUTH_FAIL_WINDOW_MS = 5_000;
+
+/** Full-jitter reconnect window (ms) for the FIRST reconnect after a live
+ *  connection drops (e.g. graceful server drain). Spreads a drained fleet's
+ *  reconnects over random(0, window) so the freshly-booted node isn't
+ *  stampeded. Overridden per-connection by the server-advertised value from
+ *  the sync join reply; this constant is the crash-safe floor. */
+export const RECONNECT_JITTER_DEFAULT_MS = 5_000;
+/** Hard ceiling on any server-advertised jitter window — guards against a
+ *  malformed/hostile join reply making the client hang. Non-positive windows
+ *  (including zero) are rejected, forcing the client to fall back to the default
+ *  floor rather than silently disabling jitter. */
+export const RECONNECT_JITTER_MAX_MS = 60_000;
+
+export function clampReconnectJitter(raw: unknown): number | null {
+	if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
+	return Math.min(raw, RECONNECT_JITTER_MAX_MS);
+}
+
+export function fullJitterDelay(windowMs: number, rng: () => number = Math.random): number {
+	return rng() * windowMs;
+}
+
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -36,6 +58,7 @@ export class NoteChannel {
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
 	private readonly maxReconnectMs = 60_000;
+	private reconnectJitterMaxMs: number | null = null;
 	private connected = false;
 	/** True only when the `crdt:` topic join has been acknowledged by the server.
 	 *  Reset on every disconnect so it re-gates on the next connection. A backend
@@ -108,6 +131,9 @@ export class NoteChannel {
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		// A backend/vault switch invalidates the window the old server advertised;
+		// the next sync join reply re-populates it (or the default floor applies).
+		this.reconnectJitterMaxMs = null;
 	}
 
 	private get topic(): string {
@@ -151,6 +177,9 @@ export class NoteChannel {
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
 		this.setConnected(false);
+		// Drop the cached server window so a later connect to a different backend
+		// that advertises none falls back to the default floor, not a stale value.
+		this.reconnectJitterMaxMs = null;
 		rlog().info("channel", "Channel disconnected");
 	}
 
@@ -163,6 +192,12 @@ export class NoteChannel {
 	 *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
 	isCrdtConnected(): boolean {
 		return this.crdtJoined;
+	}
+
+	/** Server-advertised full-jitter reconnect window (ms), or null until the
+	 *  sync join reply has been received. Exposed for tests. */
+	getReconnectJitterMaxMs(): number | null {
+		return this.reconnectJitterMaxMs;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -257,8 +292,25 @@ export class NoteChannel {
 				this.authProvider.invalidateAccessToken();
 			}
 
-			rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`);
-			this.scheduleReconnect();
+			if (opened) {
+				// A live connection dropped (graceful drain or a mid-session network
+				// drop). Full-jitter the FIRST reconnect across random(0, window) so a
+				// drained fleet doesn't stampede the freshly-booted node. If THIS
+				// attempt also fails (close before open), the next onclose has
+				// opened=false and falls through to exponential backoff below.
+				// NOTE: local name is `jitterWindow`, not `window` — `window` is the
+				// global used for setTimeout just below.
+				const jitterWindow = this.reconnectJitterMaxMs ?? RECONNECT_JITTER_DEFAULT_MS;
+				const delay = fullJitterDelay(jitterWindow);
+				rlog().info(
+					"channel",
+					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`,
+				);
+				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+			} else {
+				rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`);
+				this.scheduleReconnect();
+			}
 		};
 	}
 
@@ -308,9 +360,16 @@ export class NoteChannel {
 			if (status === "ok") {
 				// The plugin's connected state is keyed ONLY on the sync topic.
 				// The user topic is best-effort and must never flip connected.
-				if (topic === this.topic && !this.connected) {
-					this.setConnected(true);
-					rlog().info("channel", `Joined ${this.topic}`);
+				if (topic === this.topic) {
+					const response = (
+						payload as { response?: { reconnect_jitter_max_ms?: unknown } }
+					).response;
+					const clamped = clampReconnectJitter(response?.reconnect_jitter_max_ms);
+					if (clamped !== null) this.reconnectJitterMaxMs = clamped;
+					if (!this.connected) {
+						this.setConnected(true);
+						rlog().info("channel", `Joined ${this.topic}`);
+					}
 				} else if (topic === this.userTopic) {
 					const response = (payload as { response?: { plan?: unknown } }).response;
 					const plan = response?.plan;

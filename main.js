@@ -1292,7 +1292,14 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
+function clampReconnectJitter(raw) {
+  return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
+}
+function fullJitterDelay(windowMs, rng = Math.random) {
+  return rng() * windowMs;
+}
+var NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1) {
     this.ws = null;
     this.ref = 0;
@@ -1303,6 +1310,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.reconnectTimer = null;
     this.reconnectMs = 1e3;
     this.maxReconnectMs = 6e4;
+    this.reconnectJitterMaxMs = null;
     this.connected = !1;
     /** True only when the `crdt:` topic join has been acknowledged by the server.
      *  Reset on every disconnect so it re-gates on the next connection. A backend
@@ -1337,7 +1345,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
   }
   updateConfig(baseUrl, apiKey, userId, vaultId = null) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId;
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.reconnectJitterMaxMs = null;
   }
   get topic() {
     return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
@@ -1358,7 +1366,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), rlog().info("channel", "Channel disconnected");
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
   }
   isConnected() {
     return this.connected;
@@ -1368,6 +1376,11 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
    *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
   isCrdtConnected() {
     return this.crdtJoined;
+  }
+  /** Server-advertised full-jitter reconnect window (ms), or null until the
+   *  sync join reply has been received. Exposed for tests. */
+  getReconnectJitterMaxMs() {
+    return this.reconnectJitterMaxMs;
   }
   // ---------------------------------------------------------------------------
   // Private
@@ -1410,13 +1423,22 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
     }, this.ws.onclose = () => {
-      var _a2;
+      var _a2, _b2;
       this.clearTimers(), this.ws = null, this.setConnected(!1);
       let sinceOpen = Date.now() - openedAt;
-      !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
+      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
         "channel",
         `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating`
-      ), this.authProvider.invalidateAccessToken()), rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
+      ), this.authProvider.invalidateAccessToken()), opened) {
+        let jitterWindow = (_b2 = this.reconnectJitterMaxMs) != null ? _b2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        rlog().info(
+          "channel",
+          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`
+        ), this.reconnectTimer = window.setTimeout(() => {
+          this.openSocket();
+        }, delay);
+      } else
+        rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
     };
   }
   joinChannel() {
@@ -1443,9 +1465,10 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     if (event === "phx_reply") {
       let status = payload.status;
       if (status === "ok")
-        if (topic === this.topic && !this.connected)
-          this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`);
-        else if (topic === this.userTopic) {
+        if (topic === this.topic) {
+          let response = payload.response, clamped = clampReconnectJitter(response == null ? void 0 : response.reconnect_jitter_max_ms);
+          clamped !== null && (this.reconnectJitterMaxMs = clamped), this.connected || (this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`));
+        } else if (topic === this.userTopic) {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
         } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
