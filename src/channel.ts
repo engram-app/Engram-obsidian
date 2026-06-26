@@ -107,6 +107,9 @@ export class NoteChannel {
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		// A backend/vault switch invalidates the window the old server advertised;
+		// the next sync join reply re-populates it (or the default floor applies).
+		this.reconnectJitterMaxMs = null;
 	}
 
 	private get topic(): string {
@@ -131,6 +134,9 @@ export class NoteChannel {
 			this.ws = null;
 		}
 		this.setConnected(false);
+		// Drop the cached server window so a later connect to a different backend
+		// that advertises none falls back to the default floor, not a stale value.
+		this.reconnectJitterMaxMs = null;
 		rlog().info("channel", "Channel disconnected");
 	}
 

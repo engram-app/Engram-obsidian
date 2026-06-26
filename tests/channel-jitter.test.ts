@@ -92,3 +92,36 @@ describe("NoteChannel jitter capture", () => {
 		channel.disconnect();
 	});
 });
+
+describe("NoteChannel jitter reset", () => {
+	async function connectWithWindow(ms: number): Promise<NoteChannel> {
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		await channel.connect();
+		lastWsInstance.onopen?.();
+		lastWsInstance.onmessage?.({
+			data: JSON.stringify([
+				"1",
+				"1",
+				"sync:42:7",
+				"phx_reply",
+				{ status: "ok", response: { reconnect_jitter_max_ms: ms } },
+			]),
+		});
+		return channel;
+	}
+
+	test("disconnect() clears the cached window", async () => {
+		const channel = await connectWithWindow(8000);
+		expect(channel.getReconnectJitterMaxMs()).toBe(8000);
+		channel.disconnect();
+		expect(channel.getReconnectJitterMaxMs()).toBeNull();
+	});
+
+	test("updateConfig() clears the cached window on backend switch", async () => {
+		const channel = await connectWithWindow(8000);
+		expect(channel.getReconnectJitterMaxMs()).toBe(8000);
+		channel.updateConfig("http://other:4000", "key2", "42", "9");
+		expect(channel.getReconnectJitterMaxMs()).toBeNull();
+		channel.disconnect();
+	});
+});
