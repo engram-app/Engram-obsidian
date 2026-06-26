@@ -55,6 +55,9 @@ export interface EngramSyncSettings {
 	planState?: PlanState | null;
 	/** Default mode for the search panel's toggle. */
 	searchDefaultMode: SearchMode;
+	/** True once the first-run waitlist popup has been shown (submitted OR
+	 *  dismissed). Set once, never re-shown. */
+	waitlistPromptSeen?: boolean;
 }
 
 /** Which search backend the panel uses. */
@@ -94,6 +97,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	clientId: "",
 	planState: null,
 	searchDefaultMode: "hybrid",
+	waitlistPromptSeen: false,
 };
 
 /** A note as returned by POST /notes */
