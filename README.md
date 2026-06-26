@@ -6,15 +6,13 @@
 
 **Sync your vault everywhere, and let any AI read and write it.** Your notes become memory your AI can search, cite, and build on.
 
-Sync everywhere · semantic + keyword + hybrid search · AI reads & writes via MCP · desktop + mobile · no telemetry
+Semantic + keyword + hybrid search · MCP-native · desktop & mobile · no telemetry
 
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/)
 
 </div>
-
-Works on desktop and mobile. Want everything on your own hardware instead? [Self-host it](https://engram.page/docs/self-host/).
 
 ## What you get
 
