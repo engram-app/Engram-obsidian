@@ -218,6 +218,12 @@ export class SyncEngine {
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
+	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
+	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
+	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
+	 *  recentlyPushed would make handleModify drop REAL user edits within the
+	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
+	private recentlyFlushed: Map<string, number> = new Map();
 	private pulling = false;
 	/** A pull() requested while one was already in flight. Set by the re-entry
 	 *  guard, drained in pull()'s finally to run exactly one follow-up pull.
@@ -304,13 +310,13 @@ export class SyncEngine {
 	}
 
 	/** Write a remote-merged CRDT result to disk.
-	 *  Calls markRecentlyPushed first so the resulting vault.modify event is
-	 *  suppressed by the recentlyPushed guard in handleModify.
-	 *  Safe to call from main.ts — does not expose the private markRecentlyPushed. */
+	 *  Marks the path recentlyFlushed first so the resulting vault.modify event is
+	 *  suppressed by the recentlyFlushed guard in handleModify.
+	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
 	async flushFromCrdt(path: string, content: string): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
 		if (!(file instanceof TFile)) return;
-		this.markRecentlyPushed(path);
+		this.markRecentlyFlushed(path);
 		try {
 			await this.app.vault.modify(file, content);
 		} catch (e) {
@@ -601,8 +607,12 @@ export class SyncEngine {
 			return;
 		}
 		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
-		if (this.recentlyPushed.has(file.path)) {
-			rlog().info("sync", `Modify echo skip (recently pushed): ${file.path}`);
+		// Must NOT key off recentlyPushed: that set is also populated after every
+		// legacy push, so checking it here would drop real user edits made within
+		// the post-push cooldown (e.g. a conflicting local edit), defeating
+		// conflict detection on the next pull.
+		if (this.recentlyFlushed.has(file.path)) {
+			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
 		}
 
@@ -1409,6 +1419,18 @@ export class SyncEngine {
 	/** Check if a path was recently pushed (for echo suppression). */
 	isRecentlyPushed(path: string): boolean {
 		return this.recentlyPushed.has(path);
+	}
+
+	/** Suppress the handleModify echo of a flushFromCrdt disk write for
+	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
+	 *  never swallows a genuine local edit. */
+	private markRecentlyFlushed(path: string): void {
+		const existing = this.recentlyFlushed.get(path);
+		if (existing) window.clearTimeout(existing);
+		const timer = window.setTimeout(() => {
+			this.recentlyFlushed.delete(path);
+		}, ECHO_COOLDOWN_MS);
+		this.recentlyFlushed.set(path, timer);
 	}
 
 	// --- Pull: Engram → local vault ---
@@ -3831,6 +3853,10 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.recentlyPushed.clear();
+		for (const timer of this.recentlyFlushed.values()) {
+			window.clearTimeout(timer);
+		}
+		this.recentlyFlushed.clear();
 		this.pendingPostPullPushes.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();

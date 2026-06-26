@@ -4517,6 +4517,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
+    /** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
+     *  Distinct from recentlyPushed (WS echo suppression after a push): only the
+     *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
+     *  recentlyPushed would make handleModify drop REAL user edits within the
+     *  post-push cooldown — silently losing edits and breaking conflict detection. */
+    this.recentlyFlushed = /* @__PURE__ */ new Map();
     this.pulling = !1;
     /** A pull() requested while one was already in flight. Set by the re-entry
      *  guard, drained in pull()'s finally to run exactly one follow-up pull.
@@ -4634,13 +4640,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdt = mgr;
   }
   /** Write a remote-merged CRDT result to disk.
-   *  Calls markRecentlyPushed first so the resulting vault.modify event is
-   *  suppressed by the recentlyPushed guard in handleModify.
-   *  Safe to call from main.ts — does not expose the private markRecentlyPushed. */
+   *  Marks the path recentlyFlushed first so the resulting vault.modify event is
+   *  suppressed by the recentlyFlushed guard in handleModify.
+   *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
   async flushFromCrdt(path, content) {
     let file = this.app.vault.getAbstractFileByPath((0, import_obsidian19.normalizePath)(path));
     if (file instanceof import_obsidian19.TFile) {
-      this.markRecentlyPushed(path);
+      this.markRecentlyFlushed(path);
       try {
         await this.app.vault.modify(file, content);
       } catch (e) {
@@ -4801,8 +4807,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pendingPostPullPushes.add(file.path);
       return;
     }
-    if (this.recentlyPushed.has(file.path)) {
-      rlog().info("sync", `Modify echo skip (recently pushed): ${file.path}`);
+    if (this.recentlyFlushed.has(file.path)) {
+      rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
     let existing = this.debounceTimers.get(file.path);
@@ -5300,6 +5306,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Check if a path was recently pushed (for echo suppression). */
   isRecentlyPushed(path) {
     return this.recentlyPushed.has(path);
+  }
+  /** Suppress the handleModify echo of a flushFromCrdt disk write for
+   *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
+   *  never swallows a genuine local edit. */
+  markRecentlyFlushed(path) {
+    let existing = this.recentlyFlushed.get(path);
+    existing && window.clearTimeout(existing);
+    let timer = window.setTimeout(() => {
+      this.recentlyFlushed.delete(path);
+    }, ECHO_COOLDOWN_MS);
+    this.recentlyFlushed.set(path, timer);
   }
   // --- Pull: Engram → local vault ---
   /** Pull remote changes and apply to vault. */
@@ -6710,7 +6727,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.debounceTimers.clear();
     for (let timer of this.recentlyPushed.values())
       window.clearTimeout(timer);
-    this.recentlyPushed.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.recentlyPushed.clear();
+    for (let timer of this.recentlyFlushed.values())
+      window.clearTimeout(timer);
+    this.recentlyFlushed.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 

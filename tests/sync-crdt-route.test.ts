@@ -259,12 +259,32 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		await engine.flushFromCrdt("note.md", "remote content");
 
 		// The vault.modify above fires handleModify (simulated here directly)
-		// The engine should suppress it via recentlyPushed
+		// The engine should suppress it via recentlyFlushed
 		engine.handleModify(mockFile);
 		await flush();
 
 		// applyLocalEdit should NOT be called because the echo is suppressed
 		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("a genuine local edit after a push is NOT dropped by the cooldown", async () => {
+		// Regression: the handleModify echo guard must key off recentlyFlushed
+		// (CRDT disk-write echoes), NOT recentlyPushed — which is also set after
+		// every legacy push. Folding them together silently dropped real user
+		// edits within the 5 s post-push cooldown, breaking conflict detection.
+		const engine = createEngine();
+		const file = new TFile("note.md");
+
+		// First edit → pushes → marks recentlyPushed in the push finally.
+		engine.handleModify(file);
+		await flush();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+
+		// A real, diverging edit to the same file within the cooldown MUST push.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("edited body");
+		engine.handleModify(file);
+		await flush();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
 	});
 });
 
