@@ -8,12 +8,6 @@
 
 Sync everywhere · semantic + keyword + hybrid search · AI reads & writes via MCP · desktop + mobile · no telemetry
 
-[![Latest Release](https://img.shields.io/github/v/release/engram-app/Engram-obsidian?label=release)](https://github.com/engram-app/Engram-obsidian/releases/latest)
-[![Obsidian Downloads](https://img.shields.io/badge/dynamic/json?logo=obsidian&color=8b6cb1&label=downloads&query=%24%5B%22engram-vault-sync%22%5D.downloads&url=https%3A%2F%2Fraw.githubusercontent.com%2Fobsidianmd%2Fobsidian-releases%2Fmaster%2Fcommunity-plugin-stats.json)](https://obsidian.md/plugins?id=engram-vault-sync)
-[![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Sponsor](https://img.shields.io/github/sponsors/engram-app?label=Sponsor&logo=GitHub&color=ea4aaa)](https://github.com/sponsors/engram-app)
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-Buy_a_coffee-FF5E5B?logo=ko-fi&logoColor=white)](https://ko-fi.com/engrams_sync)
-
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
 [Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/)
