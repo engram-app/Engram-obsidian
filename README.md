@@ -38,11 +38,9 @@ Nothing is ever silently overwritten. Offline edits sync when you reconnect. You
 
 ## Setup
 
-**1. Install + Enable.** Find **Engram Vault Sync** in *Community plugins → Browse* and install it.
+**1. Get an Engram account.** Hosted at **[engram.page](https://engram.page)** (free tier, nothing to install), or self-host the [source-available backend](https://github.com/engram-app/engram) so your notes never leave your hardware.
 
-**2. Get an Engram account.** Hosted at **[engram.page](https://engram.page)** (free tier, nothing to install), or self-host the [source-available backend](https://github.com/engram-app/engram) so your notes never leave your hardware.
-
-**3. Connect.** Open *Settings → Engram Vault Sync*. **Hosted:** click **Sign in** on the Cloud tab. **Self-hosted:** add your server URL and key on the Self-hosted tab. Either way the plugin walks you through the first sync; nothing is sent until you confirm.
+**2. Connect.** Open *Settings → Engram Vault Sync*. **Hosted:** click **Sign in** on the Cloud tab. **Self-hosted:** add your server URL and key on the Self-hosted tab. Either way the plugin walks you through the first sync; nothing is sent until you confirm.
 
 After that, syncing just happens as you work.
 
