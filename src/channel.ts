@@ -46,6 +46,9 @@ export class NoteChannel {
 	private apiKey: string;
 	private userId: string;
 	private vaultId: string | null;
+	/** Opt-in gate for the `crdt:` topic. When false the channel never joins the
+	 *  CRDT topic and behaves exactly like a non-CRDT build (legacy path only). */
+	private readonly enableCrdt: boolean;
 	private authProvider: AuthProvider | null = null;
 
 	onEvent: ((event: NoteStreamEvent) => void) | null = null;
@@ -64,11 +67,18 @@ export class NoteChannel {
 	 *  never fire this callback). */
 	onCrdtJoined: (() => void) | null = null;
 
-	constructor(baseUrl: string, apiKey: string, userId: string, vaultId: string | null = null) {
+	constructor(
+		baseUrl: string,
+		apiKey: string,
+		userId: string,
+		vaultId: string | null = null,
+		enableCrdt = false,
+	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		this.enableCrdt = enableCrdt;
 		rlog().info(
 			"channel",
 			`NoteChannel ctor — userId=${userId} vaultId=${vaultId ?? "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`,
@@ -109,6 +119,10 @@ export class NoteChannel {
 	}
 
 	private get crdtTopic(): string | null {
+		// Gated on the opt-in flag: when CRDT is disabled the topic is null, so the
+		// channel never joins `crdt:`, never sends frames, and never surfaces an
+		// onCrdtJoined — identical to a non-CRDT build.
+		if (!this.enableCrdt) return null;
 		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
 	}
 

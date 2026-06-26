@@ -18,6 +18,12 @@ export interface EngramSyncSettings {
 	 *  "auto" creates a conflict copy file (non-blocking).
 	 *  "modal" shows the interactive diff modal. */
 	conflictResolution: "auto" | "modal";
+	/** Opt-in to CRDT (Yjs) file sync. OFF by default: v1 CRDT is not yet a
+	 *  drop-in replacement for the legacy push/pull path (it changes offline-queue,
+	 *  versioning, and conflict-file semantics), so it ships dormant. When false the
+	 *  plugin never joins the `crdt:` topic and routes every save through the legacy
+	 *  path — behaving exactly like a non-CRDT build. */
+	enableCrdt: boolean;
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -83,6 +89,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	conflictViewMode: "unified",
 	remoteLoggingEnabled: false,
 	conflictResolution: "auto",
+	enableCrdt: false,
 	vaultId: null,
 	clientId: "",
 	planState: null,

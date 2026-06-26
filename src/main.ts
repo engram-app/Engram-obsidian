@@ -934,6 +934,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.apiKey,
 					user.id,
 					this.settings.vaultId,
+					this.settings.enableCrdt,
 				);
 
 				channel.onEvent = (event) => {
@@ -1009,7 +1010,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// server acknowledges the `crdt:` topic join. Against a non-CRDT
 				// backend the join errors out, onCrdtJoined never fires, and the
 				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
-				if (this.settings.vaultId) {
+				if (this.settings.enableCrdt && this.settings.vaultId) {
 					const dbPrefix = this.settings.vaultId;
 					this.crdtManager = new CrdtManager({
 						dbPrefix,
@@ -1060,7 +1061,9 @@ export default class EngramSyncPlugin extends Plugin {
 				} else {
 					rlog().info(
 						"crdt",
-						"vaultId is null — CRDT disabled; legacy pushNote path active",
+						this.settings.enableCrdt
+							? "vaultId is null — CRDT disabled; legacy pushNote path active"
+							: "CRDT opt-in disabled — legacy pushNote path active",
 					);
 				}
 

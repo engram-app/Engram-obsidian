@@ -1293,7 +1293,7 @@ function errMsg(e) {
 
 // src/channel.ts
 var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null) {
+  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1) {
     this.ws = null;
     this.ref = 0;
     this.joinRef = "1";
@@ -1325,7 +1325,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
      *  active against non-CRDT backends (which reply with a join error and
      *  never fire this callback). */
     this.onCrdtJoined = null;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, rlog().info(
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1346,7 +1346,7 @@ var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, NoteChannel = class {
     return `user:${this.userId}`;
   }
   get crdtTopic() {
-    return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+    return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
   /** Send a CRDT update frame to the server on the crdt topic.
    *  No-op when vaultId is null (crdt topic not joined). */
@@ -2800,6 +2800,7 @@ var DEFAULT_SETTINGS = {
   conflictViewMode: "unified",
   remoteLoggingEnabled: !1,
   conflictResolution: "auto",
+  enableCrdt: !1,
   vaultId: null,
   clientId: "",
   planState: null,
@@ -13978,7 +13979,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         this.settings.apiUrl,
         this.settings.apiKey,
         user.id,
-        this.settings.vaultId
+        this.settings.vaultId,
+        this.settings.enableCrdt
       );
       if (channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
@@ -13999,7 +14001,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         this.crdtManager = new CrdtManager({
           dbPrefix,
@@ -14046,7 +14048,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       } else
         rlog().info(
           "crdt",
-          "vaultId is null \u2014 CRDT disabled; legacy pushNote path active"
+          this.settings.enableCrdt ? "vaultId is null \u2014 CRDT disabled; legacy pushNote path active" : "CRDT opt-in disabled \u2014 legacy pushNote path active"
         );
       channel.connect();
     }).catch((e) => {
