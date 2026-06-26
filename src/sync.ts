@@ -1820,9 +1820,9 @@ export class SyncEngine {
 							return ok ? ("ok" as const) : ("skip" as const);
 						} catch (e) {
 							const msg = errMsg(e);
-							// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
 							rlog().error(
 								"pull",
+								// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
 								"Skipped attachment: " + change.path + " — " + msg,
 							);
 							this.logEntry("pull", change.path, "error", msg);

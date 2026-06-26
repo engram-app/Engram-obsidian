@@ -5554,6 +5554,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               let msg = errMsg(e);
               return rlog().error(
                 "pull",
+                // biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
                 "Skipped attachment: " + change.path + " \u2014 " + msg
               ), this.logEntry("pull", change.path, "error", msg), "error";
             }
