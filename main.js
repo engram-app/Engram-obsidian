@@ -737,7 +737,7 @@ var import_obsidian23 = require("obsidian");
 var import_obsidian = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -13525,7 +13525,7 @@ var EmailCaptureState = class {
       try {
         await send(this.email.trim()), this.view = "success";
       } catch (e) {
-        this.view = "error", this.errorText = "Couldn't reach the server \u2014 try again later.";
+        this.view = "error", this.errorText = "Couldn't reach the server. Try again later.";
       }
     }
   }
@@ -13548,11 +13548,24 @@ var EmailCaptureState = class {
   render() {
     let { contentEl } = this;
     if (contentEl.empty(), this.state.view === "success") {
-      contentEl.createEl("h2", { text: "You're on the list \u2014 thanks for your patience. \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
       return;
     }
-    contentEl.createEl("h2", { text: "Engram is still in active development" }), contentEl.createEl("p", {
-      text: "This plugin and its backend aren't ready for everyday use yet \u2014 sync may be incomplete and things will change. We're building fast. Leave your email and we'll tell you the moment it's ready. No spam, just launch news."
+    contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet" }), contentEl.createEl("p", {
+      text: "We're building Engram in the open, and early people like you make it better. Leave your email for beta access, an early-supporter discount, and a standing invite to give feedback and steer what comes next."
+    }), contentEl.createEl("p", {
+      cls: "engram-email-capture-contact",
+      text: "Questions or feedback? Email me directly at "
+    }).createEl("a", { text: "todd@ras.band", href: "mailto:todd@ras.band" });
+    let links = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+    links.createEl("a", {
+      text: "engram.page",
+      href: ENGRAM_MARKETING_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "GitHub",
+      href: ENGRAM_GITHUB_URL,
+      attr: { target: "_blank", rel: "noopener" }
     });
     let input = contentEl.createEl("input", {
       type: "email",

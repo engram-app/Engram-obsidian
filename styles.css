@@ -1933,6 +1933,18 @@ body.is-mobile .engram-support-buttons > a {
 	font-size: var(--font-ui-small);
 }
 
+.engram-email-capture-contact {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: 0.5rem;
+}
+
+.engram-email-capture-links {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: 0.25rem;
+}
+
 .engram-email-capture-footer {
 	display: flex;
 	gap: 0.5rem;
