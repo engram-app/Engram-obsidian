@@ -109,8 +109,7 @@ export async function reconcileColdStart(
 	} catch (e) {
 		// Storage write failure: do not masquerade as corruption. The CRDT
 		// handshake will converge the state once connectivity is restored.
-		// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-		rlog().warn("crdt", "reconcileColdStart: write failed for " + file.path + ": " + errMsg(e));
+		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
 	}
 }
 
@@ -320,11 +319,7 @@ export class SyncEngine {
 		try {
 			await this.app.vault.modify(file, content);
 		} catch (e) {
-			rlog().error(
-				"crdt",
-				// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-				"flushFromCrdt: vault.modify failed for " + path + ": " + errMsg(e),
-			);
+			rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
 		}
 	}
 
@@ -745,8 +740,7 @@ export class SyncEngine {
 			await this.explicitFolders.add(path);
 		} catch (e) {
 			devLog().log("push", `createFolder("${path}") failed: ${errMsg(e)}`);
-			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-			rlog().warn("push", 'createFolder("' + path + '") failed: ' + errMsg(e));
+			rlog().warn("push", `createFolder("${path}") failed: ${errMsg(e)}`);
 		}
 	}
 
@@ -766,8 +760,7 @@ export class SyncEngine {
 			await this.api.deleteFolder(path);
 		} catch (e) {
 			devLog().log("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
-			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-			rlog().warn("push", 'deleteFolder("' + path + '") failed: ' + errMsg(e));
+			rlog().warn("push", `deleteFolder("${path}") failed: ${errMsg(e)}`);
 		} finally {
 			await this.explicitFolders.delete(path);
 		}
@@ -799,8 +792,7 @@ export class SyncEngine {
 				await this.explicitFolders.add(path);
 			} catch (e) {
 				devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
-				// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-				rlog().warn("push", 'seedEmptyFolders("' + path + '") failed: ' + errMsg(e));
+				rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
 			}
 		}
 	}
@@ -1860,11 +1852,7 @@ export class SyncEngine {
 							return ok ? ("ok" as const) : ("skip" as const);
 						} catch (e) {
 							const msg = errMsg(e);
-							rlog().error(
-								"pull",
-								// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-								"Skipped attachment: " + change.path + " — " + msg,
-							);
+							rlog().error("pull", `Skipped attachment: ${change.path} — ${msg}`);
 							this.logEntry("pull", change.path, "error", msg);
 							return "error" as const;
 						}
@@ -1905,8 +1893,7 @@ export class SyncEngine {
 			devLog().log("error", `pullAll failed: ${errMsg(e)}`);
 			rlog().error(
 				"pull",
-				// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-				"PullAll failed: " + errMsg(e),
+				`PullAll failed: ${errMsg(e)}`,
 				e instanceof Error ? e.stack : undefined,
 			);
 			this.lastError =
@@ -2682,8 +2669,7 @@ export class SyncEngine {
 			names = await this.api.listExplicitFolders();
 		} catch (e) {
 			devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`);
-			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-			rlog().warn("pull", "listExplicitFolders failed: " + errMsg(e));
+			rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
 			return;
 		}
 

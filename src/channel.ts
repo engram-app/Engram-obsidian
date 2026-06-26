@@ -211,8 +211,7 @@ export class NoteChannel {
 		try {
 			this.ws = new WebSocket(url);
 		} catch (e) {
-			// biome-ignore lint/style/useTemplate: codeql js/tainted-format-string
-			rlog().error("channel", "WebSocket open error: " + errMsg(e));
+			rlog().error("channel", `WebSocket open error: ${errMsg(e)}`);
 			this.scheduleReconnect();
 			return;
 		}
