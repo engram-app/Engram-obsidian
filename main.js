@@ -1360,7 +1360,7 @@ var NoteChannel = class {
    *  No-op when vaultId is null (crdt topic not joined). */
   sendCrdt(docId, b64) {
     let t = this.crdtTopic;
-    t && this.send([null, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+    t && this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
