@@ -22,6 +22,7 @@ THIS_DIR=$(git rev-parse --show-toplevel)
 
 [ "$CANONICAL" = "$THIS_DIR" ] && exit 0
 
+linked=0
 link_if_missing() {
   local rel="$1"
   local src="$CANONICAL/$rel"
@@ -31,9 +32,34 @@ link_if_missing() {
   fi
   if cp -al "$src" "$dst" 2>/dev/null; then
     echo "post-checkout: hardlinked $rel from $CANONICAL"
+    linked=1
   else
     echo "post-checkout: skipped $rel (cp -al failed — likely cross-filesystem)" >&2
   fi
 }
 
 link_if_missing node_modules
+
+# Hardlinking only SEEDS node_modules from the canonical checkout. If that
+# checkout's tree is itself stale — a dependency added to package.json/bun.lock
+# without a re-install there — the gap is inherited and silently persists. The
+# symptom that prompted this: `bun run lint:obsidian` failing with "The 'jiti'
+# library is required for loading TypeScript configuration files", because jiti
+# (needed to load the .mts eslint config) was absent from the seeded tree while
+# CI — which always does a clean install — stayed green.
+#
+# Reconcile the seeded tree against the lockfile so any missing packages are
+# fetched. Hardlinked files already on disk are reused, so this pulls only the
+# delta, not the full ~500MB. Notes:
+#   --frozen-lockfile : install exactly what bun.lock pins; never mutate it.
+#   --ignore-scripts  : skip the `prepare` → `lefthook install` script, which
+#                       errors inside a worktree (different core.hooksPath) and
+#                       is unnecessary here (hooks already installed canonically).
+# Runs only when we just seeded (fresh worktree), so steady-state checkouts stay
+# instant. Non-fatal: a failure (e.g. offline) warns but never blocks checkout.
+if [ "$linked" = "1" ] && command -v bun >/dev/null 2>&1; then
+  echo "post-checkout: reconciling node_modules against bun.lock"
+  if ! (cd "$THIS_DIR" && bun install --frozen-lockfile --ignore-scripts >/dev/null 2>&1); then
+    echo "post-checkout: reconcile failed (non-fatal) — run 'bun install' in the worktree if lint/build complains" >&2
+  fi
+fi
