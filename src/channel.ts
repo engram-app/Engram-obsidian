@@ -53,16 +53,25 @@ export class NoteChannel {
 	private ref = 0;
 	private readonly joinRef = "1";
 	private readonly userJoinRef = "2";
+	private readonly crdtJoinRef = "3";
 	private heartbeatTimer: number | null = null;
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
 	private readonly maxReconnectMs = 60_000;
 	private reconnectJitterMaxMs: number | null = null;
 	private connected = false;
+	/** True only when the `crdt:` topic join has been acknowledged by the server.
+	 *  Reset on every disconnect so it re-gates on the next connection. A backend
+	 *  that does not serve the crdt: topic replies with an error (handled below),
+	 *  keeping this false — which allows the legacy pushNote path to remain active. */
+	private crdtJoined = false;
 	private baseUrl: string;
 	private apiKey: string;
 	private userId: string;
 	private vaultId: string | null;
+	/** Opt-in gate for the `crdt:` topic. When false the channel never joins the
+	 *  CRDT topic and behaves exactly like a non-CRDT build (legacy path only). */
+	private readonly enableCrdt: boolean;
 	private authProvider: AuthProvider | null = null;
 
 	onEvent: ((event: NoteStreamEvent) => void) | null = null;
@@ -72,12 +81,27 @@ export class NoteChannel {
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
 	onPlanState: ((plan: unknown) => void) | null = null;
+	/** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
+	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
+	/** Fired when the `crdt:` topic join is acknowledged by the server.
+	 *  Use this to activate CRDT routing in the SyncEngine — only wire
+	 *  `setCrdtManager` after this fires, so the legacy pushNote path stays
+	 *  active against non-CRDT backends (which reply with a join error and
+	 *  never fire this callback). */
+	onCrdtJoined: (() => void) | null = null;
 
-	constructor(baseUrl: string, apiKey: string, userId: string, vaultId: string | null = null) {
+	constructor(
+		baseUrl: string,
+		apiKey: string,
+		userId: string,
+		vaultId: string | null = null,
+		enableCrdt = false,
+	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		this.enableCrdt = enableCrdt;
 		rlog().info(
 			"channel",
 			`NoteChannel ctor — userId=${userId} vaultId=${vaultId ?? "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`,
@@ -120,6 +144,22 @@ export class NoteChannel {
 		return `user:${this.userId}`;
 	}
 
+	private get crdtTopic(): string | null {
+		// Gated on the opt-in flag: when CRDT is disabled the topic is null, so the
+		// channel never joins `crdt:`, never sends frames, and never surfaces an
+		// onCrdtJoined — identical to a non-CRDT build.
+		if (!this.enableCrdt) return null;
+		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+	}
+
+	/** Send a CRDT update frame to the server on the crdt topic.
+	 *  No-op when vaultId is null (crdt topic not joined). */
+	sendCrdt(docId: string, b64: string): void {
+		const t = this.crdtTopic;
+		if (!t) return;
+		this.send([null, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+	}
+
 	async connect(): Promise<void> {
 		if (this.ws) return;
 		this.reconnectMs = 1000;
@@ -133,6 +173,9 @@ export class NoteChannel {
 			this.ws.close();
 			this.ws = null;
 		}
+		// Always reset crdtJoined on intentional disconnect regardless of whether
+		// the sync topic was also joined (setConnected only resets it on transition).
+		this.crdtJoined = false;
 		this.setConnected(false);
 		// Drop the cached server window so a later connect to a different backend
 		// that advertises none falls back to the default floor, not a stale value.
@@ -142,6 +185,13 @@ export class NoteChannel {
 
 	isConnected(): boolean {
 		return this.connected;
+	}
+
+	/** True only when the `crdt:` topic join has been acknowledged by the server.
+	 *  The SyncEngine uses this to decide whether to route markdown saves through
+	 *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
+	isCrdtConnected(): boolean {
+		return this.crdtJoined;
 	}
 
 	/** Server-advertised full-jitter reconnect window (ms), or null until the
@@ -271,6 +321,13 @@ export class NoteChannel {
 		// backend that doesn't serve this topic simply replies with an error
 		// (handled below) without affecting the sync channel.
 		this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
+		// Best-effort: join the CRDT topic for real-time CRDT frame exchange.
+		// Only joined when vaultId is known; a backend that doesn't serve this
+		// topic replies with an error (handled gracefully below).
+		const crdtT = this.crdtTopic;
+		if (crdtT) {
+			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", {}]);
+		}
 	}
 
 	private startHeartbeat(): void {
@@ -320,11 +377,21 @@ export class NoteChannel {
 						rlog().info("channel", `Joined ${this.userTopic} — plan state received`);
 						this.onPlanState?.(plan);
 					}
+				} else if (topic === this.crdtTopic && !this.crdtJoined) {
+					// The crdt: topic join succeeded — the backend is CRDT-capable.
+					// Activate CRDT routing in the SyncEngine via the onCrdtJoined
+					// callback. Until this fires, all markdown saves use the legacy
+					// pushNote path (graceful degradation against pre-CRDT backends).
+					this.crdtJoined = true;
+					rlog().info("channel", `Joined ${topic} — CRDT routing active`);
+					this.onCrdtJoined?.();
 				}
 			} else if (status === "error") {
 				// Include the topic so a best-effort user-topic join failure
 				// (e.g. an older backend) is distinguishable from a sync failure.
 				// Either way we do NOT touch sync connection state here.
+				// A crdt: topic join error means this backend does not support CRDT —
+				// crdtJoined stays false and the legacy pushNote path remains active.
 				rlog().error(
 					"channel",
 					`Channel join error on ${topic}: ${JSON.stringify(payload)}`,
@@ -342,6 +409,15 @@ export class NoteChannel {
 		if (event === "vault_deleted") {
 			rlog().info("channel", "Received vault_deleted event");
 			this.onVaultDeleted?.();
+			return;
+		}
+
+		if (event === "crdt_msg" && payload) {
+			const docId = payload.doc_id as string | undefined;
+			const b64 = payload.b64 as string | undefined;
+			if (docId && b64) {
+				this.onCrdtMessage?.(docId, b64);
+			}
 			return;
 		}
 
@@ -400,6 +476,13 @@ export class NoteChannel {
 	private setConnected(value: boolean): void {
 		if (this.connected !== value) {
 			this.connected = value;
+			if (!value) {
+				// Reset the CRDT join state on disconnect so we don't hold the
+				// CRDT-active signal across a reconnect. The crdt: topic join will
+				// fire again if the new backend also supports CRDT; until then
+				// the legacy pushNote path takes over.
+				this.crdtJoined = false;
+			}
 			this.onStatusChange?.(value);
 		}
 	}

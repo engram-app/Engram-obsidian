@@ -4,6 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
+import type { CrdtManager } from "./crdt/manager";
 import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
@@ -42,6 +43,75 @@ import type {
 	SyncProgress,
 	SyncStatus,
 } from "./types";
+
+/**
+ * Pure routing helper: for a markdown note, apply the disk content into the
+ * CRDT doc (no full-document POST); for binary files, return false so the
+ * caller falls through to the existing attachment push path.
+ */
+/** Notes larger than this are NOT routed through CRDT — see routeModify. The
+ *  channel base64-encodes each update (~+33%), so the cap stays well under
+ *  Bandit's 8 MB WebSocket fragmented-message limit even after encoding. Large
+ *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
+export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+
+export async function routeModify(
+	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
+	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
+	maxBytes: number,
+): Promise<boolean> {
+	if (!file.isMarkdown) return false;
+	const content = await file.readContent();
+	// Oversized notes must NOT enter the Yjs doc. The channel transmits each
+	// update as a base64 crdt_msg (~+33%), so a multi-MB note becomes a
+	// WebSocket frame past Bandit's 8 MB fragmented-message limit, which closes
+	// the socket (1009) and — because the bloated doc persists in IndexedDB —
+	// re-crashes on every reconnect, killing all sync for the vault. Fall through
+	// to the legacy push path, which the server gates with a 413. Measure UTF-8
+	// bytes (not code units) so multi-byte content can't slip past the cap.
+	if (maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes) {
+		return false;
+	}
+	await crdt.applyLocalEdit(file.path, content);
+	return true;
+}
+
+/** At startup, the on-disk file may have changed while the app was closed
+ *  (external editor, another sync app, OS). For a synced note this is NOT a
+ *  3-way merge: diff the disk content into the Y.Doc as a local edit. The CRDT
+ *  converges it with any remote history once the handshake runs. The conflict
+ *  modal is only a last resort if the doc itself cannot be opened/decoded.
+ *
+ *  The try/catch is split into two distinct error categories:
+ *  - `getText` (decode) failure → `onCorruption` — the Y.Doc state is unreadable
+ *    and the user must intervene via the conflict modal.
+ *  - `applyLocalEdit` (write) failure → swallowed — a transient storage write error
+ *    must not masquerade as CRDT corruption and trigger the conflict modal. The CRDT
+ *    handshake will converge the state once connectivity is restored. */
+export async function reconcileColdStart(
+	file: { path: string; diskContent: string },
+	crdt: {
+		applyLocalEdit: (path: string, content: string) => Promise<void>;
+		getText: (path: string) => Promise<string>;
+	},
+	onCorruption: () => void,
+): Promise<void> {
+	let current: string;
+	try {
+		current = await crdt.getText(file.path);
+	} catch {
+		onCorruption(); // surface the existing ConflictModal only on decode failure
+		return;
+	}
+	if (current === file.diskContent) return; // already in sync
+	try {
+		await crdt.applyLocalEdit(file.path, file.diskContent);
+	} catch (e) {
+		// Storage write failure: do not masquerade as corruption. The CRDT
+		// handshake will converge the state once connectivity is restored.
+		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
+	}
+}
 
 /** Check if an error is an HTTP response with the given status code.
  *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
@@ -147,6 +217,12 @@ export class SyncEngine {
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
+	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
+	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
+	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
+	 *  recentlyPushed would make handleModify drop REAL user edits within the
+	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
+	private recentlyFlushed: Map<string, number> = new Map();
 	private pulling = false;
 	/** A pull() requested while one was already in flight. Set by the re-entry
 	 *  guard, drained in pull()'s finally to run exactly one follow-up pull.
@@ -222,6 +298,30 @@ export class SyncEngine {
 
 	/** Optional sync log — receives an entry for each push/pull outcome. */
 	syncLog: SyncLog | null = null;
+
+	/** Optional CRDT manager — when set, markdown saves route through it instead
+	 *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
+	 *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
+	private crdt: CrdtManager | null = null;
+
+	setCrdtManager(mgr: CrdtManager | null): void {
+		this.crdt = mgr;
+	}
+
+	/** Write a remote-merged CRDT result to disk.
+	 *  Marks the path recentlyFlushed first so the resulting vault.modify event is
+	 *  suppressed by the recentlyFlushed guard in handleModify.
+	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
+	async flushFromCrdt(path: string, content: string): Promise<void> {
+		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+		if (!(file instanceof TFile)) return;
+		this.markRecentlyFlushed(path);
+		try {
+			await this.app.vault.modify(file, content);
+		} catch (e) {
+			rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
+		}
+	}
 
 	/** Persistent record of files that failed to sync, with reason. Surfaced
 	 *  in the Sync Center "Issues" panel and used to short-circuit the offline
@@ -499,6 +599,15 @@ export class SyncEngine {
 		// But real user edits can happen too — queue them for post-pull push.
 		if (this.pulling) {
 			this.pendingPostPullPushes.add(file.path);
+			return;
+		}
+		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
+		// Must NOT key off recentlyPushed: that set is also populated after every
+		// legacy push, so checking it here would drop real user edits made within
+		// the post-push cooldown (e.g. a conflicting local edit), defeating
+		// conflict detection on the next pull.
+		if (this.recentlyFlushed.has(file.path)) {
+			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
 		}
 
@@ -874,6 +983,29 @@ export class SyncEngine {
 				this.syncState.set(normalizePath(file.path), { hash });
 			} else {
 				const content = await this.app.vault.cachedRead(file);
+
+				// CRDT path: route markdown saves through CrdtManager when wired.
+				// diffIntoYText produces minimal ops; the Y.Doc update listener
+				// forwards the diff to the server via CrdtChannel. No full-document
+				// POST, no version field — the CRDT update IS the transmission.
+				if (this.crdt) {
+					const consumed = await routeModify(
+						{
+							isMarkdown: file.extension === "md",
+							path: file.path,
+							readContent: async () => content,
+						},
+						this.crdt,
+						MAX_CRDT_NOTE_BYTES,
+					);
+					if (consumed) {
+						success = true;
+						devLog().log("push", `crdt ok: ${file.path}`);
+						rlog().info("push", `CRDT push ok: ${file.path}`);
+						return true;
+					}
+				}
+
 				// Echo suppression — skip pushing if content matches what the
 				// sync engine last wrote (pull/WebSocket). Prevents the pull→push loop
 				// where vault.modify() triggers handleModify() for every pulled file.
@@ -1279,6 +1411,18 @@ export class SyncEngine {
 	/** Check if a path was recently pushed (for echo suppression). */
 	isRecentlyPushed(path: string): boolean {
 		return this.recentlyPushed.has(path);
+	}
+
+	/** Suppress the handleModify echo of a flushFromCrdt disk write for
+	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
+	 *  never swallows a genuine local edit. */
+	private markRecentlyFlushed(path: string): void {
+		const existing = this.recentlyFlushed.get(path);
+		if (existing) window.clearTimeout(existing);
+		const timer = window.setTimeout(() => {
+			this.recentlyFlushed.delete(path);
+		}, ECHO_COOLDOWN_MS);
+		this.recentlyFlushed.set(path, timer);
 	}
 
 	// --- Pull: Engram → local vault ---
@@ -1830,6 +1974,13 @@ export class SyncEngine {
 						},
 						attachment.content_base64,
 					);
+				} else if (this.crdt && event.path.endsWith(".md")) {
+					// C1: CRDT owns markdown content for this session — the crdt: topic
+					// delivers updates via CrdtChannel/flushFromCrdt. The legacy
+					// note_changed/upsert path must not double-write the body or run
+					// threeWayMerge/ConflictModal, which would create a feedback loop
+					// (disk write re-enters handleModify → applyLocalEdit).
+					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
@@ -2105,6 +2256,17 @@ export class SyncEngine {
 		const content = change.content;
 		if (content === undefined) {
 			throw new Error(`applyChange: missing content for ${change.path}`);
+		}
+
+		// C1: CRDT-managed markdown — the crdt: topic owns the body. Skip the
+		// legacy disk-write, threeWayMerge, and ConflictModal for markdown notes
+		// when CRDT is active. This prevents the dual-write hazard where a
+		// note_changed broadcast and the crdt: update both try to write the same
+		// file. Deletes (handled above) and attachments (routed via
+		// applyAttachmentChange) are unaffected.
+		if (this.crdt && normalized.endsWith(".md")) {
+			rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
+			return false;
 		}
 
 		// Create or update the file
@@ -3677,6 +3839,10 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.recentlyPushed.clear();
+		for (const timer of this.recentlyFlushed.values()) {
+			window.clearTimeout(timer);
+		}
+		this.recentlyFlushed.clear();
 		this.pendingPostPullPushes.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();

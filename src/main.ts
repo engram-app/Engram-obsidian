@@ -4,7 +4,7 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, TFolder, requestUrl } from "obsidian";
+import { FileSystemAdapter, Notice, Platform, Plugin, TFile, TFolder, requestUrl } from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -23,7 +23,7 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { SyncEngine } from "./sync";
+import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import { SyncProgressModal } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
@@ -37,6 +37,9 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
+import { CrdtChannel } from "./crdt/channel";
+import { CrdtEnrollment } from "./crdt/enrollment";
+import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
@@ -133,6 +136,9 @@ export default class EngramSyncPlugin extends Plugin {
 
 	private baseStore: BaseStore | null = null;
 	private explicitFolders: ExplicitFolders | null = null;
+	private crdtManager: CrdtManager | null = null;
+	private crdtChannel: CrdtChannel | null = null;
+	private crdtEnrollment: CrdtEnrollment | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -275,6 +281,22 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("modify", (file) => {
 				this.syncEngine.handleModify(file);
+			}),
+		);
+
+		// Task 7B: enroll each opened markdown note into the CRDT handshake so the
+		// state-vector exchange fires and the note pulls remote history (down-sync).
+		// `active-leaf-change` fires whenever the user switches tabs/panes — we
+		// filter to the active file and enroll once per path per channel session.
+		// The once-per-doc guard inside CrdtEnrollment and CrdtChannel ensures the
+		// STEP1 handshake fires exactly once even if the same note is opened
+		// repeatedly, and resets on channel reconnect for a fresh handshake.
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => {
+				const file = this.app.workspace.getActiveFile();
+				if (file instanceof TFile && file.extension === "md") {
+					this.crdtEnrollment?.enroll(file.path);
+				}
 			}),
 		);
 		this.registerEvent(
@@ -521,6 +543,34 @@ export default class EngramSyncPlugin extends Plugin {
 			// readiness must not depend on a user-driven modal choice.
 			this.syncEngine.setReady();
 
+			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
+			// doc for any markdown file that changed while the app was closed
+			// (external editor, another sync app, OS). Runs after readiness is
+			// set so the resulting applyLocalEdit fires normally through the CRDT
+			// route. Only runs when a CrdtManager is available (auth configured).
+			if (this.crdtManager) {
+				const markdownFiles = this.app.vault.getMarkdownFiles();
+				for (const file of markdownFiles) {
+					const crdt = this.crdtManager;
+					this.app.vault
+						.cachedRead(file)
+						.then((diskContent) =>
+							reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
+								rlog().warn(
+									"crdt",
+									`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+								);
+							}),
+						)
+						.catch((e) => {
+							rlog().warn(
+								"crdt",
+								`reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`,
+							);
+						});
+				}
+			}
+
 			if (!registered) return;
 
 			if (gateOpen) {
@@ -561,6 +611,10 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.baseStore?.save();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
+		void this.crdtManager?.destroy();
+		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
+		// open resources; the WebSocket it dispatches over is owned by the Phoenix
+		// channel and torn down via noteStream?.disconnect().
 		if (this.syncInterval) {
 			window.clearInterval(this.syncInterval);
 			this.syncInterval = null;
@@ -826,6 +880,16 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	setupNoteStream(): void {
+		// Tear down any existing CRDT instances before disconnecting the channel.
+		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
+		// IndexeddbPersistence listeners — each overwrites the references but the
+		// old objects stay alive with their observers still firing.
+		void this.crdtManager?.destroy();
+		this.crdtManager = null;
+		this.crdtChannel = null;
+		this.crdtEnrollment?.resetAll();
+		this.crdtEnrollment = null;
+
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
 		this.noteStream?.disconnect();
@@ -866,6 +930,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.apiKey,
 					user.id,
 					this.settings.vaultId,
+					this.settings.enableCrdt,
 				);
 
 				channel.onEvent = (event) => {
@@ -877,6 +942,9 @@ export default class EngramSyncPlugin extends Plugin {
 					this.updateStatusBar(this.syncEngine.getStatus());
 					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {
+						// Reset all CRDT enrollments so a fresh startSync STEP1
+						// handshake fires for each open note after reconnect.
+						this.crdtEnrollment?.resetAll();
 						this.syncEngine.pull().catch((e) => {
 							// biome-ignore lint/suspicious/noConsole: error boundary
 							console.error("Engram Sync: catch-up pull failed", e);
@@ -885,6 +953,19 @@ export default class EngramSyncPlugin extends Plugin {
 								`Catch-up pull on reconnect failed: ${errMsg(e)}`,
 							);
 						});
+					} else {
+						// On disconnect the crdt: topic is also gone. Clear the CRDT
+						// manager from the SyncEngine so markdown saves fall back to
+						// the legacy pushNote path until the crdt: topic re-joins on
+						// the next connection. This is the graceful-degradation gate:
+						// non-CRDT backends never fire onCrdtJoined and therefore never
+						// set the manager, but we also reset here defensively in case
+						// the channel drops mid-session.
+						this.syncEngine.setCrdtManager(null);
+						rlog().info(
+							"crdt",
+							"Disconnected — CRDT routing cleared, legacy path active",
+						);
 					}
 				};
 
@@ -910,6 +991,78 @@ export default class EngramSyncPlugin extends Plugin {
 				if (this.authProvider) {
 					this.noteStream.setAuthProvider(this.authProvider);
 				}
+
+				// Wire CRDT transport through this channel.
+				// Only wire when vaultId is known: the crdt: topic is keyed by
+				// vaultId and the doc_id = "{vaultId}/{path}" must match the
+				// backend's path_hmac resolution. Without a vaultId the crdt:
+				// topic join is silently a no-op, CRDT updates go nowhere, AND
+				// the legacy pushNote path is suppressed — so this.crdt must stay
+				// null to let the legacy path continue working.
+				//
+				// Graceful degradation: the CrdtManager and CrdtChannel are wired
+				// eagerly (so they're ready to handle frames), but `setCrdtManager`
+				// is deferred to `channel.onCrdtJoined` — only called once the
+				// server acknowledges the `crdt:` topic join. Against a non-CRDT
+				// backend the join errors out, onCrdtJoined never fires, and the
+				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
+				if (this.settings.enableCrdt && this.settings.vaultId) {
+					const dbPrefix = this.settings.vaultId;
+					this.crdtManager = new CrdtManager({
+						dbPrefix,
+						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
+						onFlushToDisk: (path, content) =>
+							this.syncEngine.flushFromCrdt(path, content),
+						onPersistError: (path, err) => {
+							rlog().warn(
+								"crdt",
+								`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
+							);
+						},
+					});
+					this.crdtChannel = new CrdtChannel({
+						manager: this.crdtManager,
+						send: (docId, frame) => channel.sendCrdt(docId, frame),
+					});
+					// Enrollment tracker: calls startSync(path) exactly once per note
+					// per channel session so the state-vector handshake fires and the
+					// note pulls remote CRDT state (the down-sync gap). Reset on
+					// reconnect so a fresh handshake fires with updated server state.
+					this.crdtEnrollment = new CrdtEnrollment({
+						startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
+						resetSync: (path) => this.crdtChannel?.resetSync(path),
+						// After the handshake fires, compact any bloated docs. This is a
+						// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
+						// so it is safe to run on every note open.
+						onAfterEnroll: async (path) => {
+							await this.crdtManager?.flattenIfBloated(path);
+						},
+					});
+					channel.onCrdtMessage = (docId, b64) => {
+						const prefix = `${dbPrefix}/`;
+						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+						void this.crdtChannel?.handleFrame(path, b64);
+					};
+					// Deferred activation: only engage CRDT routing in the SyncEngine
+					// after the server confirms the crdt: topic join. Against a non-CRDT
+					// backend this never fires and setCrdtManager stays null → every
+					// markdown save uses the legacy pushNote path (graceful degradation).
+					channel.onCrdtJoined = () => {
+						rlog().info(
+							"crdt",
+							"crdt: topic joined — activating CRDT routing in SyncEngine",
+						);
+						this.syncEngine.setCrdtManager(this.crdtManager);
+					};
+				} else {
+					rlog().info(
+						"crdt",
+						this.settings.enableCrdt
+							? "vaultId is null — CRDT disabled; legacy pushNote path active"
+							: "CRDT opt-in disabled — legacy pushNote path active",
+					);
+				}
+
 				void channel.connect();
 			})
 			.catch((e) => {
