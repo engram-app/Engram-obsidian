@@ -36,19 +36,19 @@ import {
 	type SyncStatus,
 } from "./types";
 
-import { EmailCaptureModal } from "./email-capture-modal";
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
-import { shouldShowWaitlistPrompt } from "./waitlist";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import type { QueueEntry, SyncChoice, SyncIssue } from "./types";
+import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.
  *  Uses SHA-256 of the vault's absolute path (desktop) or name (mobile fallback). */

@@ -1,7 +1,7 @@
-import { describe, test, expect, beforeEach } from "bun:test";
-import { type Mock } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
+import type { Mock } from "bun:test";
 import { requestUrl } from "obsidian";
-import { submitWaitlistEmail, WAITLIST_ENDPOINT } from "../src/waitlist";
+import { WAITLIST_ENDPOINT, submitWaitlistEmail } from "../src/waitlist";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
