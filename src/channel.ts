@@ -157,7 +157,11 @@ export class NoteChannel {
 	sendCrdt(docId: string, b64: string): void {
 		const t = this.crdtTopic;
 		if (!t) return;
-		this.send([null, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+		// join_ref MUST be the crdt: topic's join_ref. Phoenix routes channel
+		// messages by (topic, join_ref); sending null here means the server can't
+		// match the joined channel and silently drops the frame (every CRDT update
+		// vanished before reaching the backend).
+		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
 	}
 
 	async connect(): Promise<void> {

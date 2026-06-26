@@ -135,6 +135,11 @@ describe("NoteChannel.sendCrdt", () => {
 		const crdtMsg = newMessages.find((m: unknown[]) => m[3] === "crdt_msg");
 
 		expect(crdtMsg).toBeDefined();
+		// join_ref MUST match the crdt: topic's join_ref ("3"). Phoenix routes
+		// channel messages by (topic, join_ref); a null/mismatched join_ref means
+		// the message is silently dropped before reaching the channel — which made
+		// every CRDT update vanish before it hit the backend.
+		expect(crdtMsg![0]).toBe("3");
 		expect(crdtMsg![2]).toBe("crdt:u1:v1"); // topic
 		expect((crdtMsg![4] as { doc_id: string }).doc_id).toBe("v1/note.md");
 		expect((crdtMsg![4] as { b64: string }).b64).toBe("dGVzdA==");
