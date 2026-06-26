@@ -5552,7 +5552,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               ), ok ? "ok" : "skip";
             } catch (e) {
               let msg = errMsg(e);
-              return rlog().error("pull", `Skipped attachment: ${change.path} \u2014 ${msg}`), this.logEntry("pull", change.path, "error", msg), "error";
+              return rlog().error(
+                "pull",
+                "Skipped attachment: " + change.path + " \u2014 " + msg
+              ), this.logEntry("pull", change.path, "error", msg), "error";
             }
           })
         );
