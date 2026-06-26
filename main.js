@@ -4425,10 +4425,11 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-async function routeModify(file, crdt) {
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+async function routeModify(file, crdt, maxBytes) {
   if (!file.isMarkdown) return !1;
   let content = await file.readContent();
-  return await crdt.applyLocalEdit(file.path, content), !0;
+  return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes ? !1 : (await crdt.applyLocalEdit(file.path, content), !0);
 }
 async function reconcileColdStart(file, crdt, onCorruption) {
   let current;
@@ -5025,7 +5026,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: file.path,
             readContent: async () => content
           },
-          this.crdt
+          this.crdt,
+          MAX_CRDT_NOTE_BYTES
         ))
           return success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian19.normalizePath)(file.path));

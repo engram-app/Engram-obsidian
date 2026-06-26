@@ -16,12 +16,15 @@ import { DEFAULT_SETTINGS } from "../src/types";
 // ---------------------------------------------------------------------------
 
 describe("routeModify helper", () => {
+	const BIG = 8 * 1024 * 1024;
+
 	test("markdown modify routes to CRDT, never to pushNote", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
 			{ isMarkdown: true, path: "n.md", readContent: async () => "body" },
 			{ applyLocalEdit } as any,
+			BIG,
 		);
 		expect(result).toBe(true);
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
@@ -35,6 +38,36 @@ describe("routeModify helper", () => {
 		const result = await routeModify(
 			{ isMarkdown: false, path: "img.png", readContent: async () => "" },
 			{ applyLocalEdit } as any,
+			BIG,
+		);
+		expect(result).toBe(false);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("oversized markdown does NOT route to CRDT (would crash the WS frame)", async () => {
+		const applyLocalEdit = mock(async () => {});
+		// 5 MB of ASCII exceeds the 4 MB CRDT transport cap. Routing it into the
+		// Yjs doc would produce a base64 crdt_msg over Bandit's 8 MB frame limit,
+		// killing the socket. Must fall through to the legacy push path instead.
+		const huge = "x".repeat(5 * 1024 * 1024);
+		const result = await routeModify(
+			{ isMarkdown: true, path: "big.md", readContent: async () => huge },
+			{ applyLocalEdit } as any,
+			4 * 1024 * 1024,
+		);
+		expect(result).toBe(false);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("multi-byte content is measured in UTF-8 bytes, not code units", async () => {
+		const applyLocalEdit = mock(async () => {});
+		// 2M emoji × 4 UTF-8 bytes = 8 MB > 6 MB cap, but only 2M UTF-16 units.
+		// A naive .length check (code units) would wrongly let it through.
+		const emoji = "😀".repeat(2 * 1024 * 1024);
+		const result = await routeModify(
+			{ isMarkdown: true, path: "emoji.md", readContent: async () => emoji },
+			{ applyLocalEdit } as any,
+			6 * 1024 * 1024,
 		);
 		expect(result).toBe(false);
 		expect(applyLocalEdit).not.toHaveBeenCalled();

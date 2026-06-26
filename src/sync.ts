@@ -49,12 +49,29 @@ import type {
  * CRDT doc (no full-document POST); for binary files, return false so the
  * caller falls through to the existing attachment push path.
  */
+/** Notes larger than this are NOT routed through CRDT — see routeModify. The
+ *  channel base64-encodes each update (~+33%), so the cap stays well under
+ *  Bandit's 8 MB WebSocket fragmented-message limit even after encoding. Large
+ *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
+export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+
 export async function routeModify(
 	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
 	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
+	maxBytes: number,
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
 	const content = await file.readContent();
+	// Oversized notes must NOT enter the Yjs doc. The channel transmits each
+	// update as a base64 crdt_msg (~+33%), so a multi-MB note becomes a
+	// WebSocket frame past Bandit's 8 MB fragmented-message limit, which closes
+	// the socket (1009) and — because the bloated doc persists in IndexedDB —
+	// re-crashes on every reconnect, killing all sync for the vault. Fall through
+	// to the legacy push path, which the server gates with a 413. Measure UTF-8
+	// bytes (not code units) so multi-byte content can't slip past the cap.
+	if (maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes) {
+		return false;
+	}
 	await crdt.applyLocalEdit(file.path, content);
 	return true;
 }
@@ -977,6 +994,7 @@ export class SyncEngine {
 							readContent: async () => content,
 						},
 						this.crdt,
+						MAX_CRDT_NOTE_BYTES,
 					);
 					if (consumed) {
 						success = true;
