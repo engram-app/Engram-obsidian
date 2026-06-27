@@ -1327,6 +1327,10 @@ var NoteChannel = class {
     this.onPlanState = null;
     /** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
     this.onCrdtMessage = null;
+    /** A room became active on the server for `docId` (announced via
+     *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
+     *  for this doc so a device that doesn't yet have the note pulls it. */
+    this.onCrdtDocReady = null;
     /** Fired when the `crdt:` topic join is acknowledged by the server.
      *  Use this to activate CRDT routing in the SyncEngine — only wire
      *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -1453,7 +1457,7 @@ var NoteChannel = class {
     }, 3e4);
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1491,12 +1495,17 @@ var NoteChannel = class {
       docId && b64 && ((_e = this.onCrdtMessage) == null || _e.call(this, docId, b64));
       return;
     }
+    if (event === "crdt_doc_ready" && payload) {
+      let docId = payload.doc_id;
+      docId && ((_f = this.onCrdtDocReady) == null || _f.call(this, docId));
+      return;
+    }
     if (event === "note_changed" && payload) {
       let p = payload, streamEvent = {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_f = p.kind) != null ? _f : "note",
+        kind: (_g = p.kind) != null ? _g : "note",
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -1506,10 +1515,10 @@ var NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_g = this.onEvent) == null || _g.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_h = this.onEvent) == null || _h.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_h = payload.notes) != null ? _h : [];
+      let notes = (_i = payload.notes) != null ? _i : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1525,7 +1534,7 @@ var NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_i = this.onEvent) == null || _i.call(this, streamEvent);
+        (_j = this.onEvent) == null || _j.call(this, streamEvent);
       }
     }
   }
@@ -14073,6 +14082,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
+        }, channel.onCrdtDocReady = (docId) => {
+          var _a2;
+          let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path);
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",

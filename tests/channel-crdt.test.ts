@@ -207,6 +207,66 @@ describe("NoteChannel inbound crdt_msg", () => {
 });
 
 // ---------------------------------------------------------------------------
+// inbound crdt_doc_ready — device-B discovery announce
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel inbound crdt_doc_ready", () => {
+	test("routes inbound crdt_doc_ready to onCrdtDocReady callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const ready: string[] = [];
+		channel.onCrdtDocReady = (docId) => ready.push(docId);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"crdt:u1:v1",
+			"crdt_doc_ready",
+			{ doc_id: "v1/note.md" },
+		]);
+
+		expect(ready).toEqual(["v1/note.md"]);
+
+		channel.disconnect();
+	});
+
+	test("crdt_doc_ready without onCrdtDocReady is a no-op (no crash)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(() =>
+			simulateMessage(lastWsInstance, [
+				null,
+				null,
+				"crdt:u1:v1",
+				"crdt_doc_ready",
+				{ doc_id: "v1/note.md" },
+			]),
+		).not.toThrow();
+
+		channel.disconnect();
+	});
+
+	test("crdt_doc_ready without doc_id does not fire callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		let fired = false;
+		channel.onCrdtDocReady = () => {
+			fired = true;
+		};
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [null, null, "crdt:u1:v1", "crdt_doc_ready", {}]);
+
+		expect(fired).toBe(false);
+
+		channel.disconnect();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // isCrdtConnected / onCrdtJoined — graceful degradation gate
 // ---------------------------------------------------------------------------
 
