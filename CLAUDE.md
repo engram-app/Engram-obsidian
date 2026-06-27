@@ -170,4 +170,8 @@ Restart Obsidian or disable/re-enable the plugin to pick up changes.
 
 Required status checks on `main`: `build-and-test`, `version-check / version-check`
 
+## Context Docs
+
+If you need info on the `version-bump.mjs` script (and the silent-corruption foot-gun where running it directly drops the `version` key from `manifest.json`), see `docs/context/version-bump-script.md`
+
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md

@@ -1,6 +1,38 @@
-import { Modal } from "obsidian";
+import { type App, Modal } from "obsidian";
 import { DEFAULT_UPGRADE_URL } from "./sync-center-render";
-import type { SyncProgress } from "./types";
+import { optionBreakdown } from "./sync-plan-format";
+import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
+
+/** Plain-language intro shown the instant the progress modal opens, before the
+ *  first engine event arrives — the previous "Preparing..." dead state is what
+ *  made the modal feel stuck. Built from the chosen plan so the user sees
+ *  exactly what is about to happen. Pure for testing. */
+export function describePlannedWork(
+	choice: SyncChoice,
+	plan: SyncPlan,
+	firstSync: boolean,
+): string {
+	const b = optionBreakdown(plan, choice);
+	const parts: string[] = [];
+	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
+	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
+	if (b.deleteLocalCount > 0) {
+		parts.push(
+			`deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`,
+		);
+	}
+	if (b.deleteRemoteCount > 0) {
+		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+	}
+
+	const prefix = firstSync ? "First sync, this may take a moment. " : "";
+	if (parts.length === 0) return `${prefix}Checking for changes.`;
+
+	const sentence = parts.join(", ");
+	const capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	const noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+	return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
 
 /** Final tally rendered when a sync settles. Plan-gated attachments land in
  *  `skipped` (informational, not a failure); genuine errors land in `failed`.
@@ -47,7 +79,7 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
 		const noun = summary.skipped === 1 ? "attachment" : "attachments";
 		note.createSpan({
-			text: `${summary.skipped} ${noun} need a paid plan — see Sync Center. `,
+			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
 		});
 		const upgrade = note.createEl("button", {
 			text: "Upgrade",
@@ -57,91 +89,177 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 	}
 }
 
-const PHASE_LABELS: Record<SyncProgress["phase"], string> = {
-	deleting: "Deleting local files",
-	pushing: "Pushing notes",
-	pulling: "Pulling notes",
-	attachments: "Syncing attachments",
-	complete: "Complete",
-};
+/** Plain-language recap shown when the sync settles and kept on screen until
+ *  the user dismisses, so a fast sync never blanks out before they can read
+ *  what happened. Complements the icon tally; failures take priority and point
+ *  at the sync log. Pure for testing. */
+export function describeCompletion(summary: CompletionSummary): string {
+	if (summary.failed > 0) {
+		return "Finished with some errors. Open the sync log to see what failed.";
+	}
+	if (summary.skipped > 0) {
+		return "Synced. Some attachments need a paid plan to sync (see below).";
+	}
+	if (summary.synced > 0) {
+		return "All synced. Your vault and the cloud now match.";
+	}
+	return "Already up to date. Nothing needed syncing.";
+}
 
-/** Minimum ms to display each phase before transitioning to the next. */
-const MIN_PHASE_MS = 800;
+/** A phase that this sync will actually perform, in display order. Used to seed
+ *  one persistent progress row per phase so the whole plan is visible up front
+ *  and each row stays on screen (with its final count) after it finishes. */
+export interface PlannedPhase {
+	phase: "deleting" | "pushing" | "pulling";
+	label: string;
+	total: number;
+}
 
-/** How often to update the count/bar within a phase (ms). */
+/** The phases a given choice will run, in display order, with their planned
+ *  totals from the plan. The engine only emits deleting / pushing / pulling
+ *  (attachments are counted within push and pull, never a separate phase), so
+ *  these are the only rows that can receive progress. Pure for testing. */
+export function plannedPhases(choice: SyncChoice, plan: SyncPlan): PlannedPhase[] {
+	const b = optionBreakdown(plan, choice);
+	const deleting = b.deleteLocalCount + b.deleteRemoteCount;
+	const out: PlannedPhase[] = [];
+	if (deleting > 0) out.push({ phase: "deleting", label: "Deleting", total: deleting });
+	if (b.pullCount > 0) out.push({ phase: "pulling", label: "Downloading", total: b.pullCount });
+	if (b.pushCount > 0) out.push({ phase: "pushing", label: "Uploading", total: b.pushCount });
+	return out;
+}
+
+/** How often to flush buffered progress to the DOM (ms). */
 const TICK_INTERVAL_MS = 50;
 
-/** Modal that stays open during sync, showing live progress with phase transitions.
- *  Updates are buffered so each phase is visible for at least MIN_PHASE_MS,
- *  even if the underlying operation completes faster. */
+interface RowState {
+	phase: SyncProgress["phase"];
+	label: string;
+	plannedTotal: number;
+	current: number;
+	total: number;
+	failed: number;
+	/** True once this phase has reported at least one event. */
+	seen: boolean;
+	done: boolean;
+}
+
+interface RowEls {
+	statusEl: HTMLElement;
+	barInner: HTMLElement;
+	countEl: HTMLElement;
+}
+
+/** Modal that stays open during sync. Shows one persistent row per phase the
+ *  sync will perform, seeded from the plan: every phase is visible up front,
+ *  fills as it runs, and stays on screen with its final count when done — so a
+ *  fast sync no longer flashes its detail away. */
 export class SyncProgressModal extends Modal {
-	private phaseEl!: HTMLElement;
-	private countEl!: HTMLElement;
+	private rowsWrap!: HTMLElement;
+	private statusEl!: HTMLElement;
 	private pathEl!: HTMLElement;
-	private barInner!: HTMLElement;
+	private recapEl!: HTMLElement;
 	private failedEl!: HTMLElement;
 	private summaryEl!: HTMLElement;
+	private verifyEl!: HTMLElement;
 	private hintEl!: HTMLElement;
 	private bgBtn!: HTMLButtonElement;
 	private closeBtn!: HTMLButtonElement;
 
-	/** Latest progress update received from the sync engine (may be ahead of display). */
+	private rows: RowState[] = [];
+	private readonly rowEls = new Map<SyncProgress["phase"], RowEls>();
+	/** Latest progress update from the engine, applied on the next tick. */
 	private latest: SyncProgress | null = null;
-	/** Currently displayed phase. */
-	private displayedPhase: SyncProgress["phase"] | null = null;
-	/** Timestamp when the current phase started displaying. */
-	private phaseStartTime = 0;
-	/** Interval for ticking the display forward. */
 	private tickTimer: number | null = null;
-	/** Queue of phase-changing updates waiting for min display time. */
-	private pendingPhaseChange: SyncProgress | null = null;
+
+	/** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
+	 *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+	 *  on completion so the user can verify their vault. All optional so callers
+	 *  without a plan still get a usable modal. */
+	constructor(
+		app: App,
+		private readonly opts: { intro?: string; phases?: PlannedPhase[]; webUrl?: string } = {},
+	) {
+		super(app);
+	}
 
 	onOpen(): void {
 		const { contentEl } = this;
 		contentEl.empty();
 		contentEl.addClass("engram-sync-progress-modal");
 
-		contentEl.createEl("h2", { text: "Syncing..." });
+		contentEl.createEl("h2", { text: "Syncing your vault" });
 
-		this.phaseEl = contentEl.createEl("p", {
-			text: "Preparing...",
-			cls: "engram-progress-phase",
+		if (this.opts.intro) {
+			contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" });
+		}
+
+		this.statusEl = contentEl.createEl("p", {
+			text: "Getting started…",
+			cls: "engram-progress-status",
 		});
 
-		this.countEl = contentEl.createEl("p", { text: "", cls: "engram-progress-count" });
+		this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" });
+		this.rows = (this.opts.phases ?? []).map((p) => ({
+			phase: p.phase,
+			label: p.label,
+			plannedTotal: p.total,
+			current: 0,
+			total: p.total,
+			failed: 0,
+			seen: false,
+			done: false,
+		}));
+		for (const row of this.rows) this.createRow(row);
+
 		this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" });
 
-		const barOuter = contentEl.createDiv({ cls: "engram-progress-bar-outer" });
-		this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" });
+		this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" });
+		this.recapEl.hidden = true;
 
-		this.failedEl = contentEl.createEl("p", {
-			text: "",
-			cls: "engram-progress-failed",
-		});
+		this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" });
 		this.failedEl.hidden = true;
 
-		this.summaryEl = contentEl.createDiv({
-			cls: "engram-progress-summary",
-		});
+		this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" });
 		this.summaryEl.hidden = true;
 
+		// Post-sync nudge to open Engram and confirm the vault looks right.
+		// Shown on completion only; needs a web URL to link to.
+		this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" });
+		this.verifyEl.hidden = true;
+		if (this.opts.webUrl) {
+			const url = this.opts.webUrl;
+			this.verifyEl.createSpan({
+				text: "Open Engram to check your vault and confirm everything synced. ",
+			});
+			const link = this.verifyEl.createEl("a", {
+				text: "Open Engram",
+				cls: "engram-progress-verify-link",
+				href: url,
+			});
+			link.setAttr("target", "_blank");
+			link.setAttr("rel", "noopener");
+			// Obsidian's Electron host opens window.open in the system browser;
+			// drive it explicitly so the link works regardless of <a> handling.
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				window.open(url, "_blank");
+			});
+		}
+
 		this.hintEl = contentEl.createEl("p", {
-			text: "You can close this — the sync keeps running in the background.",
+			text: "You can close this and the sync keeps running in the background.",
 			cls: "engram-progress-hint",
 		});
 
 		const buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
 		this.bgBtn = buttons.createEl("button", { text: "Run in background" });
 		this.bgBtn.addEventListener("click", () => this.close());
-
-		this.closeBtn = buttons.createEl("button", {
-			text: "Done",
-			cls: "mod-cta",
-		});
+		this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" });
 		this.closeBtn.hidden = true;
 		this.closeBtn.addEventListener("click", () => this.close());
 
-		// Start the display tick loop
+		this.renderRows();
 		this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
 	}
 
@@ -150,103 +268,119 @@ export class SyncProgressModal extends Modal {
 		this.latest = progress;
 	}
 
-	/** Periodic tick: apply buffered updates with minimum phase display time. */
 	private tick(): void {
-		if (!this.latest || !this.phaseEl) return;
-
-		const now = Date.now();
-
-		// If a phase change is pending, check if enough time has passed
-		if (this.pendingPhaseChange) {
-			const elapsed = now - this.phaseStartTime;
-			if (elapsed < MIN_PHASE_MS) {
-				// Still showing the old phase — update its final count (show 100%)
-				this.renderProgress({
-					...this.pendingPhaseChange,
-					phase: this.displayedPhase ?? this.pendingPhaseChange.phase,
-				});
-				return;
-			}
-			// Enough time passed — apply the phase change
-			this.displayedPhase = this.pendingPhaseChange.phase;
-			this.phaseStartTime = now;
-			this.pendingPhaseChange = null;
-		}
-
-		// Check if the latest update is a new phase
-		if (this.displayedPhase !== null && this.latest.phase !== this.displayedPhase) {
-			const elapsed = now - this.phaseStartTime;
-			if (elapsed < MIN_PHASE_MS) {
-				// Queue the phase change — keep showing current phase at 100%
-				this.pendingPhaseChange = { ...this.latest };
-				this.renderProgress({
-					phase: this.displayedPhase,
-					current: this.latest.total || 1,
-					total: this.latest.total || 1,
-					failed: this.latest.failed,
-				});
-				return;
-			}
-		}
-
-		// Apply the update directly
-		if (this.displayedPhase !== this.latest.phase) {
-			this.displayedPhase = this.latest.phase;
-			this.phaseStartTime = now;
-			this.barInner.setCssStyles({ width: "0%" });
-		}
-		this.renderProgress(this.latest);
+		if (!this.latest) return;
+		const progress = this.latest;
+		this.latest = null;
+		this.applyProgress(progress);
 	}
 
-	/** Render a progress state to the DOM. */
-	private renderProgress(progress: SyncProgress): void {
-		const label = PHASE_LABELS[progress.phase] ?? progress.phase;
-		const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+	private createRow(row: RowState): void {
+		const rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" });
+		const statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "·" });
+		rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
+		const barOuter = rowEl.createDiv({ cls: "engram-progress-bar-outer" });
+		const barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" });
+		const countEl = rowEl.createSpan({
+			cls: "engram-progress-row-count",
+			text: `0 / ${row.plannedTotal}`,
+		});
+		this.rowEls.set(row.phase, { statusEl, barInner, countEl });
+	}
 
+	private applyProgress(progress: SyncProgress): void {
 		if (progress.phase === "complete") {
-			if (this.tickTimer) {
-				window.clearInterval(this.tickTimer);
-				this.tickTimer = null;
-			}
-			this.phaseEl.setText("Sync complete");
-			this.countEl.setText("");
-			this.pathEl.setText("");
-			this.barInner.setCssStyles({ width: "100%" });
-			this.barInner.addClass("is-complete");
-			this.hintEl.hidden = true;
-			this.bgBtn.hidden = true;
-			this.closeBtn.hidden = false;
-
-			this.summaryEl.empty();
-			renderCompletionSummary(this.summaryEl, {
-				synced: progress.current,
-				skipped: progress.skipped ?? 0,
-				failed: progress.failed,
-			});
-			this.summaryEl.hidden = false;
-
-			if (progress.failed > 0) {
-				this.failedEl.setText(
-					`${progress.failed} failed — run "Engram: Show sync log" for details`,
-				);
-				this.failedEl.hidden = false;
-			} else {
-				this.failedEl.hidden = true;
-			}
+			this.applyComplete(progress);
 			return;
 		}
 
-		this.phaseEl.setText(label);
-		this.countEl.setText(`${progress.current} / ${progress.total}`);
-		this.pathEl.setText(progress.currentPath ?? "");
-		this.barInner.style.width = `${pct}%`;
-		this.barInner.removeClass("is-complete");
+		let row = this.rows.find((r) => r.phase === progress.phase);
+		if (!row) {
+			// Engine reported a phase the plan didn't predict — add a row so its
+			// progress is still visible rather than silently dropped.
+			row = {
+				phase: progress.phase,
+				label: PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase,
+				plannedTotal: progress.total,
+				current: 0,
+				total: progress.total,
+				failed: 0,
+				seen: false,
+				done: false,
+			};
+			this.rows.push(row);
+			this.createRow(row);
+		}
 
-		if (progress.failed > 0) {
-			this.failedEl.setText(`${progress.failed} failed so far`);
+		row.seen = true;
+		row.current = progress.current;
+		row.total = progress.total || row.total;
+		row.failed = progress.failed;
+
+		// Any other phase that has already run is now finished.
+		for (const other of this.rows) {
+			if (other !== row && other.seen) other.done = true;
+		}
+
+		this.statusEl.setText("Syncing…");
+		this.pathEl.setText(progress.currentPath ?? "");
+		this.renderRows();
+	}
+
+	private applyComplete(progress: SyncProgress): void {
+		if (this.tickTimer) {
+			window.clearInterval(this.tickTimer);
+			this.tickTimer = null;
+		}
+
+		for (const row of this.rows) {
+			row.done = true;
+			row.current = row.total;
+		}
+		this.renderRows();
+
+		const summary: CompletionSummary = {
+			synced: progress.current,
+			skipped: progress.skipped ?? 0,
+			failed: progress.failed,
+		};
+
+		this.statusEl.setText("Sync complete");
+		this.pathEl.setText("");
+		this.recapEl.setText(describeCompletion(summary));
+		this.recapEl.hidden = false;
+
+		this.summaryEl.empty();
+		renderCompletionSummary(this.summaryEl, summary);
+		this.summaryEl.hidden = false;
+
+		if (summary.failed > 0) {
+			this.failedEl.setText(
+				`${summary.failed} failed. Run "Engram: Show sync log" for details.`,
+			);
 			this.failedEl.hidden = false;
 		} else {
 			this.failedEl.hidden = true;
+		}
+
+		// Nudge the user to verify their vault on Engram (only if we have a URL).
+		this.verifyEl.hidden = !this.opts.webUrl;
+
+		this.hintEl.hidden = true;
+		this.bgBtn.hidden = true;
+		this.closeBtn.hidden = false;
+	}
+
+	private renderRows(): void {
+		for (const row of this.rows) {
+			const els = this.rowEls.get(row.phase);
+			if (!els) continue;
+			const pct =
+				row.total > 0 ? Math.round((row.current / row.total) * 100) : row.done ? 100 : 0;
+			els.barInner.style.width = `${pct}%`;
+			els.barInner.toggleClass("is-complete", row.done);
+			els.countEl.setText(`${row.current} / ${row.total}`);
+			els.statusEl.setText(row.done ? "✓" : row.seen ? "⟳" : "·");
 		}
 	}
 
@@ -258,3 +392,13 @@ export class SyncProgressModal extends Modal {
 		this.contentEl.empty();
 	}
 }
+
+/** Labels for a phase the engine reports that the plan did not predict (rare;
+ *  keeps an unexpected phase from rendering its raw key). */
+const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
+	deleting: "Deleting",
+	pushing: "Uploading",
+	pulling: "Downloading",
+	attachments: "Syncing attachments",
+	complete: "Complete",
+};

@@ -119,19 +119,26 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 
 	makeActionButton(strip, "Sync...", async () => {
 		try {
-			const plan = await plugin.syncEngine.computeSyncPlan("full");
-			const modal = new SyncPreviewModal(plugin.app, plan, {
+			// Open instantly in a loading state, then stream the plan in (mirrors
+			// the first-sync path) so the modal never waits on the server to appear.
+			const modal = new SyncPreviewModal(plugin.app, null, {
 				remoteVaultName: plugin.settings.remoteVaultName,
 				showChangeVault: false,
 				context: "review",
 			});
+			void plugin.syncEngine
+				.computeSyncPlan("full")
+				.then((p) => modal.setPlan(p))
+				.catch(() =>
+					modal.setPlanError("Could not compare with the cloud. Check your connection."),
+				);
 			const choice = await modal.awaitChoice();
 			// change-vault is unreachable here (showChangeVault: false), but assert in
 			// case a future caller flips that flag without updating this dispatch site.
 			if (choice === "change-vault") {
-				throw new Error("Sync Center received change-vault choice — caller missing");
+				throw new Error("Sync Center received change-vault choice, caller missing");
 			}
-			await plugin.runSyncWithProgress(choice);
+			await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
 		} catch (e) {
 			new Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
 		}
@@ -169,7 +176,7 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "These files are fine — they just need a paid plan to sync.",
+		text: "These files are fine. They just need a paid plan to sync.",
 	});
 
 	for (const [category, list] of groups) {
@@ -330,7 +337,7 @@ function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "Temporary errors — these clear themselves once the server recovers.",
+		text: "Temporary errors. These clear themselves once the server recovers.",
 	});
 	const list = body.createDiv({ cls: "engram-sync-center-issue-list" });
 	for (const [, issues] of groups) {

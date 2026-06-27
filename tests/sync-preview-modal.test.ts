@@ -1,9 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { LimitExceededError } from "../src/limit-error";
+import type { OptionBreakdown } from "../src/sync-plan-format";
 import {
+	HEADER_BY_CONTEXT,
 	SyncPreviewState,
+	confirmActions,
 	countSkippedAttachments,
 	describeCreateVaultError,
+	mergeHelperText,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";
@@ -234,7 +238,7 @@ describe("SyncPreviewState — non-destructive choices", () => {
 		const { state } = newState();
 		const next = makePlan({ vaultName: "Switched" });
 		state.replacePlan(next);
-		expect(state.plan.vaultName).toBe("Switched");
+		expect(state.plan?.vaultName).toBe("Switched");
 	});
 });
 
@@ -327,5 +331,118 @@ describe("SyncPreviewState — multiple resolutions ignored", () => {
 		state.pickOption("cancel");
 		state.cancel();
 		expect(resolved.value).toBe("smart-merge");
+	});
+});
+
+describe("SyncPreviewState — deferred plan (instant open)", () => {
+	test("accepts a null initial plan (modal opens before the plan resolves)", () => {
+		const state = new SyncPreviewState(null, () => {});
+		expect(state.plan).toBeNull();
+		expect(state.planError).toBeNull();
+	});
+
+	test("replacePlan swaps in the plan and clears any planError", () => {
+		const state = new SyncPreviewState(null, () => {});
+		state.planError = "Could not load the sync plan";
+		state.replacePlan(makePlan({ vaultName: "Loaded" }));
+		expect(state.plan?.vaultName).toBe("Loaded");
+		expect(state.planError).toBeNull();
+	});
+});
+
+describe("confirmActions", () => {
+	test("push-all-delete-remote: deletes the WHOLE server, then re-uploads all local", () => {
+		const p = makePlan({
+			serverNoteCount: 48,
+			serverAttachmentCount: 2,
+			localNoteCount: 188,
+			localAttachmentCount: 2,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Delete all 50 files currently on the server",
+			"Upload 190 files from this vault",
+		]);
+	});
+
+	test("push-all-delete-remote with an empty server: only the upload line", () => {
+		const p = makePlan({
+			serverNoteCount: 0,
+			serverAttachmentCount: 0,
+			localNoteCount: 190,
+			localAttachmentCount: 0,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Upload 190 files from this vault",
+		]);
+	});
+
+	test("pull-all-delete-local: wipes the whole vault, then downloads all remote", () => {
+		const p = makePlan({
+			localNoteCount: 80,
+			localAttachmentCount: 0,
+			serverNoteCount: 20,
+			serverAttachmentCount: 0,
+		});
+		expect(confirmActions("pull-all-delete-local", p)).toEqual([
+			"Delete all 80 files in this vault",
+			"Download 20 files from the server",
+		]);
+	});
+
+	test("singular file wording", () => {
+		const p = makePlan({
+			serverNoteCount: 1,
+			serverAttachmentCount: 0,
+			localNoteCount: 1,
+			localAttachmentCount: 0,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Delete all 1 file currently on the server",
+			"Upload 1 file from this vault",
+		]);
+	});
+});
+
+describe("mergeHelperText", () => {
+	const b = (over: Partial<OptionBreakdown> = {}): OptionBreakdown => ({
+		pullCount: 0,
+		pushCount: 0,
+		conflictCount: 0,
+		deleteLocalCount: 0,
+		deleteRemoteCount: 0,
+		samplePaths: [],
+		...over,
+	});
+
+	test("states upload and download counts for a review sync", () => {
+		expect(mergeHelperText(b({ pushCount: 12, pullCount: 3 }), "review")).toBe(
+			"Uploads 12, downloads 3. Nothing is deleted.",
+		);
+	});
+
+	test("appends conflicts when present", () => {
+		expect(mergeHelperText(b({ pushCount: 1, pullCount: 0, conflictCount: 2 }), "review")).toBe(
+			"Uploads 1. 2 conflicts to resolve. Nothing is deleted.",
+		);
+	});
+
+	test("leads with reassurance on first-time", () => {
+		expect(mergeHelperText(b({ pushCount: 5 }), "first-time")).toBe(
+			"Safe choice: combines both sides, nothing is deleted. Uploads 5.",
+		);
+	});
+
+	test("leads with reassurance on vault-switch", () => {
+		expect(mergeHelperText(b(), "vault-switch")).toBe(
+			"Safe choice: combines both sides, nothing is deleted.",
+		);
+	});
+});
+
+describe("HEADER_BY_CONTEXT", () => {
+	test("uses clearer vault-switch header copy", () => {
+		expect(HEADER_BY_CONTEXT["vault-switch"]).toBe(
+			"You are now pointing at a different cloud vault",
+		);
 	});
 });

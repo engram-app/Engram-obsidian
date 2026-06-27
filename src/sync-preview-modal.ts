@@ -1,4 +1,4 @@
-import { type App, Modal } from "obsidian";
+import { type App, Modal, setIcon } from "obsidian";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -19,8 +19,13 @@ export class SyncPreviewState {
 	view: "preview" | "confirm" | "vault-picker" | "done" = "preview";
 	pendingChoice: SyncChoice | null = null;
 	confirmInput = "";
-	/** Mutable so the modal can swap in a fresh plan after applyVaultChange. */
-	plan: SyncPlan;
+	/** Mutable so the modal can swap in a fresh plan after applyVaultChange.
+	 *  Null while the initial plan is still computing — the modal opens instantly
+	 *  in a loading state and fills in once `replacePlan` runs. */
+	plan: SyncPlan | null;
+	/** Set when the initial plan computation fails; surfaced in the loading
+	 *  view so an instant-open modal is not stuck on a blank spinner. */
+	planError: string | null = null;
 	vaultsLoading = false;
 	vaults: VaultInfo[] | null = null;
 	vaultsError: string | null = null;
@@ -33,7 +38,7 @@ export class SyncPreviewState {
 	private resolved = false;
 
 	constructor(
-		initialPlan: SyncPlan,
+		initialPlan: SyncPlan | null,
 		private readonly onResolve: (choice: SyncChoice) => void,
 	) {
 		this.plan = initialPlan;
@@ -117,10 +122,12 @@ export class SyncPreviewState {
 		this.creatingVault = false;
 	}
 
-	/** Swap in the SyncPlan that came back from applyVaultChange. Caller is
+	/** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
+	 *  initial plan once it resolves. Clears any prior plan-load error. Caller is
 	 *  responsible for re-rendering. */
 	replacePlan(plan: SyncPlan): void {
 		this.plan = plan;
+		this.planError = null;
 	}
 
 	cancel(): void {
@@ -170,11 +177,54 @@ export function skippedAttachmentsLine(n: number): string | null {
 	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
 }
 
+/** Plain-language outcome line for the smart-merge ("Sync") option, computed
+ *  from the plan. Smart-merge never deletes, so the line always reassures.
+ *  First-time and vault-switch lead with a safety clause for users who do not
+ *  yet trust what the button does. Pure for testing. */
+export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext): string {
+	const counts: string[] = [];
+	if (b.pushCount > 0) counts.push(`Uploads ${b.pushCount}`);
+	if (b.pullCount > 0) counts.push(`downloads ${b.pullCount}`);
+	let countLine = counts.join(", ");
+	if (countLine) countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`;
+	const conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+
+	if (context === "first-time" || context === "vault-switch") {
+		const lead = "Safe choice: combines both sides, nothing is deleted.";
+		const tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
+		return `${lead}${tail}`;
+	}
+	return countLine
+		? `${countLine}${conflict} Nothing is deleted.`
+		: "Already in sync. Nothing is deleted.";
+}
+
+/** The "You are about to:" lines for a destructive sync's confirm screen, built
+ *  from the plan. Both destructive options wipe the ENTIRE target side and then
+ *  re-populate it, so the deletion line reports the full target count, not just
+ *  net extras — otherwise a destructive button could show no deletion at all
+ *  when the two sides already overlap. Pure for testing. */
+export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
+	const files = (n: number) => (n === 1 ? "file" : "files");
+	const lines: string[] = [];
+	if (choice === "push-all-delete-remote") {
+		const del = plan.serverNoteCount + plan.serverAttachmentCount;
+		const up = plan.localNoteCount + plan.localAttachmentCount;
+		if (del > 0) lines.push(`Delete all ${del} ${files(del)} currently on the server`);
+		if (up > 0) lines.push(`Upload ${up} ${files(up)} from this vault`);
+	} else if (choice === "pull-all-delete-local") {
+		const del = plan.localNoteCount + plan.localAttachmentCount;
+		const down = plan.serverNoteCount + plan.serverAttachmentCount;
+		if (del > 0) lines.push(`Delete all ${del} ${files(del)} in this vault`);
+		if (down > 0) lines.push(`Download ${down} ${files(down)} from the server`);
+	}
+	return lines;
+}
+
 interface OptionCard {
 	choice: SyncChoice;
 	emoji: string;
 	label: string;
-	subtitle: (b: OptionBreakdown) => string;
 	cssClass: string;
 }
 
@@ -182,7 +232,6 @@ const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
 	label: "Sync",
-	subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -190,15 +239,13 @@ const PUSH_CARDS: OptionCard[] = [
 	{
 		choice: "push-all-keep-remote",
 		emoji: "⬆️",
-		label: "Push all + keep remote",
-		subtitle: (b) => `Upload ${b.pushCount}, keep remote extras`,
+		label: "Upload local files without downloading the remote",
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "push-all-delete-remote",
-		emoji: "⚠️",
-		label: "Push all + delete remote",
-		subtitle: (b) => `Upload ${b.pushCount}, delete ${b.deleteRemoteCount} remote`,
+		emoji: "🗑️",
+		label: "Delete all on remote, then upload local files",
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -207,29 +254,21 @@ const PULL_CARDS: OptionCard[] = [
 	{
 		choice: "pull-all-keep-local",
 		emoji: "⬇️",
-		label: "Pull all + keep local",
-		subtitle: (b) => `Download ${b.pullCount}, keep local extras`,
+		label: "Download remote files without uploading the local",
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "pull-all-delete-local",
-		emoji: "⚠️",
-		label: "Pull all + delete local",
-		subtitle: (b) => `Download ${b.pullCount}, delete ${b.deleteLocalCount} local`,
+		emoji: "🗑️",
+		label: "Delete all local files, then download from remote",
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
 
-const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
+export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
 	"first-time": "Set up sync for this vault",
-	"vault-switch": "New vault detected",
+	"vault-switch": "You are now pointing at a different cloud vault",
 	review: "Sync preview",
-};
-
-const OPTIONS_HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
-	"first-time": "Choose from the following first-time sync options",
-	"vault-switch": "Choose how to sync this new vault",
-	review: "Choose a sync direction",
 };
 
 export interface SyncPreviewOptions {
@@ -271,7 +310,7 @@ export class SyncPreviewModal extends Modal {
 
 	constructor(
 		app: App,
-		plan: SyncPlan,
+		plan: SyncPlan | null,
 		private readonly opts: SyncPreviewOptions,
 	) {
 		super(app);
@@ -307,6 +346,33 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
+	/** Fill in the deferred initial plan once the background computeSyncPlan
+	 *  resolves, refreshing the loading/preview view in place. Only applies while
+	 *  the plan is still null: if the user already switched vaults in the picker,
+	 *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
+	 *  for the old vault must not clobber it. */
+	setPlan(plan: SyncPlan): void {
+		if (this.state.plan != null) return;
+		this.state.replacePlan(plan);
+		if (this.state.view === "preview") this.render();
+	}
+
+	/** Surface a plan-load failure in the instant-open loading view. Skipped once
+	 *  a plan exists (e.g. the user switched vaults), so a stale failure never
+	 *  overwrites a good plan. */
+	setPlanError(message: string): void {
+		if (this.state.plan != null) return;
+		this.state.planError = message;
+		if (this.state.view === "preview") this.render();
+	}
+
+	/** The plan the user ultimately chose against (after any vault switch), or
+	 *  null if it never loaded. Lets the caller describe the planned work in the
+	 *  progress modal. */
+	getPlan(): SyncPlan | null {
+		return this.state.plan;
+	}
+
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -322,21 +388,31 @@ export class SyncPreviewModal extends Modal {
 
 	private renderPreview(): void {
 		const { contentEl } = this;
-		const empty = isPlanEmpty(this.state.plan);
 		const context = this.opts.context ?? "review";
+
+		// Instant-open: the modal is already on screen while the initial plan
+		// computes in the background. Show a loading state until it arrives.
+		if (this.state.plan == null) {
+			this.renderPlanLoading(contentEl, context);
+			return;
+		}
+
+		const empty = isPlanEmpty(this.state.plan);
 
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
 		this.renderSkippedAttachmentsNote(contentEl);
 
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-		// When already in sync there's no direction to "choose" — drop the prompt
-		// but still offer Sync + the (collapsed) advanced options for a deliberate
+		// The plain-language description of what Sync will do sits above the
+		// button (replacing the old generic "Choose a sync direction" prompt).
+		// When already in sync there's nothing to describe — drop it but still
+		// offer Sync + the (collapsed) advanced options for a deliberate
 		// force push/pull or recovery.
 		if (!empty) {
 			options.createDiv({
 				cls: "engram-sync-preview-options-header",
-				text: OPTIONS_HEADER_BY_CONTEXT[context],
+				text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context),
 			});
 		}
 
@@ -359,42 +435,66 @@ export class SyncPreviewModal extends Modal {
 		}
 	}
 
-	/** Render the "Show advanced sync options" accordion (collapsed by default)
-	 *  with the push/pull direction grid. Shared by the up-to-date and
-	 *  has-changes preview states so force push/pull stays reachable even at
-	 *  100% match. */
-	private renderAdvancedOptions(options: HTMLElement): void {
-		const advancedToggle = options.createEl("button", {
-			cls: "engram-sync-preview-advanced-toggle",
-		});
-		advancedToggle.createSpan({
-			cls: "engram-sync-preview-advanced-chevron",
-			text: this.state.advancedOpen ? "▾" : "▸",
-		});
-		advancedToggle.createSpan({ text: "Show advanced sync options" });
-		advancedToggle.addEventListener("click", () => {
-			this.state.toggleAdvanced();
-			this.render();
-		});
-
-		const grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
-		if (!this.state.advancedOpen) grid.addClass("is-collapsed");
-		const pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-		pushCol.createDiv({
-			text: "Push (local → cloud)",
-			cls: "engram-sync-preview-options-col-header",
-		});
-		for (const card of PUSH_CARDS) {
-			this.renderOptionCard(pushCol, card);
+	/** Instant-open loading state: the modal is on screen while computeSyncPlan
+	 *  runs. Shows the context header plus a calm progress line (or the load
+	 *  error), and keeps Cancel + Change vault reachable so the user is never
+	 *  trapped on a spinner. */
+	private renderPlanLoading(parent: HTMLElement, context: SyncPreviewContext): void {
+		this.renderHeader(parent, context);
+		const body = parent.createDiv({ cls: "engram-sync-preview-loading" });
+		if (this.state.planError) {
+			body.createSpan({
+				cls: "engram-sync-preview-picker-error",
+				text: this.state.planError,
+			});
+		} else {
+			body.createSpan({ text: "Comparing your vault with the cloud…" });
 		}
 
-		const pullCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-		pullCol.createDiv({
-			text: "Pull (cloud → local)",
-			cls: "engram-sync-preview-options-col-header",
+		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
+		const cancelBtn = footer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.state.cancel());
+		if (this.opts.showChangeVault) {
+			const changeBtn = footer.createEl("button", { text: "Change vault" });
+			changeBtn.addEventListener("click", () => {
+				void this.openVaultPicker();
+			});
+		}
+	}
+
+	/** The loaded plan. Only reached from render paths that run after the plan
+	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
+	 *  against a future caller skipping the loading gate. */
+	private requirePlan(): SyncPlan {
+		const p = this.state.plan;
+		if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
+		return p;
+	}
+
+	/** Render the advanced sync options as a native <details> accordion holding
+	 *  all four direction buttons in one column. Collapsed by default; stays
+	 *  reachable even at 100% match for a deliberate force push/pull or recovery. */
+	private renderAdvancedOptions(options: HTMLElement): void {
+		const details = options.createEl("details", { cls: "engram-sync-preview-advanced" });
+		details.open = this.state.advancedOpen;
+
+		const summary = details.createEl("summary", {
+			cls: "engram-sync-preview-advanced-summary",
 		});
-		for (const card of PULL_CARDS) {
-			this.renderOptionCard(pullCol, card);
+		summary.createSpan({ text: "Advanced sync options" });
+		const chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
+		setIcon(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right");
+
+		// The native <details> owns open/close — just persist the state and swap
+		// the chevron on toggle, no full re-render so the disclosure stays smooth.
+		details.addEventListener("toggle", () => {
+			this.state.advancedOpen = details.open;
+			setIcon(chevron, details.open ? "chevron-down" : "chevron-right");
+		});
+
+		const grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
+		for (const card of [...PUSH_CARDS, ...PULL_CARDS]) {
+			this.renderOptionCard(grid, card);
 		}
 	}
 
@@ -402,7 +502,10 @@ export class SyncPreviewModal extends Modal {
 	 *  upcoming push includes non-text attachments. Renders nothing when the
 	 *  plan isn't text-only, the flag is unknown, or the count is zero. */
 	private renderSkippedAttachmentsNote(parent: HTMLElement): void {
-		const n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === true);
+		const n = countSkippedAttachments(
+			this.requirePlan(),
+			this.opts.attachmentsTextOnly === true,
+		);
 		const text = skippedAttachmentsLine(n);
 		if (text == null) return;
 		const note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
@@ -427,7 +530,7 @@ export class SyncPreviewModal extends Modal {
 
 	private renderComparison(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-compare" });
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 
 		this.renderCompareCard(wrap, {
 			emoji: "💻",
@@ -449,6 +552,10 @@ export class SyncPreviewModal extends Modal {
 		const match = computeMatchPercent(plan);
 		const conflicts = plan.conflicts.length;
 		const matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
+		matchRow.createSpan({
+			cls: "engram-sync-preview-match-label",
+			text: "Your vault shares ",
+		});
 		const matchValue = matchRow.createSpan({
 			cls: "engram-sync-preview-match-value",
 			text: `${match}%`,
@@ -456,7 +563,7 @@ export class SyncPreviewModal extends Modal {
 		if (match === 100) matchValue.addClass("is-perfect");
 		matchRow.createSpan({
 			cls: "engram-sync-preview-match-label",
-			text: " of vaults currently match",
+			text: " of its data with Engram",
 		});
 		if (conflicts > 0) {
 			const conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
@@ -516,15 +623,10 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	private renderOptionCard(parent: HTMLElement, card: OptionCard): void {
-		const b = optionBreakdown(this.state.plan, card.choice);
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" });
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		wrap.createEl("p", {
-			text: card.subtitle(b),
-			cls: "engram-sync-preview-option-subtitle",
-		});
 		btn.addEventListener("click", () => {
 			this.state.pickOption(card.choice);
 			this.render();
@@ -541,27 +643,17 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-header",
 		});
 
-		const b = optionBreakdown(this.state.plan, choice);
 		const summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
 		summary.createEl("p", { text: "You are about to:" });
 		const ul = summary.createEl("ul");
-		if (b.deleteLocalCount > 0) {
-			ul.createEl("li", { text: `Delete ${b.deleteLocalCount} local files` });
-		}
-		if (b.deleteRemoteCount > 0) {
-			ul.createEl("li", { text: `Delete ${b.deleteRemoteCount} remote files` });
-		}
-		if (b.pullCount > 0) {
-			ul.createEl("li", { text: `Download ${b.pullCount} files from server` });
-		}
-		if (b.pushCount > 0) {
-			ul.createEl("li", { text: `Upload ${b.pushCount} files to server` });
+		for (const action of confirmActions(choice, this.requirePlan())) {
+			ul.createEl("li", { text: action });
 		}
 
 		const deletePaths = this.deletePathsFor(choice);
 		if (deletePaths.length > 0) {
 			contentEl.createEl("p", {
-				text: "Files marked for deletion:",
+				text: "Files that will be deleted:",
 				cls: "engram-sync-preview-tree-caption",
 			});
 			this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths));
@@ -571,7 +663,10 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-warning",
 			text: "This cannot be undone.",
 		});
-		contentEl.createEl("p", { text: "Type delete to confirm:" });
+		const typeLine = contentEl.createEl("p");
+		typeLine.createSpan({ text: "Type " });
+		typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
+		typeLine.createSpan({ text: " to confirm:" });
 
 		const input = contentEl.createEl("input", {
 			type: "text",
@@ -733,13 +828,16 @@ export class SyncPreviewModal extends Modal {
 		this.render();
 	}
 
+	/** Every path that the destructive sync deletes. Both options wipe the whole
+	 *  target side (then re-populate it), so this is the entire local/server file
+	 *  list — matching the "Delete all N" line on the confirm screen. */
 	private deletePathsFor(choice: SyncChoice): string[] {
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 		if (choice === "pull-all-delete-local") {
-			return [...plan.toPush.notes, ...plan.toPush.attachments];
+			return [...plan.localPaths];
 		}
 		if (choice === "push-all-delete-remote") {
-			return [...plan.toPull.notes, ...plan.toPull.attachments];
+			return [...plan.serverPaths];
 		}
 		return [];
 	}
@@ -747,7 +845,7 @@ export class SyncPreviewModal extends Modal {
 	/** Paths that remain on the affected side after the destructive sync —
 	 *  used to decide whether a folder row is going away entirely. */
 	private keptPathsFor(choice: SyncChoice, deletePaths: string[]): string[] {
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 		const deleted = new Set(deletePaths);
 		if (choice === "pull-all-delete-local") {
 			return plan.localPaths.filter((p) => !deleted.has(p));

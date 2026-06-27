@@ -23,10 +23,11 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
+import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
-import { SyncProgressModal } from "./sync-progress-modal";
-import { ENGRAM_CLOUD_URL } from "./tabs/urls";
+import { SyncProgressModal, describePlannedWork, plannedPhases } from "./sync-progress-modal";
+import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
 import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
@@ -47,7 +48,7 @@ import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import type { QueueEntry, SyncChoice, SyncIssue } from "./types";
+import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.
@@ -146,6 +147,11 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  auth/vault change. Compared against current fingerprint to decide
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
+
+	/** Single-flight guard so a vault switch (or any racing trigger) cannot
+	 *  stack two SyncPreviewModal instances. A second call while one preview is
+	 *  open is a silent no-op. See single-flight.ts. */
+	private readonly syncPreviewGuard = createSingleFlight();
 
 	async onload(): Promise<void> {
 		initDevLog();
@@ -1146,14 +1152,14 @@ export default class EngramSyncPlugin extends Plugin {
 
 			case "push-all-delete-remote": {
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: true });
-				new Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`);
+				const pushed = await this.syncEngine.pushAll({ replaceRemote: true });
+				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
 				return true;
 			}
 
 			case "push-all-keep-remote": {
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: false });
+				const pushed = await this.syncEngine.pushAll({ replaceRemote: false });
 				new Notice(`Engram Sync: pushed ${pushed}`);
 				return true;
 			}
@@ -1166,11 +1172,22 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  the prior progress callback when the sync settles. The modal's "Run in
 	 *  background" closes it while the sync keeps running. No-op choices
 	 *  (cancel / change-vault) skip the modal entirely. */
-	async runSyncWithProgress(choice: SyncChoice): Promise<boolean> {
+	async runSyncWithProgress(
+		choice: SyncChoice,
+		opts: { plan?: SyncPlan | null; firstSync?: boolean } = {},
+	): Promise<boolean> {
 		if (choice === "cancel" || choice === "change-vault") {
 			return this.runSyncFromChoice(choice);
 		}
-		const modal = new SyncProgressModal(this.app);
+		const intro = opts.plan
+			? describePlannedWork(choice, opts.plan, opts.firstSync ?? false)
+			: undefined;
+		const phases = opts.plan ? plannedPhases(choice, opts.plan) : undefined;
+		const modal = new SyncProgressModal(this.app, {
+			intro,
+			phases,
+			webUrl: engramWebUrl(this.settings.apiUrl),
+		});
 		const prev = this.syncEngine.onSyncProgress;
 		this.syncEngine.onSyncProgress = (progress) => {
 			modal.update(progress);
@@ -1243,49 +1260,75 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  saveSettings once auth + vault are configured. First-sync is just
 	 *  one case of the preview UX. */
 	async doSyncWithFirstSyncCheck(opts: { startInVaultPicker?: boolean } = {}): Promise<void> {
-		try {
-			const plan = await this.syncEngine.computeSyncPlan("full");
-			const context = this.derivePreviewContext();
-			const modal = new SyncPreviewModal(this.app, plan, {
-				remoteVaultName: this.settings.remoteVaultName,
-				showChangeVault: true,
-				context,
-				initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
-				attachmentsTextOnly: this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
-				listVaults: () => this.api.listVaults(),
-				createVault: (name) => this.api.createVault(name),
-				applyVaultChange: async (id, name) => {
-					// Persist the new vault target without going through
-					// saveSettings — that path would re-fire
-					// doSyncWithFirstSyncCheck for the closed gate and stack
-					// a second modal on top of this one.
-					this.settings.vaultId = id;
-					this.settings.remoteVaultName = name;
-					this.api.setVaultId(id);
-					this.syncEngine.updateSettings(this.settings);
-					// Last sync and per-file hashes are scoped to the previous
-					// server vault. Without this reset, fullSync compares
-					// local mtime to a stale lastSync and pushes nothing —
-					// even when the new vault is empty.
-					await this.syncEngine.resetForVaultChange();
-					this.syncGateAcceptedFor = null;
-					this.syncEngine.setSyncBlocked(true);
-					await this.savePluginData(this.syncEngine.getLastSync());
-					// Re-render the settings tab so the vault name span and
-					// any other vault-derived UI pick up the switch.
-					this.settingTab?.display();
-					return this.syncEngine.computeSyncPlan("full");
-				},
-			});
-			const choice = await modal.awaitChoice();
+		// Single-flight: if a preview is already open (e.g. a vault switch fired
+		// two saveSettings gate-chains), this call is a silent no-op so we never
+		// stack two modals.
+		await this.syncPreviewGuard(async () => {
+			try {
+				const context = this.derivePreviewContext();
+				// Open the modal immediately in a loading state, then stream the
+				// plan in when computeSyncPlan resolves. Previously we awaited the
+				// full server round-trip (manifest + changes) BEFORE opening, so
+				// the modal appeared to hang on slow connections.
+				const modal = new SyncPreviewModal(this.app, null, {
+					remoteVaultName: this.settings.remoteVaultName,
+					showChangeVault: true,
+					context,
+					initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
+					attachmentsTextOnly:
+						this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
+					listVaults: () => this.api.listVaults(),
+					createVault: (name) => this.api.createVault(name),
+					applyVaultChange: async (id, name) => {
+						// Persist the new vault target without going through
+						// saveSettings — that path would re-fire
+						// doSyncWithFirstSyncCheck for the closed gate and stack
+						// a second modal on top of this one.
+						this.settings.vaultId = id;
+						this.settings.remoteVaultName = name;
+						this.api.setVaultId(id);
+						this.syncEngine.updateSettings(this.settings);
+						// Last sync and per-file hashes are scoped to the previous
+						// server vault. Without this reset, fullSync compares
+						// local mtime to a stale lastSync and pushes nothing —
+						// even when the new vault is empty.
+						await this.syncEngine.resetForVaultChange();
+						this.syncGateAcceptedFor = null;
+						this.syncEngine.setSyncBlocked(true);
+						await this.savePluginData(this.syncEngine.getLastSync());
+						// Re-render the settings tab so the vault name span and
+						// any other vault-derived UI pick up the switch.
+						this.settingTab?.display();
+						return this.syncEngine.computeSyncPlan("full");
+					},
+				});
 
-			await this.runSyncWithProgress(choice);
-		} catch (e) {
-			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error("Engram Sync: sync preview failed", e);
-			new Notice("Engram sync: preview failed — check connection");
-			rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
-		}
+				// Compute the plan off the critical path and stream it into the
+				// already-open modal. A failure surfaces in the modal's loading
+				// view rather than blocking the open.
+				void this.syncEngine
+					.computeSyncPlan("full")
+					.then((plan) => modal.setPlan(plan))
+					.catch((e) => {
+						modal.setPlanError(
+							"Could not compare with the cloud. Check your connection.",
+						);
+						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
+					});
+
+				const choice = await modal.awaitChoice();
+
+				await this.runSyncWithProgress(choice, {
+					plan: modal.getPlan(),
+					firstSync: context === "first-time",
+				});
+			} catch (e) {
+				// biome-ignore lint/suspicious/noConsole: error boundary
+				console.error("Engram Sync: sync preview failed", e);
+				new Notice("Engram sync: preview failed — check connection");
+				rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+			}
+		});
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin

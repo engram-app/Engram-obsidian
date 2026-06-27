@@ -737,7 +737,11 @@ var import_obsidian23 = require("obsidian");
 var import_obsidian = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://api.engram.page", ENGRAM_APP_URL = "https://app.engram.page";
+function engramWebUrl(apiUrl) {
+  return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
+}
+var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -2957,6 +2961,9 @@ var SyncPreviewState = class {
     this.view = "preview";
     this.pendingChoice = null;
     this.confirmInput = "";
+    /** Set when the initial plan computation fails; surfaced in the loading
+     *  view so an instant-open modal is not stuck on a blank spinner. */
+    this.planError = null;
     this.vaultsLoading = !1;
     this.vaults = null;
     this.vaultsError = null;
@@ -3011,10 +3018,11 @@ var SyncPreviewState = class {
   exitVaultPicker() {
     this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
   }
-  /** Swap in the SyncPlan that came back from applyVaultChange. Caller is
+  /** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
+   *  initial plan once it resolves. Clears any prior plan-load error. Caller is
    *  responsible for re-rendering. */
   replacePlan(plan) {
-    this.plan = plan;
+    this.plan = plan, this.planError = null;
   }
   cancel() {
     this.resolve("cancel");
@@ -3036,50 +3044,64 @@ function countSkippedAttachments(plan, attachmentsTextOnly) {
 function skippedAttachmentsLine(n) {
   return n <= 0 ? null : `Free syncs notes only \u2014 ${n} ${n === 1 ? "attachment" : "attachments"} will be skipped.`;
 }
+function mergeHelperText(b, context) {
+  let counts = [];
+  b.pushCount > 0 && counts.push(`Uploads ${b.pushCount}`), b.pullCount > 0 && counts.push(`downloads ${b.pullCount}`);
+  let countLine = counts.join(", ");
+  countLine && (countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`);
+  let conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+  if (context === "first-time" || context === "vault-switch") {
+    let lead = "Safe choice: combines both sides, nothing is deleted.", tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
+    return `${lead}${tail}`;
+  }
+  return countLine ? `${countLine}${conflict} Nothing is deleted.` : "Already in sync. Nothing is deleted.";
+}
+function confirmActions(choice, plan) {
+  let files = (n) => n === 1 ? "file" : "files", lines = [];
+  if (choice === "push-all-delete-remote") {
+    let del2 = plan.serverNoteCount + plan.serverAttachmentCount, up = plan.localNoteCount + plan.localAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} currently on the server`), up > 0 && lines.push(`Upload ${up} ${files(up)} from this vault`);
+  } else if (choice === "pull-all-delete-local") {
+    let del2 = plan.localNoteCount + plan.localAttachmentCount, down = plan.serverNoteCount + plan.serverAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} in this vault`), down > 0 && lines.push(`Download ${down} ${files(down)} from the server`);
+  }
+  return lines;
+}
 var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
   label: "Sync",
-  subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
   cssClass: "engram-sync-preview-option mod-cta"
 }, PUSH_CARDS = [
   {
     choice: "push-all-keep-remote",
     emoji: "\u2B06\uFE0F",
-    label: "Push all + keep remote",
-    subtitle: (b) => `Upload ${b.pushCount}, keep remote extras`,
+    label: "Upload local files without downloading the remote",
     cssClass: "engram-sync-preview-option"
   },
   {
     choice: "push-all-delete-remote",
-    emoji: "\u26A0\uFE0F",
-    label: "Push all + delete remote",
-    subtitle: (b) => `Upload ${b.pushCount}, delete ${b.deleteRemoteCount} remote`,
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all on remote, then upload local files",
     cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
   }
 ], PULL_CARDS = [
   {
     choice: "pull-all-keep-local",
     emoji: "\u2B07\uFE0F",
-    label: "Pull all + keep local",
-    subtitle: (b) => `Download ${b.pullCount}, keep local extras`,
+    label: "Download remote files without uploading the local",
     cssClass: "engram-sync-preview-option"
   },
   {
     choice: "pull-all-delete-local",
-    emoji: "\u26A0\uFE0F",
-    label: "Pull all + delete local",
-    subtitle: (b) => `Download ${b.pullCount}, delete ${b.deleteLocalCount} local`,
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all local files, then download from remote",
     cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
   }
 ], HEADER_BY_CONTEXT = {
   "first-time": "Set up sync for this vault",
-  "vault-switch": "New vault detected",
+  "vault-switch": "You are now pointing at a different cloud vault",
   review: "Sync preview"
-}, OPTIONS_HEADER_BY_CONTEXT = {
-  "first-time": "Choose from the following first-time sync options",
-  "vault-switch": "Choose how to sync this new vault",
-  review: "Choose a sync direction"
 }, SyncPreviewModal = class extends import_obsidian11.Modal {
   constructor(app, plan, opts) {
     super(app);
@@ -3103,18 +3125,43 @@ var MERGE_CARD = {
       this.resolveFn = resolve, this.open();
     });
   }
+  /** Fill in the deferred initial plan once the background computeSyncPlan
+   *  resolves, refreshing the loading/preview view in place. Only applies while
+   *  the plan is still null: if the user already switched vaults in the picker,
+   *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
+   *  for the old vault must not clobber it. */
+  setPlan(plan) {
+    this.state.plan == null && (this.state.replacePlan(plan), this.state.view === "preview" && this.render());
+  }
+  /** Surface a plan-load failure in the instant-open loading view. Skipped once
+   *  a plan exists (e.g. the user switched vaults), so a stale failure never
+   *  overwrites a good plan. */
+  setPlanError(message) {
+    this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
+  }
+  /** The plan the user ultimately chose against (after any vault switch), or
+   *  null if it never loaded. Lets the caller describe the planned work in the
+   *  progress modal. */
+  getPlan() {
+    return this.state.plan;
+  }
   render() {
     let { contentEl } = this;
     contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
   }
   renderPreview() {
     var _a;
-    let { contentEl } = this, empty = isPlanEmpty(this.state.plan), context = (_a = this.opts.context) != null ? _a : "review";
+    let { contentEl } = this, context = (_a = this.opts.context) != null ? _a : "review";
+    if (this.state.plan == null) {
+      this.renderPlanLoading(contentEl, context);
+      return;
+    }
+    let empty = isPlanEmpty(this.state.plan);
     this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
     empty || options.createDiv({
       cls: "engram-sync-preview-options-header",
-      text: OPTIONS_HEADER_BY_CONTEXT[context]
+      text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
     this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
@@ -3126,42 +3173,56 @@ var MERGE_CARD = {
       this.openVaultPicker();
     });
   }
-  /** Render the "Show advanced sync options" accordion (collapsed by default)
-   *  with the push/pull direction grid. Shared by the up-to-date and
-   *  has-changes preview states so force push/pull stays reachable even at
-   *  100% match. */
+  /** Instant-open loading state: the modal is on screen while computeSyncPlan
+   *  runs. Shows the context header plus a calm progress line (or the load
+   *  error), and keeps Cancel + Change vault reachable so the user is never
+   *  trapped on a spinner. */
+  renderPlanLoading(parent, context) {
+    this.renderHeader(parent, context);
+    let body = parent.createDiv({ cls: "engram-sync-preview-loading" });
+    this.state.planError ? body.createSpan({
+      cls: "engram-sync-preview-picker-error",
+      text: this.state.planError
+    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" });
+    let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** The loaded plan. Only reached from render paths that run after the plan
+   *  has arrived (renderPreview gates on it); throws otherwise as a guard
+   *  against a future caller skipping the loading gate. */
+  requirePlan() {
+    let p = this.state.plan;
+    if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
+    return p;
+  }
+  /** Render the advanced sync options as a native <details> accordion holding
+   *  all four direction buttons in one column. Collapsed by default; stays
+   *  reachable even at 100% match for a deliberate force push/pull or recovery. */
   renderAdvancedOptions(options) {
-    let advancedToggle = options.createEl("button", {
-      cls: "engram-sync-preview-advanced-toggle"
+    let details = options.createEl("details", { cls: "engram-sync-preview-advanced" });
+    details.open = this.state.advancedOpen;
+    let summary = details.createEl("summary", {
+      cls: "engram-sync-preview-advanced-summary"
     });
-    advancedToggle.createSpan({
-      cls: "engram-sync-preview-advanced-chevron",
-      text: this.state.advancedOpen ? "\u25BE" : "\u25B8"
-    }), advancedToggle.createSpan({ text: "Show advanced sync options" }), advancedToggle.addEventListener("click", () => {
-      this.state.toggleAdvanced(), this.render();
+    summary.createSpan({ text: "Advanced sync options" });
+    let chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
+    (0, import_obsidian11.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
+      this.state.advancedOpen = details.open, (0, import_obsidian11.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
     });
-    let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
-    this.state.advancedOpen || grid.addClass("is-collapsed");
-    let pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-    pushCol.createDiv({
-      text: "Push (local \u2192 cloud)",
-      cls: "engram-sync-preview-options-col-header"
-    });
-    for (let card of PUSH_CARDS)
-      this.renderOptionCard(pushCol, card);
-    let pullCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-    pullCol.createDiv({
-      text: "Pull (cloud \u2192 local)",
-      cls: "engram-sync-preview-options-col-header"
-    });
-    for (let card of PULL_CARDS)
-      this.renderOptionCard(pullCol, card);
+    let grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
+    for (let card of [...PUSH_CARDS, ...PULL_CARDS])
+      this.renderOptionCard(grid, card);
   }
   /** One calm, non-blocking info line for a text-only (Free) plan when the
    *  upcoming push includes non-text attachments. Renders nothing when the
    *  plan isn't text-only, the flag is unknown, or the count is zero. */
   renderSkippedAttachmentsNote(parent) {
-    let n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === !0), text2 = skippedAttachmentsLine(n);
+    let n = countSkippedAttachments(
+      this.requirePlan(),
+      this.opts.attachmentsTextOnly === !0
+    ), text2 = skippedAttachmentsLine(n);
     if (text2 == null) return;
     let note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
     note.createSpan({ text: "\u2139\uFE0F ", cls: "engram-sync-preview-skip-note-icon" }), note.createSpan({ text: text2 });
@@ -3180,7 +3241,7 @@ var MERGE_CARD = {
     });
   }
   renderComparison(parent) {
-    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.state.plan;
+    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.requirePlan();
     this.renderCompareCard(wrap, {
       emoji: "\u{1F4BB}",
       name: plan.vaultName,
@@ -3196,13 +3257,18 @@ var MERGE_CARD = {
       attachments: plan.serverAttachmentCount,
       folders: plan.serverFolderCount
     });
-    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" }), matchValue = matchRow.createSpan({
+    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
+    matchRow.createSpan({
+      cls: "engram-sync-preview-match-label",
+      text: "Your vault shares "
+    });
+    let matchValue = matchRow.createSpan({
       cls: "engram-sync-preview-match-value",
       text: `${match2}%`
     });
     if (match2 === 100 && matchValue.addClass("is-perfect"), matchRow.createSpan({
       cls: "engram-sync-preview-match-label",
-      text: " of vaults currently match"
+      text: " of its data with Engram"
     }), conflicts > 0) {
       let conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
       conflictRow.createSpan({
@@ -3234,11 +3300,8 @@ var MERGE_CARD = {
     });
   }
   renderOptionCard(parent, card) {
-    let b = optionBreakdown(this.state.plan, card.choice), wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }), btn = wrap.createEl("button", { cls: card.cssClass });
-    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), wrap.createEl("p", {
-      text: card.subtitle(b),
-      cls: "engram-sync-preview-option-subtitle"
-    }), btn.addEventListener("click", () => {
+    let btn = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }).createEl("button", { cls: card.cssClass });
+    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), btn.addEventListener("click", () => {
       this.state.pickOption(card.choice), this.render();
     });
   }
@@ -3249,18 +3312,21 @@ var MERGE_CARD = {
       text: "Confirm destructive sync",
       cls: "engram-sync-preview-header"
     });
-    let b = optionBreakdown(this.state.plan, choice), summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
+    let summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
     summary.createEl("p", { text: "You are about to:" });
     let ul = summary.createEl("ul");
-    b.deleteLocalCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteLocalCount} local files` }), b.deleteRemoteCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteRemoteCount} remote files` }), b.pullCount > 0 && ul.createEl("li", { text: `Download ${b.pullCount} files from server` }), b.pushCount > 0 && ul.createEl("li", { text: `Upload ${b.pushCount} files to server` });
+    for (let action of confirmActions(choice, this.requirePlan()))
+      ul.createEl("li", { text: action });
     let deletePaths = this.deletePathsFor(choice);
     deletePaths.length > 0 && (contentEl.createEl("p", {
-      text: "Files marked for deletion:",
+      text: "Files that will be deleted:",
       cls: "engram-sync-preview-tree-caption"
     }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
       cls: "engram-sync-preview-warning",
       text: "This cannot be undone."
-    }), contentEl.createEl("p", { text: "Type delete to confirm:" });
+    });
+    let typeLine = contentEl.createEl("p");
+    typeLine.createSpan({ text: "Type " }), typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" }), typeLine.createSpan({ text: " to confirm:" });
     let input = contentEl.createEl("input", {
       type: "text",
       cls: "engram-sync-preview-confirm-input"
@@ -3374,14 +3440,17 @@ var MERGE_CARD = {
       this.render();
     }
   }
+  /** Every path that the destructive sync deletes. Both options wipe the whole
+   *  target side (then re-populate it), so this is the entire local/server file
+   *  list — matching the "Delete all N" line on the confirm screen. */
   deletePathsFor(choice) {
-    let plan = this.state.plan;
-    return choice === "pull-all-delete-local" ? [...plan.toPush.notes, ...plan.toPush.attachments] : choice === "push-all-delete-remote" ? [...plan.toPull.notes, ...plan.toPull.attachments] : [];
+    let plan = this.requirePlan();
+    return choice === "pull-all-delete-local" ? [...plan.localPaths] : choice === "push-all-delete-remote" ? [...plan.serverPaths] : [];
   }
   /** Paths that remain on the affected side after the destructive sync —
    *  used to decide whether a folder row is going away entirely. */
   keptPathsFor(choice, deletePaths) {
-    let plan = this.state.plan, deleted = new Set(deletePaths);
+    let plan = this.requirePlan(), deleted = new Set(deletePaths);
     return choice === "pull-all-delete-local" ? plan.localPaths.filter((p) => !deleted.has(p)) : choice === "push-all-delete-remote" ? plan.serverPaths.filter((p) => !deleted.has(p)) : [];
   }
   renderDeletionTree(parent, paths, keptPaths) {
@@ -3467,14 +3536,18 @@ function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
   makeActionButton(strip, "Sync...", async () => {
     try {
-      let plan = await plugin.syncEngine.computeSyncPlan("full"), choice = await new SyncPreviewModal(plugin.app, plan, {
+      let modal = new SyncPreviewModal(plugin.app, null, {
         remoteVaultName: plugin.settings.remoteVaultName,
         showChangeVault: !1,
         context: "review"
-      }).awaitChoice();
+      });
+      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(
+        () => modal.setPlanError("Could not compare with the cloud. Check your connection.")
+      );
+      let choice = await modal.awaitChoice();
       if (choice === "change-vault")
-        throw new Error("Sync Center received change-vault choice \u2014 caller missing");
-      await plugin.runSyncWithProgress(choice);
+        throw new Error("Sync Center received change-vault choice, caller missing");
+      await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
     } catch (e) {
       new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
@@ -3496,7 +3569,7 @@ function renderPlanSkips(parent, plugin, refresh) {
   let body = section.createDiv({ cls: "engram-sync-center-section-body" });
   body.createEl("p", {
     cls: "engram-sync-center-card-hint",
-    text: "These files are fine \u2014 they just need a paid plan to sync."
+    text: "These files are fine. They just need a paid plan to sync."
   });
   for (let [category, list] of groups)
     renderPlanCard(body, plugin, refresh, category, list);
@@ -3576,7 +3649,7 @@ function renderRetrying(parent, plugin, refresh) {
   let body = section.createDiv({ cls: "engram-sync-center-section-body" });
   body.createEl("p", {
     cls: "engram-sync-center-card-hint",
-    text: "Temporary errors \u2014 these clear themselves once the server recovers."
+    text: "Temporary errors. These clear themselves once the server recovers."
   });
   let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
   for (let [, issues] of groups)
@@ -3694,6 +3767,16 @@ function formatRelative(timestamp) {
 }
 
 // src/sync-progress-modal.ts
+function describePlannedWork(choice, plan, firstSync) {
+  let b = optionBreakdown(plan, choice), parts = [];
+  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
+    `deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`
+  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+  let prefix = firstSync ? "First sync, this may take a moment. " : "";
+  if (parts.length === 0) return `${prefix}Checking for changes.`;
+  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
 function renderCompletionSummary(parent, summary) {
   let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
   if (summary.synced > 0 && line.createSpan({
@@ -3708,104 +3791,143 @@ function renderCompletionSummary(parent, summary) {
   }), summary.skipped > 0) {
     let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = summary.skipped === 1 ? "attachment" : "attachments";
     note.createSpan({
-      text: `${summary.skipped} ${noun} need a paid plan \u2014 see Sync Center. `
+      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
     }), note.createEl("button", {
       text: "Upgrade",
       cls: "engram-progress-upgrade mod-cta"
     }).addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
   }
 }
-var PHASE_LABELS = {
-  deleting: "Deleting local files",
-  pushing: "Pushing notes",
-  pulling: "Pulling notes",
-  attachments: "Syncing attachments",
-  complete: "Complete"
-}, MIN_PHASE_MS = 800, TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
-  constructor() {
-    super(...arguments);
-    /** Latest progress update received from the sync engine (may be ahead of display). */
+function describeCompletion(summary) {
+  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
+}
+function plannedPhases(choice, plan) {
+  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
+  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
+}
+var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
+  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
+   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+   *  on completion so the user can verify their vault. All optional so callers
+   *  without a plan still get a usable modal. */
+  constructor(app, opts = {}) {
+    super(app);
+    this.opts = opts;
+    this.rows = [];
+    this.rowEls = /* @__PURE__ */ new Map();
+    /** Latest progress update from the engine, applied on the next tick. */
     this.latest = null;
-    /** Currently displayed phase. */
-    this.displayedPhase = null;
-    /** Timestamp when the current phase started displaying. */
-    this.phaseStartTime = 0;
-    /** Interval for ticking the display forward. */
     this.tickTimer = null;
-    /** Queue of phase-changing updates waiting for min display time. */
-    this.pendingPhaseChange = null;
   }
   onOpen() {
+    var _a;
     let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing..." }), this.phaseEl = contentEl.createEl("p", {
-      text: "Preparing...",
-      cls: "engram-progress-phase"
-    }), this.countEl = contentEl.createEl("p", { text: "", cls: "engram-progress-count" }), this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" });
-    let barOuter = contentEl.createDiv({ cls: "engram-progress-bar-outer" });
-    this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" }), this.failedEl = contentEl.createEl("p", {
-      text: "",
-      cls: "engram-progress-failed"
-    }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({
-      cls: "engram-progress-summary"
-    }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
-      text: "You can close this \u2014 the sync keeps running in the background.",
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
+      text: "Getting started\u2026",
+      cls: "engram-progress-status"
+    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
+      phase: p.phase,
+      label: p.label,
+      plannedTotal: p.total,
+      current: 0,
+      total: p.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }));
+    for (let row of this.rows) this.createRow(row);
+    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
+      let url = this.opts.webUrl;
+      this.verifyEl.createSpan({
+        text: "Open Engram to check your vault and confirm everything synced. "
+      });
+      let link = this.verifyEl.createEl("a", {
+        text: "Open Engram",
+        cls: "engram-progress-verify-link",
+        href: url
+      });
+      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
+        e.preventDefault(), window.open(url, "_blank");
+      });
+    }
+    this.hintEl = contentEl.createEl("p", {
+      text: "You can close this and the sync keeps running in the background.",
       cls: "engram-progress-hint"
     });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", {
-      text: "Done",
-      cls: "mod-cta"
-    }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
   /** Called by the sync engine's progress callback. Buffers the update. */
   update(progress) {
     this.latest = progress;
   }
-  /** Periodic tick: apply buffered updates with minimum phase display time. */
   tick() {
-    var _a;
-    if (!this.latest || !this.phaseEl) return;
-    let now = Date.now();
-    if (this.pendingPhaseChange) {
-      if (now - this.phaseStartTime < MIN_PHASE_MS) {
-        this.renderProgress({
-          ...this.pendingPhaseChange,
-          phase: (_a = this.displayedPhase) != null ? _a : this.pendingPhaseChange.phase
-        });
-        return;
-      }
-      this.displayedPhase = this.pendingPhaseChange.phase, this.phaseStartTime = now, this.pendingPhaseChange = null;
-    }
-    if (this.displayedPhase !== null && this.latest.phase !== this.displayedPhase && now - this.phaseStartTime < MIN_PHASE_MS) {
-      this.pendingPhaseChange = { ...this.latest }, this.renderProgress({
-        phase: this.displayedPhase,
-        current: this.latest.total || 1,
-        total: this.latest.total || 1,
-        failed: this.latest.failed
-      });
-      return;
-    }
-    this.displayedPhase !== this.latest.phase && (this.displayedPhase = this.latest.phase, this.phaseStartTime = now, this.barInner.setCssStyles({ width: "0%" })), this.renderProgress(this.latest);
+    if (!this.latest) return;
+    let progress = this.latest;
+    this.latest = null, this.applyProgress(progress);
   }
-  /** Render a progress state to the DOM. */
-  renderProgress(progress) {
-    var _a, _b, _c;
-    let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
+  createRow(row) {
+    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
+    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
+    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
+      cls: "engram-progress-row-count",
+      text: `0 / ${row.plannedTotal}`
+    });
+    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
+  }
+  applyProgress(progress) {
+    var _a, _b;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, {
-        synced: progress.current,
-        skipped: (_b = progress.skipped) != null ? _b : 0,
-        failed: progress.failed
-      }), this.summaryEl.hidden = !1, progress.failed > 0 ? (this.failedEl.setText(
-        `${progress.failed} failed \u2014 run "Engram: Show sync log" for details`
-      ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
+      this.applyComplete(progress);
       return;
     }
-    this.phaseEl.setText(label), this.countEl.setText(`${progress.current} / ${progress.total}`), this.pathEl.setText((_c = progress.currentPath) != null ? _c : ""), this.barInner.style.width = `${pct}%`, this.barInner.removeClass("is-complete"), progress.failed > 0 ? (this.failedEl.setText(`${progress.failed} failed so far`), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
+    let row = this.rows.find((r) => r.phase === progress.phase);
+    row || (row = {
+      phase: progress.phase,
+      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
+      plannedTotal: progress.total,
+      current: 0,
+      total: progress.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0, row.current = progress.current, row.total = progress.total || row.total, row.failed = progress.failed;
+    for (let other of this.rows)
+      other !== row && other.seen && (other.done = !0);
+    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
+  }
+  applyComplete(progress) {
+    var _a;
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
+    for (let row of this.rows)
+      row.done = !0, row.current = row.total;
+    this.renderRows();
+    let summary = {
+      synced: progress.current,
+      skipped: (_a = progress.skipped) != null ? _a : 0,
+      failed: progress.failed
+    };
+    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
+      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+  }
+  renderRows() {
+    for (let row of this.rows) {
+      let els = this.rowEls.get(row.phase);
+      if (!els) continue;
+      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(`${row.current} / ${row.total}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+    }
   }
   onClose() {
     this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
   }
+}, PHASE_FALLBACK_LABEL = {
+  deleting: "Deleting",
+  pushing: "Uploading",
+  pulling: "Downloading",
+  attachments: "Syncing attachments",
+  complete: "Complete"
 };
 
 // src/tabs/about-tab.ts
@@ -4420,6 +4542,21 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     this.plugin.onStatusBarChange = null, this.statusContainerEl = null;
   }
 };
+
+// src/single-flight.ts
+function createSingleFlight() {
+  let inFlight = !1;
+  return async (fn) => {
+    if (!inFlight) {
+      inFlight = !0;
+      try {
+        return await fn();
+      } finally {
+        inFlight = !1;
+      }
+    }
+  };
+}
 
 // src/sync.ts
 var import_obsidian21 = require("obsidian");
@@ -6570,10 +6707,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Push every local syncable file to the server.
    *
-   *  @param opts.deleteRemoteExtras — if true, also delete any remote note or
-   *    attachment that has no local counterpart. Used by the "Push all + delete
-   *    remote extras" sync direction. Defaults to false (preserves existing
-   *    behavior for callers that haven't migrated).
+   *  @param opts.replaceRemote — if true, delete EVERY remote note and
+   *    attachment first, then upload all local files, so the server ends up an
+   *    exact mirror of the local vault. Used by the "Delete all on remote, then
+   *    upload local files" sync direction. This literally wipes the server
+   *    before re-uploading (shared files are deleted then recreated); the user
+   *    confirms via the type-delete gate. Defaults to false (plain push that
+   *    leaves remote-only files untouched).
    */
   async pushAll(opts = {}) {
     var _a, _b, _c, _d;
@@ -6583,7 +6723,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
-    await this.invalidateIfVaultChanged();
+    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote();
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
@@ -6646,40 +6786,57 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
       }
     }
-    return await this.saveData({ lastSync: this.lastSync }), opts.deleteRemoteExtras && await this.deleteRemoteExtras(), pushed;
+    return await this.saveData({ lastSync: this.lastSync }), pushed;
   }
-  /** Known limitation: `pushAll(opts={deleteRemoteExtras:true})` triggers TWO
-   *  `/sync/manifest` fetches in sequence — one inside `reconcile()`, one here.
-   *  Any note a different client creates between those two reads will be in
-   *  this method's "remote-only" set and get deleted. The window is small
-   *  (sub-second) and the user's intent is explicitly destructive, but it's
-   *  worth refactoring later to share the manifest snapshot if the race
-   *  surfaces. Tracked in: code review for commit dcb74e2. */
-  async deleteRemoteExtras() {
+  /** Delete EVERY remote note and attachment (the whole server vault), emitting
+   *  a `deleting` progress phase. Used by `pushAll({replaceRemote:true})` before
+   *  it re-uploads all local files, so the server ends up an exact mirror of
+   *  local. This is intentionally a full wipe (shared files are deleted then
+   *  recreated by the subsequent upload); the user confirms via the type-delete
+   *  gate. Failures on individual deletes are logged, not thrown, so the
+   *  re-upload still runs. */
+  async wipeRemote() {
+    var _a, _b, _c;
     let manifest = await this.api.getManifest();
     if (!manifest) {
-      rlog().warn("push", "deleteRemoteExtras skipped \u2014 backend has no /sync/manifest");
+      rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let localFiles = this.app.vault.getFiles(), localPaths = new Set(
-      localFiles.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => f.path)
-    ), remoteOnlyNotes = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has(p)), remoteOnlyAttachments = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has(p));
+    let notePaths = manifest.notes.map((n) => n.path), attachmentPaths = manifest.attachments.map((a) => a.path), total = notePaths.length + attachmentPaths.length;
     rlog().info(
       "push",
-      `deleteRemoteExtras \u2014 ${remoteOnlyNotes.length} notes, ${remoteOnlyAttachments.length} attachments`
+      `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`
     );
-    for (let path of remoteOnlyNotes)
+    let done = 0;
+    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 });
+    for (let path of notePaths) {
       try {
-        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "remote-extras");
+        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-    for (let path of remoteOnlyAttachments)
+      done++, (_b = this.onSyncProgress) == null || _b.call(this, {
+        phase: "deleting",
+        current: done,
+        total,
+        failed: 0,
+        currentPath: path
+      });
+    }
+    for (let path of attachmentPaths) {
       try {
-        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "remote-extras");
+        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
+      done++, (_c = this.onSyncProgress) == null || _c.call(this, {
+        phase: "deleting",
+        current: done,
+        total,
+        failed: 0,
+        currentPath: path
+      });
+    }
   }
   /** Reconcile local vault against server manifest.
    *  Returns null if server doesn't support the manifest endpoint.
@@ -13814,6 +13971,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
     this.syncGateAcceptedFor = null;
+    /** Single-flight guard so a vault switch (or any racing trigger) cannot
+     *  stack two SyncPreviewModal instances. A second call while one preview is
+     *  open is a silent no-op. See single-flight.ts. */
+    this.syncPreviewGuard = createSingleFlight();
   }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
@@ -14291,12 +14452,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`), !0;
+        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
+        return new import_obsidian23.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !1 });
+        let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
         return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
@@ -14307,10 +14468,15 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
    *  the prior progress callback when the sync settles. The modal's "Run in
    *  background" closes it while the sync keeps running. No-op choices
    *  (cancel / change-vault) skip the modal entirely. */
-  async runSyncWithProgress(choice) {
+  async runSyncWithProgress(choice, opts = {}) {
+    var _a;
     if (choice === "cancel" || choice === "change-vault")
       return this.runSyncFromChoice(choice);
-    let modal = new SyncProgressModal(this.app), prev = this.syncEngine.onSyncProgress;
+    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, phases = opts.plan ? plannedPhases(choice, opts.plan) : void 0, modal = new SyncProgressModal(this.app, {
+      intro,
+      phases,
+      webUrl: engramWebUrl(this.settings.apiUrl)
+    }), prev = this.syncEngine.onSyncProgress;
     this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();
@@ -14362,25 +14528,36 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
    *  saveSettings once auth + vault are configured. First-sync is just
    *  one case of the preview UX. */
   async doSyncWithFirstSyncCheck(opts = {}) {
-    var _a, _b;
-    try {
-      let plan = await this.syncEngine.computeSyncPlan("full"), context = this.derivePreviewContext(), choice = await new SyncPreviewModal(this.app, plan, {
-        remoteVaultName: this.settings.remoteVaultName,
-        showChangeVault: !0,
-        context,
-        initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
-        attachmentsTextOnly: (_b = (_a = this.syncEngine.getPlanState()) == null ? void 0 : _a.attachmentsTextOnly) != null ? _b : !1,
-        listVaults: () => this.api.listVaults(),
-        createVault: (name) => this.api.createVault(name),
-        applyVaultChange: async (id2, name) => {
-          var _a2;
-          return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
-        }
-      }).awaitChoice();
-      await this.runSyncWithProgress(choice);
-    } catch (e) {
-      console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
-    }
+    await this.syncPreviewGuard(async () => {
+      var _a, _b;
+      try {
+        let context = this.derivePreviewContext(), modal = new SyncPreviewModal(this.app, null, {
+          remoteVaultName: this.settings.remoteVaultName,
+          showChangeVault: !0,
+          context,
+          initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
+          attachmentsTextOnly: (_b = (_a = this.syncEngine.getPlanState()) == null ? void 0 : _a.attachmentsTextOnly) != null ? _b : !1,
+          listVaults: () => this.api.listVaults(),
+          createVault: (name) => this.api.createVault(name),
+          applyVaultChange: async (id2, name) => {
+            var _a2;
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
+          }
+        });
+        this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
+          modal.setPlanError(
+            "Could not compare with the cloud. Check your connection."
+          ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
+        });
+        let choice = await modal.awaitChoice();
+        await this.runSyncWithProgress(choice, {
+          plan: modal.getPlan(),
+          firstSync: context === "first-time"
+        });
+      } catch (e) {
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+      }
+    });
   }
   /** Persist current sync engine state (issues, ignored files, etc.) to plugin
    *  data. Public so Sync Center button handlers can save without owning a

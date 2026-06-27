@@ -3340,12 +3340,15 @@ export class SyncEngine {
 
 	/** Push every local syncable file to the server.
 	 *
-	 *  @param opts.deleteRemoteExtras — if true, also delete any remote note or
-	 *    attachment that has no local counterpart. Used by the "Push all + delete
-	 *    remote extras" sync direction. Defaults to false (preserves existing
-	 *    behavior for callers that haven't migrated).
+	 *  @param opts.replaceRemote — if true, delete EVERY remote note and
+	 *    attachment first, then upload all local files, so the server ends up an
+	 *    exact mirror of the local vault. Used by the "Delete all on remote, then
+	 *    upload local files" sync direction. This literally wipes the server
+	 *    before re-uploading (shared files are deleted then recreated); the user
+	 *    confirms via the type-delete gate. Defaults to false (plain push that
+	 *    leaves remote-only files untouched).
 	 */
-	async pushAll(opts: { deleteRemoteExtras?: boolean } = {}): Promise<number> {
+	async pushAll(opts: { replaceRemote?: boolean } = {}): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
 			return 0;
@@ -3362,6 +3365,13 @@ export class SyncEngine {
 
 		// Drop stale per-vault bookkeeping if the active vault changed.
 		await this.invalidateIfVaultChanged();
+
+		// Replace mode: wipe the entire remote BEFORE uploading so the server
+		// ends up an exact mirror of local. Runs first so the "Delete all on
+		// remote, then upload local files" label is literally true.
+		if (opts.replaceRemote) {
+			await this.wipeRemote();
+		}
 
 		const files = this.app.vault.getFiles();
 		const toSync = files.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path));
@@ -3479,58 +3489,66 @@ export class SyncEngine {
 		// Persist all hashes accumulated during pushAll + reconcile
 		await this.saveData({ lastSync: this.lastSync });
 
-		if (opts.deleteRemoteExtras) {
-			await this.deleteRemoteExtras();
-		}
-
 		return pushed;
 	}
 
-	/** Known limitation: `pushAll(opts={deleteRemoteExtras:true})` triggers TWO
-	 *  `/sync/manifest` fetches in sequence — one inside `reconcile()`, one here.
-	 *  Any note a different client creates between those two reads will be in
-	 *  this method's "remote-only" set and get deleted. The window is small
-	 *  (sub-second) and the user's intent is explicitly destructive, but it's
-	 *  worth refactoring later to share the manifest snapshot if the race
-	 *  surfaces. Tracked in: code review for commit dcb74e2. */
-	private async deleteRemoteExtras(): Promise<void> {
+	/** Delete EVERY remote note and attachment (the whole server vault), emitting
+	 *  a `deleting` progress phase. Used by `pushAll({replaceRemote:true})` before
+	 *  it re-uploads all local files, so the server ends up an exact mirror of
+	 *  local. This is intentionally a full wipe (shared files are deleted then
+	 *  recreated by the subsequent upload); the user confirms via the type-delete
+	 *  gate. Failures on individual deletes are logged, not thrown, so the
+	 *  re-upload still runs. */
+	private async wipeRemote(): Promise<void> {
 		const manifest = await this.api.getManifest();
 		if (!manifest) {
-			rlog().warn("push", "deleteRemoteExtras skipped — backend has no /sync/manifest");
+			rlog().warn("push", "wipeRemote skipped — backend has no /sync/manifest");
 			return;
 		}
-		const localFiles = this.app.vault.getFiles();
-		const localPaths = new Set(
-			localFiles
-				.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
-				.map((f) => f.path),
-		);
 
-		const remoteOnlyNotes = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has(p));
-		const remoteOnlyAttachments = manifest.attachments
-			.map((a) => a.path)
-			.filter((p) => !localPaths.has(p));
+		const notePaths = manifest.notes.map((n) => n.path);
+		const attachmentPaths = manifest.attachments.map((a) => a.path);
+		const total = notePaths.length + attachmentPaths.length;
 
 		rlog().info(
 			"push",
-			`deleteRemoteExtras — ${remoteOnlyNotes.length} notes, ${remoteOnlyAttachments.length} attachments`,
+			`wipeRemote — deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`,
 		);
 
-		for (const path of remoteOnlyNotes) {
+		let done = 0;
+		this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
+
+		for (const path of notePaths) {
 			try {
 				await this.api.deleteNote(path);
-				this.logEntry("delete", path, "ok", undefined, "remote-extras");
+				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
 			} catch (e) {
 				this.logEntry("delete", path, "error", errMsg(e));
 			}
+			done++;
+			this.onSyncProgress?.({
+				phase: "deleting",
+				current: done,
+				total,
+				failed: 0,
+				currentPath: path,
+			});
 		}
-		for (const path of remoteOnlyAttachments) {
+		for (const path of attachmentPaths) {
 			try {
 				await this.api.deleteAttachment(path);
-				this.logEntry("delete", path, "ok", undefined, "remote-extras");
+				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
 			} catch (e) {
 				this.logEntry("delete", path, "error", errMsg(e));
 			}
+			done++;
+			this.onSyncProgress?.({
+				phase: "deleting",
+				current: done,
+				total,
+				failed: 0,
+				currentPath: path,
+			});
 		}
 	}
 

@@ -3403,52 +3403,50 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 	});
 });
 
-describe("SyncEngine.pushAll with deleteRemoteExtras", () => {
-	test("keep-remote mode: pushes all local, never calls deleteNote", async () => {
+describe("SyncEngine.pushAll with replaceRemote", () => {
+	test("keep mode (replaceRemote:false): pushes all local, never deletes remote", async () => {
 		const engine = createEngine();
 		const local = [new TFile("kept.md", Date.now()), new TFile("also.md", Date.now())];
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Content");
 		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
-		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({ note: {}, chunks_indexed: 1 });
-		(mockApi.getManifest as jest.Mock).mockResolvedValueOnce({
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
 			notes: [{ path: "kept.md" }, { path: "also.md" }, { path: "remote-only.md" }],
 			attachments: [],
 		});
 
-		await engine.pushAll({ deleteRemoteExtras: false });
+		await engine.pushAll({ replaceRemote: false });
 
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(mockApi.deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("delete-remote mode: pushes all local AND deletes remote-only paths", async () => {
+	test("replace mode (replaceRemote:true): wipes ALL remote first, then uploads local", async () => {
 		const engine = createEngine();
 		const local = [new TFile("kept.md", Date.now())];
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Content");
 		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
-		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({ note: {}, chunks_indexed: 1 });
-		// pushAll with deleteRemoteExtras:true fetches the manifest TWICE:
-		// once in reconcile() and once in deleteRemoteExtras() — supply both.
-		const manifestSnapshot = {
-			notes: [
-				{ path: "kept.md" },
-				{ path: "remote-only-a.md" },
-				{ path: "remote-only-b.md" },
-			],
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+		// wipeRemote (before upload) and reconcile (after upload) both read the
+		// manifest — return the same snapshot for every call.
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "kept.md" }, { path: "remote-a.md" }, { path: "remote-b.md" }],
 			attachments: [{ path: "old.png" }],
-		};
-		(mockApi.getManifest as jest.Mock)
-			.mockResolvedValueOnce(manifestSnapshot) // consumed by reconcile()
-			.mockResolvedValueOnce(manifestSnapshot); // consumed by deleteRemoteExtras()
+		});
 
-		await engine.pushAll({ deleteRemoteExtras: true });
+		await engine.pushAll({ replaceRemote: true });
 
-		expect(mockApi.deleteNote).toHaveBeenCalledTimes(2);
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-only-a.md");
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-only-b.md");
-		expect(mockApi.deleteAttachment).toHaveBeenCalledTimes(1);
+		// Every remote file is deleted up front — including the shared one
+		// (which is then re-uploaded), proving a literal wipe rather than a
+		// selective extras-prune.
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("kept.md");
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-a.md");
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-b.md");
 		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("old.png");
+		// Local was re-uploaded after the wipe.
+		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
 
 	test("backward compat: no opts = no deletions", async () => {

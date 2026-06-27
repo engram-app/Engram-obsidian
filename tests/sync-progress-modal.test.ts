@@ -10,7 +10,14 @@
  * emitted text + structure without a real DOM.
  */
 import { describe, expect, test } from "bun:test";
-import { type CompletionSummary, renderCompletionSummary } from "../src/sync-progress-modal";
+import {
+	type CompletionSummary,
+	describeCompletion,
+	describePlannedWork,
+	plannedPhases,
+	renderCompletionSummary,
+} from "../src/sync-progress-modal";
+import type { SyncPlan } from "../src/types";
 
 interface FakeEl {
 	cls: string;
@@ -142,5 +149,121 @@ describe("renderCompletionSummary — three-way tally", () => {
 		expect(text).toContain("100 synced");
 		expect(text).toContain("5 skipped");
 		expect(text).toContain("2 failed");
+	});
+});
+
+function plan(over: Partial<SyncPlan> = {}): SyncPlan {
+	return {
+		vaultName: "V",
+		serverNoteCount: 0,
+		serverAttachmentCount: 0,
+		serverFolderCount: 0,
+		localNoteCount: 0,
+		localAttachmentCount: 0,
+		localFolderCount: 0,
+		localPaths: [],
+		serverPaths: [],
+		toPush: { notes: [], attachments: [] },
+		toPull: { notes: [], attachments: [] },
+		conflicts: [],
+		toDeleteLocal: [],
+		toDeleteRemote: [],
+		...over,
+	};
+}
+
+describe("describePlannedWork", () => {
+	test("smart-merge states uploads, downloads, and the no-delete reassurance", () => {
+		const p = plan({
+			toPush: { notes: ["a", "b", "c"], attachments: [] },
+			toPull: { notes: ["x"], attachments: [] },
+		});
+		expect(describePlannedWork("smart-merge", p, false)).toBe(
+			"Uploading 3, downloading 1. Nothing will be deleted.",
+		);
+	});
+
+	test("first sync adds an expectation-setting prefix", () => {
+		const p = plan({ toPush: { notes: ["a"], attachments: [] } });
+		expect(describePlannedWork("smart-merge", p, true)).toBe(
+			"First sync, this may take a moment. Uploading 1. Nothing will be deleted.",
+		);
+	});
+
+	test("destructive pull states the deletion instead of the no-delete line", () => {
+		const p = plan({
+			serverNoteCount: 2,
+			toPush: { notes: ["gone.md"], attachments: [] },
+		});
+		expect(describePlannedWork("pull-all-delete-local", p, false)).toBe(
+			"Downloading 2, deleting 1 local file.",
+		);
+	});
+
+	test("nothing to do falls back to a checking message", () => {
+		expect(describePlannedWork("push-all-keep-remote", plan(), false)).toBe(
+			"Checking for changes.",
+		);
+	});
+});
+
+describe("describeCompletion", () => {
+	test("clean sync reassures the vault matches the cloud", () => {
+		expect(describeCompletion({ synced: 80, skipped: 0, failed: 0 })).toBe(
+			"All synced. Your vault and the cloud now match.",
+		);
+	});
+
+	test("nothing to sync is its own message", () => {
+		expect(describeCompletion({ synced: 0, skipped: 0, failed: 0 })).toBe(
+			"Already up to date. Nothing needed syncing.",
+		);
+	});
+
+	test("plan-skipped attachments point below without sounding like a failure", () => {
+		expect(describeCompletion({ synced: 80, skipped: 3, failed: 0 })).toBe(
+			"Synced. Some attachments need a paid plan to sync (see below).",
+		);
+	});
+
+	test("failures take priority and point at the sync log", () => {
+		expect(describeCompletion({ synced: 78, skipped: 3, failed: 2 })).toBe(
+			"Finished with some errors. Open the sync log to see what failed.",
+		);
+	});
+});
+
+describe("plannedPhases", () => {
+	test("smart-merge shows downloading then uploading", () => {
+		const p = plan({
+			toPush: { notes: ["a", "b", "c", "d", "e"], attachments: [] },
+			toPull: { notes: ["x", "y", "z"], attachments: [] },
+		});
+		expect(plannedPhases("smart-merge", p)).toEqual([
+			{ phase: "pulling", label: "Downloading", total: 3 },
+			{ phase: "pushing", label: "Uploading", total: 5 },
+		]);
+	});
+
+	test("push-all shows a single uploading row", () => {
+		const p = plan({ localNoteCount: 12, localAttachmentCount: 3 });
+		expect(plannedPhases("push-all-keep-remote", p)).toEqual([
+			{ phase: "pushing", label: "Uploading", total: 15 },
+		]);
+	});
+
+	test("pull-all-delete-local leads with a deleting row", () => {
+		const p = plan({
+			serverNoteCount: 4,
+			toPush: { notes: ["gone1.md", "gone2.md"], attachments: [] },
+		});
+		expect(plannedPhases("pull-all-delete-local", p)).toEqual([
+			{ phase: "deleting", label: "Deleting", total: 2 },
+			{ phase: "pulling", label: "Downloading", total: 4 },
+		]);
+	});
+
+	test("nothing to do yields no rows", () => {
+		expect(plannedPhases("push-all-keep-remote", plan())).toEqual([]);
 	});
 });

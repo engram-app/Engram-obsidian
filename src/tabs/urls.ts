@@ -9,6 +9,18 @@
  *  writes. REST must point at `api.engram.page` (the ALB / Phoenix host). */
 export const ENGRAM_CLOUD_URL = "https://api.engram.page";
 
+/** Production Engram web app (SPA) host — where Cloud users browse and verify
+ *  their vault. Distinct from `ENGRAM_CLOUD_URL` (the API host): the SPA lives
+ *  on `app.engram.page`, the REST API on `api.engram.page`. */
+export const ENGRAM_APP_URL = "https://app.engram.page";
+
+/** The browsable web-app URL for a given backend. Cloud points at the managed
+ *  SPA host; a self-hosted backend serves its own SPA from the same origin, so
+ *  its apiUrl is already the web URL. Pure for testing. */
+export function engramWebUrl(apiUrl: string): string {
+	return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
+}
+
 /** Hostnames previously used as the Cloud REST base that must be migrated to
  *  `ENGRAM_CLOUD_URL` on load. Same backend, same credentials — only the edge
  *  hostname changed, so the stored apiUrl is rewritten WITHOUT wiping auth. */

@@ -893,17 +893,6 @@
 
 /* ── Sync progress modal ─────────────────────────────────────── */
 
-.engram-progress-phase {
-	font-weight: bold;
-	margin: 8px 0 4px;
-}
-
-.engram-progress-count {
-	margin: 0 0 2px;
-	font-family: var(--font-monospace);
-	font-size: 0.9em;
-}
-
 .engram-progress-path {
 	margin: 0 0 8px;
 	font-family: var(--font-monospace);
@@ -930,6 +919,59 @@
 
 .engram-progress-bar-inner.is-complete {
 	background: var(--text-success, var(--interactive-accent));
+}
+
+.engram-progress-intro {
+	margin: 4px 0 10px;
+	color: var(--text-muted);
+}
+
+.engram-progress-subtext {
+	margin: 0 0 8px;
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+.engram-progress-status {
+	font-weight: bold;
+	margin: 8px 0 4px;
+}
+
+/* One persistent row per phase: status icon, label, its own bar, and count. */
+.engram-progress-rows {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	margin: 8px 0;
+}
+
+.engram-progress-row {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.engram-progress-row-status {
+	flex: 0 0 auto;
+	width: 1.2em;
+	text-align: center;
+}
+
+.engram-progress-row-label {
+	flex: 0 0 6.5em;
+}
+
+.engram-progress-row .engram-progress-bar-outer {
+	flex: 1 1 auto;
+}
+
+.engram-progress-row-count {
+	flex: 0 0 auto;
+	min-width: 4.5em;
+	font-family: var(--font-monospace);
+	font-size: 0.85em;
+	color: var(--text-muted);
+	text-align: right;
 }
 
 .engram-progress-failed {
@@ -980,6 +1022,16 @@
 	margin: 12px 0 0;
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
+}
+
+.engram-progress-verify {
+	margin: 12px 0 0;
+}
+
+.engram-progress-verify-link {
+	color: var(--text-accent);
+	cursor: pointer;
+	font-weight: 600;
 }
 
 .engram-progress-buttons {
@@ -1475,6 +1527,12 @@ body.is-mobile .engram-support-buttons > a {
 	margin: 0.25em 0 1em 0;
 }
 
+.engram-sync-preview-loading {
+	color: var(--text-muted);
+	padding: 1.5em 0;
+	text-align: center;
+}
+
 .engram-sync-preview-picker-body {
 	margin-bottom: 1em;
 }
@@ -1642,63 +1700,57 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 .engram-sync-preview-options-grid {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 0.75em;
+	display: flex;
+	flex-direction: column;
+	gap: 0.6em;
 }
 
-.engram-sync-preview-options-grid.is-collapsed {
-	display: none;
+.engram-sync-preview-advanced {
+	margin: 0.5em 0 0;
 }
 
-.engram-sync-preview-advanced-toggle {
+.engram-sync-preview-advanced > .engram-sync-preview-options-grid {
+	margin-top: 0.6em;
+}
+
+.engram-sync-preview-advanced-summary {
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	gap: 0.4em;
-	width: 100%;
-	margin: 0.25em 0;
 	padding: 6px 10px;
-	background: transparent;
-	box-shadow: none;
-	border: none;
 	cursor: pointer;
 	user-select: none;
+	list-style: none;
 	color: var(--text-muted);
 	font-size: var(--font-ui-small);
 }
 
-.engram-sync-preview-advanced-toggle:hover {
-	background: var(--background-modifier-hover);
+/* Hide the native disclosure marker — we render our own chevron on the right. */
+.engram-sync-preview-advanced-summary::-webkit-details-marker {
+	display: none;
+}
+
+.engram-sync-preview-advanced-summary:hover {
 	color: var(--text-normal);
 }
 
 .engram-sync-preview-advanced-chevron {
-	font-size: 10px;
+	display: inline-flex;
+	align-items: center;
 }
 
-.engram-sync-preview-options-col {
-	display: flex;
-	flex-direction: column;
-	gap: 0.5em;
+.engram-sync-preview-advanced-chevron svg {
+	width: 14px;
+	height: 14px;
 }
 
 .engram-sync-preview-options-header {
 	text-align: center;
-	font-size: 0.95em;
+	font-size: 1.05em;
 	font-weight: 600;
 	color: var(--text-normal);
-	margin-bottom: 0.25em;
-}
-
-.engram-sync-preview-options-col-header {
-	font-size: 0.8em;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--text-muted);
-	margin-bottom: 0.15em;
-	text-align: center;
+	margin-bottom: 0.6em;
 }
 
 .engram-sync-preview-option-wrap {
@@ -1724,13 +1776,6 @@ body.is-mobile .engram-support-buttons > a {
 	flex: 0 1 auto;
 }
 
-.engram-sync-preview-option-subtitle {
-	margin: 0.3em 0 0.5em 0;
-	font-size: 0.85em;
-	color: var(--text-muted);
-	text-align: center;
-}
-
 .engram-sync-preview-destructive {
 	background: var(--background-modifier-error);
 	color: var(--text-on-accent);
@@ -1746,6 +1791,11 @@ body.is-mobile .engram-support-buttons > a {
 .engram-sync-preview-warning {
 	color: var(--text-error);
 	font-weight: 600;
+}
+
+.engram-sync-preview-confirm-keyword {
+	color: var(--text-error);
+	font-weight: 700;
 }
 
 .engram-sync-preview-tree-caption {
