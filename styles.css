@@ -1722,7 +1722,13 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 .engram-sync-preview-advanced-chevron {
-	font-size: 10px;
+	display: inline-flex;
+	align-items: center;
+}
+
+.engram-sync-preview-advanced-chevron svg {
+	width: 14px;
+	height: 14px;
 }
 
 .engram-sync-preview-options-col {
@@ -1733,10 +1739,9 @@ body.is-mobile .engram-support-buttons > a {
 
 .engram-sync-preview-options-header {
 	text-align: center;
-	font-size: 0.95em;
-	font-weight: 600;
-	color: var(--text-normal);
-	margin-bottom: 0.25em;
+	font-size: 0.85em;
+	color: var(--text-muted);
+	margin-bottom: 0.5em;
 }
 
 .engram-sync-preview-options-col-header {

@@ -1,4 +1,4 @@
-import { type App, Modal } from "obsidian";
+import { type App, Modal, setIcon } from "obsidian";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -211,7 +211,9 @@ const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
 	label: "Sync",
-	subtitle: (b, context) => mergeHelperText(b, context),
+	// The Sync description is rendered once above the button (see renderPreview),
+	// so the card itself carries no subtitle.
+	subtitle: () => "",
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -253,12 +255,6 @@ export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
 	"first-time": "Set up sync for this vault",
 	"vault-switch": "You are now pointing at a different cloud vault",
 	review: "Sync preview",
-};
-
-const OPTIONS_HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
-	"first-time": "Choose from the following first-time sync options",
-	"vault-switch": "Choose how to sync this new vault",
-	review: "Choose a sync direction",
 };
 
 export interface SyncPreviewOptions {
@@ -394,13 +390,15 @@ export class SyncPreviewModal extends Modal {
 		this.renderSkippedAttachmentsNote(contentEl);
 
 		const options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-		// When already in sync there's no direction to "choose" — drop the prompt
-		// but still offer Sync + the (collapsed) advanced options for a deliberate
+		// The plain-language description of what Sync will do sits above the
+		// button (replacing the old generic "Choose a sync direction" prompt).
+		// When already in sync there's nothing to describe — drop it but still
+		// offer Sync + the (collapsed) advanced options for a deliberate
 		// force push/pull or recovery.
 		if (!empty) {
 			options.createDiv({
 				cls: "engram-sync-preview-options-header",
-				text: OPTIONS_HEADER_BY_CONTEXT[context],
+				text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context),
 			});
 		}
 
@@ -467,11 +465,11 @@ export class SyncPreviewModal extends Modal {
 		const advancedToggle = options.createEl("button", {
 			cls: "engram-sync-preview-advanced-toggle",
 		});
-		advancedToggle.createSpan({
-			cls: "engram-sync-preview-advanced-chevron",
-			text: this.state.advancedOpen ? "▾" : "▸",
-		});
 		advancedToggle.createSpan({ text: "Show advanced sync options" });
+		const chevron = advancedToggle.createSpan({
+			cls: "engram-sync-preview-advanced-chevron",
+		});
+		setIcon(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right");
 		advancedToggle.addEventListener("click", () => {
 			this.state.toggleAdvanced();
 			this.render();
@@ -628,10 +626,13 @@ export class SyncPreviewModal extends Modal {
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		wrap.createEl("p", {
-			text: card.subtitle(b, context),
-			cls: "engram-sync-preview-option-subtitle",
-		});
+		const subtitle = card.subtitle(b, context);
+		if (subtitle) {
+			wrap.createEl("p", {
+				text: subtitle,
+				cls: "engram-sync-preview-option-subtitle",
+			});
+		}
 		btn.addEventListener("click", () => {
 			this.state.pickOption(card.choice);
 			this.render();

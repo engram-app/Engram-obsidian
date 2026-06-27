@@ -3056,7 +3056,9 @@ var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
   label: "Sync",
-  subtitle: (b, context) => mergeHelperText(b, context),
+  // The Sync description is rendered once above the button (see renderPreview),
+  // so the card itself carries no subtitle.
+  subtitle: () => "",
   cssClass: "engram-sync-preview-option mod-cta"
 }, PUSH_CARDS = [
   {
@@ -3092,10 +3094,6 @@ var MERGE_CARD = {
   "first-time": "Set up sync for this vault",
   "vault-switch": "You are now pointing at a different cloud vault",
   review: "Sync preview"
-}, OPTIONS_HEADER_BY_CONTEXT = {
-  "first-time": "Choose from the following first-time sync options",
-  "vault-switch": "Choose how to sync this new vault",
-  review: "Choose a sync direction"
 }, SyncPreviewModal = class extends import_obsidian11.Modal {
   constructor(app, plan, opts) {
     super(app);
@@ -3155,7 +3153,7 @@ var MERGE_CARD = {
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
     empty || options.createDiv({
       cls: "engram-sync-preview-options-header",
-      text: OPTIONS_HEADER_BY_CONTEXT[context]
+      text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
     });
     let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
     this.renderOptionCard(mergeRow, MERGE_CARD, context), this.renderAdvancedOptions(options, context);
@@ -3199,10 +3197,11 @@ var MERGE_CARD = {
     let advancedToggle = options.createEl("button", {
       cls: "engram-sync-preview-advanced-toggle"
     });
-    advancedToggle.createSpan({
-      cls: "engram-sync-preview-advanced-chevron",
-      text: this.state.advancedOpen ? "\u25BE" : "\u25B8"
-    }), advancedToggle.createSpan({ text: "Show advanced sync options" }), advancedToggle.addEventListener("click", () => {
+    advancedToggle.createSpan({ text: "Show advanced sync options" });
+    let chevron = advancedToggle.createSpan({
+      cls: "engram-sync-preview-advanced-chevron"
+    });
+    (0, import_obsidian11.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), advancedToggle.addEventListener("click", () => {
       this.state.toggleAdvanced(), this.render();
     });
     let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
@@ -3303,8 +3302,10 @@ var MERGE_CARD = {
   }
   renderOptionCard(parent, card, context) {
     let b = optionBreakdown(this.requirePlan(), card.choice), wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }), btn = wrap.createEl("button", { cls: card.cssClass });
-    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), wrap.createEl("p", {
-      text: card.subtitle(b, context),
+    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
+    let subtitle = card.subtitle(b, context);
+    subtitle && wrap.createEl("p", {
+      text: subtitle,
       cls: "engram-sync-preview-option-subtitle"
     }), btn.addEventListener("click", () => {
       this.state.pickOption(card.choice), this.render();
