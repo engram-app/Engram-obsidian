@@ -308,6 +308,17 @@ export class SyncEngine {
 		this.crdt = mgr;
 	}
 
+	/** Optional CRDT enrollment tracker. When set, a pull that surfaces a
+	 *  CRDT-managed markdown note we don't have locally enrolls it (sends a
+	 *  sync-step-1) so the body is pulled over the y-protocols handshake — the
+	 *  level-triggered discovery path that backstops the edge-triggered
+	 *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
+	private crdtEnrollment: { enroll(path: string): void } | null = null;
+
+	setCrdtEnrollment(enrollment: { enroll(path: string): void } | null): void {
+		this.crdtEnrollment = enrollment;
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify event is
 	 *  suppressed by the recentlyFlushed guard in handleModify.
@@ -2265,7 +2276,19 @@ export class SyncEngine {
 		// file. Deletes (handled above) and attachments (routed via
 		// applyAttachmentChange) are unaffected.
 		if (this.crdt && normalized.endsWith(".md")) {
-			rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
+			// Discovery: a CRDT-managed note we don't have on disk yet. Enroll it
+			// (sync-step-1) so the body arrives over the CRDT handshake — the server
+			// seeds the room from notes.content when it has no CRDT state. We never
+			// legacy-write here (CRDT owns the body), so without enrolling a brand-new
+			// note would be invisible on this device (the announce is edge-triggered
+			// and can be missed if we weren't subscribed when the other device opened
+			// the room). An already-local note is left to its existing CRDT routing.
+			if (!this.app.vault.getFileByPath(normalized)) {
+				this.crdtEnrollment?.enroll(normalized);
+				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+			} else {
+				rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
+			}
 			return false;
 		}
 

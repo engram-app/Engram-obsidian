@@ -83,6 +83,10 @@ export class NoteChannel {
 	onPlanState: ((plan: unknown) => void) | null = null;
 	/** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
+	/** A room became active on the server for `docId` (announced via
+	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
+	 *  for this doc so a device that doesn't yet have the note pulls it. */
+	onCrdtDocReady: ((docId: string) => void) | null = null;
 	/** Fired when the `crdt:` topic join is acknowledged by the server.
 	 *  Use this to activate CRDT routing in the SyncEngine — only wire
 	 *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -421,6 +425,14 @@ export class NoteChannel {
 			const b64 = payload.b64 as string | undefined;
 			if (docId && b64) {
 				this.onCrdtMessage?.(docId, b64);
+			}
+			return;
+		}
+
+		if (event === "crdt_doc_ready" && payload) {
+			const docId = payload.doc_id as string | undefined;
+			if (docId) {
+				this.onCrdtDocReady?.(docId);
 			}
 			return;
 		}
