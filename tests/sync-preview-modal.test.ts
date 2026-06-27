@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { LimitExceededError } from "../src/limit-error";
 import {
+	HEADER_BY_CONTEXT,
 	SyncPreviewState,
 	countSkippedAttachments,
 	describeCreateVaultError,
+	mergeHelperText,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
+import type { OptionBreakdown } from "../src/sync-plan-format";
 import type { SyncChoice, SyncPlan } from "../src/types";
 
 describe("SyncPreviewState — create-vault sub-view", () => {
@@ -327,5 +330,49 @@ describe("SyncPreviewState — multiple resolutions ignored", () => {
 		state.pickOption("cancel");
 		state.cancel();
 		expect(resolved.value).toBe("smart-merge");
+	});
+});
+
+describe("mergeHelperText", () => {
+	const b = (over: Partial<OptionBreakdown> = {}): OptionBreakdown => ({
+		pullCount: 0,
+		pushCount: 0,
+		conflictCount: 0,
+		deleteLocalCount: 0,
+		deleteRemoteCount: 0,
+		samplePaths: [],
+		...over,
+	});
+
+	test("states upload and download counts for a review sync", () => {
+		expect(mergeHelperText(b({ pushCount: 12, pullCount: 3 }), "review")).toBe(
+			"Uploads 12, downloads 3. Nothing is deleted.",
+		);
+	});
+
+	test("appends conflicts when present", () => {
+		expect(mergeHelperText(b({ pushCount: 1, pullCount: 0, conflictCount: 2 }), "review")).toBe(
+			"Uploads 1. 2 conflicts to resolve. Nothing is deleted.",
+		);
+	});
+
+	test("leads with reassurance on first-time", () => {
+		expect(mergeHelperText(b({ pushCount: 5 }), "first-time")).toBe(
+			"Safe choice: combines both sides, nothing is deleted. Uploads 5.",
+		);
+	});
+
+	test("leads with reassurance on vault-switch", () => {
+		expect(mergeHelperText(b(), "vault-switch")).toBe(
+			"Safe choice: combines both sides, nothing is deleted.",
+		);
+	});
+});
+
+describe("HEADER_BY_CONTEXT", () => {
+	test("uses clearer vault-switch header copy", () => {
+		expect(HEADER_BY_CONTEXT["vault-switch"]).toBe(
+			"You are now pointing at a different cloud vault",
+		);
 	});
 });

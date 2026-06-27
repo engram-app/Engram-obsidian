@@ -170,11 +170,33 @@ export function skippedAttachmentsLine(n: number): string | null {
 	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
 }
 
+/** Plain-language outcome line for the smart-merge ("Sync") option, computed
+ *  from the plan. Smart-merge never deletes, so the line always reassures.
+ *  First-time and vault-switch lead with a safety clause for users who do not
+ *  yet trust what the button does. Pure for testing. */
+export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext): string {
+	const counts: string[] = [];
+	if (b.pushCount > 0) counts.push(`Uploads ${b.pushCount}`);
+	if (b.pullCount > 0) counts.push(`downloads ${b.pullCount}`);
+	let countLine = counts.join(", ");
+	if (countLine) countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`;
+	const conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+
+	if (context === "first-time" || context === "vault-switch") {
+		const lead = "Safe choice: combines both sides, nothing is deleted.";
+		const tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
+		return `${lead}${tail}`;
+	}
+	return countLine
+		? `${countLine}${conflict} Nothing is deleted.`
+		: "Already in sync. Nothing is deleted.";
+}
+
 interface OptionCard {
 	choice: SyncChoice;
 	emoji: string;
 	label: string;
-	subtitle: (b: OptionBreakdown) => string;
+	subtitle: (b: OptionBreakdown, context: SyncPreviewContext) => string;
 	cssClass: string;
 }
 
@@ -182,7 +204,7 @@ const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
 	label: "Sync",
-	subtitle: () => "Keep files from both sides; resolve conflicts as they appear",
+	subtitle: (b, context) => mergeHelperText(b, context),
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -220,9 +242,9 @@ const PULL_CARDS: OptionCard[] = [
 	},
 ];
 
-const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
+export const HEADER_BY_CONTEXT: Record<SyncPreviewContext, string> = {
 	"first-time": "Set up sync for this vault",
-	"vault-switch": "New vault detected",
+	"vault-switch": "You are now pointing at a different cloud vault",
 	review: "Sync preview",
 };
 
@@ -341,9 +363,9 @@ export class SyncPreviewModal extends Modal {
 		}
 
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-		this.renderOptionCard(mergeRow, MERGE_CARD);
+		this.renderOptionCard(mergeRow, MERGE_CARD, context);
 
-		this.renderAdvancedOptions(options);
+		this.renderAdvancedOptions(options, context);
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
@@ -363,7 +385,7 @@ export class SyncPreviewModal extends Modal {
 	 *  with the push/pull direction grid. Shared by the up-to-date and
 	 *  has-changes preview states so force push/pull stays reachable even at
 	 *  100% match. */
-	private renderAdvancedOptions(options: HTMLElement): void {
+	private renderAdvancedOptions(options: HTMLElement, context: SyncPreviewContext): void {
 		const advancedToggle = options.createEl("button", {
 			cls: "engram-sync-preview-advanced-toggle",
 		});
@@ -385,7 +407,7 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-options-col-header",
 		});
 		for (const card of PUSH_CARDS) {
-			this.renderOptionCard(pushCol, card);
+			this.renderOptionCard(pushCol, card, context);
 		}
 
 		const pullCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
@@ -394,7 +416,7 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-options-col-header",
 		});
 		for (const card of PULL_CARDS) {
-			this.renderOptionCard(pullCol, card);
+			this.renderOptionCard(pullCol, card, context);
 		}
 	}
 
@@ -515,14 +537,18 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
-	private renderOptionCard(parent: HTMLElement, card: OptionCard): void {
+	private renderOptionCard(
+		parent: HTMLElement,
+		card: OptionCard,
+		context: SyncPreviewContext,
+	): void {
 		const b = optionBreakdown(this.state.plan, card.choice);
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" });
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
 		wrap.createEl("p", {
-			text: card.subtitle(b),
+			text: card.subtitle(b, context),
 			cls: "engram-sync-preview-option-subtitle",
 		});
 		btn.addEventListener("click", () => {
