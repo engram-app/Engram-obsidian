@@ -1739,9 +1739,10 @@ body.is-mobile .engram-support-buttons > a {
 
 .engram-sync-preview-options-header {
 	text-align: center;
-	font-size: 0.85em;
-	color: var(--text-muted);
-	margin-bottom: 0.5em;
+	font-size: 1.05em;
+	font-weight: 600;
+	color: var(--text-normal);
+	margin-bottom: 0.6em;
 }
 
 .engram-sync-preview-options-col-header {

@@ -3064,30 +3064,30 @@ var MERGE_CARD = {
   {
     choice: "push-all-keep-remote",
     emoji: "\u2B06\uFE0F",
-    label: "Push all + keep remote",
-    subtitle: (b) => `Upload ${b.pushCount}, keep remote extras`,
+    label: "Upload local, keep cloud files",
+    subtitle: (b) => `Upload ${b.pushCount}, keep cloud extras`,
     cssClass: "engram-sync-preview-option"
   },
   {
     choice: "push-all-delete-remote",
-    emoji: "\u26A0\uFE0F",
-    label: "Push all + delete remote",
-    subtitle: (b) => `Upload ${b.pushCount}, delete ${b.deleteRemoteCount} remote`,
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all on remote, then upload local files",
+    subtitle: (b) => `Delete ${b.deleteRemoteCount} on cloud, upload ${b.pushCount}`,
     cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
   }
 ], PULL_CARDS = [
   {
     choice: "pull-all-keep-local",
     emoji: "\u2B07\uFE0F",
-    label: "Pull all + keep local",
+    label: "Download cloud, keep local files",
     subtitle: (b) => `Download ${b.pullCount}, keep local extras`,
     cssClass: "engram-sync-preview-option"
   },
   {
     choice: "pull-all-delete-local",
-    emoji: "\u26A0\uFE0F",
-    label: "Pull all + delete local",
-    subtitle: (b) => `Download ${b.pullCount}, delete ${b.deleteLocalCount} local`,
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all local files, then download from remote",
+    subtitle: (b) => `Delete ${b.deleteLocalCount} local, download ${b.pullCount}`,
     cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
   }
 ], HEADER_BY_CONTEXT = {
@@ -3263,13 +3263,18 @@ var MERGE_CARD = {
       attachments: plan.serverAttachmentCount,
       folders: plan.serverFolderCount
     });
-    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" }), matchValue = matchRow.createSpan({
+    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
+    matchRow.createSpan({
+      cls: "engram-sync-preview-match-label",
+      text: "Your vault shares "
+    });
+    let matchValue = matchRow.createSpan({
       cls: "engram-sync-preview-match-value",
       text: `${match2}%`
     });
     if (match2 === 100 && matchValue.addClass("is-perfect"), matchRow.createSpan({
       cls: "engram-sync-preview-match-label",
-      text: " of vaults currently match"
+      text: " of its data with Engram"
     }), conflicts > 0) {
       let conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
       conflictRow.createSpan({

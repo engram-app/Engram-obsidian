@@ -221,15 +221,15 @@ const PUSH_CARDS: OptionCard[] = [
 	{
 		choice: "push-all-keep-remote",
 		emoji: "⬆️",
-		label: "Push all + keep remote",
-		subtitle: (b) => `Upload ${b.pushCount}, keep remote extras`,
+		label: "Upload local, keep cloud files",
+		subtitle: (b) => `Upload ${b.pushCount}, keep cloud extras`,
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "push-all-delete-remote",
-		emoji: "⚠️",
-		label: "Push all + delete remote",
-		subtitle: (b) => `Upload ${b.pushCount}, delete ${b.deleteRemoteCount} remote`,
+		emoji: "🗑️",
+		label: "Delete all on remote, then upload local files",
+		subtitle: (b) => `Delete ${b.deleteRemoteCount} on cloud, upload ${b.pushCount}`,
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -238,15 +238,15 @@ const PULL_CARDS: OptionCard[] = [
 	{
 		choice: "pull-all-keep-local",
 		emoji: "⬇️",
-		label: "Pull all + keep local",
+		label: "Download cloud, keep local files",
 		subtitle: (b) => `Download ${b.pullCount}, keep local extras`,
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "pull-all-delete-local",
-		emoji: "⚠️",
-		label: "Pull all + delete local",
-		subtitle: (b) => `Download ${b.pullCount}, delete ${b.deleteLocalCount} local`,
+		emoji: "🗑️",
+		label: "Delete all local files, then download from remote",
+		subtitle: (b) => `Delete ${b.deleteLocalCount} local, download ${b.pullCount}`,
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -550,6 +550,10 @@ export class SyncPreviewModal extends Modal {
 		const match = computeMatchPercent(plan);
 		const conflicts = plan.conflicts.length;
 		const matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
+		matchRow.createSpan({
+			cls: "engram-sync-preview-match-label",
+			text: "Your vault shares ",
+		});
 		const matchValue = matchRow.createSpan({
 			cls: "engram-sync-preview-match-value",
 			text: `${match}%`,
@@ -557,7 +561,7 @@ export class SyncPreviewModal extends Modal {
 		if (match === 100) matchValue.addClass("is-perfect");
 		matchRow.createSpan({
 			cls: "engram-sync-preview-match-label",
-			text: " of vaults currently match",
+			text: " of its data with Engram",
 		});
 		if (conflicts > 0) {
 			const conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
