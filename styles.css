@@ -1951,3 +1951,12 @@ body.is-mobile .engram-support-buttons > a {
 	justify-content: flex-end;
 	margin-top: 1rem;
 }
+
+.engram-about-waitlist {
+	margin-bottom: 1.5rem;
+}
+
+.engram-about-waitlist-success {
+	color: var(--text-success);
+	font-weight: var(--font-semibold);
+}

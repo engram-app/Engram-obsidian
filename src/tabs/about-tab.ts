@@ -1,4 +1,6 @@
 import { Setting } from "obsidian";
+import { EmailCaptureState } from "../email-capture-modal";
+import { submitWaitlistEmail } from "../waitlist";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DOCS_URL,
@@ -8,6 +10,71 @@ import {
 	ENGRAM_PRICING_URL,
 	ENGRAM_SELFHOST_URL,
 } from "./urls";
+
+/** Inline waitlist signup for the Welcome tab — a permanent counterpart to the
+ *  one-time first-run popup, for users who dismissed it but later change their
+ *  mind. Reuses the same tested state machine and submit path as the modal. */
+function renderWaitlistSection(containerEl: HTMLElement): void {
+	const state = new EmailCaptureState();
+	const section = containerEl.createDiv({ cls: "engram-about-waitlist" });
+
+	const render = (): void => {
+		section.empty();
+
+		if (state.view === "success") {
+			section.createEl("p", {
+				cls: "engram-about-waitlist-success",
+				text: "You're on the list. Thanks for your patience!",
+			});
+			return;
+		}
+
+		section.createEl("p", {
+			text:
+				"Engram is still in active development. Leave your email for beta access, an " +
+				"early-supporter discount, and a say in what comes next.",
+		});
+
+		const input = section.createEl("input", {
+			type: "email",
+			placeholder: "you@example.com",
+			cls: "engram-email-capture-input",
+		});
+		input.value = state.email;
+		input.disabled = state.view === "submitting";
+
+		if (state.errorText) {
+			section.createEl("p", { text: state.errorText, cls: "engram-email-capture-error" });
+		}
+
+		const footer = section.createDiv({ cls: "engram-email-capture-footer" });
+		const submit = footer.createEl("button", {
+			text: state.view === "submitting" ? "Submitting…" : "Notify me",
+			cls: "mod-cta",
+		});
+		submit.disabled = state.view === "submitting";
+
+		const doSubmit = async (): Promise<void> => {
+			state.setEmail(input.value);
+			if (!state.canSubmit()) {
+				state.view = "error";
+				state.errorText = "Please enter a valid email address.";
+				render();
+				return;
+			}
+			await state.submit(submitWaitlistEmail);
+			render();
+		};
+
+		input.addEventListener("input", () => state.setEmail(input.value));
+		input.addEventListener("keydown", (e) => {
+			if (e.key === "Enter") void doSubmit();
+		});
+		submit.addEventListener("click", () => void doSubmit());
+	};
+
+	render();
+}
 
 /** Append an external link (opens in the browser) to a parent element. */
 function externalLink(parent: HTMLElement, text: string, href: string): void {
@@ -30,6 +97,10 @@ export function renderAboutTab(ctx: TabContext): void {
 	intro.setText(
 		"Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote.",
 	);
+
+	// ── Stay in the loop ──
+	heading(containerEl, "Stay in the loop");
+	renderWaitlistSection(containerEl);
 
 	// ── Getting set up ──
 	heading(containerEl, "Getting set up");
