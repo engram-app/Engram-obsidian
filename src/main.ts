@@ -41,12 +41,14 @@ import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import type { QueueEntry, SyncChoice, SyncIssue } from "./types";
+import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.
  *  Uses SHA-256 of the vault's absolute path (desktop) or name (mobile fallback). */
@@ -151,6 +153,20 @@ export default class EngramSyncPlugin extends Plugin {
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
 		await this.loadSettings();
+
+		// First-run waitlist popup. Engram is in active development; this sets
+		// honest expectations and captures an email for launch news. Shown once
+		// (submit OR dismiss → flag), then never again. onLayoutReady so the
+		// workspace exists before we open a modal. saveSettings persists the
+		// flag; on a first run with no auth it has no sync side effects.
+		if (shouldShowWaitlistPrompt(this.settings)) {
+			this.app.workspace.onLayoutReady(() => {
+				new EmailCaptureModal(this.app, () => {
+					this.settings.waitlistPromptSeen = true;
+					void this.saveSettings();
+				}).open();
+			});
+		}
 
 		this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey);
 		if (this.settings.vaultId) {

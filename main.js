@@ -731,13 +731,13 @@ __export(main_exports, {
   default: () => EngramSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian21 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -2827,7 +2827,8 @@ var DEFAULT_SETTINGS = {
   vaultId: null,
   clientId: "",
   planState: null,
-  searchDefaultMode: "hybrid"
+  searchDefaultMode: "hybrid",
+  waitlistPromptSeen: !1
 }, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
   "pull-all-delete-local",
   "push-all-delete-remote"
@@ -13482,6 +13483,119 @@ var CrdtEnrollment = class {
   }
 };
 
+// src/email-capture-modal.ts
+var import_obsidian21 = require("obsidian");
+
+// src/waitlist.ts
+var import_obsidian20 = require("obsidian"), WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
+async function submitWaitlistEmail(email) {
+  let resp = await (0, import_obsidian20.requestUrl)({
+    url: WAITLIST_ENDPOINT,
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email, source: "obsidian-plugin" }),
+    throw: !1
+  });
+  if (resp.status < 200 || resp.status >= 300)
+    throw new Error(`waitlist signup failed: ${resp.status}`);
+}
+function shouldShowWaitlistPrompt(settings) {
+  return settings.waitlistPromptSeen !== !0;
+}
+
+// src/email-capture-modal.ts
+function isLikelyEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+var EmailCaptureState = class {
+  constructor() {
+    this.view = "form";
+    this.email = "";
+    this.errorText = null;
+  }
+  setEmail(v) {
+    this.email = v, this.view === "error" && (this.view = "form", this.errorText = null);
+  }
+  canSubmit() {
+    return (this.view === "form" || this.view === "error") && isLikelyEmail(this.email);
+  }
+  async submit(send) {
+    if (this.canSubmit()) {
+      this.view = "submitting", this.errorText = null;
+      try {
+        await send(this.email.trim()), this.view = "success";
+      } catch (e) {
+        this.view = "error", this.errorText = "Couldn't reach the server. Try again later.";
+      }
+    }
+  }
+}, EmailCaptureModal = class extends import_obsidian21.Modal {
+  constructor(app, onDone) {
+    super(app);
+    this.onDone = onDone;
+    this.state = new EmailCaptureState();
+    this.done = !1;
+  }
+  onOpen() {
+    this.contentEl.addClass("engram-email-capture-modal"), this.render();
+  }
+  onClose() {
+    this.contentEl.empty(), this.finish();
+  }
+  finish() {
+    this.done || (this.done = !0, this.onDone());
+  }
+  render() {
+    let { contentEl } = this;
+    if (contentEl.empty(), this.state.view === "success") {
+      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+      return;
+    }
+    contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet" }), contentEl.createEl("p", {
+      text: "We're building Engram in the open, and early people like you make it better. Leave your email for beta access, an early-supporter discount, and a standing invite to give feedback and steer what comes next."
+    }), contentEl.createEl("p", {
+      cls: "engram-email-capture-contact",
+      text: "Questions or feedback? Email me directly at "
+    }).createEl("a", { text: "todd@ras.band", href: "mailto:todd@ras.band" });
+    let links = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+    links.createEl("a", {
+      text: "engram.page",
+      href: ENGRAM_MARKETING_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "GitHub",
+      href: ENGRAM_GITHUB_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    });
+    let input = contentEl.createEl("input", {
+      type: "email",
+      placeholder: "you@example.com",
+      cls: "engram-email-capture-input"
+    });
+    input.value = this.state.email, input.disabled = this.state.view === "submitting", this.state.errorText && contentEl.createEl("p", {
+      text: this.state.errorText,
+      cls: "engram-email-capture-error"
+    });
+    let footer = contentEl.createDiv({ cls: "engram-email-capture-footer" }), submit = footer.createEl("button", {
+      text: this.state.view === "submitting" ? "Submitting\u2026" : "Notify me",
+      cls: "mod-cta"
+    });
+    submit.disabled = this.state.view === "submitting";
+    let later = footer.createEl("button", { text: "Maybe later" }), doSubmit = async () => {
+      if (this.state.setEmail(input.value), !this.state.canSubmit()) {
+        this.state.view = "error", this.state.errorText = "Please enter a valid email address.", this.render();
+        return;
+      }
+      await this.state.submit(submitWaitlistEmail), this.render();
+    };
+    input.addEventListener("input", () => this.state.setEmail(input.value)), input.addEventListener("keydown", (e) => {
+      e.key === "Enter" && doSubmit();
+    }), submit.addEventListener("click", () => {
+      doSubmit();
+    }), later.addEventListener("click", () => this.close()), input.focus();
+  }
+};
+
 // src/explicit-folders.ts
 var ExplicitFolders = class {
   constructor(adapter, path) {
@@ -13561,14 +13675,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian20 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian22 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian20.Modal {
+}, SyncLogModal = class extends import_obsidian22.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -13605,10 +13719,10 @@ var import_obsidian20 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian21.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian23.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -13659,15 +13773,19 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
   }
   async onload() {
     var _a;
-    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
+    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), shouldShowWaitlistPrompt(this.settings) && this.app.workspace.onLayoutReady(() => {
+      new EmailCaptureModal(this.app, () => {
+        this.settings.waitlistPromptSeen = !0, this.saveSettings();
+      }).open();
+    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
     let remoteLogger = initRemoteLog();
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian21.Platform.isMobile ? "mobile" : "desktop"
+      import_obsidian23.Platform.isMobile ? "mobile" : "desktop"
     ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian21.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian23.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
@@ -13692,11 +13810,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian21.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
+        file instanceof import_obsidian23.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian21.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -13709,44 +13827,44 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian21.Notice("Engram sync: syncing...");
+        new import_obsidian23.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian21.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian23.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian21.Notice("Engram sync: checking...");
+        new import_obsidian23.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian21.Notice(
+          new import_obsidian23.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian21.Notice("Engram sync: everything in sync");
+          new import_obsidian23.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian21.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian23.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian21.Notice("Engram sync: pulling all from server...");
+        new import_obsidian23.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian21.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian23.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -13805,8 +13923,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian21.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian23.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -13819,14 +13937,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian21.Notice("Engram sync: sync failed");
+          ), new import_obsidian23.Notice("Engram sync: sync failed");
         });
       }
     }), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
       var _a2, _b;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian21.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b = this.explicitFolders) == null ? void 0 : _b.load());
       let registered = !1, gateOpen = !1;
@@ -13859,7 +13977,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
-            (pulled > 0 || pushed > 0) && new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+            (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -13892,7 +14010,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -13954,7 +14072,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian21.requestUrl)({
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian23.requestUrl)({
           url: `${apiUrl}/auth/token/refresh`,
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -14031,7 +14149,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
         ));
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian21.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian23.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
@@ -14107,27 +14225,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian21.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian21.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !0 });
-        return new import_obsidian21.Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`), !0;
+        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !1 });
-        return new import_obsidian21.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -14209,7 +14327,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
       }).awaitChoice();
       await this.runSyncWithProgress(choice);
     } catch (e) {
-      console.error("Engram Sync: sync preview failed", e), new import_obsidian21.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+      console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
     }
   }
   /** Persist current sync engine state (issues, ignored files, etc.) to plugin
@@ -14244,7 +14362,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.pull();
-          pulled > 0 && new import_obsidian21.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic pull failed", e);
         }
