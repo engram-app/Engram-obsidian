@@ -4962,18 +4962,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdtEnrollment = enrollment;
   }
   /** Write a remote-merged CRDT result to disk.
-   *  Marks the path recentlyFlushed first so the resulting vault.modify event is
-   *  suppressed by the recentlyFlushed guard in handleModify.
+   *  Marks the path recentlyFlushed first so the resulting vault.modify/create
+   *  event is suppressed by the recentlyFlushed guard in handleModify (the
+   *  'create' handler routes through handleModify too).
    *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
   async flushFromCrdt(path, content) {
-    let file = this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path));
-    if (file instanceof import_obsidian21.TFile) {
-      this.markRecentlyFlushed(path);
-      try {
-        await this.app.vault.modify(file, content);
-      } catch (e) {
-        rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
-      }
+    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    this.markRecentlyFlushed(normalized);
+    try {
+      file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content);
+    } catch (e) {
+      rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
     }
   }
   updateSettings(settings) {

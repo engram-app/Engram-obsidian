@@ -320,17 +320,26 @@ export class SyncEngine {
 	}
 
 	/** Write a remote-merged CRDT result to disk.
-	 *  Marks the path recentlyFlushed first so the resulting vault.modify event is
-	 *  suppressed by the recentlyFlushed guard in handleModify.
+	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
+	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
+	 *  'create' handler routes through handleModify too).
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
 	async flushFromCrdt(path: string, content: string): Promise<void> {
-		const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
-		if (!(file instanceof TFile)) return;
-		this.markRecentlyFlushed(path);
+		const normalized = normalizePath(path);
+		const file = this.app.vault.getAbstractFileByPath(normalized);
+		this.markRecentlyFlushed(normalized);
 		try {
-			await this.app.vault.modify(file, content);
+			if (file instanceof TFile) {
+				await this.app.vault.modify(file, content);
+			} else {
+				// Discovery: CRDT delivered the body for a note this device has never
+				// had on disk (it lived only in the Yjs doc). Create it — without this
+				// flushFromCrdt returned early and the note stayed permanently invisible
+				// on this device even though its content was in the local CRDT doc.
+				await this.createFileWithFolders(normalized, content);
+			}
 		} catch (e) {
-			rlog().error("crdt", `flushFromCrdt: vault.modify failed for ${path}: ${errMsg(e)}`);
+			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
 		}
 	}
 

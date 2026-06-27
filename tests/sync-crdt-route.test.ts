@@ -247,6 +247,38 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		expect(mockApp.vault.modify).toHaveBeenCalledWith(mockFile, "new content");
 	});
 
+	test("creates the file when it does not exist yet (device-B discovery)", async () => {
+		const engine = createEngine();
+		// No local file — CRDT delivered content for a note this device has never
+		// had on disk (the body lives only in the Yjs doc until now).
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/discovered.md", "# Discovered\nfrom CRDT");
+
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"Notes/discovered.md",
+			"# Discovered\nfrom CRDT",
+		);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("after flushFromCrdt creates a file, the create echo is suppressed", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/discovered.md", "from CRDT");
+
+		// The vault.create fires a 'create' event routed through handleModify.
+		const created = new TFile("Notes/discovered.md");
+		engine.handleModify(created);
+		await flush();
+
+		// Echo suppressed via recentlyFlushed → no re-push into CRDT.
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
 	test("after flushFromCrdt, a handleModify echo is suppressed", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
