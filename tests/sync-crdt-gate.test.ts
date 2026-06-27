@@ -265,6 +265,58 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
+	test("applyChange enrolls a not-yet-local markdown note into CRDT (discovery)", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+		// getFileByPath returns null by default → the note does not exist locally,
+		// so this pull is a discovery: enroll it so the CRDT handshake pulls the body.
+
+		const result = await engine.applyChange({
+			path: "Notes/discovered.md",
+			title: "discovered",
+			content: "remote content",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+		});
+
+		// Still no legacy disk write — CRDT owns the body — but it IS enrolled.
+		expect(result).toBe(false);
+		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("applyChange does NOT enroll a markdown note that already exists locally", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+		// The note already exists locally → CRDT already owns it, no discovery.
+		const existingFile = new TFile("Notes/have.md");
+		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
+
+		const result = await engine.applyChange({
+			path: "Notes/have.md",
+			title: "have",
+			content: "remote content",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+		});
+
+		expect(result).toBe(false);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
 	test("applyChange delete path still deletes for markdown when CRDT active", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);

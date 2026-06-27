@@ -4625,6 +4625,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
      *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
     this.crdt = null;
+    /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
+     *  CRDT-managed markdown note we don't have locally enrolls it (sends a
+     *  sync-step-1) so the body is pulled over the y-protocols handshake — the
+     *  level-triggered discovery path that backstops the edge-triggered
+     *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
+    this.crdtEnrollment = null;
     /** Persistent record of files that failed to sync, with reason. Surfaced
      *  in the Sync Center "Issues" panel and used to short-circuit the offline
      *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -4670,6 +4676,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtManager(mgr) {
     this.crdt = mgr;
+  }
+  setCrdtEnrollment(enrollment) {
+    this.crdtEnrollment = enrollment;
   }
   /** Write a remote-merged CRDT result to disk.
    *  Marks the path recentlyFlushed first so the resulting vault.modify event is
@@ -5818,7 +5827,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian19.normalizePath)(change.path);
@@ -5853,7 +5862,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (this.crdt && normalized.endsWith(".md"))
-      return rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`), !1;
+      return this.app.vault.getFileByPath(normalized) ? rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`)), !1;
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
@@ -5874,14 +5883,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_d = this.baseStore) == null ? void 0 : _d.get(normalized);
+        let pullBase = (_e = this.baseStore) == null ? void 0 : _e.get(normalized);
         if (pullBase) {
           let merge = threeWayMerge(pullBase.content, localContent, content);
           if (merge.clean) {
             await this.modifyFile(existing, merge.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge.merged),
               version: change.version
-            }), change.version != null && ((_e = this.baseStore) == null || _e.set(normalized, merge.merged, change.version));
+            }), change.version != null && ((_f = this.baseStore) == null || _f.set(normalized, merge.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -5932,7 +5941,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian19.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_f = this.baseStore) == null || _f.set(
+            }), change.version != null && ((_g = this.baseStore) == null || _g.set(
               (0, import_obsidian19.normalizePath)(conflictPath),
               content,
               change.version
@@ -5954,7 +5963,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_g = this.baseStore) == null || _g.set(
+            }), change.version != null && ((_h = this.baseStore) == null || _h.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -5977,12 +5986,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -6001,7 +6010,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -14078,7 +14087,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian21.Plugin
             var _a2;
             await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(path));
           }
-        }), channel.onCrdtMessage = (docId, b64) => {
+        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
