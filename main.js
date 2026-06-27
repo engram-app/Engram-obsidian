@@ -6697,10 +6697,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Push every local syncable file to the server.
    *
-   *  @param opts.deleteRemoteExtras — if true, also delete any remote note or
-   *    attachment that has no local counterpart. Used by the "Push all + delete
-   *    remote extras" sync direction. Defaults to false (preserves existing
-   *    behavior for callers that haven't migrated).
+   *  @param opts.replaceRemote — if true, delete EVERY remote note and
+   *    attachment first, then upload all local files, so the server ends up an
+   *    exact mirror of the local vault. Used by the "Delete all on remote, then
+   *    upload local files" sync direction. This literally wipes the server
+   *    before re-uploading (shared files are deleted then recreated); the user
+   *    confirms via the type-delete gate. Defaults to false (plain push that
+   *    leaves remote-only files untouched).
    */
   async pushAll(opts = {}) {
     var _a, _b, _c, _d;
@@ -6710,7 +6713,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
-    await this.invalidateIfVaultChanged();
+    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote();
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
@@ -6773,40 +6776,57 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
       }
     }
-    return await this.saveData({ lastSync: this.lastSync }), opts.deleteRemoteExtras && await this.deleteRemoteExtras(), pushed;
+    return await this.saveData({ lastSync: this.lastSync }), pushed;
   }
-  /** Known limitation: `pushAll(opts={deleteRemoteExtras:true})` triggers TWO
-   *  `/sync/manifest` fetches in sequence — one inside `reconcile()`, one here.
-   *  Any note a different client creates between those two reads will be in
-   *  this method's "remote-only" set and get deleted. The window is small
-   *  (sub-second) and the user's intent is explicitly destructive, but it's
-   *  worth refactoring later to share the manifest snapshot if the race
-   *  surfaces. Tracked in: code review for commit dcb74e2. */
-  async deleteRemoteExtras() {
+  /** Delete EVERY remote note and attachment (the whole server vault), emitting
+   *  a `deleting` progress phase. Used by `pushAll({replaceRemote:true})` before
+   *  it re-uploads all local files, so the server ends up an exact mirror of
+   *  local. This is intentionally a full wipe (shared files are deleted then
+   *  recreated by the subsequent upload); the user confirms via the type-delete
+   *  gate. Failures on individual deletes are logged, not thrown, so the
+   *  re-upload still runs. */
+  async wipeRemote() {
+    var _a, _b, _c;
     let manifest = await this.api.getManifest();
     if (!manifest) {
-      rlog().warn("push", "deleteRemoteExtras skipped \u2014 backend has no /sync/manifest");
+      rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let localFiles = this.app.vault.getFiles(), localPaths = new Set(
-      localFiles.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => f.path)
-    ), remoteOnlyNotes = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has(p)), remoteOnlyAttachments = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has(p));
+    let notePaths = manifest.notes.map((n) => n.path), attachmentPaths = manifest.attachments.map((a) => a.path), total = notePaths.length + attachmentPaths.length;
     rlog().info(
       "push",
-      `deleteRemoteExtras \u2014 ${remoteOnlyNotes.length} notes, ${remoteOnlyAttachments.length} attachments`
+      `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`
     );
-    for (let path of remoteOnlyNotes)
+    let done = 0;
+    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 });
+    for (let path of notePaths) {
       try {
-        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "remote-extras");
+        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-    for (let path of remoteOnlyAttachments)
+      done++, (_b = this.onSyncProgress) == null || _b.call(this, {
+        phase: "deleting",
+        current: done,
+        total,
+        failed: 0,
+        currentPath: path
+      });
+    }
+    for (let path of attachmentPaths) {
       try {
-        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "remote-extras");
+        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
+      done++, (_c = this.onSyncProgress) == null || _c.call(this, {
+        phase: "deleting",
+        current: done,
+        total,
+        failed: 0,
+        currentPath: path
+      });
+    }
   }
   /** Reconcile local vault against server manifest.
    *  Returns null if server doesn't support the manifest endpoint.
@@ -14422,12 +14442,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`), !0;
+        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
+        return new import_obsidian23.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: !1 });
+        let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
         return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }

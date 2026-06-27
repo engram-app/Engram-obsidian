@@ -1152,14 +1152,14 @@ export default class EngramSyncPlugin extends Plugin {
 
 			case "push-all-delete-remote": {
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: true });
-				new Notice(`Engram Sync: pushed ${pushed} (remote extras deleted)`);
+				const pushed = await this.syncEngine.pushAll({ replaceRemote: true });
+				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
 				return true;
 			}
 
 			case "push-all-keep-remote": {
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ deleteRemoteExtras: false });
+				const pushed = await this.syncEngine.pushAll({ replaceRemote: false });
 				new Notice(`Engram Sync: pushed ${pushed}`);
 				return true;
 			}
