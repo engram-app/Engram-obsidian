@@ -1,6 +1,38 @@
-import { Modal } from "obsidian";
+import { type App, Modal } from "obsidian";
 import { DEFAULT_UPGRADE_URL } from "./sync-center-render";
-import type { SyncProgress } from "./types";
+import { optionBreakdown } from "./sync-plan-format";
+import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
+
+/** Plain-language intro shown the instant the progress modal opens, before the
+ *  first engine event arrives — the previous "Preparing..." dead state is what
+ *  made the modal feel stuck. Built from the chosen plan so the user sees
+ *  exactly what is about to happen. Pure for testing. */
+export function describePlannedWork(
+	choice: SyncChoice,
+	plan: SyncPlan,
+	firstSync: boolean,
+): string {
+	const b = optionBreakdown(plan, choice);
+	const parts: string[] = [];
+	if (b.pushCount > 0) parts.push(`uploading ${b.pushCount}`);
+	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
+	if (b.deleteLocalCount > 0) {
+		parts.push(
+			`deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`,
+		);
+	}
+	if (b.deleteRemoteCount > 0) {
+		parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+	}
+
+	const prefix = firstSync ? "First sync, this may take a moment. " : "";
+	if (parts.length === 0) return `${prefix}Checking for changes.`;
+
+	const sentence = parts.join(", ");
+	const capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1);
+	const noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+	return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
 
 /** Final tally rendered when a sync settles. Plan-gated attachments land in
  *  `skipped` (informational, not a failure); genuine errors land in `failed`.
@@ -59,10 +91,20 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 
 const PHASE_LABELS: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting local files",
-	pushing: "Pushing notes",
-	pulling: "Pulling notes",
+	pushing: "Uploading notes",
+	pulling: "Downloading notes",
 	attachments: "Syncing attachments",
 	complete: "Complete",
+};
+
+/** One plain-language line under each phase label so the user knows exactly
+ *  what the current step does. */
+const PHASE_SUBTEXT: Record<SyncProgress["phase"], string> = {
+	deleting: "Removing the files you chose to delete.",
+	pushing: "Sending your notes to the cloud.",
+	pulling: "Saving cloud notes into this vault.",
+	attachments: "Syncing images and other attached files.",
+	complete: "",
 };
 
 /** Minimum ms to display each phase before transitioning to the next. */
@@ -76,6 +118,7 @@ const TICK_INTERVAL_MS = 50;
  *  even if the underlying operation completes faster. */
 export class SyncProgressModal extends Modal {
 	private phaseEl!: HTMLElement;
+	private subEl!: HTMLElement;
 	private countEl!: HTMLElement;
 	private pathEl!: HTMLElement;
 	private barInner!: HTMLElement;
@@ -84,6 +127,15 @@ export class SyncProgressModal extends Modal {
 	private hintEl!: HTMLElement;
 	private bgBtn!: HTMLButtonElement;
 	private closeBtn!: HTMLButtonElement;
+
+	/** Optional plan-derived intro (see describePlannedWork) shown up front so the
+	 *  user knows what the sync will do before the first engine event lands. */
+	constructor(
+		app: App,
+		private readonly opts: { intro?: string } = {},
+	) {
+		super(app);
+	}
 
 	/** Latest progress update received from the sync engine (may be ahead of display). */
 	private latest: SyncProgress | null = null;
@@ -101,11 +153,25 @@ export class SyncProgressModal extends Modal {
 		contentEl.empty();
 		contentEl.addClass("engram-sync-progress-modal");
 
-		contentEl.createEl("h2", { text: "Syncing..." });
+		contentEl.createEl("h2", { text: "Syncing your vault" });
+
+		// Plan-derived summary of what is about to happen (when the caller passed
+		// one). Stays visible through the whole sync as a reminder of the goal.
+		if (this.opts.intro) {
+			contentEl.createEl("p", {
+				text: this.opts.intro,
+				cls: "engram-progress-intro",
+			});
+		}
 
 		this.phaseEl = contentEl.createEl("p", {
-			text: "Preparing...",
+			text: "Getting started…",
 			cls: "engram-progress-phase",
+		});
+
+		this.subEl = contentEl.createEl("p", {
+			text: "Comparing your vault with the cloud…",
+			cls: "engram-progress-subtext",
 		});
 
 		this.countEl = contentEl.createEl("p", { text: "", cls: "engram-progress-count" });
@@ -113,6 +179,9 @@ export class SyncProgressModal extends Modal {
 
 		const barOuter = contentEl.createDiv({ cls: "engram-progress-bar-outer" });
 		this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" });
+		// Indeterminate until the first real progress update lands, so the bar
+		// animates instead of sitting frozen at 0% during setup.
+		this.barInner.addClass("is-indeterminate");
 
 		this.failedEl = contentEl.createEl("p", {
 			text: "",
@@ -209,8 +278,10 @@ export class SyncProgressModal extends Modal {
 				this.tickTimer = null;
 			}
 			this.phaseEl.setText("Sync complete");
+			this.subEl.setText("");
 			this.countEl.setText("");
 			this.pathEl.setText("");
+			this.barInner.removeClass("is-indeterminate");
 			this.barInner.setCssStyles({ width: "100%" });
 			this.barInner.addClass("is-complete");
 			this.hintEl.hidden = true;
@@ -237,8 +308,10 @@ export class SyncProgressModal extends Modal {
 		}
 
 		this.phaseEl.setText(label);
+		this.subEl.setText(PHASE_SUBTEXT[progress.phase] ?? "");
 		this.countEl.setText(`${progress.current} / ${progress.total}`);
 		this.pathEl.setText(progress.currentPath ?? "");
+		this.barInner.removeClass("is-indeterminate");
 		this.barInner.style.width = `${pct}%`;
 		this.barInner.removeClass("is-complete");
 

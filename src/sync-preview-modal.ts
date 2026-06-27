@@ -356,6 +356,13 @@ export class SyncPreviewModal extends Modal {
 		if (this.state.view === "preview") this.render();
 	}
 
+	/** The plan the user ultimately chose against (after any vault switch), or
+	 *  null if it never loaded. Lets the caller describe the planned work in the
+	 *  progress modal. */
+	getPlan(): SyncPlan | null {
+		return this.state.plan;
+	}
+
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();

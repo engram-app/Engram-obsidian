@@ -932,6 +932,34 @@
 	background: var(--text-success, var(--interactive-accent));
 }
 
+.engram-progress-intro {
+	margin: 4px 0 10px;
+	color: var(--text-muted);
+}
+
+.engram-progress-subtext {
+	margin: 0 0 8px;
+	font-size: 0.85em;
+	color: var(--text-muted);
+}
+
+/* Indeterminate sweep while the sync prepares, before the first real progress
+ * update — so the bar animates instead of sitting frozen at 0%. */
+.engram-progress-bar-inner.is-indeterminate {
+	width: 40%;
+	animation: engram-progress-indeterminate 1.1s ease-in-out infinite;
+}
+
+@keyframes engram-progress-indeterminate {
+	0% {
+		transform: translateX(-110%);
+	}
+
+	100% {
+		transform: translateX(280%);
+	}
+}
+
 .engram-progress-failed {
 	color: var(--text-error);
 	margin: 8px 0 0;

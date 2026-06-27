@@ -10,7 +10,12 @@
  * emitted text + structure without a real DOM.
  */
 import { describe, expect, test } from "bun:test";
-import { type CompletionSummary, renderCompletionSummary } from "../src/sync-progress-modal";
+import {
+	type CompletionSummary,
+	describePlannedWork,
+	renderCompletionSummary,
+} from "../src/sync-progress-modal";
+import type { SyncPlan } from "../src/types";
 
 interface FakeEl {
 	cls: string;
@@ -142,5 +147,60 @@ describe("renderCompletionSummary — three-way tally", () => {
 		expect(text).toContain("100 synced");
 		expect(text).toContain("5 skipped");
 		expect(text).toContain("2 failed");
+	});
+});
+
+function plan(over: Partial<SyncPlan> = {}): SyncPlan {
+	return {
+		vaultName: "V",
+		serverNoteCount: 0,
+		serverAttachmentCount: 0,
+		serverFolderCount: 0,
+		localNoteCount: 0,
+		localAttachmentCount: 0,
+		localFolderCount: 0,
+		localPaths: [],
+		serverPaths: [],
+		toPush: { notes: [], attachments: [] },
+		toPull: { notes: [], attachments: [] },
+		conflicts: [],
+		toDeleteLocal: [],
+		toDeleteRemote: [],
+		...over,
+	};
+}
+
+describe("describePlannedWork", () => {
+	test("smart-merge states uploads, downloads, and the no-delete reassurance", () => {
+		const p = plan({
+			toPush: { notes: ["a", "b", "c"], attachments: [] },
+			toPull: { notes: ["x"], attachments: [] },
+		});
+		expect(describePlannedWork("smart-merge", p, false)).toBe(
+			"Uploading 3, downloading 1. Nothing will be deleted.",
+		);
+	});
+
+	test("first sync adds an expectation-setting prefix", () => {
+		const p = plan({ toPush: { notes: ["a"], attachments: [] } });
+		expect(describePlannedWork("smart-merge", p, true)).toBe(
+			"First sync, this may take a moment. Uploading 1. Nothing will be deleted.",
+		);
+	});
+
+	test("destructive pull states the deletion instead of the no-delete line", () => {
+		const p = plan({
+			serverNoteCount: 2,
+			toPush: { notes: ["gone.md"], attachments: [] },
+		});
+		expect(describePlannedWork("pull-all-delete-local", p, false)).toBe(
+			"Downloading 2, deleting 1 local file.",
+		);
+	});
+
+	test("nothing to do falls back to a checking message", () => {
+		expect(describePlannedWork("push-all-keep-remote", plan(), false)).toBe(
+			"Checking for changes.",
+		);
 	});
 });

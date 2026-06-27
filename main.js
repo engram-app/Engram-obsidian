@@ -3124,6 +3124,12 @@ var MERGE_CARD = {
   setPlanError(message) {
     this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
   }
+  /** The plan the user ultimately chose against (after any vault switch), or
+   *  null if it never loaded. Lets the caller describe the planned work in the
+   *  progress modal. */
+  getPlan() {
+    return this.state.plan;
+  }
   render() {
     let { contentEl } = this;
     contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
@@ -3527,7 +3533,7 @@ function renderActions(parent, plugin, refresh) {
       }).awaitChoice();
       if (choice === "change-vault")
         throw new Error("Sync Center received change-vault choice \u2014 caller missing");
-      await plugin.runSyncWithProgress(choice);
+      await plugin.runSyncWithProgress(choice, { plan });
     } catch (e) {
       new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
@@ -3747,6 +3753,16 @@ function formatRelative(timestamp) {
 }
 
 // src/sync-progress-modal.ts
+function describePlannedWork(choice, plan, firstSync) {
+  let b = optionBreakdown(plan, choice), parts = [];
+  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
+    `deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`
+  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+  let prefix = firstSync ? "First sync, this may take a moment. " : "";
+  if (parts.length === 0) return `${prefix}Checking for changes.`;
+  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
 function renderCompletionSummary(parent, summary) {
   let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
   if (summary.synced > 0 && line.createSpan({
@@ -3770,13 +3786,22 @@ function renderCompletionSummary(parent, summary) {
 }
 var PHASE_LABELS = {
   deleting: "Deleting local files",
-  pushing: "Pushing notes",
-  pulling: "Pulling notes",
+  pushing: "Uploading notes",
+  pulling: "Downloading notes",
   attachments: "Syncing attachments",
   complete: "Complete"
+}, PHASE_SUBTEXT = {
+  deleting: "Removing the files you chose to delete.",
+  pushing: "Sending your notes to the cloud.",
+  pulling: "Saving cloud notes into this vault.",
+  attachments: "Syncing images and other attached files.",
+  complete: ""
 }, MIN_PHASE_MS = 800, TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
-  constructor() {
-    super(...arguments);
+  /** Optional plan-derived intro (see describePlannedWork) shown up front so the
+   *  user knows what the sync will do before the first engine event lands. */
+  constructor(app, opts = {}) {
+    super(app);
+    this.opts = opts;
     /** Latest progress update received from the sync engine (may be ahead of display). */
     this.latest = null;
     /** Currently displayed phase. */
@@ -3790,12 +3815,18 @@ var PHASE_LABELS = {
   }
   onOpen() {
     let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing..." }), this.phaseEl = contentEl.createEl("p", {
-      text: "Preparing...",
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", {
+      text: this.opts.intro,
+      cls: "engram-progress-intro"
+    }), this.phaseEl = contentEl.createEl("p", {
+      text: "Getting started\u2026",
       cls: "engram-progress-phase"
+    }), this.subEl = contentEl.createEl("p", {
+      text: "Comparing your vault with the cloud\u2026",
+      cls: "engram-progress-subtext"
     }), this.countEl = contentEl.createEl("p", { text: "", cls: "engram-progress-count" }), this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" });
     let barOuter = contentEl.createDiv({ cls: "engram-progress-bar-outer" });
-    this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" }), this.failedEl = contentEl.createEl("p", {
+    this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" }), this.barInner.addClass("is-indeterminate"), this.failedEl = contentEl.createEl("p", {
       text: "",
       cls: "engram-progress-failed"
     }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({
@@ -3842,10 +3873,10 @@ var PHASE_LABELS = {
   }
   /** Render a progress state to the DOM. */
   renderProgress(progress) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, {
+      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.subEl.setText(""), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.removeClass("is-indeterminate"), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, {
         synced: progress.current,
         skipped: (_b = progress.skipped) != null ? _b : 0,
         failed: progress.failed
@@ -3854,7 +3885,7 @@ var PHASE_LABELS = {
       ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
       return;
     }
-    this.phaseEl.setText(label), this.countEl.setText(`${progress.current} / ${progress.total}`), this.pathEl.setText((_c = progress.currentPath) != null ? _c : ""), this.barInner.style.width = `${pct}%`, this.barInner.removeClass("is-complete"), progress.failed > 0 ? (this.failedEl.setText(`${progress.failed} failed so far`), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
+    this.phaseEl.setText(label), this.subEl.setText((_c = PHASE_SUBTEXT[progress.phase]) != null ? _c : ""), this.countEl.setText(`${progress.current} / ${progress.total}`), this.pathEl.setText((_d = progress.currentPath) != null ? _d : ""), this.barInner.removeClass("is-indeterminate"), this.barInner.style.width = `${pct}%`, this.barInner.removeClass("is-complete"), progress.failed > 0 ? (this.failedEl.setText(`${progress.failed} failed so far`), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
   }
   onClose() {
     this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
@@ -14366,10 +14397,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
    *  the prior progress callback when the sync settles. The modal's "Run in
    *  background" closes it while the sync keeps running. No-op choices
    *  (cancel / change-vault) skip the modal entirely. */
-  async runSyncWithProgress(choice) {
+  async runSyncWithProgress(choice, opts = {}) {
+    var _a;
     if (choice === "cancel" || choice === "change-vault")
       return this.runSyncFromChoice(choice);
-    let modal = new SyncProgressModal(this.app), prev = this.syncEngine.onSyncProgress;
+    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, modal = new SyncProgressModal(this.app, { intro }), prev = this.syncEngine.onSyncProgress;
     this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();
@@ -14443,7 +14475,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
         });
         let choice = await modal.awaitChoice();
-        await this.runSyncWithProgress(choice);
+        await this.runSyncWithProgress(choice, {
+          plan: modal.getPlan(),
+          firstSync: context === "first-time"
+        });
       } catch (e) {
         console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }

@@ -26,7 +26,7 @@ import { EngramSyncSettingTab } from "./settings";
 import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
-import { SyncProgressModal } from "./sync-progress-modal";
+import { SyncProgressModal, describePlannedWork } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
 import {
 	DEFAULT_SETTINGS,
@@ -48,7 +48,7 @@ import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
-import type { QueueEntry, SyncChoice, SyncIssue } from "./types";
+import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.
@@ -1155,11 +1155,17 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  the prior progress callback when the sync settles. The modal's "Run in
 	 *  background" closes it while the sync keeps running. No-op choices
 	 *  (cancel / change-vault) skip the modal entirely. */
-	async runSyncWithProgress(choice: SyncChoice): Promise<boolean> {
+	async runSyncWithProgress(
+		choice: SyncChoice,
+		opts: { plan?: SyncPlan | null; firstSync?: boolean } = {},
+	): Promise<boolean> {
 		if (choice === "cancel" || choice === "change-vault") {
 			return this.runSyncFromChoice(choice);
 		}
-		const modal = new SyncProgressModal(this.app);
+		const intro = opts.plan
+			? describePlannedWork(choice, opts.plan, opts.firstSync ?? false)
+			: undefined;
+		const modal = new SyncProgressModal(this.app, { intro });
 		const prev = this.syncEngine.onSyncProgress;
 		this.syncEngine.onSyncProgress = (progress) => {
 			modal.update(progress);
@@ -1290,7 +1296,10 @@ export default class EngramSyncPlugin extends Plugin {
 
 				const choice = await modal.awaitChoice();
 
-				await this.runSyncWithProgress(choice);
+				await this.runSyncWithProgress(choice, {
+					plan: modal.getPlan(),
+					firstSync: context === "first-time",
+				});
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error("Engram Sync: sync preview failed", e);

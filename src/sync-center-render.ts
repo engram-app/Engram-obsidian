@@ -131,7 +131,7 @@ function renderActions(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: (
 			if (choice === "change-vault") {
 				throw new Error("Sync Center received change-vault choice — caller missing");
 			}
-			await plugin.runSyncWithProgress(choice);
+			await plugin.runSyncWithProgress(choice, { plan });
 		} catch (e) {
 			new Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
 		}
