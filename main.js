@@ -2948,6 +2948,9 @@ var SyncPreviewState = class {
     this.view = "preview";
     this.pendingChoice = null;
     this.confirmInput = "";
+    /** Set when the initial plan computation fails; surfaced in the loading
+     *  view so an instant-open modal is not stuck on a blank spinner. */
+    this.planError = null;
     this.vaultsLoading = !1;
     this.vaults = null;
     this.vaultsError = null;
@@ -3002,10 +3005,11 @@ var SyncPreviewState = class {
   exitVaultPicker() {
     this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
   }
-  /** Swap in the SyncPlan that came back from applyVaultChange. Caller is
+  /** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
+   *  initial plan once it resolves. Clears any prior plan-load error. Caller is
    *  responsible for re-rendering. */
   replacePlan(plan) {
-    this.plan = plan;
+    this.plan = plan, this.planError = null;
   }
   cancel() {
     this.resolve("cancel");
@@ -3106,13 +3110,32 @@ var MERGE_CARD = {
       this.resolveFn = resolve, this.open();
     });
   }
+  /** Fill in the deferred initial plan once the background computeSyncPlan
+   *  resolves, refreshing the loading/preview view in place. Only applies while
+   *  the plan is still null: if the user already switched vaults in the picker,
+   *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
+   *  for the old vault must not clobber it. */
+  setPlan(plan) {
+    this.state.plan == null && (this.state.replacePlan(plan), this.state.view === "preview" && this.render());
+  }
+  /** Surface a plan-load failure in the instant-open loading view. Skipped once
+   *  a plan exists (e.g. the user switched vaults), so a stale failure never
+   *  overwrites a good plan. */
+  setPlanError(message) {
+    this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
+  }
   render() {
     let { contentEl } = this;
     contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
   }
   renderPreview() {
     var _a;
-    let { contentEl } = this, empty = isPlanEmpty(this.state.plan), context = (_a = this.opts.context) != null ? _a : "review";
+    let { contentEl } = this, context = (_a = this.opts.context) != null ? _a : "review";
+    if (this.state.plan == null) {
+      this.renderPlanLoading(contentEl, context);
+      return;
+    }
+    let empty = isPlanEmpty(this.state.plan);
     this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
     let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
     empty || options.createDiv({
@@ -3128,6 +3151,30 @@ var MERGE_CARD = {
     }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
       this.openVaultPicker();
     });
+  }
+  /** Instant-open loading state: the modal is on screen while computeSyncPlan
+   *  runs. Shows the context header plus a calm progress line (or the load
+   *  error), and keeps Cancel + Change vault reachable so the user is never
+   *  trapped on a spinner. */
+  renderPlanLoading(parent, context) {
+    this.renderHeader(parent, context);
+    let body = parent.createDiv({ cls: "engram-sync-preview-loading" });
+    this.state.planError ? body.createSpan({
+      cls: "engram-sync-preview-picker-error",
+      text: this.state.planError
+    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" });
+    let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** The loaded plan. Only reached from render paths that run after the plan
+   *  has arrived (renderPreview gates on it); throws otherwise as a guard
+   *  against a future caller skipping the loading gate. */
+  requirePlan() {
+    let p = this.state.plan;
+    if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
+    return p;
   }
   /** Render the "Show advanced sync options" accordion (collapsed by default)
    *  with the push/pull direction grid. Shared by the up-to-date and
@@ -3164,7 +3211,10 @@ var MERGE_CARD = {
    *  upcoming push includes non-text attachments. Renders nothing when the
    *  plan isn't text-only, the flag is unknown, or the count is zero. */
   renderSkippedAttachmentsNote(parent) {
-    let n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === !0), text2 = skippedAttachmentsLine(n);
+    let n = countSkippedAttachments(
+      this.requirePlan(),
+      this.opts.attachmentsTextOnly === !0
+    ), text2 = skippedAttachmentsLine(n);
     if (text2 == null) return;
     let note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
     note.createSpan({ text: "\u2139\uFE0F ", cls: "engram-sync-preview-skip-note-icon" }), note.createSpan({ text: text2 });
@@ -3183,7 +3233,7 @@ var MERGE_CARD = {
     });
   }
   renderComparison(parent) {
-    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.state.plan;
+    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.requirePlan();
     this.renderCompareCard(wrap, {
       emoji: "\u{1F4BB}",
       name: plan.vaultName,
@@ -3237,7 +3287,7 @@ var MERGE_CARD = {
     });
   }
   renderOptionCard(parent, card, context) {
-    let b = optionBreakdown(this.state.plan, card.choice), wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }), btn = wrap.createEl("button", { cls: card.cssClass });
+    let b = optionBreakdown(this.requirePlan(), card.choice), wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }), btn = wrap.createEl("button", { cls: card.cssClass });
     btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), wrap.createEl("p", {
       text: card.subtitle(b, context),
       cls: "engram-sync-preview-option-subtitle"
@@ -3252,7 +3302,7 @@ var MERGE_CARD = {
       text: "Confirm destructive sync",
       cls: "engram-sync-preview-header"
     });
-    let b = optionBreakdown(this.state.plan, choice), summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
+    let b = optionBreakdown(this.requirePlan(), choice), summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
     summary.createEl("p", { text: "You are about to:" });
     let ul = summary.createEl("ul");
     b.deleteLocalCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteLocalCount} local files` }), b.deleteRemoteCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteRemoteCount} remote files` }), b.pullCount > 0 && ul.createEl("li", { text: `Download ${b.pullCount} files from server` }), b.pushCount > 0 && ul.createEl("li", { text: `Upload ${b.pushCount} files to server` });
@@ -3378,13 +3428,13 @@ var MERGE_CARD = {
     }
   }
   deletePathsFor(choice) {
-    let plan = this.state.plan;
+    let plan = this.requirePlan();
     return choice === "pull-all-delete-local" ? [...plan.toPush.notes, ...plan.toPush.attachments] : choice === "push-all-delete-remote" ? [...plan.toPull.notes, ...plan.toPull.attachments] : [];
   }
   /** Paths that remain on the affected side after the destructive sync —
    *  used to decide whether a folder row is going away entirely. */
   keptPathsFor(choice, deletePaths) {
-    let plan = this.state.plan, deleted = new Set(deletePaths);
+    let plan = this.requirePlan(), deleted = new Set(deletePaths);
     return choice === "pull-all-delete-local" ? plan.localPaths.filter((p) => !deleted.has(p)) : choice === "push-all-delete-remote" ? plan.serverPaths.filter((p) => !deleted.has(p)) : [];
   }
   renderDeletionTree(parent, paths, keptPaths) {
@@ -14374,7 +14424,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     await this.syncPreviewGuard(async () => {
       var _a, _b;
       try {
-        let plan = await this.syncEngine.computeSyncPlan("full"), context = this.derivePreviewContext(), choice = await new SyncPreviewModal(this.app, plan, {
+        let context = this.derivePreviewContext(), modal = new SyncPreviewModal(this.app, null, {
           remoteVaultName: this.settings.remoteVaultName,
           showChangeVault: !0,
           context,
@@ -14386,7 +14436,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             var _a2;
             return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
           }
-        }).awaitChoice();
+        });
+        this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
+          modal.setPlanError(
+            "Could not compare with the cloud \u2014 check your connection."
+          ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
+        });
+        let choice = await modal.awaitChoice();
         await this.runSyncWithProgress(choice);
       } catch (e) {
         console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);

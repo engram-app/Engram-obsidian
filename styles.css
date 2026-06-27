@@ -1475,6 +1475,12 @@ body.is-mobile .engram-support-buttons > a {
 	margin: 0.25em 0 1em 0;
 }
 
+.engram-sync-preview-loading {
+	color: var(--text-muted);
+	padding: 1.5em 0;
+	text-align: center;
+}
+
 .engram-sync-preview-picker-body {
 	margin-bottom: 1em;
 }

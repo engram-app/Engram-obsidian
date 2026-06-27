@@ -1237,9 +1237,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// stack two modals.
 		await this.syncPreviewGuard(async () => {
 			try {
-				const plan = await this.syncEngine.computeSyncPlan("full");
 				const context = this.derivePreviewContext();
-				const modal = new SyncPreviewModal(this.app, plan, {
+				// Open the modal immediately in a loading state, then stream the
+				// plan in when computeSyncPlan resolves. Previously we awaited the
+				// full server round-trip (manifest + changes) BEFORE opening, so
+				// the modal appeared to hang on slow connections.
+				const modal = new SyncPreviewModal(this.app, null, {
 					remoteVaultName: this.settings.remoteVaultName,
 					showChangeVault: true,
 					context,
@@ -1271,6 +1274,20 @@ export default class EngramSyncPlugin extends Plugin {
 						return this.syncEngine.computeSyncPlan("full");
 					},
 				});
+
+				// Compute the plan off the critical path and stream it into the
+				// already-open modal. A failure surfaces in the modal's loading
+				// view rather than blocking the open.
+				void this.syncEngine
+					.computeSyncPlan("full")
+					.then((plan) => modal.setPlan(plan))
+					.catch((e) => {
+						modal.setPlanError(
+							"Could not compare with the cloud — check your connection.",
+						);
+						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
+					});
+
 				const choice = await modal.awaitChoice();
 
 				await this.runSyncWithProgress(choice);

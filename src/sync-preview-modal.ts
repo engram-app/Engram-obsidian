@@ -19,8 +19,13 @@ export class SyncPreviewState {
 	view: "preview" | "confirm" | "vault-picker" | "done" = "preview";
 	pendingChoice: SyncChoice | null = null;
 	confirmInput = "";
-	/** Mutable so the modal can swap in a fresh plan after applyVaultChange. */
-	plan: SyncPlan;
+	/** Mutable so the modal can swap in a fresh plan after applyVaultChange.
+	 *  Null while the initial plan is still computing — the modal opens instantly
+	 *  in a loading state and fills in once `replacePlan` runs. */
+	plan: SyncPlan | null;
+	/** Set when the initial plan computation fails; surfaced in the loading
+	 *  view so an instant-open modal is not stuck on a blank spinner. */
+	planError: string | null = null;
 	vaultsLoading = false;
 	vaults: VaultInfo[] | null = null;
 	vaultsError: string | null = null;
@@ -33,7 +38,7 @@ export class SyncPreviewState {
 	private resolved = false;
 
 	constructor(
-		initialPlan: SyncPlan,
+		initialPlan: SyncPlan | null,
 		private readonly onResolve: (choice: SyncChoice) => void,
 	) {
 		this.plan = initialPlan;
@@ -117,10 +122,12 @@ export class SyncPreviewState {
 		this.creatingVault = false;
 	}
 
-	/** Swap in the SyncPlan that came back from applyVaultChange. Caller is
+	/** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
+	 *  initial plan once it resolves. Clears any prior plan-load error. Caller is
 	 *  responsible for re-rendering. */
 	replacePlan(plan: SyncPlan): void {
 		this.plan = plan;
+		this.planError = null;
 	}
 
 	cancel(): void {
@@ -293,7 +300,7 @@ export class SyncPreviewModal extends Modal {
 
 	constructor(
 		app: App,
-		plan: SyncPlan,
+		plan: SyncPlan | null,
 		private readonly opts: SyncPreviewOptions,
 	) {
 		super(app);
@@ -329,6 +336,26 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
+	/** Fill in the deferred initial plan once the background computeSyncPlan
+	 *  resolves, refreshing the loading/preview view in place. Only applies while
+	 *  the plan is still null: if the user already switched vaults in the picker,
+	 *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
+	 *  for the old vault must not clobber it. */
+	setPlan(plan: SyncPlan): void {
+		if (this.state.plan != null) return;
+		this.state.replacePlan(plan);
+		if (this.state.view === "preview") this.render();
+	}
+
+	/** Surface a plan-load failure in the instant-open loading view. Skipped once
+	 *  a plan exists (e.g. the user switched vaults), so a stale failure never
+	 *  overwrites a good plan. */
+	setPlanError(message: string): void {
+		if (this.state.plan != null) return;
+		this.state.planError = message;
+		if (this.state.view === "preview") this.render();
+	}
+
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -344,8 +371,16 @@ export class SyncPreviewModal extends Modal {
 
 	private renderPreview(): void {
 		const { contentEl } = this;
-		const empty = isPlanEmpty(this.state.plan);
 		const context = this.opts.context ?? "review";
+
+		// Instant-open: the modal is already on screen while the initial plan
+		// computes in the background. Show a loading state until it arrives.
+		if (this.state.plan == null) {
+			this.renderPlanLoading(contentEl, context);
+			return;
+		}
+
+		const empty = isPlanEmpty(this.state.plan);
 
 		this.renderHeader(contentEl, empty ? "up-to-date" : context);
 		this.renderComparison(contentEl);
@@ -379,6 +414,42 @@ export class SyncPreviewModal extends Modal {
 				void this.openVaultPicker();
 			});
 		}
+	}
+
+	/** Instant-open loading state: the modal is on screen while computeSyncPlan
+	 *  runs. Shows the context header plus a calm progress line (or the load
+	 *  error), and keeps Cancel + Change vault reachable so the user is never
+	 *  trapped on a spinner. */
+	private renderPlanLoading(parent: HTMLElement, context: SyncPreviewContext): void {
+		this.renderHeader(parent, context);
+		const body = parent.createDiv({ cls: "engram-sync-preview-loading" });
+		if (this.state.planError) {
+			body.createSpan({
+				cls: "engram-sync-preview-picker-error",
+				text: this.state.planError,
+			});
+		} else {
+			body.createSpan({ text: "Comparing your vault with the cloud…" });
+		}
+
+		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
+		const cancelBtn = footer.createEl("button", { text: "Cancel" });
+		cancelBtn.addEventListener("click", () => this.state.cancel());
+		if (this.opts.showChangeVault) {
+			const changeBtn = footer.createEl("button", { text: "Change vault" });
+			changeBtn.addEventListener("click", () => {
+				void this.openVaultPicker();
+			});
+		}
+	}
+
+	/** The loaded plan. Only reached from render paths that run after the plan
+	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
+	 *  against a future caller skipping the loading gate. */
+	private requirePlan(): SyncPlan {
+		const p = this.state.plan;
+		if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
+		return p;
 	}
 
 	/** Render the "Show advanced sync options" accordion (collapsed by default)
@@ -424,7 +495,10 @@ export class SyncPreviewModal extends Modal {
 	 *  upcoming push includes non-text attachments. Renders nothing when the
 	 *  plan isn't text-only, the flag is unknown, or the count is zero. */
 	private renderSkippedAttachmentsNote(parent: HTMLElement): void {
-		const n = countSkippedAttachments(this.state.plan, this.opts.attachmentsTextOnly === true);
+		const n = countSkippedAttachments(
+			this.requirePlan(),
+			this.opts.attachmentsTextOnly === true,
+		);
 		const text = skippedAttachmentsLine(n);
 		if (text == null) return;
 		const note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
@@ -449,7 +523,7 @@ export class SyncPreviewModal extends Modal {
 
 	private renderComparison(parent: HTMLElement): void {
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-compare" });
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 
 		this.renderCompareCard(wrap, {
 			emoji: "💻",
@@ -542,7 +616,7 @@ export class SyncPreviewModal extends Modal {
 		card: OptionCard,
 		context: SyncPreviewContext,
 	): void {
-		const b = optionBreakdown(this.state.plan, card.choice);
+		const b = optionBreakdown(this.requirePlan(), card.choice);
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" });
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
@@ -567,7 +641,7 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-header",
 		});
 
-		const b = optionBreakdown(this.state.plan, choice);
+		const b = optionBreakdown(this.requirePlan(), choice);
 		const summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
 		summary.createEl("p", { text: "You are about to:" });
 		const ul = summary.createEl("ul");
@@ -760,7 +834,7 @@ export class SyncPreviewModal extends Modal {
 	}
 
 	private deletePathsFor(choice: SyncChoice): string[] {
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 		if (choice === "pull-all-delete-local") {
 			return [...plan.toPush.notes, ...plan.toPush.attachments];
 		}
@@ -773,7 +847,7 @@ export class SyncPreviewModal extends Modal {
 	/** Paths that remain on the affected side after the destructive sync —
 	 *  used to decide whether a folder row is going away entirely. */
 	private keptPathsFor(choice: SyncChoice, deletePaths: string[]): string[] {
-		const plan = this.state.plan;
+		const plan = this.requirePlan();
 		const deleted = new Set(deletePaths);
 		if (choice === "pull-all-delete-local") {
 			return plan.localPaths.filter((p) => !deleted.has(p));

@@ -237,7 +237,7 @@ describe("SyncPreviewState — non-destructive choices", () => {
 		const { state } = newState();
 		const next = makePlan({ vaultName: "Switched" });
 		state.replacePlan(next);
-		expect(state.plan.vaultName).toBe("Switched");
+		expect(state.plan?.vaultName).toBe("Switched");
 	});
 });
 
@@ -330,6 +330,22 @@ describe("SyncPreviewState — multiple resolutions ignored", () => {
 		state.pickOption("cancel");
 		state.cancel();
 		expect(resolved.value).toBe("smart-merge");
+	});
+});
+
+describe("SyncPreviewState — deferred plan (instant open)", () => {
+	test("accepts a null initial plan (modal opens before the plan resolves)", () => {
+		const state = new SyncPreviewState(null, () => {});
+		expect(state.plan).toBeNull();
+		expect(state.planError).toBeNull();
+	});
+
+	test("replacePlan swaps in the plan and clears any planError", () => {
+		const state = new SyncPreviewState(null, () => {});
+		state.planError = "Could not load the sync plan";
+		state.replacePlan(makePlan({ vaultName: "Loaded" }));
+		expect(state.plan?.vaultName).toBe("Loaded");
+		expect(state.planError).toBeNull();
 	});
 });
 
