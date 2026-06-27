@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { LimitExceededError } from "../src/limit-error";
+import type { OptionBreakdown } from "../src/sync-plan-format";
 import {
 	HEADER_BY_CONTEXT,
 	SyncPreviewState,
@@ -8,7 +9,6 @@ import {
 	mergeHelperText,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
-import type { OptionBreakdown } from "../src/sync-plan-format";
 import type { SyncChoice, SyncPlan } from "../src/types";
 
 describe("SyncPreviewState — create-vault sub-view", () => {

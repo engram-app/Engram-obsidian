@@ -1,3 +1,4 @@
+import { describe, expect, it } from "bun:test";
 import { createSingleFlight } from "../src/single-flight";
 
 describe("createSingleFlight", () => {
@@ -5,7 +6,9 @@ describe("createSingleFlight", () => {
 		const guard = createSingleFlight();
 		let runs = 0;
 		let release!: () => void;
-		const gate = new Promise<void>((r) => (release = r));
+		const gate = new Promise<void>((r) => {
+			release = r;
+		});
 
 		const first = guard(async () => {
 			runs++;

@@ -23,8 +23,8 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
-import { SyncEngine, reconcileColdStart } from "./sync";
 import { createSingleFlight } from "./single-flight";
+import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import { SyncProgressModal } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
@@ -1244,7 +1244,8 @@ export default class EngramSyncPlugin extends Plugin {
 					showChangeVault: true,
 					context,
 					initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
-					attachmentsTextOnly: this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
+					attachmentsTextOnly:
+						this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
 					listVaults: () => this.api.listVaults(),
 					createVault: (name) => this.api.createVault(name),
 					applyVaultChange: async (id, name) => {
