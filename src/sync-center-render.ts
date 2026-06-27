@@ -169,7 +169,7 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "These files are fine — they just need a paid plan to sync.",
+		text: "These files are fine. They just need a paid plan to sync.",
 	});
 
 	for (const [category, list] of groups) {
@@ -330,7 +330,7 @@ function renderRetrying(parent: HTMLElement, plugin: EngramSyncPlugin, refresh: 
 	const body = section.createDiv({ cls: "engram-sync-center-section-body" });
 	body.createEl("p", {
 		cls: "engram-sync-center-card-hint",
-		text: "Temporary errors — these clear themselves once the server recovers.",
+		text: "Temporary errors. These clear themselves once the server recovers.",
 	});
 	const list = body.createDiv({ cls: "engram-sync-center-issue-list" });
 	for (const [, issues] of groups) {
