@@ -643,6 +643,14 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		void destroyRemoteLog();
 		destroyDevLog();
+		// Yjs stamps globalThis['__ $YJS$ __'] = true on import to guard against
+		// duplicate copies (yjs#438). Obsidian reloads the plugin module graph on
+		// update without restarting the renderer, so that flag outlives us and the
+		// next load's yjs import fires a spurious "Yjs was already imported" error.
+		// We bundle exactly one copy, so clear the marker on teardown to keep reloads
+		// quiet. The flag is re-set when the new instance imports yjs. yjs sets the
+		// marker on the realm global; in the Obsidian renderer that is `window`.
+		(window as unknown as Record<string, unknown>)["__ $YJS$ __"] = undefined;
 	}
 
 	async loadSettings(): Promise<void> {
