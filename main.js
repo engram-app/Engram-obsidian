@@ -13779,10 +13779,10 @@ var CrdtEnrollment = class {
    * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
    */
   enroll(path) {
-    this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path).then(() => {
+    path.endsWith(".md") && (this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path).then(() => {
       var _a;
       return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, path);
-    }));
+    })));
   }
   /**
    * Clear the enrollment record for `path` and call `resetSync` on the channel
