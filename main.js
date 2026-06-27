@@ -2836,7 +2836,7 @@ var DEFAULT_SETTINGS = {
   conflictViewMode: "unified",
   remoteLoggingEnabled: !1,
   conflictResolution: "auto",
-  enableCrdt: !1,
+  enableCrdt: !0,
   vaultId: null,
   clientId: "",
   planState: null,

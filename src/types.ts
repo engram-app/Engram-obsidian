@@ -92,7 +92,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	conflictViewMode: "unified",
 	remoteLoggingEnabled: false,
 	conflictResolution: "auto",
-	enableCrdt: false,
+	enableCrdt: true,
 	vaultId: null,
 	clientId: "",
 	planState: null,
