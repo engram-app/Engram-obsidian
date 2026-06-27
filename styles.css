@@ -1024,6 +1024,16 @@
 	font-size: var(--font-ui-small);
 }
 
+.engram-progress-verify {
+	margin: 12px 0 0;
+}
+
+.engram-progress-verify-link {
+	color: var(--text-accent);
+	cursor: pointer;
+	font-weight: 600;
+}
+
 .engram-progress-buttons {
 	display: flex;
 	justify-content: flex-end;

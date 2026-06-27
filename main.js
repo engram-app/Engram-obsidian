@@ -737,7 +737,11 @@ var import_obsidian23 = require("obsidian");
 var import_obsidian = require("obsidian");
 
 // src/tabs/urls.ts
-var ENGRAM_CLOUD_URL = "https://api.engram.page", LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var ENGRAM_CLOUD_URL = "https://api.engram.page", ENGRAM_APP_URL = "https://app.engram.page";
+function engramWebUrl(apiUrl) {
+  return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
+}
+var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -3803,8 +3807,9 @@ function plannedPhases(choice, plan) {
 }
 var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
-   *  rows to seed (see plannedPhases). Both optional so callers without a plan
-   *  still get a usable modal. */
+   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+   *  on completion so the user can verify their vault. All optional so callers
+   *  without a plan still get a usable modal. */
   constructor(app, opts = {}) {
     super(app);
     this.opts = opts;
@@ -3831,7 +3836,21 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       done: !1
     }));
     for (let row of this.rows) this.createRow(row);
-    this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
+    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
+      let url = this.opts.webUrl;
+      this.verifyEl.createSpan({
+        text: "Open Engram to check your vault and confirm everything synced. "
+      });
+      let link = this.verifyEl.createEl("a", {
+        text: "Open Engram",
+        cls: "engram-progress-verify-link",
+        href: url
+      });
+      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
+        e.preventDefault(), window.open(url, "_blank");
+      });
+    }
+    this.hintEl = contentEl.createEl("p", {
       text: "You can close this and the sync keeps running in the background.",
       cls: "engram-progress-hint"
     });
@@ -3890,7 +3909,7 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
     };
     this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
       `${summary.failed} failed. Run "Engram: Show sync log" for details.`
-    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
   }
   renderRows() {
     for (let row of this.rows) {
@@ -14453,7 +14472,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     var _a;
     if (choice === "cancel" || choice === "change-vault")
       return this.runSyncFromChoice(choice);
-    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, phases = opts.plan ? plannedPhases(choice, opts.plan) : void 0, modal = new SyncProgressModal(this.app, { intro, phases }), prev = this.syncEngine.onSyncProgress;
+    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, phases = opts.plan ? plannedPhases(choice, opts.plan) : void 0, modal = new SyncProgressModal(this.app, {
+      intro,
+      phases,
+      webUrl: engramWebUrl(this.settings.apiUrl)
+    }), prev = this.syncEngine.onSyncProgress;
     this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();

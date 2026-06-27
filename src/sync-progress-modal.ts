@@ -161,6 +161,7 @@ export class SyncProgressModal extends Modal {
 	private recapEl!: HTMLElement;
 	private failedEl!: HTMLElement;
 	private summaryEl!: HTMLElement;
+	private verifyEl!: HTMLElement;
 	private hintEl!: HTMLElement;
 	private bgBtn!: HTMLButtonElement;
 	private closeBtn!: HTMLButtonElement;
@@ -172,11 +173,12 @@ export class SyncProgressModal extends Modal {
 	private tickTimer: number | null = null;
 
 	/** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
-	 *  rows to seed (see plannedPhases). Both optional so callers without a plan
-	 *  still get a usable modal. */
+	 *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+	 *  on completion so the user can verify their vault. All optional so callers
+	 *  without a plan still get a usable modal. */
 	constructor(
 		app: App,
-		private readonly opts: { intro?: string; phases?: PlannedPhase[] } = {},
+		private readonly opts: { intro?: string; phases?: PlannedPhase[]; webUrl?: string } = {},
 	) {
 		super(app);
 	}
@@ -220,6 +222,30 @@ export class SyncProgressModal extends Modal {
 
 		this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" });
 		this.summaryEl.hidden = true;
+
+		// Post-sync nudge to open Engram and confirm the vault looks right.
+		// Shown on completion only; needs a web URL to link to.
+		this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" });
+		this.verifyEl.hidden = true;
+		if (this.opts.webUrl) {
+			const url = this.opts.webUrl;
+			this.verifyEl.createSpan({
+				text: "Open Engram to check your vault and confirm everything synced. ",
+			});
+			const link = this.verifyEl.createEl("a", {
+				text: "Open Engram",
+				cls: "engram-progress-verify-link",
+				href: url,
+			});
+			link.setAttr("target", "_blank");
+			link.setAttr("rel", "noopener");
+			// Obsidian's Electron host opens window.open in the system browser;
+			// drive it explicitly so the link works regardless of <a> handling.
+			link.addEventListener("click", (e) => {
+				e.preventDefault();
+				window.open(url, "_blank");
+			});
+		}
 
 		this.hintEl = contentEl.createEl("p", {
 			text: "You can close this and the sync keeps running in the background.",
@@ -336,6 +362,9 @@ export class SyncProgressModal extends Modal {
 		} else {
 			this.failedEl.hidden = true;
 		}
+
+		// Nudge the user to verify their vault on Engram (only if we have a URL).
+		this.verifyEl.hidden = !this.opts.webUrl;
 
 		this.hintEl.hidden = true;
 		this.bgBtn.hidden = true;
