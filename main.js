@@ -3315,7 +3315,7 @@ var MERGE_CARD = {
       ul.createEl("li", { text: action });
     let deletePaths = this.deletePathsFor(choice);
     deletePaths.length > 0 && (contentEl.createEl("p", {
-      text: "Files that will be permanently lost:",
+      text: "Files that will be deleted:",
       cls: "engram-sync-preview-tree-caption"
     }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
       cls: "engram-sync-preview-warning",
@@ -3436,9 +3436,12 @@ var MERGE_CARD = {
       this.render();
     }
   }
+  /** Every path that the destructive sync deletes. Both options wipe the whole
+   *  target side (then re-populate it), so this is the entire local/server file
+   *  list — matching the "Delete all N" line on the confirm screen. */
   deletePathsFor(choice) {
     let plan = this.requirePlan();
-    return choice === "pull-all-delete-local" ? [...plan.toPush.notes, ...plan.toPush.attachments] : choice === "push-all-delete-remote" ? [...plan.toPull.notes, ...plan.toPull.attachments] : [];
+    return choice === "pull-all-delete-local" ? [...plan.localPaths] : choice === "push-all-delete-remote" ? [...plan.serverPaths] : [];
   }
   /** Paths that remain on the affected side after the destructive sync —
    *  used to decide whether a folder row is going away entirely. */

@@ -653,7 +653,7 @@ export class SyncPreviewModal extends Modal {
 		const deletePaths = this.deletePathsFor(choice);
 		if (deletePaths.length > 0) {
 			contentEl.createEl("p", {
-				text: "Files that will be permanently lost:",
+				text: "Files that will be deleted:",
 				cls: "engram-sync-preview-tree-caption",
 			});
 			this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths));
@@ -828,13 +828,16 @@ export class SyncPreviewModal extends Modal {
 		this.render();
 	}
 
+	/** Every path that the destructive sync deletes. Both options wipe the whole
+	 *  target side (then re-populate it), so this is the entire local/server file
+	 *  list — matching the "Delete all N" line on the confirm screen. */
 	private deletePathsFor(choice: SyncChoice): string[] {
 		const plan = this.requirePlan();
 		if (choice === "pull-all-delete-local") {
-			return [...plan.toPush.notes, ...plan.toPush.attachments];
+			return [...plan.localPaths];
 		}
 		if (choice === "push-all-delete-remote") {
-			return [...plan.toPull.notes, ...plan.toPull.attachments];
+			return [...plan.serverPaths];
 		}
 		return [];
 	}
