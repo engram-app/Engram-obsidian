@@ -199,7 +199,6 @@
 	max-height: none;
 }
 
-
 /* ── Conflict resolution modal ─────────────────────────────────── */
 
 .engram-conflict-modal {
@@ -1306,7 +1305,6 @@ body.is-mobile .engram-support-buttons > a {
 	font-size: 12px;
 }
 
-
 .engram-sync-center-issue-list {
 	display: flex;
 	flex-direction: column;
@@ -1920,4 +1918,45 @@ body.is-mobile .engram-support-buttons > a {
 
 .engram-search-tag-chip:hover .engram-search-tag-chip-remove {
 	color: var(--text-normal);
+}
+
+/* ── Email capture modal ─────────────────────────────────────── */
+
+.engram-email-capture-input {
+	width: 100%;
+	margin: 0.75rem 0;
+	padding: 0.5rem 0.75rem;
+}
+
+.engram-email-capture-error {
+	color: var(--text-error);
+	font-size: var(--font-ui-small);
+}
+
+.engram-email-capture-contact {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: 0.5rem;
+}
+
+.engram-email-capture-links {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-top: 0.25rem;
+}
+
+.engram-email-capture-footer {
+	display: flex;
+	gap: 0.5rem;
+	justify-content: flex-end;
+	margin-top: 1rem;
+}
+
+.engram-about-waitlist {
+	margin-bottom: 1.5rem;
+}
+
+.engram-about-waitlist-success {
+	color: var(--text-success);
+	font-weight: var(--font-semibold);
 }

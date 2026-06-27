@@ -29,5 +29,8 @@ export const ENGRAM_MCP_URL = "https://engram.page/docs/integrations";
 /** Self-hosted backend repo (setup instructions live here). */
 export const ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram";
 
+/** Main project GitHub repo (linked from the waitlist popup / general "our code"). */
+export const ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram";
+
 /** Plugin issue tracker. */
 export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
