@@ -3784,6 +3784,9 @@ function renderCompletionSummary(parent, summary) {
     }).addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
   }
 }
+function describeCompletion(summary) {
+  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
+}
 var PHASE_LABELS = {
   deleting: "Deleting local files",
   pushing: "Uploading notes",
@@ -3876,11 +3879,13 @@ var PHASE_LABELS = {
     var _a, _b, _c, _d;
     let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.phaseEl.setText("Sync complete"), this.subEl.setText(""), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.removeClass("is-indeterminate"), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, {
+      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
+      let summary = {
         synced: progress.current,
         skipped: (_b = progress.skipped) != null ? _b : 0,
         failed: progress.failed
-      }), this.summaryEl.hidden = !1, progress.failed > 0 ? (this.failedEl.setText(
+      };
+      this.phaseEl.setText("Sync complete"), this.subEl.setText(describeCompletion(summary)), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.removeClass("is-indeterminate"), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, progress.failed > 0 ? (this.failedEl.setText(
         `${progress.failed} failed \u2014 run "Engram: Show sync log" for details`
       ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
       return;

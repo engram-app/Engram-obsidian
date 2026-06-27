@@ -12,6 +12,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	type CompletionSummary,
+	describeCompletion,
 	describePlannedWork,
 	renderCompletionSummary,
 } from "../src/sync-progress-modal";
@@ -201,6 +202,32 @@ describe("describePlannedWork", () => {
 	test("nothing to do falls back to a checking message", () => {
 		expect(describePlannedWork("push-all-keep-remote", plan(), false)).toBe(
 			"Checking for changes.",
+		);
+	});
+});
+
+describe("describeCompletion", () => {
+	test("clean sync reassures the vault matches the cloud", () => {
+		expect(describeCompletion({ synced: 80, skipped: 0, failed: 0 })).toBe(
+			"All synced. Your vault and the cloud now match.",
+		);
+	});
+
+	test("nothing to sync is its own message", () => {
+		expect(describeCompletion({ synced: 0, skipped: 0, failed: 0 })).toBe(
+			"Already up to date. Nothing needed syncing.",
+		);
+	});
+
+	test("plan-skipped attachments point below without sounding like a failure", () => {
+		expect(describeCompletion({ synced: 80, skipped: 3, failed: 0 })).toBe(
+			"Synced. Some attachments need a paid plan to sync (see below).",
+		);
+	});
+
+	test("failures take priority and point at the sync log", () => {
+		expect(describeCompletion({ synced: 78, skipped: 3, failed: 2 })).toBe(
+			"Finished with some errors. Open the sync log to see what failed.",
 		);
 	});
 });

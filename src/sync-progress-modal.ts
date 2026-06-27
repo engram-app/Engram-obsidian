@@ -89,6 +89,23 @@ export function renderCompletionSummary(parent: HTMLElement, summary: Completion
 	}
 }
 
+/** Plain-language recap shown when the sync settles and kept on screen until
+ *  the user dismisses, so a fast sync never blanks out before they can read
+ *  what happened. Complements the icon tally; failures take priority and point
+ *  at the sync log. Pure for testing. */
+export function describeCompletion(summary: CompletionSummary): string {
+	if (summary.failed > 0) {
+		return "Finished with some errors. Open the sync log to see what failed.";
+	}
+	if (summary.skipped > 0) {
+		return "Synced. Some attachments need a paid plan to sync (see below).";
+	}
+	if (summary.synced > 0) {
+		return "All synced. Your vault and the cloud now match.";
+	}
+	return "Already up to date. Nothing needed syncing.";
+}
+
 const PHASE_LABELS: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting local files",
 	pushing: "Uploading notes",
@@ -277,8 +294,16 @@ export class SyncProgressModal extends Modal {
 				window.clearInterval(this.tickTimer);
 				this.tickTimer = null;
 			}
+			const summary: CompletionSummary = {
+				synced: progress.current,
+				skipped: progress.skipped ?? 0,
+				failed: progress.failed,
+			};
+
 			this.phaseEl.setText("Sync complete");
-			this.subEl.setText("");
+			// Keep a readable recap on the subtext line instead of blanking it —
+			// a fast sync would otherwise clear before the user can read anything.
+			this.subEl.setText(describeCompletion(summary));
 			this.countEl.setText("");
 			this.pathEl.setText("");
 			this.barInner.removeClass("is-indeterminate");
@@ -289,11 +314,7 @@ export class SyncProgressModal extends Modal {
 			this.closeBtn.hidden = false;
 
 			this.summaryEl.empty();
-			renderCompletionSummary(this.summaryEl, {
-				synced: progress.current,
-				skipped: progress.skipped ?? 0,
-				failed: progress.failed,
-			});
+			renderCompletionSummary(this.summaryEl, summary);
 			this.summaryEl.hidden = false;
 
 			if (progress.failed > 0) {
