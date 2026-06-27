@@ -1054,10 +1054,27 @@ export default class EngramSyncPlugin extends Plugin {
 							await this.crdtManager?.flattenIfBloated(path);
 						},
 					});
+					// Level-triggered discovery: a pull that surfaces a CRDT-managed
+					// note we don't have locally enrolls it (sync-step-1), so the body
+					// arrives over the handshake. Backstops the edge-triggered
+					// crdt_doc_ready announce for a device that was offline / not yet
+					// subscribed when the other device opened the room.
+					this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
 					channel.onCrdtMessage = (docId, b64) => {
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						void this.crdtChannel?.handleFrame(path, b64);
+					};
+					// Discovery: when another device opens a room (server announces
+					// `crdt_doc_ready`), enroll the note here so a sync-step-1 fires and
+					// we pull the note even if we've never opened it. Without this a
+					// brand-new note created on device A is never observed on device B
+					// (B only observes rooms it itself sends a `crdt_msg` for), and the
+					// C1 guard suppresses the legacy note_changed discovery path.
+					channel.onCrdtDocReady = (docId) => {
+						const prefix = `${dbPrefix}/`;
+						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+						this.crdtEnrollment?.enroll(path);
 					};
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
