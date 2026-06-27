@@ -3535,14 +3535,18 @@ function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
   makeActionButton(strip, "Sync...", async () => {
     try {
-      let plan = await plugin.syncEngine.computeSyncPlan("full"), choice = await new SyncPreviewModal(plugin.app, plan, {
+      let modal = new SyncPreviewModal(plugin.app, null, {
         remoteVaultName: plugin.settings.remoteVaultName,
         showChangeVault: !1,
         context: "review"
-      }).awaitChoice();
+      });
+      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(
+        () => modal.setPlanError("Could not compare with the cloud. Check your connection.")
+      );
+      let choice = await modal.awaitChoice();
       if (choice === "change-vault")
-        throw new Error("Sync Center received change-vault choice \u2014 caller missing");
-      await plugin.runSyncWithProgress(choice, { plan });
+        throw new Error("Sync Center received change-vault choice, caller missing");
+      await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
     } catch (e) {
       new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
@@ -14502,7 +14506,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
           modal.setPlanError(
-            "Could not compare with the cloud \u2014 check your connection."
+            "Could not compare with the cloud. Check your connection."
           ), rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
         });
         let choice = await modal.awaitChoice();

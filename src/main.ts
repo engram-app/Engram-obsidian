@@ -1307,7 +1307,7 @@ export default class EngramSyncPlugin extends Plugin {
 					.then((plan) => modal.setPlan(plan))
 					.catch((e) => {
 						modal.setPlanError(
-							"Could not compare with the cloud — check your connection.",
+							"Could not compare with the cloud. Check your connection.",
 						);
 						rlog().error("lifecycle", `Sync plan compute failed: ${errMsg(e)}`);
 					});
