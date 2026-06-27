@@ -203,7 +203,6 @@ interface OptionCard {
 	choice: SyncChoice;
 	emoji: string;
 	label: string;
-	subtitle: (b: OptionBreakdown, context: SyncPreviewContext) => string;
 	cssClass: string;
 }
 
@@ -211,9 +210,6 @@ const MERGE_CARD: OptionCard = {
 	choice: "smart-merge",
 	emoji: "✨",
 	label: "Sync",
-	// The Sync description is rendered once above the button (see renderPreview),
-	// so the card itself carries no subtitle.
-	subtitle: () => "",
 	cssClass: "engram-sync-preview-option mod-cta",
 };
 
@@ -221,15 +217,13 @@ const PUSH_CARDS: OptionCard[] = [
 	{
 		choice: "push-all-keep-remote",
 		emoji: "⬆️",
-		label: "Upload local, keep cloud files",
-		subtitle: (b) => `Upload ${b.pushCount}, keep cloud extras`,
+		label: "Upload local files without downloading the remote",
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "push-all-delete-remote",
 		emoji: "🗑️",
 		label: "Delete all on remote, then upload local files",
-		subtitle: (b) => `Delete ${b.deleteRemoteCount} on cloud, upload ${b.pushCount}`,
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -238,15 +232,13 @@ const PULL_CARDS: OptionCard[] = [
 	{
 		choice: "pull-all-keep-local",
 		emoji: "⬇️",
-		label: "Download cloud, keep local files",
-		subtitle: (b) => `Download ${b.pullCount}, keep local extras`,
+		label: "Download remote files without uploading the local",
 		cssClass: "engram-sync-preview-option",
 	},
 	{
 		choice: "pull-all-delete-local",
 		emoji: "🗑️",
 		label: "Delete all local files, then download from remote",
-		subtitle: (b) => `Delete ${b.deleteLocalCount} local, download ${b.pullCount}`,
 		cssClass: "engram-sync-preview-option engram-sync-preview-destructive",
 	},
 ];
@@ -403,9 +395,9 @@ export class SyncPreviewModal extends Modal {
 		}
 
 		const mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-		this.renderOptionCard(mergeRow, MERGE_CARD, context);
+		this.renderOptionCard(mergeRow, MERGE_CARD);
 
-		this.renderAdvancedOptions(options, context);
+		this.renderAdvancedOptions(options);
 
 		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
 		const dismissBtn = footer.createEl("button", {
@@ -457,29 +449,30 @@ export class SyncPreviewModal extends Modal {
 		return p;
 	}
 
-	/** Render the "Show advanced sync options" accordion (collapsed by default)
-	 *  with the push/pull direction grid. Shared by the up-to-date and
-	 *  has-changes preview states so force push/pull stays reachable even at
-	 *  100% match. */
-	private renderAdvancedOptions(options: HTMLElement, context: SyncPreviewContext): void {
-		const advancedToggle = options.createEl("button", {
-			cls: "engram-sync-preview-advanced-toggle",
+	/** Render the advanced sync options as a native <details> accordion holding
+	 *  all four direction buttons in one column. Collapsed by default; stays
+	 *  reachable even at 100% match for a deliberate force push/pull or recovery. */
+	private renderAdvancedOptions(options: HTMLElement): void {
+		const details = options.createEl("details", { cls: "engram-sync-preview-advanced" });
+		details.open = this.state.advancedOpen;
+
+		const summary = details.createEl("summary", {
+			cls: "engram-sync-preview-advanced-summary",
 		});
-		advancedToggle.createSpan({ text: "Show advanced sync options" });
-		const chevron = advancedToggle.createSpan({
-			cls: "engram-sync-preview-advanced-chevron",
-		});
+		summary.createSpan({ text: "Advanced sync options" });
+		const chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
 		setIcon(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right");
-		advancedToggle.addEventListener("click", () => {
-			this.state.toggleAdvanced();
-			this.render();
+
+		// The native <details> owns open/close — just persist the state and swap
+		// the chevron on toggle, no full re-render so the disclosure stays smooth.
+		details.addEventListener("toggle", () => {
+			this.state.advancedOpen = details.open;
+			setIcon(chevron, details.open ? "chevron-down" : "chevron-right");
 		});
 
-		// All four directions stacked in one spaced column (no Push/Pull headers).
-		const grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
-		if (!this.state.advancedOpen) grid.addClass("is-collapsed");
+		const grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
 		for (const card of [...PUSH_CARDS, ...PULL_CARDS]) {
-			this.renderOptionCard(grid, card, context);
+			this.renderOptionCard(grid, card);
 		}
 	}
 
@@ -607,23 +600,11 @@ export class SyncPreviewModal extends Modal {
 		});
 	}
 
-	private renderOptionCard(
-		parent: HTMLElement,
-		card: OptionCard,
-		context: SyncPreviewContext,
-	): void {
-		const b = optionBreakdown(this.requirePlan(), card.choice);
+	private renderOptionCard(parent: HTMLElement, card: OptionCard): void {
 		const wrap = parent.createDiv({ cls: "engram-sync-preview-option-wrap" });
 		const btn = wrap.createEl("button", { cls: card.cssClass });
 		btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" });
 		btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" });
-		const subtitle = card.subtitle(b, context);
-		if (subtitle) {
-			wrap.createEl("p", {
-				text: subtitle,
-				cls: "engram-sync-preview-option-subtitle",
-			});
-		}
 		btn.addEventListener("click", () => {
 			this.state.pickOption(card.choice);
 			this.render();
