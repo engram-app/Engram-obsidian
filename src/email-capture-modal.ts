@@ -44,6 +44,70 @@ export class EmailCaptureState {
 	}
 }
 
+export interface EmailCaptureFormOptions {
+	/** Element to render the input + footer into. */
+	parent: HTMLElement;
+	/** Shared capture state. */
+	state: EmailCaptureState;
+	/** Redraw the surrounding container after a state change. */
+	rerender: () => void;
+	/** Submit transport — injectable for tests; defaults to the real POST. */
+	send?: (email: string) => Promise<void>;
+	/** Append extra controls to the footer (e.g. the modal's "Maybe later"). */
+	decorateFooter?: (footer: HTMLElement) => void;
+}
+
+/** Render the email input + submit button and wire up validation/submit. Shared
+ *  by the first-run modal and the Welcome-tab inline form so both surfaces have
+ *  identical behavior (focus handling, disabled states, error display). */
+export function renderEmailCaptureForm({
+	parent,
+	state,
+	rerender,
+	send = submitWaitlistEmail,
+	decorateFooter,
+}: EmailCaptureFormOptions): void {
+	const input = parent.createEl("input", {
+		type: "email",
+		placeholder: "you@example.com",
+		cls: "engram-email-capture-input",
+	});
+	input.value = state.email;
+	input.disabled = state.view === "submitting";
+
+	if (state.errorText) {
+		parent.createEl("p", { text: state.errorText, cls: "engram-email-capture-error" });
+	}
+
+	const footer = parent.createDiv({ cls: "engram-email-capture-footer" });
+	const submit = footer.createEl("button", {
+		text: state.view === "submitting" ? "Submitting…" : "Notify me",
+		cls: "mod-cta",
+	});
+	submit.disabled = state.view === "submitting";
+	decorateFooter?.(footer);
+
+	const doSubmit = async (): Promise<void> => {
+		state.setEmail(input.value);
+		if (!state.canSubmit()) {
+			state.view = "error";
+			state.errorText = "Please enter a valid email address.";
+			rerender();
+			return;
+		}
+		await state.submit(send);
+		rerender();
+	};
+
+	input.addEventListener("input", () => state.setEmail(input.value));
+	input.addEventListener("keydown", (e) => {
+		if (e.key === "Enter") void doSubmit();
+	});
+	submit.addEventListener("click", () => void doSubmit());
+
+	input.focus();
+}
+
 export class EmailCaptureModal extends Modal {
 	private state = new EmailCaptureState();
 	private done = false;
@@ -109,48 +173,14 @@ export class EmailCaptureModal extends Modal {
 			attr: { target: "_blank", rel: "noopener" },
 		});
 
-		const input = contentEl.createEl("input", {
-			type: "email",
-			placeholder: "you@example.com",
-			cls: "engram-email-capture-input",
+		renderEmailCaptureForm({
+			parent: contentEl,
+			state: this.state,
+			rerender: () => this.render(),
+			decorateFooter: (footer) => {
+				const later = footer.createEl("button", { text: "Maybe later" });
+				later.addEventListener("click", () => this.close());
+			},
 		});
-		input.value = this.state.email;
-		input.disabled = this.state.view === "submitting";
-
-		if (this.state.errorText) {
-			contentEl.createEl("p", {
-				text: this.state.errorText,
-				cls: "engram-email-capture-error",
-			});
-		}
-
-		const footer = contentEl.createDiv({ cls: "engram-email-capture-footer" });
-		const submit = footer.createEl("button", {
-			text: this.state.view === "submitting" ? "Submitting…" : "Notify me",
-			cls: "mod-cta",
-		});
-		submit.disabled = this.state.view === "submitting";
-		const later = footer.createEl("button", { text: "Maybe later" });
-
-		const doSubmit = async () => {
-			this.state.setEmail(input.value);
-			if (!this.state.canSubmit()) {
-				this.state.view = "error";
-				this.state.errorText = "Please enter a valid email address.";
-				this.render();
-				return;
-			}
-			await this.state.submit(submitWaitlistEmail);
-			this.render();
-		};
-
-		input.addEventListener("input", () => this.state.setEmail(input.value));
-		input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter") void doSubmit();
-		});
-		submit.addEventListener("click", () => void doSubmit());
-		later.addEventListener("click", () => this.close());
-
-		input.focus();
 	}
 }

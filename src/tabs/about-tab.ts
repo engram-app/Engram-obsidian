@@ -1,6 +1,5 @@
 import { Setting } from "obsidian";
-import { EmailCaptureState } from "../email-capture-modal";
-import { submitWaitlistEmail } from "../waitlist";
+import { EmailCaptureState, renderEmailCaptureForm } from "../email-capture-modal";
 import type { TabContext } from "./types";
 import {
 	ENGRAM_DOCS_URL,
@@ -35,42 +34,7 @@ function renderWaitlistSection(containerEl: HTMLElement): void {
 				"early-supporter discount, and a say in what comes next.",
 		});
 
-		const input = section.createEl("input", {
-			type: "email",
-			placeholder: "you@example.com",
-			cls: "engram-email-capture-input",
-		});
-		input.value = state.email;
-		input.disabled = state.view === "submitting";
-
-		if (state.errorText) {
-			section.createEl("p", { text: state.errorText, cls: "engram-email-capture-error" });
-		}
-
-		const footer = section.createDiv({ cls: "engram-email-capture-footer" });
-		const submit = footer.createEl("button", {
-			text: state.view === "submitting" ? "Submitting…" : "Notify me",
-			cls: "mod-cta",
-		});
-		submit.disabled = state.view === "submitting";
-
-		const doSubmit = async (): Promise<void> => {
-			state.setEmail(input.value);
-			if (!state.canSubmit()) {
-				state.view = "error";
-				state.errorText = "Please enter a valid email address.";
-				render();
-				return;
-			}
-			await state.submit(submitWaitlistEmail);
-			render();
-		};
-
-		input.addEventListener("input", () => state.setEmail(input.value));
-		input.addEventListener("keydown", (e) => {
-			if (e.key === "Enter") void doSubmit();
-		});
-		submit.addEventListener("click", () => void doSubmit());
+		renderEmailCaptureForm({ parent: section, state, rerender: render });
 	};
 
 	render();
