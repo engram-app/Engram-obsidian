@@ -3052,6 +3052,17 @@ function mergeHelperText(b, context) {
   }
   return countLine ? `${countLine}${conflict} Nothing is deleted.` : "Already in sync. Nothing is deleted.";
 }
+function confirmActions(choice, plan) {
+  let files = (n) => n === 1 ? "file" : "files", lines = [];
+  if (choice === "push-all-delete-remote") {
+    let del2 = plan.serverNoteCount + plan.serverAttachmentCount, up = plan.localNoteCount + plan.localAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} currently on the server`), up > 0 && lines.push(`Upload ${up} ${files(up)} from this vault`);
+  } else if (choice === "pull-all-delete-local") {
+    let del2 = plan.localNoteCount + plan.localAttachmentCount, down = plan.serverNoteCount + plan.serverAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} in this vault`), down > 0 && lines.push(`Download ${down} ${files(down)} from the server`);
+  }
+  return lines;
+}
 var MERGE_CARD = {
   choice: "smart-merge",
   emoji: "\u2728",
@@ -3297,13 +3308,14 @@ var MERGE_CARD = {
       text: "Confirm destructive sync",
       cls: "engram-sync-preview-header"
     });
-    let b = optionBreakdown(this.requirePlan(), choice), summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
+    let summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
     summary.createEl("p", { text: "You are about to:" });
     let ul = summary.createEl("ul");
-    b.deleteLocalCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteLocalCount} local files` }), b.deleteRemoteCount > 0 && ul.createEl("li", { text: `Delete ${b.deleteRemoteCount} remote files` }), b.pullCount > 0 && ul.createEl("li", { text: `Download ${b.pullCount} files from server` }), b.pushCount > 0 && ul.createEl("li", { text: `Upload ${b.pushCount} files to server` });
+    for (let action of confirmActions(choice, this.requirePlan()))
+      ul.createEl("li", { text: action });
     let deletePaths = this.deletePathsFor(choice);
     deletePaths.length > 0 && (contentEl.createEl("p", {
-      text: "Files marked for deletion:",
+      text: "Files that will be permanently lost:",
       cls: "engram-sync-preview-tree-caption"
     }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
       cls: "engram-sync-preview-warning",

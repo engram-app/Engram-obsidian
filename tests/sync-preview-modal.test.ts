@@ -4,6 +4,7 @@ import type { OptionBreakdown } from "../src/sync-plan-format";
 import {
 	HEADER_BY_CONTEXT,
 	SyncPreviewState,
+	confirmActions,
 	countSkippedAttachments,
 	describeCreateVaultError,
 	mergeHelperText,
@@ -346,6 +347,59 @@ describe("SyncPreviewState — deferred plan (instant open)", () => {
 		state.replacePlan(makePlan({ vaultName: "Loaded" }));
 		expect(state.plan?.vaultName).toBe("Loaded");
 		expect(state.planError).toBeNull();
+	});
+});
+
+describe("confirmActions", () => {
+	test("push-all-delete-remote: deletes the WHOLE server, then re-uploads all local", () => {
+		const p = makePlan({
+			serverNoteCount: 48,
+			serverAttachmentCount: 2,
+			localNoteCount: 188,
+			localAttachmentCount: 2,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Delete all 50 files currently on the server",
+			"Upload 190 files from this vault",
+		]);
+	});
+
+	test("push-all-delete-remote with an empty server: only the upload line", () => {
+		const p = makePlan({
+			serverNoteCount: 0,
+			serverAttachmentCount: 0,
+			localNoteCount: 190,
+			localAttachmentCount: 0,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Upload 190 files from this vault",
+		]);
+	});
+
+	test("pull-all-delete-local: wipes the whole vault, then downloads all remote", () => {
+		const p = makePlan({
+			localNoteCount: 80,
+			localAttachmentCount: 0,
+			serverNoteCount: 20,
+			serverAttachmentCount: 0,
+		});
+		expect(confirmActions("pull-all-delete-local", p)).toEqual([
+			"Delete all 80 files in this vault",
+			"Download 20 files from the server",
+		]);
+	});
+
+	test("singular file wording", () => {
+		const p = makePlan({
+			serverNoteCount: 1,
+			serverAttachmentCount: 0,
+			localNoteCount: 1,
+			localAttachmentCount: 0,
+		});
+		expect(confirmActions("push-all-delete-remote", p)).toEqual([
+			"Delete all 1 file currently on the server",
+			"Upload 1 file from this vault",
+		]);
 	});
 });
 

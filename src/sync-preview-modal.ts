@@ -199,6 +199,28 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
 		: "Already in sync. Nothing is deleted.";
 }
 
+/** The "You are about to:" lines for a destructive sync's confirm screen, built
+ *  from the plan. Both destructive options wipe the ENTIRE target side and then
+ *  re-populate it, so the deletion line reports the full target count, not just
+ *  net extras — otherwise a destructive button could show no deletion at all
+ *  when the two sides already overlap. Pure for testing. */
+export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
+	const files = (n: number) => (n === 1 ? "file" : "files");
+	const lines: string[] = [];
+	if (choice === "push-all-delete-remote") {
+		const del = plan.serverNoteCount + plan.serverAttachmentCount;
+		const up = plan.localNoteCount + plan.localAttachmentCount;
+		if (del > 0) lines.push(`Delete all ${del} ${files(del)} currently on the server`);
+		if (up > 0) lines.push(`Upload ${up} ${files(up)} from this vault`);
+	} else if (choice === "pull-all-delete-local") {
+		const del = plan.localNoteCount + plan.localAttachmentCount;
+		const down = plan.serverNoteCount + plan.serverAttachmentCount;
+		if (del > 0) lines.push(`Delete all ${del} ${files(del)} in this vault`);
+		if (down > 0) lines.push(`Download ${down} ${files(down)} from the server`);
+	}
+	return lines;
+}
+
 interface OptionCard {
 	choice: SyncChoice;
 	emoji: string;
@@ -621,27 +643,17 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-header",
 		});
 
-		const b = optionBreakdown(this.requirePlan(), choice);
 		const summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
 		summary.createEl("p", { text: "You are about to:" });
 		const ul = summary.createEl("ul");
-		if (b.deleteLocalCount > 0) {
-			ul.createEl("li", { text: `Delete ${b.deleteLocalCount} local files` });
-		}
-		if (b.deleteRemoteCount > 0) {
-			ul.createEl("li", { text: `Delete ${b.deleteRemoteCount} remote files` });
-		}
-		if (b.pullCount > 0) {
-			ul.createEl("li", { text: `Download ${b.pullCount} files from server` });
-		}
-		if (b.pushCount > 0) {
-			ul.createEl("li", { text: `Upload ${b.pushCount} files to server` });
+		for (const action of confirmActions(choice, this.requirePlan())) {
+			ul.createEl("li", { text: action });
 		}
 
 		const deletePaths = this.deletePathsFor(choice);
 		if (deletePaths.length > 0) {
 			contentEl.createEl("p", {
-				text: "Files marked for deletion:",
+				text: "Files that will be permanently lost:",
 				cls: "engram-sync-preview-tree-caption",
 			});
 			this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths));
