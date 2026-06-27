@@ -1690,9 +1690,9 @@ body.is-mobile .engram-support-buttons > a {
 }
 
 .engram-sync-preview-options-grid {
-	display: grid;
-	grid-template-columns: 1fr 1fr;
-	gap: 0.75em;
+	display: flex;
+	flex-direction: column;
+	gap: 0.6em;
 }
 
 .engram-sync-preview-options-grid.is-collapsed {
@@ -1731,28 +1731,12 @@ body.is-mobile .engram-support-buttons > a {
 	height: 14px;
 }
 
-.engram-sync-preview-options-col {
-	display: flex;
-	flex-direction: column;
-	gap: 0.5em;
-}
-
 .engram-sync-preview-options-header {
 	text-align: center;
 	font-size: 1.05em;
 	font-weight: 600;
 	color: var(--text-normal);
 	margin-bottom: 0.6em;
-}
-
-.engram-sync-preview-options-col-header {
-	font-size: 0.8em;
-	font-weight: 600;
-	text-transform: uppercase;
-	letter-spacing: 0.05em;
-	color: var(--text-muted);
-	margin-bottom: 0.15em;
-	text-align: center;
 }
 
 .engram-sync-preview-option-wrap {

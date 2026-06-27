@@ -3206,20 +3206,8 @@ var MERGE_CARD = {
     });
     let grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
     this.state.advancedOpen || grid.addClass("is-collapsed");
-    let pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-    pushCol.createDiv({
-      text: "Push (local \u2192 cloud)",
-      cls: "engram-sync-preview-options-col-header"
-    });
-    for (let card of PUSH_CARDS)
-      this.renderOptionCard(pushCol, card, context);
-    let pullCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-    pullCol.createDiv({
-      text: "Pull (cloud \u2192 local)",
-      cls: "engram-sync-preview-options-col-header"
-    });
-    for (let card of PULL_CARDS)
-      this.renderOptionCard(pullCol, card, context);
+    for (let card of [...PUSH_CARDS, ...PULL_CARDS])
+      this.renderOptionCard(grid, card, context);
   }
   /** One calm, non-blocking info line for a text-only (Free) plan when the
    *  upcoming push includes non-text attachments. Renders nothing when the

@@ -475,24 +475,11 @@ export class SyncPreviewModal extends Modal {
 			this.render();
 		});
 
+		// All four directions stacked in one spaced column (no Push/Pull headers).
 		const grid = options.createDiv({ cls: "engram-sync-preview-options-grid" });
 		if (!this.state.advancedOpen) grid.addClass("is-collapsed");
-		const pushCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-		pushCol.createDiv({
-			text: "Push (local → cloud)",
-			cls: "engram-sync-preview-options-col-header",
-		});
-		for (const card of PUSH_CARDS) {
-			this.renderOptionCard(pushCol, card, context);
-		}
-
-		const pullCol = grid.createDiv({ cls: "engram-sync-preview-options-col" });
-		pullCol.createDiv({
-			text: "Pull (cloud → local)",
-			cls: "engram-sync-preview-options-col-header",
-		});
-		for (const card of PULL_CARDS) {
-			this.renderOptionCard(pullCol, card, context);
+		for (const card of [...PUSH_CARDS, ...PULL_CARDS]) {
+			this.renderOptionCard(grid, card, context);
 		}
 	}
 
