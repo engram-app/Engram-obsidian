@@ -24,6 +24,7 @@ import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
 import { SyncEngine, reconcileColdStart } from "./sync";
+import { createSingleFlight } from "./single-flight";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import { SyncProgressModal } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
@@ -146,6 +147,11 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  auth/vault change. Compared against current fingerprint to decide
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
+
+	/** Single-flight guard so a vault switch (or any racing trigger) cannot
+	 *  stack two SyncPreviewModal instances. A second call while one preview is
+	 *  open is a silent no-op. See single-flight.ts. */
+	private readonly syncPreviewGuard = createSingleFlight();
 
 	async onload(): Promise<void> {
 		initDevLog();
@@ -1226,49 +1232,54 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  saveSettings once auth + vault are configured. First-sync is just
 	 *  one case of the preview UX. */
 	async doSyncWithFirstSyncCheck(opts: { startInVaultPicker?: boolean } = {}): Promise<void> {
-		try {
-			const plan = await this.syncEngine.computeSyncPlan("full");
-			const context = this.derivePreviewContext();
-			const modal = new SyncPreviewModal(this.app, plan, {
-				remoteVaultName: this.settings.remoteVaultName,
-				showChangeVault: true,
-				context,
-				initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
-				attachmentsTextOnly: this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
-				listVaults: () => this.api.listVaults(),
-				createVault: (name) => this.api.createVault(name),
-				applyVaultChange: async (id, name) => {
-					// Persist the new vault target without going through
-					// saveSettings — that path would re-fire
-					// doSyncWithFirstSyncCheck for the closed gate and stack
-					// a second modal on top of this one.
-					this.settings.vaultId = id;
-					this.settings.remoteVaultName = name;
-					this.api.setVaultId(id);
-					this.syncEngine.updateSettings(this.settings);
-					// Last sync and per-file hashes are scoped to the previous
-					// server vault. Without this reset, fullSync compares
-					// local mtime to a stale lastSync and pushes nothing —
-					// even when the new vault is empty.
-					await this.syncEngine.resetForVaultChange();
-					this.syncGateAcceptedFor = null;
-					this.syncEngine.setSyncBlocked(true);
-					await this.savePluginData(this.syncEngine.getLastSync());
-					// Re-render the settings tab so the vault name span and
-					// any other vault-derived UI pick up the switch.
-					this.settingTab?.display();
-					return this.syncEngine.computeSyncPlan("full");
-				},
-			});
-			const choice = await modal.awaitChoice();
+		// Single-flight: if a preview is already open (e.g. a vault switch fired
+		// two saveSettings gate-chains), this call is a silent no-op so we never
+		// stack two modals.
+		await this.syncPreviewGuard(async () => {
+			try {
+				const plan = await this.syncEngine.computeSyncPlan("full");
+				const context = this.derivePreviewContext();
+				const modal = new SyncPreviewModal(this.app, plan, {
+					remoteVaultName: this.settings.remoteVaultName,
+					showChangeVault: true,
+					context,
+					initialView: opts.startInVaultPicker ? "vault-picker" : "preview",
+					attachmentsTextOnly: this.syncEngine.getPlanState()?.attachmentsTextOnly ?? false,
+					listVaults: () => this.api.listVaults(),
+					createVault: (name) => this.api.createVault(name),
+					applyVaultChange: async (id, name) => {
+						// Persist the new vault target without going through
+						// saveSettings — that path would re-fire
+						// doSyncWithFirstSyncCheck for the closed gate and stack
+						// a second modal on top of this one.
+						this.settings.vaultId = id;
+						this.settings.remoteVaultName = name;
+						this.api.setVaultId(id);
+						this.syncEngine.updateSettings(this.settings);
+						// Last sync and per-file hashes are scoped to the previous
+						// server vault. Without this reset, fullSync compares
+						// local mtime to a stale lastSync and pushes nothing —
+						// even when the new vault is empty.
+						await this.syncEngine.resetForVaultChange();
+						this.syncGateAcceptedFor = null;
+						this.syncEngine.setSyncBlocked(true);
+						await this.savePluginData(this.syncEngine.getLastSync());
+						// Re-render the settings tab so the vault name span and
+						// any other vault-derived UI pick up the switch.
+						this.settingTab?.display();
+						return this.syncEngine.computeSyncPlan("full");
+					},
+				});
+				const choice = await modal.awaitChoice();
 
-			await this.runSyncWithProgress(choice);
-		} catch (e) {
-			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error("Engram Sync: sync preview failed", e);
-			new Notice("Engram sync: preview failed — check connection");
-			rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
-		}
+				await this.runSyncWithProgress(choice);
+			} catch (e) {
+				// biome-ignore lint/suspicious/noConsole: error boundary
+				console.error("Engram Sync: sync preview failed", e);
+				new Notice("Engram sync: preview failed — check connection");
+				rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+			}
+		});
 	}
 
 	/** Persist current sync engine state (issues, ignored files, etc.) to plugin
