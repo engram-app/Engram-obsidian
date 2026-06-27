@@ -83,7 +83,7 @@ export class EmailCaptureModal extends Modal {
 			return;
 		}
 
-		contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet" });
+		contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet." });
 		contentEl.createEl("p", {
 			text:
 				"We're building Engram in the open, and early people like you make it better. " +
@@ -94,7 +94,7 @@ export class EmailCaptureModal extends Modal {
 			cls: "engram-email-capture-contact",
 			text: "Questions or feedback? Email me directly at ",
 		});
-		contact.createEl("a", { text: "todd@ras.band", href: "mailto:todd@ras.band" });
+		contact.createEl("a", { text: "todd@engram.page", href: "mailto:todd@engram.page" });
 
 		const links = contentEl.createEl("p", { cls: "engram-email-capture-links" });
 		links.createEl("a", {
