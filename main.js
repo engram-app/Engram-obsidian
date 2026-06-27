@@ -3308,7 +3308,9 @@ var MERGE_CARD = {
     }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
       cls: "engram-sync-preview-warning",
       text: "This cannot be undone."
-    }), contentEl.createEl("p", { text: "Type delete to confirm:" });
+    });
+    let typeLine = contentEl.createEl("p");
+    typeLine.createSpan({ text: "Type " }), typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" }), typeLine.createSpan({ text: " to confirm:" });
     let input = contentEl.createEl("input", {
       type: "text",
       cls: "engram-sync-preview-confirm-input"

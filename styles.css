@@ -1783,6 +1783,11 @@ body.is-mobile .engram-support-buttons > a {
 	font-weight: 600;
 }
 
+.engram-sync-preview-confirm-keyword {
+	color: var(--text-error);
+	font-weight: 700;
+}
+
 .engram-sync-preview-tree-caption {
 	margin: 1em 0 0.35em 0;
 	font-weight: 600;

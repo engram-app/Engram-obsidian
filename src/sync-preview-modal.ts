@@ -651,7 +651,10 @@ export class SyncPreviewModal extends Modal {
 			cls: "engram-sync-preview-warning",
 			text: "This cannot be undone.",
 		});
-		contentEl.createEl("p", { text: "Type delete to confirm:" });
+		const typeLine = contentEl.createEl("p");
+		typeLine.createSpan({ text: "Type " });
+		typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" });
+		typeLine.createSpan({ text: " to confirm:" });
 
 		const input = contentEl.createEl("input", {
 			type: "text",
