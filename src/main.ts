@@ -26,7 +26,7 @@ import { EngramSyncSettingTab } from "./settings";
 import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
-import { SyncProgressModal, describePlannedWork } from "./sync-progress-modal";
+import { SyncProgressModal, describePlannedWork, plannedPhases } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL } from "./tabs/urls";
 import {
 	DEFAULT_SETTINGS,
@@ -1165,7 +1165,8 @@ export default class EngramSyncPlugin extends Plugin {
 		const intro = opts.plan
 			? describePlannedWork(choice, opts.plan, opts.firstSync ?? false)
 			: undefined;
-		const modal = new SyncProgressModal(this.app, { intro });
+		const phases = opts.plan ? plannedPhases(choice, opts.plan) : undefined;
+		const modal = new SyncProgressModal(this.app, { intro, phases });
 		const prev = this.syncEngine.onSyncProgress;
 		this.syncEngine.onSyncProgress = (progress) => {
 			modal.update(progress);

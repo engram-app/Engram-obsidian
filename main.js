@@ -3777,7 +3777,7 @@ function renderCompletionSummary(parent, summary) {
   }), summary.skipped > 0) {
     let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = summary.skipped === 1 ? "attachment" : "attachments";
     note.createSpan({
-      text: `${summary.skipped} ${noun} need a paid plan \u2014 see Sync Center. `
+      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
     }), note.createEl("button", {
       text: "Upgrade",
       cls: "engram-progress-upgrade mod-cta"
@@ -3787,114 +3787,118 @@ function renderCompletionSummary(parent, summary) {
 function describeCompletion(summary) {
   return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
 }
-var PHASE_LABELS = {
-  deleting: "Deleting local files",
-  pushing: "Uploading notes",
-  pulling: "Downloading notes",
-  attachments: "Syncing attachments",
-  complete: "Complete"
-}, PHASE_SUBTEXT = {
-  deleting: "Removing the files you chose to delete.",
-  pushing: "Sending your notes to the cloud.",
-  pulling: "Saving cloud notes into this vault.",
-  attachments: "Syncing images and other attached files.",
-  complete: ""
-}, MIN_PHASE_MS = 800, TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
-  /** Optional plan-derived intro (see describePlannedWork) shown up front so the
-   *  user knows what the sync will do before the first engine event lands. */
+function plannedPhases(choice, plan) {
+  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
+  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
+}
+var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
+  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
+   *  rows to seed (see plannedPhases). Both optional so callers without a plan
+   *  still get a usable modal. */
   constructor(app, opts = {}) {
     super(app);
     this.opts = opts;
-    /** Latest progress update received from the sync engine (may be ahead of display). */
+    this.rows = [];
+    this.rowEls = /* @__PURE__ */ new Map();
+    /** Latest progress update from the engine, applied on the next tick. */
     this.latest = null;
-    /** Currently displayed phase. */
-    this.displayedPhase = null;
-    /** Timestamp when the current phase started displaying. */
-    this.phaseStartTime = 0;
-    /** Interval for ticking the display forward. */
     this.tickTimer = null;
-    /** Queue of phase-changing updates waiting for min display time. */
-    this.pendingPhaseChange = null;
   }
   onOpen() {
+    var _a;
     let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", {
-      text: this.opts.intro,
-      cls: "engram-progress-intro"
-    }), this.phaseEl = contentEl.createEl("p", {
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
       text: "Getting started\u2026",
-      cls: "engram-progress-phase"
-    }), this.subEl = contentEl.createEl("p", {
-      text: "Comparing your vault with the cloud\u2026",
-      cls: "engram-progress-subtext"
-    }), this.countEl = contentEl.createEl("p", { text: "", cls: "engram-progress-count" }), this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" });
-    let barOuter = contentEl.createDiv({ cls: "engram-progress-bar-outer" });
-    this.barInner = barOuter.createDiv({ cls: "engram-progress-bar-inner" }), this.barInner.addClass("is-indeterminate"), this.failedEl = contentEl.createEl("p", {
-      text: "",
-      cls: "engram-progress-failed"
-    }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({
-      cls: "engram-progress-summary"
-    }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
-      text: "You can close this \u2014 the sync keeps running in the background.",
+      cls: "engram-progress-status"
+    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
+      phase: p.phase,
+      label: p.label,
+      plannedTotal: p.total,
+      current: 0,
+      total: p.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }));
+    for (let row of this.rows) this.createRow(row);
+    this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.hintEl = contentEl.createEl("p", {
+      text: "You can close this and the sync keeps running in the background.",
       cls: "engram-progress-hint"
     });
     let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", {
-      text: "Done",
-      cls: "mod-cta"
-    }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
   }
   /** Called by the sync engine's progress callback. Buffers the update. */
   update(progress) {
     this.latest = progress;
   }
-  /** Periodic tick: apply buffered updates with minimum phase display time. */
   tick() {
-    var _a;
-    if (!this.latest || !this.phaseEl) return;
-    let now = Date.now();
-    if (this.pendingPhaseChange) {
-      if (now - this.phaseStartTime < MIN_PHASE_MS) {
-        this.renderProgress({
-          ...this.pendingPhaseChange,
-          phase: (_a = this.displayedPhase) != null ? _a : this.pendingPhaseChange.phase
-        });
-        return;
-      }
-      this.displayedPhase = this.pendingPhaseChange.phase, this.phaseStartTime = now, this.pendingPhaseChange = null;
-    }
-    if (this.displayedPhase !== null && this.latest.phase !== this.displayedPhase && now - this.phaseStartTime < MIN_PHASE_MS) {
-      this.pendingPhaseChange = { ...this.latest }, this.renderProgress({
-        phase: this.displayedPhase,
-        current: this.latest.total || 1,
-        total: this.latest.total || 1,
-        failed: this.latest.failed
-      });
-      return;
-    }
-    this.displayedPhase !== this.latest.phase && (this.displayedPhase = this.latest.phase, this.phaseStartTime = now, this.barInner.setCssStyles({ width: "0%" })), this.renderProgress(this.latest);
+    if (!this.latest) return;
+    let progress = this.latest;
+    this.latest = null, this.applyProgress(progress);
   }
-  /** Render a progress state to the DOM. */
-  renderProgress(progress) {
-    var _a, _b, _c, _d;
-    let label = (_a = PHASE_LABELS[progress.phase]) != null ? _a : progress.phase, pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0;
+  createRow(row) {
+    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
+    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
+    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
+      cls: "engram-progress-row-count",
+      text: `0 / ${row.plannedTotal}`
+    });
+    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
+  }
+  applyProgress(progress) {
+    var _a, _b;
     if (progress.phase === "complete") {
-      this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
-      let summary = {
-        synced: progress.current,
-        skipped: (_b = progress.skipped) != null ? _b : 0,
-        failed: progress.failed
-      };
-      this.phaseEl.setText("Sync complete"), this.subEl.setText(describeCompletion(summary)), this.countEl.setText(""), this.pathEl.setText(""), this.barInner.removeClass("is-indeterminate"), this.barInner.setCssStyles({ width: "100%" }), this.barInner.addClass("is-complete"), this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, progress.failed > 0 ? (this.failedEl.setText(
-        `${progress.failed} failed \u2014 run "Engram: Show sync log" for details`
-      ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
+      this.applyComplete(progress);
       return;
     }
-    this.phaseEl.setText(label), this.subEl.setText((_c = PHASE_SUBTEXT[progress.phase]) != null ? _c : ""), this.countEl.setText(`${progress.current} / ${progress.total}`), this.pathEl.setText((_d = progress.currentPath) != null ? _d : ""), this.barInner.removeClass("is-indeterminate"), this.barInner.style.width = `${pct}%`, this.barInner.removeClass("is-complete"), progress.failed > 0 ? (this.failedEl.setText(`${progress.failed} failed so far`), this.failedEl.hidden = !1) : this.failedEl.hidden = !0;
+    let row = this.rows.find((r) => r.phase === progress.phase);
+    row || (row = {
+      phase: progress.phase,
+      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
+      plannedTotal: progress.total,
+      current: 0,
+      total: progress.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0, row.current = progress.current, row.total = progress.total || row.total, row.failed = progress.failed;
+    for (let other of this.rows)
+      other !== row && other.seen && (other.done = !0);
+    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
+  }
+  applyComplete(progress) {
+    var _a;
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
+    for (let row of this.rows)
+      row.done = !0, row.current = row.total;
+    this.renderRows();
+    let summary = {
+      synced: progress.current,
+      skipped: (_a = progress.skipped) != null ? _a : 0,
+      failed: progress.failed
+    };
+    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
+      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+  }
+  renderRows() {
+    for (let row of this.rows) {
+      let els = this.rowEls.get(row.phase);
+      if (!els) continue;
+      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(`${row.current} / ${row.total}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+    }
   }
   onClose() {
     this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
   }
+}, PHASE_FALLBACK_LABEL = {
+  deleting: "Deleting",
+  pushing: "Uploading",
+  pulling: "Downloading",
+  attachments: "Syncing attachments",
+  complete: "Complete"
 };
 
 // src/tabs/about-tab.ts
@@ -14406,7 +14410,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     var _a;
     if (choice === "cancel" || choice === "change-vault")
       return this.runSyncFromChoice(choice);
-    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, modal = new SyncProgressModal(this.app, { intro }), prev = this.syncEngine.onSyncProgress;
+    let intro = opts.plan ? describePlannedWork(choice, opts.plan, (_a = opts.firstSync) != null ? _a : !1) : void 0, phases = opts.plan ? plannedPhases(choice, opts.plan) : void 0, modal = new SyncProgressModal(this.app, { intro, phases }), prev = this.syncEngine.onSyncProgress;
     this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();

@@ -14,6 +14,7 @@ import {
 	type CompletionSummary,
 	describeCompletion,
 	describePlannedWork,
+	plannedPhases,
 	renderCompletionSummary,
 } from "../src/sync-progress-modal";
 import type { SyncPlan } from "../src/types";
@@ -229,5 +230,40 @@ describe("describeCompletion", () => {
 		expect(describeCompletion({ synced: 78, skipped: 3, failed: 2 })).toBe(
 			"Finished with some errors. Open the sync log to see what failed.",
 		);
+	});
+});
+
+describe("plannedPhases", () => {
+	test("smart-merge shows downloading then uploading", () => {
+		const p = plan({
+			toPush: { notes: ["a", "b", "c", "d", "e"], attachments: [] },
+			toPull: { notes: ["x", "y", "z"], attachments: [] },
+		});
+		expect(plannedPhases("smart-merge", p)).toEqual([
+			{ phase: "pulling", label: "Downloading", total: 3 },
+			{ phase: "pushing", label: "Uploading", total: 5 },
+		]);
+	});
+
+	test("push-all shows a single uploading row", () => {
+		const p = plan({ localNoteCount: 12, localAttachmentCount: 3 });
+		expect(plannedPhases("push-all-keep-remote", p)).toEqual([
+			{ phase: "pushing", label: "Uploading", total: 15 },
+		]);
+	});
+
+	test("pull-all-delete-local leads with a deleting row", () => {
+		const p = plan({
+			serverNoteCount: 4,
+			toPush: { notes: ["gone1.md", "gone2.md"], attachments: [] },
+		});
+		expect(plannedPhases("pull-all-delete-local", p)).toEqual([
+			{ phase: "deleting", label: "Deleting", total: 2 },
+			{ phase: "pulling", label: "Downloading", total: 4 },
+		]);
+	});
+
+	test("nothing to do yields no rows", () => {
+		expect(plannedPhases("push-all-keep-remote", plan())).toEqual([]);
 	});
 });
