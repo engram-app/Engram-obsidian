@@ -45,6 +45,13 @@ export class CrdtEnrollment {
 	 * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
 	 */
 	enroll(path: string): void {
+		// CRDT manages MARKDOWN only — mirrors the server-side `.md` gate and
+		// Relay's SyncType.Document = "markdown" (canvas/binary are separate sync
+		// types, never the markdown Yjs path). Enrolling a non-markdown file (e.g.
+		// `.canvas`) would pull it into a Yjs doc and flushFromCrdt, whose
+		// recentlyFlushed mark then swallows the user's NEXT real edit as an echo.
+		// Non-md files sync via the legacy push path, so never enroll them.
+		if (!path.endsWith(".md")) return;
 		if (this.enrolled.has(path)) return;
 		this.enrolled.add(path);
 		void this.startSync(path).then(() => this.onAfterEnroll?.(path));
