@@ -144,6 +144,12 @@ function countFolders(paths: Iterable<string>): number {
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
+/** How long (ms) to wait after a `crdt_doc_ready` discovery announce for a note
+ *  absent on disk before treating it as empty and materializing an empty file.
+ *  A content-bearing STEP2 round-trips well under this on any real connection, so
+ *  the window only ever elapses for a genuinely empty note. */
+const CRDT_EMPTY_DISCOVERY_SETTLE_MS = 1500;
+
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -341,6 +347,37 @@ export class SyncEngine {
 		} catch (e) {
 			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
 		}
+	}
+
+	/** Materialize an EMPTY note discovered via `crdt_doc_ready`.
+	 *
+	 *  A non-empty note discovered on this device materializes through the normal
+	 *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
+	 *  applying it fires a doc update, and that writes the file. An EMPTY note has
+	 *  no such body — an empty-vs-empty handshake produces a zero-length STEP2 that
+	 *  the server suppresses (the `length > 1` gate), so no frame ever arrives and
+	 *  the file is never created. The announce itself is then the only evidence the
+	 *  note exists.
+	 *
+	 *  So after a discovery announce for a note we don't have on disk, wait out the
+	 *  handshake window: if a STEP2 had carried content it would have created the
+	 *  file by now (the existence check short-circuits). If the file is still
+	 *  absent, the note is genuinely empty — create it from the doc's current text
+	 *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
+	async materializeEmptyDiscovered(path: string): Promise<void> {
+		if (!path.endsWith(".md")) return;
+		const normalized = normalizePath(path);
+		if (this.app.vault.getAbstractFileByPath(normalized)) return;
+
+		await new Promise<void>((resolve) =>
+			window.setTimeout(resolve, CRDT_EMPTY_DISCOVERY_SETTLE_MS),
+		);
+
+		// A content-bearing STEP2 raced in and created the file — nothing to do.
+		if (this.app.vault.getAbstractFileByPath(normalized)) return;
+
+		const text = this.crdt ? await this.crdt.getText(path) : "";
+		await this.flushFromCrdt(path, text);
 	}
 
 	/** Persistent record of files that failed to sync, with reason. Surfaced
@@ -1019,6 +1056,14 @@ export class SyncEngine {
 						MAX_CRDT_NOTE_BYTES,
 					);
 					if (consumed) {
+						// Register the doc with the server even when applyLocalEdit produced
+						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
+						// is a no-op, so nothing is transmitted and the note would never reach
+						// the server. enroll() fires startSync's STEP1 handshake, which the
+						// server answers by bootstrapping the note row (CrdtChannel.ensure_room
+						// -> get_or_bootstrap_note). Idempotent per session, so a note already
+						// enrolled via active-leaf-change is unaffected.
+						this.crdtEnrollment?.enroll(file.path);
 						success = true;
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
@@ -2295,6 +2340,17 @@ export class SyncEngine {
 			if (!this.app.vault.getFileByPath(normalized)) {
 				this.crdtEnrollment?.enroll(normalized);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+				// The /changes payload already carries the body, so we know here whether
+				// the note is empty — no need to wait for a STEP2. An EMPTY note produces
+				// no STEP2 (the empty-vs-empty handshake is suppressed by the server), so
+				// the update→flush path would never create the file. Materialize it now,
+				// awaited within this pull, so a caller that pulls-then-checks (e.g.
+				// triggerFullSync) sees the file immediately. A non-empty note is left to
+				// the handshake's flushFromCrdt — avoids a transient empty file and keeps
+				// CRDT the single writer of the body.
+				if (content === "") {
+					await this.flushFromCrdt(normalized, "");
+				}
 			} else {
 				rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
 			}

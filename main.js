@@ -4776,7 +4776,7 @@ function countFolders(paths) {
   }
   return set.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, CRDT_EMPTY_DISCOVERY_SETTLE_MS = 1500, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -4974,6 +4974,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } catch (e) {
       rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
     }
+  }
+  /** Materialize an EMPTY note discovered via `crdt_doc_ready`.
+   *
+   *  A non-empty note discovered on this device materializes through the normal
+   *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
+   *  applying it fires a doc update, and that writes the file. An EMPTY note has
+   *  no such body — an empty-vs-empty handshake produces a zero-length STEP2 that
+   *  the server suppresses (the `length > 1` gate), so no frame ever arrives and
+   *  the file is never created. The announce itself is then the only evidence the
+   *  note exists.
+   *
+   *  So after a discovery announce for a note we don't have on disk, wait out the
+   *  handshake window: if a STEP2 had carried content it would have created the
+   *  file by now (the existence check short-circuits). If the file is still
+   *  absent, the note is genuinely empty — create it from the doc's current text
+   *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
+  async materializeEmptyDiscovered(path) {
+    if (!path.endsWith(".md")) return;
+    let normalized = (0, import_obsidian21.normalizePath)(path);
+    if (this.app.vault.getAbstractFileByPath(normalized) || (await new Promise(
+      (resolve) => window.setTimeout(resolve, CRDT_EMPTY_DISCOVERY_SETTLE_MS)
+    ), this.app.vault.getAbstractFileByPath(normalized))) return;
+    let text2 = this.crdt ? await this.crdt.getText(path) : "";
+    await this.flushFromCrdt(path, text2);
   }
   updateSettings(settings) {
     this.settings = settings, this.parseIgnorePatterns();
@@ -5303,7 +5327,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -5353,7 +5377,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         ))
-          return success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+          return (_a = this.crdtEnrollment) == null || _a.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
@@ -5367,7 +5391,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             "conflict",
             `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
           );
-          let pushBase = (_a = this.baseStore) == null ? void 0 : _a.get((0, import_obsidian21.normalizePath)(file.path));
+          let pushBase = (_b = this.baseStore) == null ? void 0 : _b.get((0, import_obsidian21.normalizePath)(file.path));
           if (pushBase) {
             let merge = threeWayMerge(pushBase.content, content, serverNote.content);
             if (merge.clean) {
@@ -5382,7 +5406,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_b = this.baseStore) == null || _b.set(np, merge.merged, mergeResp.note.version));
+                }), mergeResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, merge.merged, mergeResp.note.version));
               }
               return rlog().info(
                 "conflict",
@@ -5411,7 +5435,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, forceResp.note.version));
+              }), forceResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, content, forceResp.note.version));
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5422,7 +5446,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_d = this.baseStore) == null || _d.set(np, serverNote.content, serverNote.version);
+              }), (_e = this.baseStore) == null || _e.set(np, serverNote.content, serverNote.version);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5436,7 +5460,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_e = this.baseStore) == null || _e.set(
+              }), mergeResp.note.version != null && ((_f = this.baseStore) == null || _f.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
@@ -5460,13 +5484,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_f = this.baseStore) == null || _f.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_g = this.baseStore) == null || _g.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
+          }), (_g = this.baseStore) == null || _g.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
+          }), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -5487,8 +5511,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_j = (_i = this.issues.get(file.path)) == null ? void 0 : _i.attempts) != null ? _j : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_k = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_k = (_j = this.issues.get(file.path)) == null ? void 0 : _j.attempts) != null ? _k : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_l = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -5498,7 +5522,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_l = this.settings.vaultId) != null ? _l : void 0
+        vaultId: (_m = this.settings.vaultId) != null ? _m : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
@@ -6142,7 +6166,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (this.crdt && normalized.endsWith(".md"))
-      return this.app.vault.getFileByPath(normalized) ? rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`)), !1;
+      return this.app.vault.getFileByPath(normalized) ? rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), content === "" && await this.flushFromCrdt(normalized, "")), !1;
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
@@ -14402,7 +14426,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path);
+          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path), this.syncEngine.materializeEmptyDiscovered(path);
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",

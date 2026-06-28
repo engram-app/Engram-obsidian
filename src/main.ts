@@ -1089,6 +1089,10 @@ export default class EngramSyncPlugin extends Plugin {
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						this.crdtEnrollment?.enroll(path);
+						// An EMPTY note discovered here produces no STEP2 (empty-vs-empty
+						// handshake is suppressed by the server), so the update→flush path
+						// never creates the file. Materialize it explicitly if it stays absent.
+						void this.syncEngine.materializeEmptyDiscovered(path);
 					};
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
