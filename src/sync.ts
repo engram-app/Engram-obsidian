@@ -2352,7 +2352,15 @@ export class SyncEngine {
 					await this.flushFromCrdt(normalized, "");
 				}
 			} else {
-				rlog().info("pull", `CRDT-managed: skipping legacy body apply for ${change.path}`);
+				// The note already exists locally and CRDT owns its body, so we never
+				// legacy-write it here. But we MUST re-enroll: on reconnect the channel
+				// calls resetAll() (clearing the once-per-doc STEP1 guard), and this
+				// catch-up pull is how we learn a note was UPDATED while disconnected.
+				// Re-enrolling re-fires the STEP1 handshake so the server replies with
+				// the missed update (STEP2) -> flushFromCrdt. Idempotent while the guard
+				// is still set, so a steady-state pull is a no-op.
+				this.crdtEnrollment?.enroll(normalized);
+				rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 			}
 			return false;
 		}
