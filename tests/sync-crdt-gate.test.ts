@@ -292,12 +292,15 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
-	test("applyChange does NOT enroll a markdown note that already exists locally", async () => {
+	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
-		// The note already exists locally → CRDT already owns it, no discovery.
+		// The note already exists locally → CRDT owns its body (no legacy write),
+		// but we still re-enroll so a post-reconnect resetAll re-fires the STEP1
+		// handshake and pulls any update made while disconnected (idempotent
+		// otherwise). See test_48 oauth reconnect catch-up.
 		const existingFile = new TFile("Notes/have.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
 
@@ -313,8 +316,10 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
+		// No legacy disk write (CRDT owns the body), but it IS re-enrolled.
 		expect(result).toBe(false);
-		expect(enroll).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("Notes/have.md");
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
 	test("applyChange delete path still deletes for markdown when CRDT active", async () => {
