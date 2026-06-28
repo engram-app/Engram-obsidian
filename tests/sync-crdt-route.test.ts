@@ -262,7 +262,7 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
-	test("after flushFromCrdt creates a file, the create echo is suppressed", async () => {
+	test("after flushFromCrdt creates a file, the create echo no-ops at the diff layer", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
@@ -270,16 +270,20 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 
 		await engine.flushFromCrdt("Notes/discovered.md", "from CRDT");
 
-		// The vault.create fires a 'create' event routed through handleModify.
+		// The vault.create fires a 'create' event routed through handleModify. For
+		// CRDT-managed markdown we deliberately do NOT drop it on the recentlyFlushed
+		// time-window (that also dropped real edits made right after discovery —
+		// the round-trip/concurrent-edit bug). The echo instead flows to routeModify
+		// → applyLocalEdit, where diffIntoYText sees identical content and produces
+		// zero ops, so nothing re-transmits (no-op suppression, e2e tests/crdt).
 		const created = new TFile("Notes/discovered.md");
 		engine.handleModify(created);
 		await flush();
 
-		// Echo suppressed via recentlyFlushed → no re-push into CRDT.
-		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(applyLocalEdit).toHaveBeenCalled();
 	});
 
-	test("after flushFromCrdt, a handleModify echo is suppressed", async () => {
+	test("after flushFromCrdt, a handleModify echo no-ops at the diff layer", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
@@ -290,13 +294,14 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		// Flush to disk from remote CRDT update
 		await engine.flushFromCrdt("note.md", "remote content");
 
-		// The vault.modify above fires handleModify (simulated here directly)
-		// The engine should suppress it via recentlyFlushed
+		// The vault.modify above fires handleModify. For CRDT-managed markdown the
+		// echo is NOT dropped on the recentlyFlushed time-window (which also dropped
+		// real edits within the window); it flows to routeModify → applyLocalEdit,
+		// where diffIntoYText no-ops on identical content so nothing re-transmits.
 		engine.handleModify(mockFile);
 		await flush();
 
-		// applyLocalEdit should NOT be called because the echo is suppressed
-		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(applyLocalEdit).toHaveBeenCalled();
 	});
 
 	test("a genuine local edit after a push is NOT dropped by the cooldown", async () => {

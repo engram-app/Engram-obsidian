@@ -663,7 +663,16 @@ export class SyncEngine {
 		// legacy push, so checking it here would drop real user edits made within
 		// the post-push cooldown (e.g. a conflicting local edit), defeating
 		// conflict detection on the next pull.
-		if (this.recentlyFlushed.has(file.path)) {
+		//
+		// For CRDT-managed markdown this time-window guard is BOTH unnecessary and
+		// harmful: the echo of a flush is naturally a no-op (routeModify →
+		// applyLocalEdit re-applies identical content, diffIntoYText yields zero
+		// ops, nothing is re-transmitted), while a REAL edit made within the window
+		// — e.g. editing a note the moment after it was discovered/flushed — would
+		// be wrongly dropped here and never reach the CRDT path. So only apply the
+		// guard off the CRDT path (legacy writes, attachments).
+		const crdtManaged = !!this.crdt && this.isMarkdown(file);
+		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
 		}
@@ -2353,12 +2362,11 @@ export class SyncEngine {
 				}
 			} else {
 				// The note already exists locally and CRDT owns its body, so we never
-				// legacy-write it here. But we MUST re-enroll: on reconnect the channel
-				// calls resetAll() (clearing the once-per-doc STEP1 guard), and this
-				// catch-up pull is how we learn a note was UPDATED while disconnected.
-				// Re-enrolling re-fires the STEP1 handshake so the server replies with
-				// the missed update (STEP2) -> flushFromCrdt. Idempotent while the guard
-				// is still set, so a steady-state pull is a no-op.
+				// legacy-write it here.
+				// The note already exists locally and CRDT owns its body; we never legacy-
+				// write here. Re-enroll so a post-reconnect resetAll re-fires STEP1 and the
+				// server replies with any update we missed while disconnected (STEP2) ->
+				// flushFromCrdt. Idempotent while the guard is still set.
 				this.crdtEnrollment?.enroll(normalized);
 				rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 			}
