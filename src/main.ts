@@ -4,7 +4,16 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, TFile, TFolder, requestUrl } from "obsidian";
+import {
+	FileSystemAdapter,
+	MarkdownView,
+	Notice,
+	Platform,
+	Plugin,
+	TFile,
+	TFolder,
+	requestUrl,
+} from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -936,6 +945,31 @@ export default class EngramSyncPlugin extends Plugin {
 		this.connectChannel();
 	}
 
+	/**
+	 * Re-enroll every currently-open markdown note into the CRDT handshake so the
+	 * server re-registers this device as an observer of each note's room. Called
+	 * on every crdt: topic (re)join. For each open note it clears the once-per-doc
+	 * STEP1 guard (reset) then enrolls (sends STEP1), which is order-independent
+	 * and idempotent — on the initial join the active note is already enrolled, so
+	 * this just re-advertises; after a reconnect it restores the observer
+	 * subscription that a tab left open across the drop would otherwise lose.
+	 */
+	private reEnrollOpenCrdtNotes(): void {
+		const enrollment = this.crdtEnrollment;
+		if (!enrollment) return;
+		const seen = new Set<string>();
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView)) continue;
+			const file = view.file;
+			if (!(file instanceof TFile) || file.extension !== "md") continue;
+			if (seen.has(file.path)) continue;
+			seen.add(file.path);
+			enrollment.reset(file.path);
+			enrollment.enroll(file.path);
+		}
+	}
+
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
 	private connectChannel(attempt = 0, epoch = this.channelEpoch): void {
 		const maxAttempts = 5;
@@ -1104,6 +1138,14 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
 						this.syncEngine.setCrdtManager(this.crdtManager);
+						// Re-enroll every open markdown note so the server re-registers
+						// this device as a room observer after a (re)connect. The active-
+						// leaf-change handler only fires on a tab switch, so a note left
+						// open across a socket drop would otherwise never re-send STEP1 and
+						// go deaf to live updates until the user switches tabs or hits Sync.
+						// Mirrors the web client's reconnect resync. Runs on every crdt:
+						// (re)join; on the initial join it is a near no-op (already enrolled).
+						this.reEnrollOpenCrdtNotes();
 					};
 				} else {
 					rlog().info(
