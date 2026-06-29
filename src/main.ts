@@ -49,7 +49,7 @@ import {
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
-import { crdtEditorBinding } from "./crdt/live/editor-binding";
+import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
@@ -540,23 +540,10 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// CRDT editor extension; registered ONCE for the plugin's lifetime so that
 		// repeated setupNoteStream() calls (settings save / reconnect) never stack
-		// additional ViewPlugin instances or workspace event listeners. The deps
-		// object forwards to the current this.crdtLiveViews at call time and
-		// no-ops when it is null (CRDT disabled or mid-teardown).
-		this.registerEditorExtension([
-			crdtEditorBinding({
-				resolvePath: (v) => this.crdtLiveViews?.resolvePath(v) ?? null,
-				getYText: (p) => {
-					const lv = this.crdtLiveViews;
-					if (!lv) return Promise.reject(new Error("crdt disabled"));
-					return lv.getYText(p);
-				},
-				onBind: (p, id) => this.crdtLiveViews?.onBind(p, id),
-				onRelease: (p, id) => this.crdtLiveViews?.onRelease(p, id),
-				seedFromEditor: (p, t) =>
-					this.crdtLiveViews?.seedFromEditor(p, t) ?? Promise.resolve(),
-			}),
-		]);
+		// additional ViewPlugin instances or workspace event listeners. The
+		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
+		// reconfigures it for each open note via EditorController.bindTo().
+		this.registerEditorExtension([ycollabExtension()]);
 		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
@@ -564,6 +551,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
 		);
+		this.registerEvent(this.app.vault.on("rename", () => this.crdtLiveViews?.refresh()));
 
 		// WebSocket live sync
 		this.setupNoteStream();

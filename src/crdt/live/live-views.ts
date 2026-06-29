@@ -1,10 +1,12 @@
 import type { EditorView } from "@codemirror/view";
 import type { App } from "obsidian";
 import { MarkdownView as MdView } from "obsidian";
+import { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
-import { diffIntoYText } from "../bridge";
+import * as YDoc from "yjs";
 import type { CrdtEnrollment } from "../enrollment";
 import type { CrdtManager } from "../manager";
+import { EditorController } from "./editor-controller";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
@@ -65,8 +67,12 @@ export class CrdtLiveViews {
 	private readonly refcount: ViewerRefcount;
 	private readonly frontmatter: CrdtFrontmatterHook;
 	private readonly reading: CrdtReadingView;
-	/** Maps an EditorView back to its path for the binding. */
-	private readonly viewPaths = new WeakMap<EditorView, string>();
+	/** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
+	private readonly awarenessDoc = new YDoc.Doc();
+	/** Single local-only awareness instance shared across all editor controllers. */
+	private readonly localAwareness = new Awareness(this.awarenessDoc);
+	/** One EditorController per live CodeMirror EditorView. */
+	private readonly controllers = new Map<EditorView, EditorController>();
 
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
@@ -88,62 +94,44 @@ export class CrdtLiveViews {
 		return this.refcount.isBound(path);
 	}
 
-	/** Map an EditorView to its note path for the editor binding. Resolves from
-	 *  the live workspace leaves by editor identity, so it does not depend on
-	 *  refresh() having pre-populated the cache before the ViewPlugin constructed
-	 *  (that ordering is not guaranteed and left bindings permanently inert). The
-	 *  viewPaths cache is a fast path; the leaf scan is the authoritative
-	 *  fallback. */
-	resolvePath(view: EditorView): string | null {
-		const cached = this.viewPaths.get(view);
-		if (cached) return cached;
-		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
-			const v = leaf.view;
-			if (v instanceof MdView && getEditorViewForLeaf(v) === view) {
-				const p = getMarkdownFilePath(v);
-				if (p?.endsWith(".md")) {
-					this.viewPaths.set(view, p);
-					return p;
-				}
-			}
-		}
-		return null;
-	}
-
 	/** Open (or get cached) the path's Y.Text from the CRDT manager. */
 	async getYText(path: string): Promise<Y.Text> {
 		return (await this.deps.manager.getDoc(path)).getText("content");
 	}
 
-	/** Refcount bind: a new editor pane opened this path. */
-	onBind(path: string, viewId: string): void {
-		this.refcount.bind(path, viewId);
-	}
-
-	/** Refcount release: an editor pane closed this path. */
-	onRelease(path: string, viewId: string): void {
-		this.refcount.release(path, viewId);
-	}
-
-	/** Seed editor content into Y.Text after async open (no-op if equal). */
-	async seedFromEditor(path: string, editorText: string): Promise<void> {
-		const ytext = await this.getYText(path);
-		diffIntoYText(ytext, editorText);
-	}
-
-	/** Re-evaluate open leaves: register EditorView->path, enroll, attach hooks. */
+	/** Re-evaluate open markdown leaves: bind each editor's controller to its
+	 *  current path; release and drop controllers whose editor is gone. */
 	refresh(): void {
-		const leaves = this.deps.app.workspace.getLeavesOfType("markdown");
-		for (const leaf of leaves) {
+		const seen = new Set<EditorView>();
+		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MdView)) continue;
 			const path = getMarkdownFilePath(view);
 			if (!path || !path.endsWith(".md")) continue;
 			const cm = getEditorViewForLeaf(view);
-			if (cm) this.viewPaths.set(cm, path);
+			if (!cm) continue;
+			seen.add(cm);
+			let ctrl = this.controllers.get(cm);
+			if (!ctrl) {
+				ctrl = new EditorController({
+					getYText: (p) => this.getYText(p),
+					awareness: () => this.localAwareness,
+					onBind: (p, id) => this.refcount.bind(p, id),
+					onRelease: (p, id) => this.refcount.release(p, id),
+				});
+				this.controllers.set(cm, ctrl);
+			}
 			this.deps.enrollment.enroll(path);
+			void ctrl.bindTo(cm, path);
 			this.frontmatter.attach(view);
 			void this.reading.attach(view, path);
+		}
+		// Release controllers whose editor is no longer an open markdown leaf.
+		for (const [cm, ctrl] of this.controllers) {
+			if (!seen.has(cm)) {
+				ctrl.release(cm);
+				this.controllers.delete(cm);
+			}
 		}
 	}
 
