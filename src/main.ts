@@ -1200,6 +1200,13 @@ export default class EngramSyncPlugin extends Plugin {
 						flushToDisk: (path, content) =>
 							this.syncEngine.flushFromCrdt(path, content),
 					});
+					// Tell the sync engine which paths have a live editor binding so its
+					// disk-modify handler skips re-feeding disk content into the Y.Text for
+					// open notes (the binding owns them). Without this, Obsidian's autosave
+					// churns the doc every ~2s.
+					this.syncEngine.setLiveBoundCheck(
+						(path) => this.crdtLiveViews?.isBound(path) ?? false,
+					);
 					// Editor extension + workspace events are registered once in onload
 					// so repeated setupNoteStream() calls don't stack them. Trigger an
 					// initial refresh here so the new manager sees currently-open leaves.

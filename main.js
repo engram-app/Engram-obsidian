@@ -4928,6 +4928,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  level-triggered discovery path that backstops the edge-triggered
      *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
     this.crdtEnrollment = null;
+    /** True when a path currently has a live editor binding (an open, bound
+     *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
+     *  writer for the note (Relay's "editor owns the file while open"): the disk
+     *  path must NOT also feed disk content into the Y.Text, or Obsidian's ~2s
+     *  autosave re-diffs the whole file into the doc every cycle and fights the
+     *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
+     *  and headless contexts behave exactly as before. */
+    this.isLiveBound = () => !1;
     /** Persistent record of files that failed to sync, with reason. Surfaced
      *  in the Sync Center "Issues" panel and used to short-circuit the offline
      *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -4976,6 +4984,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
+  }
+  setLiveBoundCheck(fn) {
+    this.isLiveBound = fn;
   }
   /** Write a remote-merged CRDT result to disk.
    *  Marks the path recentlyFlushed first so the resulting vault.modify/create
@@ -5164,10 +5175,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pendingPostPullPushes.add(file.path);
       return;
     }
-    if (!(!!this.crdt && this.isMarkdown(file)) && this.recentlyFlushed.has(file.path)) {
+    let crdtManaged = !!this.crdt && this.isMarkdown(file);
+    if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
+    if (crdtManaged && this.isLiveBound(file.path))
+      return;
     let existing = this.debounceTimers.get(file.path);
     existing && window.clearTimeout(existing);
     let timer = window.setTimeout(() => {
@@ -14835,7 +14849,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           manager: this.crdtManager,
           enrollment: this.crdtEnrollment,
           flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
-        }), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
+        }), this.syncEngine.setLiveBoundCheck(
+          (path) => {
+            var _a2, _b2;
+            return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
+          }
+        ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
