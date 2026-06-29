@@ -2469,6 +2469,31 @@ describe("content-free queue entries", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 		expect(engine.queue.size).toBe(0);
 	});
+
+	test("flushQueue drains to 0 even when entry.vaultId differs from current settings.vaultId", async () => {
+		// Regression: entries were dequeued by settings.vaultId, not entry.vaultId,
+		// so an entry enqueued under vault-A would never be removed after settings
+		// changed to vault-B — queue could never reach 0.
+		const engine = createEngine({ vaultId: "vault-B" });
+
+		engine.queue.load([
+			{
+				path: "Notes/A.md",
+				action: "upsert",
+				content: "hello",
+				mtime: 100,
+				timestamp: 1,
+				vaultId: "vault-A",
+			},
+		]);
+
+		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
+
+		const flushed = await engine.flushQueue();
+
+		expect(flushed).toBe(1);
+		expect(engine.queue.size).toBe(0);
+	});
 });
 
 // --- V8 OOM Fix: Debounced Persistence ---

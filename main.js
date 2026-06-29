@@ -35,9 +35,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 )), __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: !0 }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "symbol" ? key + "" : key, value);
 
-// node_modules/diff-match-patch/index.js
+// ../../../node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
-  "node_modules/diff-match-patch/index.js"(exports, module2) {
+  "../../../node_modules/diff-match-patch/index.js"(exports, module2) {
     var diff_match_patch3 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
@@ -5176,7 +5176,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.goOnline();
         return;
       }
-      console.error(`Engram Sync: failed to delete ${file.path}`, e), await this.enqueueChange({
+      console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
         path: file.path,
         action: "delete",
         kind: isBinary ? "attachment" : "note",
@@ -5198,7 +5198,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline();
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error(`Engram Sync: failed to delete old path ${oldPath}`, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -5327,7 +5327,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -5345,7 +5345,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           firstFailedAt: now,
           lastFailedAt: now,
           attempts: 1
-        }), issueDisposition(gate.category) === "informational" && (this.attachmentLimitedThisBatch += 1), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
+        }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
     await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
@@ -5377,7 +5377,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         ))
-          return (_a = this.crdtEnrollment) == null || _a.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+          return (_b = this.crdtEnrollment) == null || _b.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
@@ -5391,7 +5391,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             "conflict",
             `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
           );
-          let pushBase = (_b = this.baseStore) == null ? void 0 : _b.get((0, import_obsidian21.normalizePath)(file.path));
+          let pushBase = (_c = this.baseStore) == null ? void 0 : _c.get((0, import_obsidian21.normalizePath)(file.path));
           if (pushBase) {
             let merge = threeWayMerge(pushBase.content, content, serverNote.content);
             if (merge.clean) {
@@ -5406,7 +5406,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, merge.merged, mergeResp.note.version));
+                }), mergeResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, merge.merged, mergeResp.note.version));
               }
               return rlog().info(
                 "conflict",
@@ -5435,7 +5435,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, content, forceResp.note.version));
+              }), forceResp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, forceResp.note.version));
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5446,7 +5446,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_e = this.baseStore) == null || _e.set(np, serverNote.content, serverNote.version);
+              }), (_f = this.baseStore) == null || _f.set(np, serverNote.content, serverNote.version);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5460,7 +5460,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_f = this.baseStore) == null || _f.set(
+              }), mergeResp.note.version != null && ((_g = this.baseStore) == null || _g.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
@@ -5484,18 +5484,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_g = this.baseStore) == null || _g.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
+          }), (_h = this.baseStore) == null || _h.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
+          }), serverVersion != null && ((_j = this.baseStore) == null || _j.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
       let msg = errMsg(e), classified = categorizeError(e);
-      issueDisposition(classified.category) !== "informational" && console.error(`Engram Sync: failed to push ${file.path}`, e);
+      issueDisposition(classified.category) !== "informational" && console.error("Engram Sync: failed to push %s", file.path, e);
       let now = Date.now();
       this.issues.record({
         path: file.path,
@@ -5511,8 +5511,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_k = (_j = this.issues.get(file.path)) == null ? void 0 : _j.attempts) != null ? _k : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_l = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_l = (_k = this.issues.get(file.path)) == null ? void 0 : _k.attempts) != null ? _l : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_m = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -5522,7 +5522,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_m = this.settings.vaultId) != null ? _m : void 0
+        vaultId: (_n = this.settings.vaultId) != null ? _n : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
@@ -6021,7 +6021,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           });
         }
       } catch (e) {
-        console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
+        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
@@ -7004,7 +7004,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return total;
   }
   async runFlushQueue() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -7024,7 +7024,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (!file) {
               await this.queue.dequeue(
                 entry.path,
-                (_a = this.settings.vaultId) != null ? _a : void 0
+                (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0
               ), this.issues.clear(entry.path), flushed++;
               continue;
             }
@@ -7039,7 +7039,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (!file) {
               await this.queue.dequeue(
                 entry.path,
-                (_b = this.settings.vaultId) != null ? _b : void 0
+                (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0
               ), this.issues.clear(entry.path), flushed++;
               continue;
             }
@@ -7052,11 +7052,33 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, resp.note.version));
+            }), resp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, resp.note.version));
           }
         }
-        await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), this.issues.clear(entry.path), flushed++;
+        await this.queue.dequeue(
+          entry.path,
+          (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0
+        ), this.issues.clear(entry.path), flushed++;
       } catch (e) {
+        let classified = categorizeError(e);
+        if (!shouldRetryAfterFailure(classified, 1)) {
+          let now = Date.now();
+          this.issues.record({
+            path: entry.path,
+            kind: (_h = entry.kind) != null ? _h : "note",
+            category: classified.category,
+            status: classified.status,
+            message: classified.message,
+            upgradeUrl: classified.upgradeUrl,
+            firstFailedAt: now,
+            lastFailedAt: now,
+            attempts: 1
+          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
+            entry.path,
+            (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0
+          );
+          continue;
+        }
         this.maybeGoOffline(e);
         break;
       }
@@ -7149,20 +7171,20 @@ var BaseStore = class {
   }
 };
 
-// node_modules/lib0/math.js
+// ../../../node_modules/lib0/math.js
 var floor = Math.floor;
 var abs = Math.abs;
 var min = (a, b) => a < b ? a : b, max = (a, b) => a > b ? a : b, isNaN2 = Number.isNaN;
 var isNegativeZero = (n) => n !== 0 ? n < 0 : 1 / n < 0;
 
-// node_modules/lib0/number.js
+// ../../../node_modules/lib0/number.js
 var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER, MIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER, LOWEST_INT32 = 1 << 31;
 var isInteger = Number.isInteger || ((num) => typeof num == "number" && isFinite(num) && floor(num) === num), isNaN3 = Number.isNaN, parseInt2 = Number.parseInt;
 
-// node_modules/lib0/set.js
+// ../../../node_modules/lib0/set.js
 var create = () => /* @__PURE__ */ new Set();
 
-// node_modules/lib0/array.js
+// ../../../node_modules/lib0/array.js
 var last = (arr) => arr[arr.length - 1];
 var appendTo = (dest, src) => {
   for (let i = 0; i < src.length; i++)
@@ -7186,7 +7208,7 @@ var unfold = (len, f) => {
 };
 var isArray = Array.isArray;
 
-// node_modules/lib0/string.js
+// ../../../node_modules/lib0/string.js
 var fromCharCode = String.fromCharCode, fromCodePoint = String.fromCodePoint, MAX_UTF16_CHARACTER = fromCharCode(65535), toLowerCase = (s) => s.toLowerCase(), trimLeftRegex = /^\s*/g, trimLeft = (s) => s.replace(trimLeftRegex, ""), fromCamelCaseRegex = /([A-Z])/g, fromCamelCase = (s, separator) => trimLeft(s.replace(fromCamelCaseRegex, (match2) => `${separator}${toLowerCase(match2)}`));
 var _encodeUtf8Polyfill = (str) => {
   let encodedString = unescape(encodeURIComponent(str)), len = encodedString.length, buf = new Uint8Array(len);
@@ -7202,14 +7224,14 @@ var utf8TextDecoder = typeof TextDecoder == "undefined" ? null : new TextDecoder
 utf8TextDecoder && utf8TextDecoder.decode(new Uint8Array()).length === 1 && (utf8TextDecoder = null);
 var repeat = (source, n) => unfold(n, () => source).join("");
 
-// node_modules/lib0/error.js
+// ../../../node_modules/lib0/error.js
 var create2 = (s) => new Error(s), methodUnimplemented = () => {
   throw create2("Method unimplemented");
 }, unexpectedCase = () => {
   throw create2("Unexpected case");
 };
 
-// node_modules/lib0/encoding.js
+// ../../../node_modules/lib0/encoding.js
 var Encoder = class {
   constructor() {
     this.cpos = 0, this.cbuf = new Uint8Array(100), this.bufs = [];
@@ -7386,7 +7408,7 @@ var flushIntDiffOptRleEncoder = (encoder) => {
   }
 };
 
-// node_modules/lib0/decoding.js
+// ../../../node_modules/lib0/decoding.js
 var errorUnexpectedEndOfArray = create2("Unexpected end of array"), errorIntegerOutOfRange = create2("Integer out of Range"), Decoder = class {
   /**
    * @param {Uint8Array<Buf>} uint8Array Binary data to decode
@@ -7553,7 +7575,7 @@ var IntDiffOptRleDecoder = class extends Decoder {
   }
 };
 
-// node_modules/lib0/map.js
+// ../../../node_modules/lib0/map.js
 var create3 = () => /* @__PURE__ */ new Map(), copy = (m) => {
   let r = create3();
   return m.forEach((v, k) => {
@@ -7574,7 +7596,7 @@ var create3 = () => /* @__PURE__ */ new Map(), copy = (m) => {
   return !1;
 };
 
-// node_modules/lib0/observable.js
+// ../../../node_modules/lib0/observable.js
 var ObservableV2 = class {
   constructor() {
     this._observers = create3();
@@ -7682,10 +7704,10 @@ var ObservableV2 = class {
   }
 };
 
-// node_modules/lib0/webcrypto.js
+// ../../../node_modules/lib0/webcrypto.js
 var subtle = crypto.subtle, getRandomValues = crypto.getRandomValues.bind(crypto);
 
-// node_modules/lib0/random.js
+// ../../../node_modules/lib0/random.js
 var uint32 = () => getRandomValues(new Uint32Array(1))[0];
 var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Template.replace(
   /[018]/g,
@@ -7693,20 +7715,20 @@ var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Tem
   (c) => (c ^ uint32() & 15 >> c / 4).toString(16)
 );
 
-// node_modules/lib0/time.js
+// ../../../node_modules/lib0/time.js
 var getUnixTime = Date.now;
 
-// node_modules/lib0/promise.js
+// ../../../node_modules/lib0/promise.js
 var create4 = (f) => (
   /** @type {Promise<T>} */
   new Promise(f)
 );
 var all = Promise.all.bind(Promise);
 
-// node_modules/lib0/conditions.js
+// ../../../node_modules/lib0/conditions.js
 var undefinedToNull = (v) => v === void 0 ? null : v;
 
-// node_modules/lib0/storage.js
+// ../../../node_modules/lib0/storage.js
 var VarStoragePolyfill = class {
   constructor() {
     this.map = /* @__PURE__ */ new Map();
@@ -7731,13 +7753,13 @@ try {
 }
 var varStorage = _localStorage;
 
-// node_modules/lib0/trait/equality.js
+// ../../../node_modules/lib0/trait/equality.js
 var EqualityTraitSymbol = /* @__PURE__ */ Symbol("Equality"), equals = (a, b) => {
   var _a;
   return a === b || !!((_a = a == null ? void 0 : a[EqualityTraitSymbol]) != null && _a.call(a, b)) || !1;
 };
 
-// node_modules/lib0/object.js
+// ../../../node_modules/lib0/object.js
 var isObject = (o) => typeof o == "object", assign = Object.assign, keys = Object.keys;
 var forEach = (obj, f) => {
   for (let key in obj)
@@ -7761,7 +7783,7 @@ var isEmpty = (obj) => {
   return freeze(o);
 };
 
-// node_modules/lib0/function.js
+// ../../../node_modules/lib0/function.js
 var callAll = (fs, args2, i = 0) => {
   try {
     for (; i < fs.length; i++)
@@ -7827,7 +7849,7 @@ var equalityDeep = (a, b) => {
   return !0;
 }, isOneOf = (value, options) => options.includes(value);
 
-// node_modules/lib0/environment.js
+// ../../../node_modules/lib0/environment.js
 var isNode = typeof process != "undefined" && process.release && /node|io\.js/.test(process.release.name) && Object.prototype.toString.call(typeof process != "undefined" ? process : 0) === "[object process]";
 var isMac = typeof navigator != "undefined" ? /Mac/.test(navigator.platform) : !1, params, args = [], computeParams = () => {
   if (params === void 0)
@@ -7851,14 +7873,14 @@ var getVariable = (name) => isNode ? undefinedToNull(process.env[name.toUpperCas
 var hasConf = (name) => hasParam("--" + name) || getVariable(name) !== null, production = hasConf("production"), forceColor = isNode && isOneOf(process.env.FORCE_COLOR, ["true", "1", "2"]), supportsColor = forceColor || !hasParam("--no-colors") && // @todo deprecate --no-colors
 !hasConf("no-color") && (!isNode || process.stdout.isTTY) && (!isNode || hasParam("--color") || getVariable("COLORTERM") !== null || (getVariable("TERM") || "").includes("color"));
 
-// node_modules/lib0/buffer.js
+// ../../../node_modules/lib0/buffer.js
 var createUint8ArrayFromLen = (len) => new Uint8Array(len);
 var copyUint8Array = (uint8Array) => {
   let newBuf = createUint8ArrayFromLen(uint8Array.byteLength);
   return newBuf.set(uint8Array), newBuf;
 };
 
-// node_modules/lib0/pair.js
+// ../../../node_modules/lib0/pair.js
 var Pair = class {
   /**
    * @param {L} left
@@ -7869,7 +7891,7 @@ var Pair = class {
   }
 }, create5 = (left, right) => new Pair(left, right);
 
-// node_modules/lib0/prng.js
+// ../../../node_modules/lib0/prng.js
 var bool = (gen) => gen.next() >= 0.5, int53 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
 var int32 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
 var int31 = (gen, min2, max2) => int32(gen, min2, max2);
@@ -7881,7 +7903,7 @@ var letter = (gen) => fromCharCode(int31(gen, 97, 122)), word = (gen, minLen = 0
 };
 var oneOf = (gen, array) => array[int31(gen, 0, array.length - 1)];
 
-// node_modules/lib0/schema.js
+// ../../../node_modules/lib0/schema.js
 var schemaSymbol = /* @__PURE__ */ Symbol("0schema"), ValidationError = class {
   constructor() {
     this._rerrs = [];
@@ -8475,7 +8497,7 @@ ${err.toString()}`);
   _random($(schema), gen)
 );
 
-// node_modules/lib0/dom.js
+// ../../../node_modules/lib0/dom.js
 var doc = (
   /** @type {Document} */
   typeof document != "undefined" ? document : {}
@@ -8490,10 +8512,10 @@ var $text = $custom((el) => el.nodeType === TEXT_NODE);
 var mapToStyleString = (m) => map(m, (value, key) => `${key}:${value};`).join("");
 var ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
 
-// node_modules/lib0/symbol.js
+// ../../../node_modules/lib0/symbol.js
 var create6 = Symbol;
 
-// node_modules/lib0/logging.common.js
+// ../../../node_modules/lib0/logging.common.js
 var BOLD = create6(), UNBOLD = create6(), BLUE = create6(), GREY = create6(), GREEN = create6(), RED = create6(), PURPLE = create6(), ORANGE = create6(), UNCOLOR = create6(), computeNoColorLoggingArgs = (args2) => {
   var _a;
   args2.length === 1 && ((_a = args2[0]) == null ? void 0 : _a.constructor) === Function && (args2 = /** @type {Array<string|Symbol|Object|number>} */
@@ -8517,7 +8539,7 @@ var BOLD = create6(), UNBOLD = create6(), BLUE = create6(), GREY = create6(), GR
 };
 var lastLoggingTime = getUnixTime();
 
-// node_modules/lib0/logging.js
+// ../../../node_modules/lib0/logging.js
 var _browserStyleMap = {
   [BOLD]: create5("font-weight", "bold"),
   [UNBOLD]: create5("font-weight", "normal"),
@@ -8561,7 +8583,7 @@ var _browserStyleMap = {
 };
 var vconsoles = create();
 
-// node_modules/lib0/iterator.js
+// ../../../node_modules/lib0/iterator.js
 var createIterator = (next) => ({
   /**
    * @return {IterableIterator<T>}
@@ -8582,7 +8604,7 @@ var createIterator = (next) => ({
   return { done, value: done ? void 0 : fmap(value) };
 });
 
-// node_modules/yjs/dist/yjs.mjs
+// ../../../node_modules/yjs/dist/yjs.mjs
 var DeleteItem = class {
   /**
    * @param {number} clock
@@ -13387,7 +13409,7 @@ var Item = class _Item extends AbstractStruct {
 glo[importIdentifier] === !0 && console.error("Yjs was already imported. This breaks constructor checks and will lead to issues! - https://github.com/yjs/yjs/issues/438");
 glo[importIdentifier] = !0;
 
-// node_modules/y-protocols/sync.js
+// ../../../node_modules/y-protocols/sync.js
 var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
   writeVarUint(encoder, messageYjsSyncStep1);
   let sv = encodeStateVector(doc2);
@@ -13423,7 +13445,7 @@ var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writ
   return messageType;
 };
 
-// node_modules/lib0/indexeddb.js
+// ../../../node_modules/lib0/indexeddb.js
 var rtop = (request) => create4((resolve, reject) => {
   request.onerror = (event) => reject(new Error(event.target.error)), request.onsuccess = (event) => resolve(event.target.result);
 }), openDB = (name, initDB) => create4((resolve, reject) => {
@@ -13459,7 +13481,7 @@ var iterateOnRequest = (request, f) => create4((resolve, reject) => {
 var iterateKeys = (store, keyrange, f, direction = "next") => iterateOnRequest(store.openKeyCursor(keyrange, direction), (cursor) => f(cursor.key)), getStore = (t, store) => t.objectStore(store);
 var createIDBKeyRangeUpperBound = (upper, upperOpen) => IDBKeyRange.upperBound(upper, upperOpen), createIDBKeyRangeLowerBound = (lower, lowerOpen) => IDBKeyRange.lowerBound(lower, lowerOpen);
 
-// node_modules/y-indexeddb/src/y-indexeddb.js
+// ../../../node_modules/y-indexeddb/src/y-indexeddb.js
 var customStoreName = "custom", updatesStoreName = "updates", PREFERRED_TRIM_SIZE = 500, fetchUpdates = (idbPersistence, beforeApplyUpdatesCallback = () => {
 }, afterApplyUpdatesCallback = () => {
 }) => {
