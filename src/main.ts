@@ -40,6 +40,8 @@ import {
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
+import { crdtEditorBinding } from "./crdt/live/editor-binding";
+import { CrdtLiveViews } from "./crdt/live/live-views";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { EmailCaptureModal } from "./email-capture-modal";
@@ -142,6 +144,7 @@ export default class EngramSyncPlugin extends Plugin {
 	private crdtManager: CrdtManager | null = null;
 	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
+	private crdtLiveViews: CrdtLiveViews | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -517,6 +520,35 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 		});
 
+		// CRDT editor extension; registered ONCE for the plugin's lifetime so that
+		// repeated setupNoteStream() calls (settings save / reconnect) never stack
+		// additional ViewPlugin instances or workspace event listeners. The deps
+		// object forwards to the current this.crdtLiveViews at call time and
+		// no-ops when it is null (CRDT disabled or mid-teardown).
+		this.registerEditorExtension([
+			crdtEditorBinding({
+				resolvePath: (v) => this.crdtLiveViews?.resolvePath(v) ?? null,
+				getYText: (p) => {
+					const lv = this.crdtLiveViews;
+					if (!lv) return Promise.reject(new Error("crdt disabled"));
+					return lv.getYText(p);
+				},
+				onBind: (p, id) => this.crdtLiveViews?.onBind(p, id),
+				onRelease: (p, id) => this.crdtLiveViews?.onRelease(p, id),
+				seedFromEditor: (p, t) =>
+					this.crdtLiveViews?.seedFromEditor(p, t) ?? Promise.resolve(),
+			}),
+		]);
+		this.registerEvent(
+			this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
+		);
+
 		// WebSocket live sync
 		this.setupNoteStream();
 
@@ -633,6 +665,8 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.baseStore?.save();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
+		this.crdtLiveViews?.destroy();
+		this.crdtLiveViews = null;
 		void this.crdtManager?.destroy();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
 		// open resources; the WebSocket it dispatches over is owned by the Phoenix
@@ -914,6 +948,8 @@ export default class EngramSyncPlugin extends Plugin {
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
 		// IndexeddbPersistence listeners — each overwrites the references but the
 		// old objects stay alive with their observers still firing.
+		this.crdtLiveViews?.destroy();
+		this.crdtLiveViews = null;
 		void this.crdtManager?.destroy();
 		this.crdtManager = null;
 		this.crdtChannel = null;
@@ -1042,7 +1078,9 @@ export default class EngramSyncPlugin extends Plugin {
 						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
 						onFlushToDisk: (path, content) =>
-							this.syncEngine.flushFromCrdt(path, content),
+							this.crdtLiveViews?.isBound(path)
+								? Promise.resolve()
+								: this.syncEngine.flushFromCrdt(path, content),
 						onPersistError: (path, err) => {
 							rlog().warn(
 								"crdt",
@@ -1074,6 +1112,16 @@ export default class EngramSyncPlugin extends Plugin {
 					// crdt_doc_ready announce for a device that was offline / not yet
 					// subscribed when the other device opened the room.
 					this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
+					this.crdtLiveViews = new CrdtLiveViews({
+						app: this.app,
+						manager: this.crdtManager,
+						enrollment: this.crdtEnrollment,
+						flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+					});
+					// Editor extension + workspace events are registered once in onload
+					// so repeated setupNoteStream() calls don't stack them. Trigger an
+					// initial refresh here so the new manager sees currently-open leaves.
+					this.crdtLiveViews.refresh();
 					channel.onCrdtMessage = (docId, b64) => {
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;

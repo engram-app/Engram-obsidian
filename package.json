@@ -25,6 +25,8 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
     "@biomejs/biome": "^1.9.4",
     "@eslint/js": "^9.39.4",
     "@eslint/json": "^1.2.0",
