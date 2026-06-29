@@ -1218,12 +1218,13 @@ var ApiKeyAuth = class {
     this.apiKey = "", this.vaultId = null;
   }
 }, _OAuthAuth = class _OAuthAuth {
-  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0) {
+  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0, onAuthInvalidated) {
     this.accessToken = null;
     this.expiresAt = 0;
     this.authenticated = !0;
     this.inflightRefresh = null;
-    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt;
+    this.authInvalidatedFired = !1;
+    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt, this.onAuthInvalidated = onAuthInvalidated;
   }
   async getToken() {
     if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
@@ -1241,7 +1242,9 @@ var ApiKeyAuth = class {
     }
   }
   async doRefresh() {
-    var _a;
+    var _a, _b;
+    if (!this.refreshToken)
+      throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
     try {
       let result = await this.refreshFn(this.refreshToken);
       return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
@@ -1253,11 +1256,24 @@ var ApiKeyAuth = class {
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
       ), this.accessToken;
     } catch (err) {
-      throw this.authenticated = !1, this.accessToken = null, this.expiresAt = 0, rlog().error(
+      this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
+      let status = err == null ? void 0 : err.status, definitive = status === 400 || status === 401 || status === 403 || status === 404;
+      if (rlog().error(
         "auth",
-        `OAuth refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
         err instanceof Error ? err.stack : void 0
-      ), err;
+      ), definitive && !this.authInvalidatedFired) {
+        this.authInvalidatedFired = !0, this.refreshToken = "";
+        try {
+          await ((_b = this.onAuthInvalidated) == null ? void 0 : _b.call(this));
+        } catch (cbErr) {
+          rlog().error(
+            "auth",
+            `onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`
+          );
+        }
+      }
+      throw err;
     }
   }
   getVaultId() {
@@ -5176,7 +5192,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.goOnline();
         return;
       }
-      console.error(`Engram Sync: failed to delete ${file.path}`, e), await this.enqueueChange({
+      console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
         path: file.path,
         action: "delete",
         kind: isBinary ? "attachment" : "note",
@@ -5198,7 +5214,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline();
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error(`Engram Sync: failed to delete old path ${oldPath}`, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -5327,7 +5343,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -5345,7 +5361,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           firstFailedAt: now,
           lastFailedAt: now,
           attempts: 1
-        }), issueDisposition(gate.category) === "informational" && (this.attachmentLimitedThisBatch += 1), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
+        }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
     await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
@@ -5377,7 +5393,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         ))
-          return (_a = this.crdtEnrollment) == null || _a.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+          return (_b = this.crdtEnrollment) == null || _b.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
@@ -5391,7 +5407,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             "conflict",
             `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
           );
-          let pushBase = (_b = this.baseStore) == null ? void 0 : _b.get((0, import_obsidian21.normalizePath)(file.path));
+          let pushBase = (_c = this.baseStore) == null ? void 0 : _c.get((0, import_obsidian21.normalizePath)(file.path));
           if (pushBase) {
             let merge = threeWayMerge(pushBase.content, content, serverNote.content);
             if (merge.clean) {
@@ -5406,7 +5422,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, merge.merged, mergeResp.note.version));
+                }), mergeResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, merge.merged, mergeResp.note.version));
               }
               return rlog().info(
                 "conflict",
@@ -5435,7 +5451,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, content, forceResp.note.version));
+              }), forceResp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, forceResp.note.version));
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5446,7 +5462,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_e = this.baseStore) == null || _e.set(np, serverNote.content, serverNote.version);
+              }), (_f = this.baseStore) == null || _f.set(np, serverNote.content, serverNote.version);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5460,7 +5476,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_f = this.baseStore) == null || _f.set(
+              }), mergeResp.note.version != null && ((_g = this.baseStore) == null || _g.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
@@ -5484,18 +5500,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_g = this.baseStore) == null || _g.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_h = this.baseStore) == null || _h.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
+          }), (_h = this.baseStore) == null || _h.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
+          }), serverVersion != null && ((_j = this.baseStore) == null || _j.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
       let msg = errMsg(e), classified = categorizeError(e);
-      issueDisposition(classified.category) !== "informational" && console.error(`Engram Sync: failed to push ${file.path}`, e);
+      issueDisposition(classified.category) !== "informational" && console.error("Engram Sync: failed to push %s", file.path, e);
       let now = Date.now();
       this.issues.record({
         path: file.path,
@@ -5511,8 +5527,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_k = (_j = this.issues.get(file.path)) == null ? void 0 : _j.attempts) != null ? _k : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_l = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_l = (_k = this.issues.get(file.path)) == null ? void 0 : _k.attempts) != null ? _l : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_m = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -5522,7 +5538,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_m = this.settings.vaultId) != null ? _m : void 0
+        vaultId: (_n = this.settings.vaultId) != null ? _n : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
@@ -6021,7 +6037,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           });
         }
       } catch (e) {
-        console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
+        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
@@ -7004,7 +7020,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return total;
   }
   async runFlushQueue() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -7024,7 +7040,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (!file) {
               await this.queue.dequeue(
                 entry.path,
-                (_a = this.settings.vaultId) != null ? _a : void 0
+                (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0
               ), this.issues.clear(entry.path), flushed++;
               continue;
             }
@@ -7039,7 +7055,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             if (!file) {
               await this.queue.dequeue(
                 entry.path,
-                (_b = this.settings.vaultId) != null ? _b : void 0
+                (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0
               ), this.issues.clear(entry.path), flushed++;
               continue;
             }
@@ -7052,11 +7068,33 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_c = this.baseStore) == null || _c.set(np, content, resp.note.version));
+            }), resp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, resp.note.version));
           }
         }
-        await this.queue.dequeue(entry.path, (_d = this.settings.vaultId) != null ? _d : void 0), this.issues.clear(entry.path), flushed++;
+        await this.queue.dequeue(
+          entry.path,
+          (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0
+        ), this.issues.clear(entry.path), flushed++;
       } catch (e) {
+        let classified = categorizeError(e);
+        if (!shouldRetryAfterFailure(classified, 1)) {
+          let now = Date.now();
+          this.issues.record({
+            path: entry.path,
+            kind: (_h = entry.kind) != null ? _h : "note",
+            category: classified.category,
+            status: classified.status,
+            message: classified.message,
+            upgradeUrl: classified.upgradeUrl,
+            firstFailedAt: now,
+            lastFailedAt: now,
+            attempts: 1
+          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
+            entry.path,
+            (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0
+          );
+          continue;
+        }
         this.maybeGoOffline(e);
         break;
       }
@@ -14325,6 +14363,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
+      id: "disconnect",
+      name: "Disconnect (clear login)",
+      callback: async () => {
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian24.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+      }
+    }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
@@ -14599,6 +14643,25 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
       syncGateAcceptedFor: this.syncGateAcceptedFor
     });
   }
+  /**
+   * Clear all persisted login state and drop back to the unlinked state so the
+   * user can re-link. Used by both the auto-heal path (the server definitively
+   * rejected the stored refresh token) and the manual "Disconnect" command.
+   * Idempotent — a no-op once auth is already cleared.
+   */
+  async clearAuthAndPromptRelink(reason, notify) {
+    var _a;
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian24.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+  }
+  /**
+   * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
+   * token (revoked / rotated-away / expired → 4xx). Self-heals the previously
+   * stuck "token invalid" state: without this, the plugin replayed a dead token
+   * forever with no recovery and no unlink button.
+   */
+  handleAuthInvalidated() {
+    this.clearAuthAndPromptRelink("server rejected refresh token", !0);
+  }
   createAuthProvider() {
     var _a, _b, _c;
     if (this.settings.refreshToken) {
@@ -14610,8 +14673,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           body: JSON.stringify({ refresh_token: token }),
           throw: !1
         });
-        if (resp.status < 200 || resp.status >= 300)
-          throw new Error(`Refresh failed: ${resp.status}`);
+        if (resp.status < 200 || resp.status >= 300) {
+          let e = new Error(`Refresh failed: ${resp.status}`);
+          throw e.status = resp.status, e;
+        }
         return resp.json;
       }, seed = seededAccessToken(this.settings);
       return this.settings.accessToken && !seed.token && rlog().warn(
@@ -14626,7 +14691,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, this.settings.accessTokenVaultId = this.settings.vaultId, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
         },
         seed.token,
-        seed.expiresAt
+        seed.expiresAt,
+        () => this.handleAuthInvalidated()
       );
     }
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
@@ -14646,6 +14712,26 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
       return;
     }
     this.connectChannel();
+  }
+  /**
+   * Re-enroll every currently-open markdown note into the CRDT handshake so the
+   * server re-registers this device as an observer of each note's room. Called
+   * on every crdt: topic (re)join. For each open note it clears the once-per-doc
+   * STEP1 guard (reset) then enrolls (sends STEP1), which is order-independent
+   * and idempotent — on the initial join the active note is already enrolled, so
+   * this just re-advertises; after a reconnect it restores the observer
+   * subscription that a tab left open across the drop would otherwise lose.
+   */
+  reEnrollOpenCrdtNotes() {
+    let enrollment = this.crdtEnrollment;
+    if (!enrollment) return;
+    let seen = /* @__PURE__ */ new Set();
+    for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (!(view instanceof import_obsidian24.MarkdownView)) continue;
+      let file = view.file;
+      !(file instanceof import_obsidian24.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
+    }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
   connectChannel(attempt = 0, epoch = this.channelEpoch) {
@@ -14738,7 +14824,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.syncEngine.setCrdtManager(this.crdtManager);
+          ), this.syncEngine.setCrdtManager(this.crdtManager), this.reEnrollOpenCrdtNotes();
         };
       } else
         rlog().info(
