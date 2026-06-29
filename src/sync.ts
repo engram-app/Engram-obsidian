@@ -727,7 +727,7 @@ export class SyncEngine {
 				return;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error(`Engram Sync: failed to delete ${file.path}`, e);
+			console.error("Engram Sync: failed to delete %s", file.path, e);
 			await this.enqueueChange({
 				path: file.path,
 				action: "delete",
@@ -765,7 +765,7 @@ export class SyncEngine {
 					this.goOnline();
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error(`Engram Sync: failed to delete old path ${oldPath}`, e);
+					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
 					await this.enqueueChange({
 						path: oldPath,
 						action: "delete",
@@ -1006,6 +1006,9 @@ export class SyncEngine {
 				});
 				if (issueDisposition(gate.category) === "informational") {
 					this.attachmentLimitedThisBatch += 1;
+				} else {
+					this.failuresThisBatch += 1;
+					this.firstFailureMessageThisBatch ??= gate.message;
 				}
 				devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`);
 				return false;
@@ -1267,7 +1270,7 @@ export class SyncEngine {
 			// categories keep the error log for triage.
 			if (issueDisposition(classified.category) !== "informational") {
 				// biome-ignore lint/suspicious/noConsole: error boundary
-				console.error(`Engram Sync: failed to push ${file.path}`, e);
+				console.error("Engram Sync: failed to push %s", file.path, e);
 			}
 			const now = Date.now();
 			this.issues.record({
@@ -2090,7 +2093,7 @@ export class SyncEngine {
 				}
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary
-				console.error(`Engram Sync: failed to apply WebSocket event ${event.path}`, e);
+				console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
 			}
 		}
 	}
@@ -3870,7 +3873,7 @@ export class SyncEngine {
 						if (!file) {
 							await this.queue.dequeue(
 								entry.path,
-								this.settings.vaultId ?? undefined,
+								entry.vaultId ?? this.settings.vaultId ?? undefined,
 							);
 							this.issues.clear(entry.path);
 							flushed++;
@@ -3891,7 +3894,7 @@ export class SyncEngine {
 						if (!file) {
 							await this.queue.dequeue(
 								entry.path,
-								this.settings.vaultId ?? undefined,
+								entry.vaultId ?? this.settings.vaultId ?? undefined,
 							);
 							this.issues.clear(entry.path);
 							flushed++;
@@ -3916,13 +3919,39 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(entry.path, this.settings.vaultId ?? undefined);
+				await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
-				// Stop this flush pass on the first failure. Only flip offline if
-				// it's a real connection loss — a server error on one entry must
-				// not report the whole plugin as disconnected.
+				const classified = categorizeError(e);
+				if (!shouldRetryAfterFailure(classified, 1)) {
+					// Terminal error (402, 413, auth, etc.) — record the issue,
+					// dequeue this entry so it doesn't retry, and keep flushing.
+					// Mirrors the pushFile terminal path so these surface in Sync Center.
+					const now = Date.now();
+					this.issues.record({
+						path: entry.path,
+						kind: entry.kind ?? "note",
+						category: classified.category,
+						status: classified.status,
+						message: classified.message,
+						upgradeUrl: classified.upgradeUrl,
+						firstFailedAt: now,
+						lastFailedAt: now,
+						attempts: 1,
+					});
+					if (issueDisposition(classified.category) === "informational") {
+						this.attachmentLimitedThisBatch += 1;
+					} else {
+						this.failuresThisBatch += 1;
+						this.firstFailureMessageThisBatch ??= classified.message;
+					}
+					await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+					continue;
+				}
+				// Non-terminal: stop this flush pass. Only flip offline if it's a
+				// real connection loss — a server error on one entry must not
+				// report the whole plugin as disconnected.
 				this.maybeGoOffline(e);
 				break;
 			}
