@@ -36,4 +36,25 @@ describe("ViewerRefcount", () => {
     expect(onLast).toHaveBeenCalledTimes(1);
     expect(rc.isBound("a.md")).toBe(false);
   });
+
+  it("boundPaths returns currently-bound paths and is empty after all releases", () => {
+    const rc = new ViewerRefcount(() => {});
+    // Initially empty
+    expect(rc.boundPaths()).toEqual([]);
+
+    rc.bind("a.md", "v1");
+    rc.bind("b.md", "v2");
+    const paths = rc.boundPaths();
+    expect(paths).toHaveLength(2);
+    expect(paths).toContain("a.md");
+    expect(paths).toContain("b.md");
+
+    // Release one path completely — it should disappear from boundPaths
+    rc.release("a.md", "v1");
+    expect(rc.boundPaths()).toEqual(["b.md"]);
+
+    // Release remaining path — back to empty
+    rc.release("b.md", "v2");
+    expect(rc.boundPaths()).toEqual([]);
+  });
 });

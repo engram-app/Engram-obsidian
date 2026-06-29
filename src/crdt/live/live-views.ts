@@ -2,6 +2,7 @@ import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { App } from "obsidian";
 import { MarkdownView as MdView } from "obsidian";
+import type * as Y from "yjs";
 import { diffIntoYText } from "../bridge";
 import type { CrdtEnrollment } from "../enrollment";
 import type { CrdtManager } from "../manager";
@@ -46,6 +47,11 @@ export class ViewerRefcount {
 	isBound(path: string): boolean {
 		return (this.viewers.get(path)?.size ?? 0) > 0;
 	}
+
+	/** Returns all paths that currently have at least one active viewer. */
+	boundPaths(): string[] {
+		return [...this.viewers.keys()];
+	}
 }
 
 export interface CrdtLiveViewsDeps {
@@ -84,20 +90,40 @@ export class CrdtLiveViews {
 		return this.refcount.isBound(path);
 	}
 
-	private async getYText(path: string) {
+	/** Map an EditorView to its note path for the editor binding. */
+	resolvePath(view: EditorView): string | null {
+		return this.viewPaths.get(view) ?? null;
+	}
+
+	/** Open (or get cached) the path's Y.Text from the CRDT manager. */
+	async getYText(path: string): Promise<Y.Text> {
 		return (await this.deps.manager.getDoc(path)).getText("content");
 	}
 
+	/** Refcount bind: a new editor pane opened this path. */
+	onBind(path: string, viewId: string): void {
+		this.refcount.bind(path, viewId);
+	}
+
+	/** Refcount release: an editor pane closed this path. */
+	onRelease(path: string, viewId: string): void {
+		this.refcount.release(path, viewId);
+	}
+
+	/** Seed editor content into Y.Text after async open (no-op if equal). */
+	async seedFromEditor(path: string, editorText: string): Promise<void> {
+		const ytext = await this.getYText(path);
+		diffIntoYText(ytext, editorText);
+	}
+
+	/** @deprecated Use the stable BindingDeps wired in main.ts onload instead. */
 	extension(): Extension {
 		const bindingDeps: BindingDeps = {
-			resolvePath: (view) => this.viewPaths.get(view) ?? null,
+			resolvePath: (view) => this.resolvePath(view),
 			getYText: (path) => this.getYText(path),
-			onBind: (path, viewId) => this.refcount.bind(path, viewId),
-			onRelease: (path, viewId) => this.refcount.release(path, viewId),
-			seedFromEditor: async (path, editorText) => {
-				const ytext = await this.getYText(path);
-				diffIntoYText(ytext, editorText); // no-op when already equal
-			},
+			onBind: (path, viewId) => this.onBind(path, viewId),
+			onRelease: (path, viewId) => this.onRelease(path, viewId),
+			seedFromEditor: (path, editorText) => this.seedFromEditor(path, editorText),
 		};
 		return crdtEditorBinding(bindingDeps);
 	}
@@ -119,7 +145,15 @@ export class CrdtLiveViews {
 	}
 
 	destroy(): void {
-		// Hooks detach via WeakMap GC on view teardown; nothing global to clear here
-		// beyond letting the CrdtManager own doc lifecycle.
+		// Flush any paths that still have live viewers (mid-session settings save /
+		// reconnect). Without this, content typed since the last onLastRelease flush
+		// stays only in Y.Text and is never written to disk before the manager tears
+		// down. The frontmatter hook and reading view hold only WeakMap-keyed
+		// per-view state, which is GC-safe on view teardown with no explicit clear.
+		for (const path of this.refcount.boundPaths()) {
+			void this.deps.manager
+				.getText(path)
+				.then((content) => this.deps.flushToDisk(path, content));
+		}
 	}
 }

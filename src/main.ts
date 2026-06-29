@@ -40,6 +40,7 @@ import {
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
+import { crdtEditorBinding } from "./crdt/live/editor-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
@@ -518,6 +519,35 @@ export default class EngramSyncPlugin extends Plugin {
 					new Notice("Engram sync: sync failed");
 				});
 		});
+
+		// CRDT editor extension — registered ONCE for the plugin's lifetime so that
+		// repeated setupNoteStream() calls (settings save / reconnect) never stack
+		// additional ViewPlugin instances or workspace event listeners. The deps
+		// object forwards to the current this.crdtLiveViews at call time and
+		// no-ops when it is null (CRDT disabled or mid-teardown).
+		this.registerEditorExtension([
+			crdtEditorBinding({
+				resolvePath: (v) => this.crdtLiveViews?.resolvePath(v) ?? null,
+				getYText: (p) => {
+					const lv = this.crdtLiveViews;
+					if (!lv) return Promise.reject(new Error("crdt disabled"));
+					return lv.getYText(p);
+				},
+				onBind: (p, id) => this.crdtLiveViews?.onBind(p, id),
+				onRelease: (p, id) => this.crdtLiveViews?.onRelease(p, id),
+				seedFromEditor: (p, t) =>
+					this.crdtLiveViews?.seedFromEditor(p, t) ?? Promise.resolve(),
+			}),
+		]);
+		this.registerEvent(
+			this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
+		);
 
 		// WebSocket live sync
 		this.setupNoteStream();
@@ -1088,18 +1118,9 @@ export default class EngramSyncPlugin extends Plugin {
 						enrollment: this.crdtEnrollment,
 						flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
 					});
-					this.registerEditorExtension([this.crdtLiveViews.extension()]);
-					this.registerEvent(
-						this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()),
-					);
-					this.registerEvent(
-						this.app.workspace.on("active-leaf-change", () =>
-							this.crdtLiveViews?.refresh(),
-						),
-					);
-					this.registerEvent(
-						this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
-					);
+					// Editor extension + workspace events are registered once in onload
+					// so repeated setupNoteStream() calls don't stack them. Trigger an
+					// initial refresh here so the new manager sees currently-open leaves.
 					this.crdtLiveViews.refresh();
 					channel.onCrdtMessage = (docId, b64) => {
 						const prefix = `${dbPrefix}/`;

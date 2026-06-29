@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch3 = function() {
+    var diff_match_patch4 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch3.Diff = function(op, text2) {
+    diff_match_patch4.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch3.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch3.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch3.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch3.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch3.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch3.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch3.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch3.Diff(
+          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch4.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch3.Diff(DIFF_DELETE, text1),
-          new diff_match_patch3.Diff(DIFF_INSERT, text2)
+          new diff_match_patch4.Diff(DIFF_DELETE, text1),
+          new diff_match_patch4.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch3.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch3.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch3.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch3.Diff(DIFF_DELETE, text1),
-        new diff_match_patch3.Diff(DIFF_INSERT, text2)
+        new diff_match_patch4.Diff(DIFF_DELETE, text1),
+        new diff_match_patch4.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch3.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch3.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch3.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch3.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,19 +224,19 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch3.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
       if (longtext.length < 4 || shorttext.length * 2 < longtext.length)
         return null;
-      var dmp3 = this;
+      var dmp4 = this;
       function diff_halfMatchI_(longtext2, shorttext2, i) {
         for (var seed = longtext2.substring(i, i + Math.floor(longtext2.length / 4)), j = -1, best_common = "", best_longtext_a, best_longtext_b, best_shorttext_a, best_shorttext_b; (j = shorttext2.indexOf(seed, j + 1)) != -1; ) {
-          var prefixLength = dmp3.diff_commonPrefix(
+          var prefixLength = dmp4.diff_commonPrefix(
             longtext2.substring(i),
             shorttext2.substring(j)
-          ), suffixLength = dmp3.diff_commonSuffix(
+          ), suffixLength = dmp4.diff_commonSuffix(
             longtext2.substring(0, i),
             shorttext2.substring(0, j)
           );
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch3.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch3.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch3.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch3.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch3.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch3.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch3.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch3.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch3.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch3.whitespaceRegex_ = /\s/;
-    diff_match_patch3.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch3.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch3.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch3.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch4.whitespaceRegex_ = /\s/;
+    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch3.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch3.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch3.prototype.diff_text1 = function(diffs) {
+    diff_match_patch4.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_text2 = function(diffs) {
+    diff_match_patch4.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch3.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch3.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,18 +454,18 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch3.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch3.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
-      var s = this.match_alphabet_(pattern), dmp3 = this;
+      var s = this.match_alphabet_(pattern), dmp4 = this;
       function match_bitapScore_(e, x) {
         var accuracy = e / pattern.length, proximity = Math.abs(loc - x);
-        return dmp3.Match_Distance ? accuracy + proximity / dmp3.Match_Distance : proximity ? 1 : accuracy;
+        return dmp4.Match_Distance ? accuracy + proximity / dmp4.Match_Distance : proximity ? 1 : accuracy;
       }
       var score_threshold = this.Match_Threshold, best_loc = text2.indexOf(pattern, loc);
       best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold), best_loc = text2.lastIndexOf(pattern, loc + pattern.length), best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold)));
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch3.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch3.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch3.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch3.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch3.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch3.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch3.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch3.prototype.patch_addPadding = function(patches) {
+    diff_match_patch4.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch3.prototype.patch_splitMax = function(patches) {
+    diff_match_patch4.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch3.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch4.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch3.prototype.patch_toText = function(patches) {
+    diff_match_patch4.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch3.prototype.patch_fromText = function(textline) {
+    diff_match_patch4.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch3.patch_obj();
+        var patch = new diff_match_patch4.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch3.patch_obj = function() {
+    diff_match_patch4.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch3.patch_obj.prototype.toString = function() {
+    diff_match_patch4.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch3;
-    module2.exports.diff_match_patch = diff_match_patch3;
+    module2.exports = diff_match_patch4;
+    module2.exports.diff_match_patch = diff_match_patch4;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -731,7 +731,7 @@ __export(main_exports, {
   default: () => EngramSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
@@ -13824,6 +13824,273 @@ var CrdtEnrollment = class {
   }
 };
 
+// src/crdt/live/editor-binding.ts
+var import_view = require("@codemirror/view");
+
+// src/crdt/live/annotations.ts
+var import_state = require("@codemirror/state"), ySyncAnnotation = import_state.Annotation.define();
+
+// src/crdt/live/cm-yjs-bridge.ts
+var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp3 = new import_diff_match_patch3.diff_match_patch();
+function yDeltaToChangeSpec(delta) {
+  let changes = [], pos = 0;
+  for (let d of delta)
+    d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : d.retain != null && (pos += d.retain);
+  return changes;
+}
+function applyCmChangesToYText(ytext, changes) {
+  let adj = 0;
+  for (let c of changes)
+    c.fromA !== c.toA && ytext.delete(c.fromA + adj, c.toA - c.fromA), c.insert.length > 0 && ytext.insert(c.fromA + adj, c.insert), adj += c.insert.length - (c.toA - c.fromA);
+}
+function textDiffToChangeSpec(before, after) {
+  if (before === after) return [];
+  let diffs = dmp3.diff_main(before, after);
+  dmp3.diff_cleanupSemantic(diffs);
+  let changes = [], cursor = 0;
+  for (let [op, data] of diffs)
+    op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
+  return changes;
+}
+
+// src/crdt/live/editor-binding.ts
+var viewSeq = 0, CrdtEditorBindingValue = class {
+  constructor(view, deps) {
+    this.viewId = `cm-${viewSeq++}`;
+    this.path = null;
+    this.ytext = null;
+    this.observer = null;
+    this.destroyed = !1;
+    if (this.view = view, this.deps = deps, this.path = deps.resolvePath(view), !this.path) return;
+    deps.onBind(this.path, this.viewId);
+    let path = this.path;
+    deps.getYText(path).then(async (ytext) => {
+      if (this.destroyed || (this.ytext = ytext, await deps.seedFromEditor(path, this.view.state.doc.toString()), this.destroyed)) return;
+      this.observer = (event, tr) => this.onYTextEvent(event, tr), ytext.observe(this.observer);
+      let after = ytext.toJSON(), before = this.view.state.doc.toString();
+      if (before !== after) {
+        if (this.destroyed) return;
+        this.view.dispatch({
+          changes: textDiffToChangeSpec(before, after),
+          annotations: [ySyncAnnotation.of(this.view)]
+        });
+      }
+    });
+  }
+  /** Y.Text changed. If the change did NOT originate from this binding, push it
+   *  into the editor as minimal changes, marked sync-origin to avoid a loop. */
+  onYTextEvent(event, tr) {
+    if (this.destroyed || tr.origin === this) return;
+    let changes = yDeltaToChangeSpec(event.delta);
+    changes.length !== 0 && this.view.dispatch({
+      changes,
+      annotations: [ySyncAnnotation.of(this.view)]
+    });
+  }
+  /** Editor changed. If it was a real local edit (not our own sync dispatch),
+   *  apply it to the Y.Text with origin=this so onYTextEvent ignores the echo
+   *  and CrdtManager.onUpdate ships it to the server. */
+  update(update) {
+    var _a;
+    if (!update.docChanged || !this.ytext || update.transactions.some(
+      (t) => t.annotation(ySyncAnnotation) === this.view
+    )) return;
+    let edits = [];
+    update.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      edits.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, `
+`) });
+    });
+    let ytext = this.ytext;
+    (_a = ytext.doc) == null || _a.transact(() => applyCmChangesToYText(ytext, edits), this);
+  }
+  destroy() {
+    this.destroyed = !0, this.ytext && this.observer && this.ytext.unobserve(this.observer), this.path && this.deps.onRelease(this.path, this.viewId), this.ytext = null, this.observer = null;
+  }
+};
+function crdtEditorBinding(deps) {
+  return import_view.ViewPlugin.define((view) => new CrdtEditorBindingValue(view, deps));
+}
+
+// src/crdt/live/live-views.ts
+var import_obsidian22 = require("obsidian");
+
+// src/crdt/live/obsidian-internals.ts
+function getEditorViewForLeaf(view) {
+  var _a;
+  let cm = (_a = view == null ? void 0 : view.editor) == null ? void 0 : _a.cm;
+  return cm && typeof cm.dispatch == "function" ? cm : null;
+}
+function getMarkdownFilePath(view) {
+  var _a;
+  let path = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
+  return typeof path == "string" ? path : null;
+}
+function setPreviewRendered(view, text2) {
+  var _a, _b;
+  let pm = view == null ? void 0 : view.previewMode;
+  if (!(pm != null && pm.renderer) || typeof pm.renderer.set != "function") return !1;
+  try {
+    return pm.renderer.set(text2), (_a = view == null ? void 0 : view.editor) != null && _a.cm || (_b = view.onInternalDataChange) == null || _b.call(view), !0;
+  } catch (e) {
+    return !1;
+  }
+}
+function patchFrontmatterSave(view, onSave) {
+  let v = view;
+  if (typeof v.saveFrontmatter != "function") return null;
+  let original = v.saveFrontmatter.bind(v);
+  return v.saveFrontmatter = (...args2) => {
+    let result = original(...args2);
+    try {
+      typeof v.text == "string" && onSave(v.text);
+    } catch (e) {
+    }
+    return result;
+  }, () => {
+    v.saveFrontmatter = original;
+  };
+}
+
+// src/crdt/live/frontmatter-hook.ts
+var CrdtFrontmatterHook = class {
+  constructor(deps) {
+    this.uninstallers = /* @__PURE__ */ new WeakMap();
+    this.deps = deps;
+  }
+  attach(view) {
+    let path = this.deps.getPath(view);
+    if (!path || typeof view != "object" || view === null) return;
+    let uninstall = patchFrontmatterSave(view, (newText) => {
+      this.deps.getYText(path).then((ytext) => {
+        diffIntoYText(ytext, newText);
+      });
+    });
+    if (!uninstall) {
+      rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
+      return;
+    }
+    this.uninstallers.set(view, uninstall);
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let uninstall = this.uninstallers.get(view);
+    uninstall && (uninstall(), this.uninstallers.delete(view));
+  }
+};
+
+// src/crdt/live/reading-view.ts
+var CrdtReadingView = class {
+  constructor(deps) {
+    this.observers = /* @__PURE__ */ new WeakMap();
+    this.deps = deps;
+  }
+  async attach(view, path) {
+    if (typeof view != "object" || view === null) return;
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), null));
+    if (!ytext) return;
+    let handler = () => {
+      this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
+    };
+    ytext.observe(handler), this.observers.set(view, () => ytext.unobserve(handler));
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let off = this.observers.get(view);
+    off && (off(), this.observers.delete(view));
+  }
+};
+
+// src/crdt/live/live-views.ts
+var ViewerRefcount = class {
+  constructor(onLastRelease) {
+    this.viewers = /* @__PURE__ */ new Map();
+    this.onLastRelease = onLastRelease;
+  }
+  bind(path, viewId) {
+    let set = this.viewers.get(path);
+    set || (set = /* @__PURE__ */ new Set(), this.viewers.set(path, set)), set.add(viewId);
+  }
+  release(path, viewId) {
+    let set = this.viewers.get(path);
+    !set || !set.has(viewId) || (set.delete(viewId), set.size === 0 && (this.viewers.delete(path), this.onLastRelease(path)));
+  }
+  isBound(path) {
+    var _a, _b;
+    return ((_b = (_a = this.viewers.get(path)) == null ? void 0 : _a.size) != null ? _b : 0) > 0;
+  }
+  /** Returns all paths that currently have at least one active viewer. */
+  boundPaths() {
+    return [...this.viewers.keys()];
+  }
+}, CrdtLiveViews = class {
+  constructor(deps) {
+    /** Maps an EditorView back to its path for the binding. */
+    this.viewPaths = /* @__PURE__ */ new WeakMap();
+    this.deps = deps, this.refcount = new ViewerRefcount((path) => {
+      this.deps.manager.getText(path).then((t) => this.deps.flushToDisk(path, t));
+    }), this.frontmatter = new CrdtFrontmatterHook({
+      getPath: (v) => getMarkdownFilePath(v),
+      getYText: (path) => this.getYText(path)
+    }), this.reading = new CrdtReadingView({
+      getYText: (path) => this.getYText(path),
+      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
+    });
+  }
+  isBound(path) {
+    return this.refcount.isBound(path);
+  }
+  /** Map an EditorView to its note path for the editor binding. */
+  resolvePath(view) {
+    var _a;
+    return (_a = this.viewPaths.get(view)) != null ? _a : null;
+  }
+  /** Open (or get cached) the path's Y.Text from the CRDT manager. */
+  async getYText(path) {
+    return (await this.deps.manager.getDoc(path)).getText("content");
+  }
+  /** Refcount bind: a new editor pane opened this path. */
+  onBind(path, viewId) {
+    this.refcount.bind(path, viewId);
+  }
+  /** Refcount release: an editor pane closed this path. */
+  onRelease(path, viewId) {
+    this.refcount.release(path, viewId);
+  }
+  /** Seed editor content into Y.Text after async open (no-op if equal). */
+  async seedFromEditor(path, editorText) {
+    let ytext = await this.getYText(path);
+    diffIntoYText(ytext, editorText);
+  }
+  /** @deprecated Use the stable BindingDeps wired in main.ts onload instead. */
+  extension() {
+    return crdtEditorBinding({
+      resolvePath: (view) => this.resolvePath(view),
+      getYText: (path) => this.getYText(path),
+      onBind: (path, viewId) => this.onBind(path, viewId),
+      onRelease: (path, viewId) => this.onRelease(path, viewId),
+      seedFromEditor: (path, editorText) => this.seedFromEditor(path, editorText)
+    });
+  }
+  /** Re-evaluate open leaves: register EditorView->path, enroll, attach hooks. */
+  refresh() {
+    let leaves = this.deps.app.workspace.getLeavesOfType("markdown");
+    for (let leaf of leaves) {
+      let view = leaf.view;
+      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
+      let path = getMarkdownFilePath(view);
+      if (!path || !path.endsWith(".md")) continue;
+      let cm = getEditorViewForLeaf(view);
+      cm && this.viewPaths.set(cm, path), this.deps.enrollment.enroll(path), this.frontmatter.attach(view), this.reading.attach(view, path);
+    }
+  }
+  destroy() {
+    for (let path of this.refcount.boundPaths())
+      this.deps.manager.getText(path).then(
+        (content) => this.deps.flushToDisk(path, content)
+      );
+  }
+};
+
 // src/explicit-folders.ts
 var ExplicitFolders = class {
   constructor(adapter, path) {
@@ -13903,14 +14170,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian22 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian23 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian22.Modal {
+}, SyncLogModal = class extends import_obsidian23.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -13947,10 +14214,10 @@ var import_obsidian22 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian23.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian24.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -13990,6 +14257,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     this.crdtManager = null;
     this.crdtChannel = null;
     this.crdtEnrollment = null;
+    this.crdtLiveViews = null;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -14014,10 +14282,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian23.Platform.isMobile ? "mobile" : "desktop"
+      import_obsidian24.Platform.isMobile ? "mobile" : "desktop"
     ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian23.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian24.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
@@ -14042,11 +14310,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian23.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
+        file instanceof import_obsidian24.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -14059,44 +14327,44 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: syncing...");
+        new import_obsidian24.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian23.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian24.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: checking...");
+        new import_obsidian24.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian23.Notice(
+          new import_obsidian24.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian23.Notice("Engram sync: everything in sync");
+          new import_obsidian24.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian23.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian24.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: pulling all from server...");
+        new import_obsidian24.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian23.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian24.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -14155,8 +14423,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian23.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian24.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -14169,14 +14437,52 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian23.Notice("Engram sync: sync failed");
+          ), new import_obsidian24.Notice("Engram sync: sync failed");
         });
       }
-    }), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
+    }), this.registerEditorExtension([
+      crdtEditorBinding({
+        resolvePath: (v) => {
+          var _a2, _b;
+          return (_b = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.resolvePath(v)) != null ? _b : null;
+        },
+        getYText: (p) => {
+          let lv = this.crdtLiveViews;
+          return lv ? lv.getYText(p) : Promise.reject(new Error("crdt disabled"));
+        },
+        onBind: (p, id2) => {
+          var _a2;
+          return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.onBind(p, id2);
+        },
+        onRelease: (p, id2) => {
+          var _a2;
+          return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.onRelease(p, id2);
+        },
+        seedFromEditor: (p, t) => {
+          var _a2, _b;
+          return (_b = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.seedFromEditor(p, t)) != null ? _b : Promise.resolve();
+        }
+      })
+    ]), this.registerEvent(
+      this.app.workspace.on("file-open", () => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+      })
+    ), this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+      })
+    ), this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+      })
+    ), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
       var _a2, _b;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b = this.explicitFolders) == null ? void 0 : _b.load());
       let registered = !1, gateOpen = !1;
@@ -14209,7 +14515,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
-            (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+            (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -14225,8 +14531,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     });
   }
   onunload() {
-    var _a, _b, _c, _d, _e;
-    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtManager) == null || _e.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    var _a, _b, _c, _d, _e, _f;
+    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -14242,7 +14548,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -14304,7 +14610,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian23.requestUrl)({
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian24.requestUrl)({
           url: `${apiUrl}/auth/token/refresh`,
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -14339,8 +14645,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
-    var _a, _b, _c;
-    (_a = this.crdtManager) == null || _a.destroy(), this.crdtManager = null, this.crdtChannel = null, (_b = this.crdtEnrollment) == null || _b.resetAll(), this.crdtEnrollment = null, (_c = this.noteStream) == null || _c.disconnect(), this.noteStream = null, this.channelEpoch++;
+    var _a, _b, _c, _d;
+    (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -14381,7 +14687,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         ));
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian23.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian24.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
@@ -14393,7 +14699,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             var _a2;
             return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
           },
-          onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          onFlushToDisk: (path, content) => {
+            var _a2;
+            return (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content);
+          },
           onPersistError: (path, err) => {
             rlog().warn(
               "crdt",
@@ -14419,7 +14728,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             var _a2;
             await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(path));
           }
-        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), channel.onCrdtMessage = (docId, b64) => {
+        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+          app: this.app,
+          manager: this.crdtManager,
+          enrollment: this.crdtEnrollment,
+          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
+        }), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
@@ -14461,27 +14775,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
-        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -14578,7 +14892,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian24.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }
     });
   }
@@ -14614,7 +14928,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.pull();
-          pulled > 0 && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic pull failed", e);
         }
