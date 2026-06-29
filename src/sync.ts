@@ -3919,7 +3919,10 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+				await this.queue.dequeue(
+					entry.path,
+					entry.vaultId ?? this.settings.vaultId ?? undefined,
+				);
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
@@ -3946,7 +3949,10 @@ export class SyncEngine {
 						this.failuresThisBatch += 1;
 						this.firstFailureMessageThisBatch ??= classified.message;
 					}
-					await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+					await this.queue.dequeue(
+						entry.path,
+						entry.vaultId ?? this.settings.vaultId ?? undefined,
+					);
 					continue;
 				}
 				// Non-terminal: stop this flush pass. Only flip offline if it's a

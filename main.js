@@ -7055,7 +7055,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), resp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, resp.note.version));
           }
         }
-        await this.queue.dequeue(entry.path, (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0), this.issues.clear(entry.path), flushed++;
+        await this.queue.dequeue(
+          entry.path,
+          (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0
+        ), this.issues.clear(entry.path), flushed++;
       } catch (e) {
         let classified = categorizeError(e);
         if (!shouldRetryAfterFailure(classified, 1)) {
@@ -7070,7 +7073,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             firstFailedAt: now,
             lastFailedAt: now,
             attempts: 1
-          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(entry.path, (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0);
+          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
+            entry.path,
+            (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0
+          );
           continue;
         }
         this.maybeGoOffline(e);
