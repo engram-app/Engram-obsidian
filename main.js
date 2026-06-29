@@ -13958,12 +13958,15 @@ var CrdtFrontmatterHook = class {
     this.deps = deps;
   }
   attach(view) {
+    if (typeof view != "object" || view === null || this.uninstallers.has(view)) return;
     let path = this.deps.getPath(view);
-    if (!path || typeof view != "object" || view === null) return;
+    if (!path) return;
     let uninstall = patchFrontmatterSave(view, (newText) => {
       this.deps.getYText(path).then((ytext) => {
         diffIntoYText(ytext, newText);
-      });
+      }).catch(
+        (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
+      );
     });
     if (!uninstall) {
       rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
@@ -13985,8 +13988,10 @@ var CrdtReadingView = class {
     this.deps = deps;
   }
   async attach(view, path) {
-    if (typeof view != "object" || view === null) return;
-    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), null));
+    if (typeof view != "object" || view === null || this.observers.has(view)) return;
+    this.observers.set(view, () => {
+    });
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), null));
     if (!ytext) return;
     let handler = () => {
       this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
@@ -14061,16 +14066,6 @@ var ViewerRefcount = class {
     let ytext = await this.getYText(path);
     diffIntoYText(ytext, editorText);
   }
-  /** @deprecated Use the stable BindingDeps wired in main.ts onload instead. */
-  extension() {
-    return crdtEditorBinding({
-      resolvePath: (view) => this.resolvePath(view),
-      getYText: (path) => this.getYText(path),
-      onBind: (path, viewId) => this.onBind(path, viewId),
-      onRelease: (path, viewId) => this.onRelease(path, viewId),
-      seedFromEditor: (path, editorText) => this.seedFromEditor(path, editorText)
-    });
-  }
   /** Re-evaluate open leaves: register EditorView->path, enroll, attach hooks. */
   refresh() {
     let leaves = this.deps.app.workspace.getLeavesOfType("markdown");
@@ -14085,9 +14080,7 @@ var ViewerRefcount = class {
   }
   destroy() {
     for (let path of this.refcount.boundPaths())
-      this.deps.manager.getText(path).then(
-        (content) => this.deps.flushToDisk(path, content)
-      );
+      this.deps.manager.getText(path).then((content) => this.deps.flushToDisk(path, content));
   }
 };
 

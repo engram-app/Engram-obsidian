@@ -20,7 +20,7 @@ export class CrdtFrontmatterHook {
 
 	attach(view: unknown): void {
 		if (typeof view !== "object" || view === null) return;
-		if (this.uninstallers.has(view as object)) return; // idempotent: already attached
+		if (this.uninstallers.has(view)) return; // idempotent: already attached
 		const path = this.deps.getPath(view);
 		if (!path) return;
 		const uninstall = patchFrontmatterSave(view, (newText) => {
@@ -41,15 +41,15 @@ export class CrdtFrontmatterHook {
 			rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
 			return;
 		}
-		this.uninstallers.set(view as object, uninstall);
+		this.uninstallers.set(view, uninstall);
 	}
 
 	detach(view: unknown): void {
 		if (typeof view !== "object" || view === null) return;
-		const uninstall = this.uninstallers.get(view as object);
+		const uninstall = this.uninstallers.get(view);
 		if (uninstall) {
 			uninstall();
-			this.uninstallers.delete(view as object);
+			this.uninstallers.delete(view);
 		}
 	}
 }

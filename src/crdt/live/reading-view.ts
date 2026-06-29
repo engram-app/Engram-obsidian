@@ -24,11 +24,11 @@ export class CrdtReadingView {
 		// slot synchronously before awaiting so a second call that arrives before
 		// getYText resolves sees the placeholder and returns early. If getYText
 		// rejects, remove the placeholder so a later refresh can retry.
-		if (this.observers.has(view as object)) return;
-		this.observers.set(view as object, () => {}); // placeholder, replaced below
+		if (this.observers.has(view)) return;
+		this.observers.set(view, () => {}); // placeholder, replaced below
 		const ytext = await this.deps.getYText(path).catch((err: unknown) => {
 			rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`);
-			this.observers.delete(view as object); // allow retry on next refresh
+			this.observers.delete(view); // allow retry on next refresh
 			return null;
 		});
 		if (!ytext) return;
@@ -37,7 +37,7 @@ export class CrdtReadingView {
 			setPreviewRendered(view, ytext.toJSON());
 		};
 		ytext.observe(handler);
-		this.observers.set(view as object, () => ytext.unobserve(handler)); // replace placeholder
+		this.observers.set(view, () => ytext.unobserve(handler)); // replace placeholder
 	}
 
 	detach(view: unknown): void {
