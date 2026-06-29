@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import * as Y from "yjs";
-import { yDeltaToChangeSpec, applyCmChangesToYText } from "../src/crdt/live/cm-yjs-bridge";
+import { yDeltaToChangeSpec, applyCmChangesToYText, textDiffToChangeSpec } from "../src/crdt/live/cm-yjs-bridge";
 
 describe("yDeltaToChangeSpec", () => {
   it("maps insert at offset 0", () => {
@@ -36,5 +36,40 @@ describe("applyCmChangesToYText", () => {
       { fromA: 5, toA: 5, insert: "!" },
     ]);
     expect(t.toJSON()).toBe("hi!");
+  });
+});
+
+/** Inline helper: apply a CmChangeSpec[] against a string, returning the result. */
+function applySpec(before: string, specs: { from: number; to: number; insert: string }[]): string {
+  let result = before;
+  let adj = 0;
+  for (const s of specs) {
+    result = result.slice(0, s.from + adj) + s.insert + result.slice(s.to + adj);
+    adj += s.insert.length - (s.to - s.from);
+  }
+  return result;
+}
+
+describe("textDiffToChangeSpec", () => {
+  it("returns [] when before === after", () => {
+    expect(textDiffToChangeSpec("hello", "hello")).toEqual([]);
+  });
+
+  it("pure insert at end", () => {
+    const specs = textDiffToChangeSpec("hello", "hello world");
+    expect(specs.length).toBeGreaterThan(0);
+    expect(applySpec("hello", specs)).toBe("hello world");
+  });
+
+  it("pure delete from middle", () => {
+    const specs = textDiffToChangeSpec("hello world", "hello");
+    expect(specs.length).toBeGreaterThan(0);
+    expect(applySpec("hello world", specs)).toBe("hello");
+  });
+
+  it("replace in the middle", () => {
+    const specs = textDiffToChangeSpec("hello world", "hello there");
+    expect(specs.length).toBeGreaterThan(0);
+    expect(applySpec("hello world", specs)).toBe("hello there");
   });
 });

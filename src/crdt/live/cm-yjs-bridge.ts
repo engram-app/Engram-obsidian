@@ -1,6 +1,9 @@
 // CM6 <-> Y.Text offset transforms. Adapted from Relay's LiveNodePlugin.ts
 // (No-Instructions/Relay; MIT, y-codemirror.next by Kevin Jahns).
+import { diff_match_patch } from "diff-match-patch";
 import type * as Y from "yjs";
+
+const dmp = new diff_match_patch();
 
 export interface YDeltaEntry {
 	insert?: string;
@@ -51,4 +54,28 @@ export function applyCmChangesToYText(
 		}
 		adj += c.insert.length - (c.toA - c.fromA);
 	}
+}
+
+/** Compute minimal CM6 ChangeSpec entries to transform `before` into `after`.
+ *  Uses diff-match-patch (UTF-16 offsets, matches Y.Text's native model).
+ *  Returns [] when before === after. Walk: EQUAL advances cursor; INSERT emits
+ *  {cursor,cursor,text} without advancing cursor into `before`; DELETE emits
+ *  {cursor,cursor+len,""} and advances cursor by len. */
+export function textDiffToChangeSpec(before: string, after: string): CmChangeSpec[] {
+	if (before === after) return [];
+	const diffs = dmp.diff_main(before, after);
+	dmp.diff_cleanupSemantic(diffs);
+	const changes: CmChangeSpec[] = [];
+	let cursor = 0;
+	for (const [op, data] of diffs) {
+		if (op === 0) {
+			cursor += data.length; // EQUAL — advance cursor through `before`
+		} else if (op === 1) {
+			changes.push({ from: cursor, to: cursor, insert: data }); // INSERT — no cursor advance
+		} else {
+			changes.push({ from: cursor, to: cursor + data.length, insert: "" }); // DELETE
+			cursor += data.length;
+		}
+	}
+	return changes;
 }

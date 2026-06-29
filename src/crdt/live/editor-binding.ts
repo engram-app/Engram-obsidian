@@ -5,7 +5,7 @@ import type { Extension } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import type * as Y from "yjs";
 import { ySyncAnnotation } from "./annotations";
-import { applyCmChangesToYText, yDeltaToChangeSpec } from "./cm-yjs-bridge";
+import { applyCmChangesToYText, textDiffToChangeSpec, yDeltaToChangeSpec } from "./cm-yjs-bridge";
 
 export interface BindingDeps {
 	/** Map this EditorView to its note path, or null if not a CRDT-managed md note. */
@@ -45,12 +45,21 @@ class CrdtEditorBindingValue implements PluginValue {
 			// Seed any keystrokes typed during the async open (no-op if identical).
 			await deps.seedFromEditor(path, this.view.state.doc.toString());
 			if (this.destroyed) return;
+			// Attach the observer before the catch-up so no remote update is missed.
 			this.observer = (event, tr) => this.onYTextEvent(event, tr);
 			ytext.observe(this.observer);
-			// Initial paint: if the doc already has content differing from the editor
-			// (e.g. opened a synced note), reflect it. Reuse the delta path by
-			// diffing current editor against ytext is unnecessary here because
-			// flushFromCrdt seeded disk before open; the editor already shows it.
+			// Catch-up: a remote Y.Text update may have arrived during the seed await.
+			// Compute the minimal diff and push it into the editor, marked sync-origin
+			// to prevent a loop. Guard in case destroy raced with the await resolution.
+			const after = ytext.toJSON();
+			const before = this.view.state.doc.toString();
+			if (before !== after) {
+				if (this.destroyed) return;
+				this.view.dispatch({
+					changes: textDiffToChangeSpec(before, after),
+					annotations: [ySyncAnnotation.of(this.view)],
+				});
+			}
 		});
 	}
 
@@ -80,6 +89,7 @@ class CrdtEditorBindingValue implements PluginValue {
 			edits.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, "\n") });
 		});
 		const ytext = this.ytext;
+		// Optional chain is intentional: guards the destroy race when Y.Doc is torn down.
 		ytext.doc?.transact(() => applyCmChangesToYText(ytext, edits), this);
 	}
 
