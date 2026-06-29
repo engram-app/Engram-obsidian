@@ -12,6 +12,7 @@ import {
 	Plugin,
 	TFile,
 	TFolder,
+	normalizePath,
 	requestUrl,
 } from "obsidian";
 import { EngramApi } from "./api";
@@ -55,6 +56,7 @@ import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
+import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
@@ -273,7 +275,7 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 
 		// Restore last sync timestamp, offline queue, and sync state
-		const saved = (await this.loadData()) as Partial<PluginData> | null;
+		const saved = await this.loadPluginData();
 		if (saved?.lastSync) {
 			this.syncEngine.setLastSync(saved.lastSync);
 		}
@@ -694,7 +696,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const data = (await this.loadData()) as Partial<PluginData> | null;
+		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
@@ -722,7 +724,11 @@ export default class EngramSyncPlugin extends Plugin {
 			dirty = true;
 		}
 		if (dirty) {
-			await this.saveData({ ...data, settings: this.settings, deviceId: this.deviceId });
+			await this.writePluginData({
+				...data,
+				settings: this.settings,
+				deviceId: this.deviceId,
+			});
 		}
 		// NOTE: this.api is replaced with a configured instance in onload() right
 		// after loadSettings() returns; the device id is wired there via
@@ -816,8 +822,77 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/** True once we have surfaced a data.json recovery/corruption Notice this
+	 *  session, so the two load paths (loadSettings + onload restore) don't
+	 *  double-toast the user. */
+	private dataRecoveryNotified = false;
+
+	/** Absolute (vault-relative) path of the plugin's data.json. Matches the
+	 *  path Obsidian's own loadData()/saveData() use. */
+	private pluginDataPath(): string {
+		return normalizePath(`${this.manifest.dir}/data.json`);
+	}
+
+	/** Resilient replacement for this.loadData(). Reads data.json, falling back
+	 *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
+	 *  outage scenario: a non-atomic saveData() interrupted mid-write leaves a
+	 *  0-byte data.json, which the stock loadData() JSON.parse turns into an
+	 *  onload-aborting throw). On a successful recovery the primary is healed in
+	 *  place; on unrecoverable corruption the user is warned and we fall back to
+	 *  defaults rather than crashing the whole plugin. */
+	private async loadPluginData(): Promise<Partial<PluginData> | null> {
+		const path = this.pluginDataPath();
+		const { data, source } = await resilientReadJson<Partial<PluginData>>(
+			this.app.vault.adapter,
+			path,
+		);
+		if (source === "backup" || source === "tmp") {
+			rlog().error(
+				"lifecycle",
+				`data.json was unreadable; recovered settings from ${source} sidecar`,
+			);
+			// Heal the primary so the next load is clean and the recovered state
+			// is the canonical copy again.
+			if (data !== null) {
+				try {
+					await atomicWriteJson(this.app.vault.adapter, path, data);
+				} catch (e) {
+					rlog().error(
+						"lifecycle",
+						`Failed to heal data.json after recovery: ${errMsg(e)}`,
+					);
+				}
+			}
+			if (!this.dataRecoveryNotified) {
+				this.dataRecoveryNotified = true;
+				new Notice(
+					"Engram: recovered plugin settings from a backup after a corrupted save.",
+				);
+			}
+		} else if (source === "corrupt") {
+			rlog().error(
+				"lifecycle",
+				"data.json and its backups were all unreadable; falling back to defaults",
+			);
+			if (!this.dataRecoveryNotified) {
+				this.dataRecoveryNotified = true;
+				new Notice(
+					"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+				);
+			}
+		}
+		return data;
+	}
+
+	/** Resilient replacement for this.saveData(). Writes data.json atomically
+	 *  (stage .tmp, demote current to .bak, rename .tmp over primary) so an
+	 *  interrupted write can never leave a 0-byte data.json. */
+	private async writePluginData(data: Partial<PluginData>): Promise<void> {
+		await atomicWriteJson(this.app.vault.adapter, this.pluginDataPath(), data);
+	}
+
 	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
-		await this.saveData({
+		await this.writePluginData({
 			settings: this.settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
