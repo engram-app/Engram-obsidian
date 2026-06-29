@@ -64,4 +64,42 @@ describe("CrdtFrontmatterHook", () => {
 		// many times getYText was invoked via the onSave callback.
 		expect(onSaveCount).toBe(1);
 	});
+
+	it("detachAll() uninstalls all attached views", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "---\ntags: []\n---\nbody");
+		const hook = new CrdtFrontmatterHook({
+			getPath: (v: any) => v.file.path,
+			getYText: async () => ytext,
+		});
+
+		// Attach two distinct views.
+		const view1 = fakeView("---\ntags: []\n---\nbody");
+		const view2 = fakeView("---\ntags: []\n---\nbody");
+		hook.attach(view1);
+		hook.attach(view2);
+
+		// Verify both are attached by patching frontmatter on each; both should update Y.Text.
+		view1.saveFrontmatter("---\ntags: [a]\n---\nbody");
+		await Promise.resolve();
+		expect(ytext.toJSON()).toBe("---\ntags: [a]\n---\nbody");
+
+		view2.saveFrontmatter("---\ntags: [b]\n---\nbody");
+		await Promise.resolve();
+		expect(ytext.toJSON()).toBe("---\ntags: [b]\n---\nbody");
+
+		// Now detachAll and verify neither view patches the Y.Text anymore.
+		hook.detachAll();
+
+		view1.saveFrontmatter("---\ntags: [view1-after]\n---\nbody");
+		await Promise.resolve();
+		// Y.Text should not have changed because view1's patch was uninstalled.
+		expect(ytext.toJSON()).toBe("---\ntags: [b]\n---\nbody");
+
+		view2.saveFrontmatter("---\ntags: [view2-after]\n---\nbody");
+		await Promise.resolve();
+		// Y.Text should still not have changed because view2's patch was uninstalled.
+		expect(ytext.toJSON()).toBe("---\ntags: [b]\n---\nbody");
+	});
 });

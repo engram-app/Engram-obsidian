@@ -107,4 +107,42 @@ describe("CrdtReadingView", () => {
 		await rv.attach(view, "n.md");
 		expect(observeCount).toBe(2); // re-attach re-registers
 	});
+
+	it("detachAll() unobserves all attached views", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		let observeCount = 0;
+		let unobserveCount = 0;
+		const realObserve = ytext.observe.bind(ytext);
+		const realUnobserve = ytext.unobserve.bind(ytext);
+		ytext.observe = (fn: Parameters<typeof ytext.observe>[0]) => {
+			observeCount++;
+			realObserve(fn);
+		};
+		ytext.unobserve = (fn: Parameters<typeof ytext.unobserve>[0]) => {
+			unobserveCount++;
+			realUnobserve(fn);
+		};
+
+		// Attach two distinct views.
+		const view1 = fakeView();
+		const view2 = fakeView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => true,
+		});
+
+		await rv.attach(view1, "n1.md");
+		await rv.attach(view2, "n2.md");
+		expect(observeCount).toBe(2); // two observers registered
+
+		// detachAll should unobserve both.
+		rv.detachAll();
+		expect(unobserveCount).toBe(2);
+
+		// Verify that mutations no longer trigger the handlers by attaching new views
+		// (which would register observers again if the old ones were working).
+		await rv.attach(view1, "n1.md");
+		expect(observeCount).toBe(3); // fresh observer, not the old one
+	});
 });
