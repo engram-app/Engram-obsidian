@@ -14284,8 +14284,89 @@ var CrdtEnrollment = class {
   }
 };
 
+// src/crdt/live/live-views.ts
+var import_obsidian22 = require("obsidian");
+
+// node_modules/y-protocols/awareness.js
+var outdatedTimeout = 3e4, Awareness = class extends Observable {
+  /**
+   * @param {Y.Doc} doc
+   */
+  constructor(doc2) {
+    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
+    setInterval(() => {
+      let now = getUnixTime();
+      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
+      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
+      let remove = [];
+      this.meta.forEach((meta, clientid) => {
+        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
+      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
+    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
+      this.destroy();
+    }), this.setLocalState({});
+  }
+  destroy() {
+    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
+  }
+  /**
+   * @return {Object<string,any>|null}
+   */
+  getLocalState() {
+    return this.states.get(this.clientID) || null;
+  }
+  /**
+   * @param {Object<string,any>|null} state
+   */
+  setLocalState(state) {
+    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
+    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
+      clock,
+      lastUpdated: getUnixTime()
+    });
+    let added = [], updated = [], filteredUpdated = [], removed = [];
+    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
+  }
+  /**
+   * @param {string} field
+   * @param {any} value
+   */
+  setLocalStateField(field, value) {
+    let state = this.getLocalState();
+    state !== null && this.setLocalState({
+      ...state,
+      [field]: value
+    });
+  }
+  /**
+   * @return {Map<number,Object<string,any>>}
+   */
+  getStates() {
+    return this.states;
+  }
+}, removeAwarenessStates = (awareness, clients, origin) => {
+  let removed = [];
+  for (let i = 0; i < clients.length; i++) {
+    let clientID = clients[i];
+    if (awareness.states.has(clientID)) {
+      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
+        let curMeta = (
+          /** @type {MetaClientState} */
+          awareness.meta.get(clientID)
+        );
+        awareness.meta.set(clientID, {
+          clock: curMeta.clock + 1,
+          lastUpdated: getUnixTime()
+        });
+      }
+      removed.push(clientID);
+    }
+  }
+  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
+};
+
 // src/crdt/live/ycollab-binding.ts
-var import_state = require("@codemirror/state");
+var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
 
 // node_modules/y-codemirror.next/src/index.js
 var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
@@ -14695,6 +14776,11 @@ var YUndoManagerConfig = class {
     this._undoManager.off("stack-item-added", this._onStackItemAdded), this._undoManager.off("stack-item-popped", this._onStackItemPopped), this._undoManager.removeTrackedOrigin(this.syncConf);
   }
 }, yUndoManager = cmView3.ViewPlugin.fromClass(YUndoManagerPluginValue), undo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).undo() || !0, redo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).redo() || !0;
+var yUndoManagerKeymap = [
+  { key: "Mod-z", run: undo, preventDefault: !0 },
+  { key: "Mod-y", mac: "Mod-Shift-z", run: redo, preventDefault: !0 },
+  { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
+];
 
 // node_modules/y-codemirror.next/src/index.js
 var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
@@ -14733,96 +14819,47 @@ var crdtCompartment = new import_state.Compartment();
 function ycollabExtension() {
   return crdtCompartment.of([]);
 }
+function makeSyncAnnotationCapture(syncConfig, onCapture) {
+  let captured = !1;
+  return import_view.EditorView.updateListener.of((update) => {
+    if (!captured)
+      for (let tr of update.transactions) {
+        let rawAnnotations = tr.annotations;
+        if (rawAnnotations) {
+          for (let ann of rawAnnotations)
+            if (ann.value === syncConfig) {
+              captured = !0, onCapture(ann.type);
+              return;
+            }
+        }
+      }
+  });
+}
 function bindSpec(ytext, awareness) {
-  return yCollab(ytext, awareness);
+  let syncConfig = new YSyncConfig(ytext, awareness), undoManager = new UndoManager(ytext, {
+    trackedOrigins: /* @__PURE__ */ new Set([syncConfig])
+  }), capturedAnnotationType = null, captureExt = makeSyncAnnotationCapture(syncConfig, (at) => {
+    capturedAnnotationType = at;
+  }), ycollabExt = yCollab(ytext, awareness, { undoManager });
+  return {
+    extension: [
+      captureExt,
+      ycollabExt,
+      // Prec.highest so this keymap beats Obsidian's built-in history Mod-z.
+      // yUndoManagerKeymap's handlers call preventDefault, so the native history
+      // does not also fire.
+      import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap))
+    ],
+    syncConfig,
+    getSyncAnnotationType: () => capturedAnnotationType
+  };
 }
 function reconcileEditorToYText(currentDoc, ytext) {
   return textDiffToChangeSpec(currentDoc, ytext.toJSON());
 }
 
-// src/crdt/live/live-views.ts
-var import_obsidian22 = require("obsidian");
-
-// node_modules/y-protocols/awareness.js
-var outdatedTimeout = 3e4, Awareness = class extends Observable {
-  /**
-   * @param {Y.Doc} doc
-   */
-  constructor(doc2) {
-    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
-    setInterval(() => {
-      let now = getUnixTime();
-      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
-      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
-      let remove = [];
-      this.meta.forEach((meta, clientid) => {
-        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
-      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
-    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
-      this.destroy();
-    }), this.setLocalState({});
-  }
-  destroy() {
-    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
-  }
-  /**
-   * @return {Object<string,any>|null}
-   */
-  getLocalState() {
-    return this.states.get(this.clientID) || null;
-  }
-  /**
-   * @param {Object<string,any>|null} state
-   */
-  setLocalState(state) {
-    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
-    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
-      clock,
-      lastUpdated: getUnixTime()
-    });
-    let added = [], updated = [], filteredUpdated = [], removed = [];
-    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
-  }
-  /**
-   * @param {string} field
-   * @param {any} value
-   */
-  setLocalStateField(field, value) {
-    let state = this.getLocalState();
-    state !== null && this.setLocalState({
-      ...state,
-      [field]: value
-    });
-  }
-  /**
-   * @return {Map<number,Object<string,any>>}
-   */
-  getStates() {
-    return this.states;
-  }
-}, removeAwarenessStates = (awareness, clients, origin) => {
-  let removed = [];
-  for (let i = 0; i < clients.length; i++) {
-    let clientID = clients[i];
-    if (awareness.states.has(clientID)) {
-      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
-        let curMeta = (
-          /** @type {MetaClientState} */
-          awareness.meta.get(clientID)
-        );
-        awareness.meta.set(clientID, {
-          clock: curMeta.clock + 1,
-          lastUpdated: getUnixTime()
-        });
-      }
-      removed.push(clientID);
-    }
-  }
-  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
-};
-
 // src/crdt/live/editor-controller.ts
-var seq = 0, EditorController = class {
+var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
   constructor(deps) {
     this.viewId = `cm-${seq++}`;
     this.path = null;
@@ -14830,6 +14867,9 @@ var seq = 0, EditorController = class {
      *  getYText. Once released, the controller is permanently inert: refresh()
      *  drops it from the map and mints a fresh one on next refresh. */
     this.released = !1;
+    this.bindResult = null;
+    this.boundYtext = null;
+    this.driftTimer = null;
     this.deps = deps;
   }
   currentPath() {
@@ -14841,14 +14881,34 @@ var seq = 0, EditorController = class {
     if (this.released) return;
     let oldPath = this.path;
     oldPath && this.deps.onRelease(oldPath, this.viewId);
-    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext);
+    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
-      effects: crdtCompartment.reconfigure(bindSpec(ytext, this.deps.awareness()))
-    }), this.path = path, this.deps.onBind(path, this.viewId);
+      effects: crdtCompartment.reconfigure(result.extension)
+    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
   }
   release(view) {
-    this.released = !0, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.released = !0, this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+  }
+  clearDriftTimer() {
+    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
+  }
+  scheduleDriftCheck(view) {
+    this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
+      this.driftTimer = null, this.runDriftCheck(view);
+    }, DRIFT_CHECK_INTERVAL_MS);
+  }
+  runDriftCheck(view) {
+    if (this.released || this.boundYtext === null || this.bindResult === null) return;
+    let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
+    if (changes.length > 0) {
+      let annotationType = this.bindResult.getSyncAnnotationType(), syncConfig = this.bindResult.syncConfig;
+      annotationType !== null && view.dispatch({
+        changes,
+        annotations: [annotationType.of(syncConfig)]
+      });
+    }
+    this.scheduleDriftCheck(view);
   }
 };
 
