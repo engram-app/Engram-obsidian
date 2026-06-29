@@ -14737,7 +14737,7 @@ function bindSpec(ytext, awareness) {
   return yCollab(ytext, awareness);
 }
 function reconcileEditorToYText(currentDoc, ytext) {
-  return textDiffToChangeSpec(currentDoc, ytext.toString());
+  return textDiffToChangeSpec(currentDoc, ytext.toJSON());
 }
 
 // src/crdt/live/live-views.ts
@@ -14827,7 +14827,7 @@ var seq = 0, EditorController = class {
     this.viewId = `cm-${seq++}`;
     this.path = null;
     /** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
-     *  getYText. Once released, the controller is permanently inert — refresh()
+     *  getYText. Once released, the controller is permanently inert: refresh()
      *  drops it from the map and mints a fresh one on next refresh. */
     this.released = !1;
     this.deps = deps;

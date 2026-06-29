@@ -28,5 +28,5 @@ export function bindSpec(ytext: Y.Text, awareness: Awareness): Extension {
  *  the editor must be reconciled to the existing Y.Text content first. Returns
  *  [] when already equal. */
 export function reconcileEditorToYText(currentDoc: string, ytext: Y.Text): CmChangeSpec[] {
-	return textDiffToChangeSpec(currentDoc, ytext.toString());
+	return textDiffToChangeSpec(currentDoc, ytext.toJSON());
 }
