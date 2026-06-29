@@ -345,6 +345,10 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
 				void this.syncEngine.handleRename(file, oldPath);
+				if (file instanceof TFile && file.extension === "md") {
+					this.crdtManager?.renameDoc(oldPath, file.path);
+				}
+				this.crdtLiveViews?.refresh();
 			}),
 		);
 
@@ -551,8 +555,6 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
 		);
-		this.registerEvent(this.app.vault.on("rename", () => this.crdtLiveViews?.refresh()));
-
 		// WebSocket live sync
 		this.setupNoteStream();
 

@@ -86,6 +86,47 @@ describe("EditorController", () => {
     expect(releaseIdx).toBeLessThan(bindIdx);
   });
 
+  it("release() during pending bindTo: no onBind, no dispatch after release", async () => {
+    const d = new Y.Doc();
+    const ta = d.getText("a");
+    let resolveB!: (t: Y.Text) => void;
+    const deferredB = new Promise<Y.Text>((res) => { resolveB = res; });
+    const tb = d.getText("b");
+    const calls: string[] = [];
+    const dispatchCalls: unknown[][] = [];
+    const deferredDeps = {
+      getYText: async (p: string) => {
+        if (p === "b.md") return deferredB;
+        return ta;
+      },
+      awareness: () => new Awareness(new Y.Doc()),
+      onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+      onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+    };
+    const c = new EditorController(deferredDeps);
+    const v = { dispatch: mock((...a: unknown[]) => { dispatchCalls.push(a); }), state: { doc: { toString: () => "" } } } as any;
+    // Bind to a.md first so the controller is in a bound state
+    await c.bindTo(v, "a.md");
+    calls.length = 0;
+    dispatchCalls.length = 0;
+    // Start bindTo b.md (will await deferred getYText)
+    const bindPromise = c.bindTo(v, "b.md");
+    // release() before getYText resolves
+    c.release(v);
+    expect(c.currentPath()).toBe(null);
+    // Now resolve the deferred getYText
+    resolveB(tb);
+    await bindPromise;
+    // After release was called, onBind must NOT have fired for b.md
+    expect(calls.some((s) => s.startsWith("bind:b.md:"))).toBe(false);
+    // dispatch must NOT have been called for the b.md reconfigure (after release)
+    // (The release() dispatch to clear compartment is fine; no NEW reconfigure for b.md)
+    const reconfigureCallsForB = dispatchCalls.filter(
+      (args) => JSON.stringify(args).includes("b.md")
+    );
+    expect(reconfigureCallsForB.length).toBe(0);
+  });
+
   it("getYText rejection on rebind: old binding untouched, refcount balanced", async () => {
     const d = new Y.Doc();
     const ta = d.getText("a");

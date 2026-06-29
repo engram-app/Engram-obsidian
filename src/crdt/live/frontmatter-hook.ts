@@ -13,6 +13,9 @@ export interface FrontmatterHookDeps {
 export class CrdtFrontmatterHook {
 	private readonly deps: FrontmatterHookDeps;
 	private readonly uninstallers = new WeakMap<object, () => void>();
+	/** Strong-reference set so detachAll() can iterate all attached views.
+	 *  The WeakMap alone is not iterable. */
+	private readonly attached = new Set<object>();
 
 	constructor(deps: FrontmatterHookDeps) {
 		this.deps = deps;
@@ -42,6 +45,7 @@ export class CrdtFrontmatterHook {
 			return;
 		}
 		this.uninstallers.set(view, uninstall);
+		this.attached.add(view);
 	}
 
 	detach(view: unknown): void {
@@ -50,6 +54,16 @@ export class CrdtFrontmatterHook {
 		if (uninstall) {
 			uninstall();
 			this.uninstallers.delete(view);
+			this.attached.delete(view);
 		}
+	}
+
+	/** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
+	detachAll(): void {
+		for (const view of this.attached) {
+			this.detach(view);
+		}
+		// attached is cleared entry-by-entry in detach(); belt-and-suspenders clear.
+		this.attached.clear();
 	}
 }

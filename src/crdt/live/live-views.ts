@@ -100,7 +100,9 @@ export class CrdtLiveViews {
 	}
 
 	/** Re-evaluate open markdown leaves: bind each editor's controller to its
-	 *  current path; release and drop controllers whose editor is gone. */
+	 *  current path; release and drop controllers whose editor is gone.
+	 *  Detaches frontmatter + reading hooks for views whose path changed before
+	 *  re-attaching, so the idempotency guard does not block the rebind. */
 	refresh(): void {
 		const seen = new Set<EditorView>();
 		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
@@ -121,6 +123,13 @@ export class CrdtLiveViews {
 				});
 				this.controllers.set(cm, ctrl);
 			}
+			// If the controller is already bound to a different path (e.g. after a
+			// rename), detach the hooks for the old path so they are not stuck on
+			// the stale path and the re-attach below binds to the current path.
+			if (ctrl.currentPath() !== null && ctrl.currentPath() !== path) {
+				this.frontmatter.detach(view);
+				this.reading.detach(view);
+			}
 			this.deps.enrollment.enroll(path);
 			void ctrl.bindTo(cm, path);
 			this.frontmatter.attach(view);
@@ -136,11 +145,21 @@ export class CrdtLiveViews {
 	}
 
 	destroy(): void {
+		// Release all editor controllers (sets their released flag, clears compartments).
+		for (const [cm, ctrl] of this.controllers) {
+			ctrl.release(cm);
+		}
+		this.controllers.clear();
+		// Detach all frontmatter + reading-view hooks.
+		this.frontmatter.detachAll();
+		this.reading.detachAll();
+		// Tear down the local-only awareness + its throwaway doc.
+		this.localAwareness.destroy();
+		this.awarenessDoc.destroy();
 		// Flush any paths that still have live viewers (mid-session settings save /
 		// reconnect). Without this, content typed since the last onLastRelease flush
 		// stays only in Y.Text and is never written to disk before the manager tears
-		// down. The frontmatter hook and reading view hold only WeakMap-keyed
-		// per-view state, which is GC-safe on view teardown with no explicit clear.
+		// down.
 		for (const path of this.refcount.boundPaths()) {
 			void this.deps.manager
 				.getText(path)

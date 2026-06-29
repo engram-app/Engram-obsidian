@@ -19,6 +19,10 @@ export class EditorController {
 	private readonly deps: ControllerDeps;
 	private readonly viewId = `cm-${seq++}`;
 	private path: string | null = null;
+	/** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
+	 *  getYText. Once released, the controller is permanently inert — refresh()
+	 *  drops it from the map and mints a fresh one on next refresh. */
+	private released = false;
 
 	constructor(deps: ControllerDeps) {
 		this.deps = deps;
@@ -34,6 +38,9 @@ export class EditorController {
 		// getYText rejects, the controller remains unchanged (no onRelease fired,
 		// path untouched, refcount balanced).
 		const ytext = await this.deps.getYText(path);
+		// Concurrency guard: if release() was called while we awaited getYText,
+		// abort — do not dispatch, do not call onBind. The controller is inert.
+		if (this.released) return;
 		// Now safe to release the old binding, since getYText has resolved.
 		const oldPath = this.path;
 		if (oldPath) this.deps.onRelease(oldPath, this.viewId);
@@ -49,6 +56,7 @@ export class EditorController {
 	}
 
 	release(view: EditorView): void {
+		this.released = true;
 		if (!this.path) return;
 		view.dispatch({ effects: crdtCompartment.reconfigure([]) });
 		this.deps.onRelease(this.path, this.viewId);
