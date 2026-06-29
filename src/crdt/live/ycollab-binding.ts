@@ -4,7 +4,13 @@
 // Mod-z keymap. Bare yCollab() adds a UndoManager but NO Mod-z keymap, so
 // Obsidian's native undo runs and reverts remote-applied transactions, then
 // ySync propagates the revert as a local delete (divergence).
-import { type AnnotationType, Compartment, type Extension, Prec } from "@codemirror/state";
+import {
+	type AnnotationType,
+	Compartment,
+	EditorState,
+	type Extension,
+	Prec,
+} from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
 // yCollab, YSyncConfig, and yUndoManagerKeymap are all re-exported from the
 // package root (confirmed in node_modules/y-codemirror.next/src/index.js).
@@ -97,8 +103,58 @@ function makeSyncAnnotationCapture(
 	});
 }
 
-/** Build the live binding using yCollab() with a scoped UndoManager plus a
- *  high-precedence Mod-z keymap that beats Obsidian's native history handler.
+/** Routes undo/redo intent to the CRDT-aware Y.UndoManager. */
+export interface UndoRouter {
+	undo(): void;
+	redo(): void;
+}
+
+/** Layer 3 (structural veto). Cancels any transaction CodeMirror tags as a
+ *  native undo/redo and reroutes it to the CRDT-aware Y.UndoManager. Obsidian's
+ *  editor history is @codemirror/commands, which stamps userEvent "undo"/"redo"
+ *  on its reverting transactions, so this intercepts EVERY native-history
+ *  transaction regardless of which keymap won the precedence race. That makes it
+ *  correct-by-construction: a native, offset-based revert can never reach ySync
+ *  and be mis-propagated as a delete of a remote peer's text. The reroute is
+ *  deferred to a microtask because undoManager.undo() dispatches a fresh
+ *  transaction, which CodeMirror forbids from inside a transactionFilter. */
+export function rerouteUndoFilter(router: UndoRouter): Extension {
+	return EditorState.transactionFilter.of((tr) => {
+		if (tr.isUserEvent("undo")) {
+			queueMicrotask(() => router.undo());
+			return [];
+		}
+		if (tr.isUserEvent("redo")) {
+			queueMicrotask(() => router.redo());
+			return [];
+		}
+		return tr;
+	});
+}
+
+/** Layer 2 decision. Maps a beforeinput inputType to an undo/redo reroute,
+ *  returning true when handled (the caller must then preventDefault). Covers the
+ *  Edit menu, right-click, macOS menu bar, OS accessibility and mobile undo,
+ *  which fire a cancelable beforeinput (historyUndo/historyRedo) rather than a
+ *  key event the keymap (Layer 1) would see. */
+export function handleUndoBeforeInput(inputType: string, router: UndoRouter): boolean {
+	if (inputType === "historyUndo") {
+		router.undo();
+		return true;
+	}
+	if (inputType === "historyRedo") {
+		router.redo();
+		return true;
+	}
+	return false;
+}
+
+/** Build the live binding using yCollab() with a scoped UndoManager and a
+ *  defense-in-depth stack that suppresses Obsidian's native undo at every entry
+ *  point and routes it to the CRDT-aware Y.UndoManager (whose undo() reverses
+ *  operations by item identity, scoped to local-only edits — correct by
+ *  construction). We do NOT capture-and-replay native undo (Relay's OpCapture);
+ *  that is only needed when there is no stock Y.UndoManager, which we have.
  *
  *  Key design choices:
  *  - yCollab() is called with our own Y.UndoManager scoped to an empty
@@ -107,11 +163,12 @@ function makeSyncAnnotationCapture(
  *    YUndoManagerPluginValue.addTrackedOrigin() (line 104 of y-undomanager.js)
  *    adds the real ySync origin (yCollab's INTERNAL YSyncConfig) post-init,
  *    so remote peers' edits are never added to the undo stack.
- *  - Prec.highest(keymap.of(yUndoManagerKeymap)) is prepended so it beats
- *    Obsidian's native CM6 history keymap for Mod-z / Mod-Shift-z. Real-Obsidian
- *    validation still needed (see task-B-undo-report.md).
- *  - yCollab() already includes a beforeinput handler for platform-level undo
- *    (mobile, macOS Edit menu, OS accessibility).
+ *  - Layer 1: Prec.highest(keymap.of(yUndoManagerKeymap)) for keyboard Mod-z.
+ *  - Layer 2: Prec.highest beforeinput handler (preventDefault) for the Edit
+ *    menu / OS / mobile undo path, which never reaches the keymap.
+ *  - Layer 3: rerouteUndoFilter — the structural backstop that catches any
+ *    native-history transaction that slipped past Layers 1-2.
+ *  - The drift-repair backstop in editor-controller.ts remains the last resort.
  *  - ySyncAnnotation is captured lazily from the first ySync remote dispatch
  *    so drift-repair dispatches use the exact AnnotationType+conf ySync checks. */
 export function bindSpec(ytext: Y.Text, awareness: Awareness): BindResult {
@@ -132,13 +189,35 @@ export function bindSpec(ytext: Y.Text, awareness: Awareness): BindResult {
 	// Passing our scoped undoManager replaces the default unscoped one.
 	const ycollabExt = yCollab(ytext, awareness, { undoManager });
 
+	const router: UndoRouter = {
+		undo: () => undoManager.undo(),
+		redo: () => undoManager.redo(),
+	};
+
+	// Layer 2: our own high-precedence beforeinput handler for the menu/OS/mobile
+	// undo path. preventDefault stops the native history default from also firing.
+	const beforeInputHandler = Prec.highest(
+		EditorView.domEventHandlers({
+			beforeinput(e) {
+				if (handleUndoBeforeInput(e.inputType, router)) {
+					e.preventDefault();
+					return true;
+				}
+				return false;
+			},
+		}),
+	);
+
 	const extension: Extension = [
 		captureExt,
 		ycollabExt,
-		// Prec.highest so this keymap beats Obsidian's built-in history Mod-z.
-		// yUndoManagerKeymap's handlers call preventDefault, so the native history
-		// does not also fire.
+		// Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
+		// Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
+		// native history does not also fire on the keyboard path.
 		Prec.highest(keymap.of(yUndoManagerKeymap)),
+		beforeInputHandler,
+		// Layer 3: catch any native-history transaction that beat Layers 1-2.
+		rerouteUndoFilter(router),
 	];
 	return {
 		extension,
