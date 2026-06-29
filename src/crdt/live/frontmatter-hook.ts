@@ -19,14 +19,21 @@ export class CrdtFrontmatterHook {
 	}
 
 	attach(view: unknown): void {
+		if (typeof view !== "object" || view === null) return;
+		if (this.uninstallers.has(view as object)) return; // idempotent: already attached
 		const path = this.deps.getPath(view);
-		if (!path || typeof view !== "object" || view === null) return;
+		if (!path) return;
 		const uninstall = patchFrontmatterSave(view, (newText) => {
-			void this.deps.getYText(path).then((ytext) => {
-				// diffIntoYText is a no-op when content is unchanged, and patches only
-				// the frontmatter range, leaving body Y.Text ops untouched.
-				diffIntoYText(ytext, newText);
-			});
+			void this.deps
+				.getYText(path)
+				.then((ytext) => {
+					// diffIntoYText is a no-op when content is unchanged, and patches only
+					// the frontmatter range, leaving body Y.Text ops untouched.
+					diffIntoYText(ytext, newText);
+				})
+				.catch((err: unknown) =>
+					rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`),
+				);
 		});
 		if (!uninstall) {
 			// Not patchable on this Obsidian build: frontmatter still syncs via the

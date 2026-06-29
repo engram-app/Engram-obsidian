@@ -1,4 +1,3 @@
-import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { App } from "obsidian";
 import { MarkdownView as MdView } from "obsidian";
@@ -6,7 +5,6 @@ import type * as Y from "yjs";
 import { diffIntoYText } from "../bridge";
 import type { CrdtEnrollment } from "../enrollment";
 import type { CrdtManager } from "../manager";
-import { type BindingDeps, crdtEditorBinding } from "./editor-binding";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
@@ -114,18 +112,6 @@ export class CrdtLiveViews {
 	async seedFromEditor(path: string, editorText: string): Promise<void> {
 		const ytext = await this.getYText(path);
 		diffIntoYText(ytext, editorText);
-	}
-
-	/** @deprecated Use the stable BindingDeps wired in main.ts onload instead. */
-	extension(): Extension {
-		const bindingDeps: BindingDeps = {
-			resolvePath: (view) => this.resolvePath(view),
-			getYText: (path) => this.getYText(path),
-			onBind: (path, viewId) => this.onBind(path, viewId),
-			onRelease: (path, viewId) => this.onRelease(path, viewId),
-			seedFromEditor: (path, editorText) => this.seedFromEditor(path, editorText),
-		};
-		return crdtEditorBinding(bindingDeps);
 	}
 
 	/** Re-evaluate open leaves: register EditorView->path, enroll, attach hooks. */

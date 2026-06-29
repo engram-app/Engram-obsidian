@@ -69,9 +69,9 @@ export function textDiffToChangeSpec(before: string, after: string): CmChangeSpe
 	let cursor = 0;
 	for (const [op, data] of diffs) {
 		if (op === 0) {
-			cursor += data.length; // EQUAL — advance cursor through `before`
+			cursor += data.length; // EQUAL: advance cursor through `before`
 		} else if (op === 1) {
-			changes.push({ from: cursor, to: cursor, insert: data }); // INSERT — no cursor advance
+			changes.push({ from: cursor, to: cursor, insert: data }); // INSERT: no cursor advance
 		} else {
 			changes.push({ from: cursor, to: cursor + data.length, insert: "" }); // DELETE
 			cursor += data.length;

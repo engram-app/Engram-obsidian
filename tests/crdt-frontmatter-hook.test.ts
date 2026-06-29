@@ -40,4 +40,28 @@ describe("CrdtFrontmatterHook", () => {
 		// No saveFrontmatter -> patch returns null -> attach must not throw.
 		expect(() => hook.attach({ file: { path: "n.md" } })).not.toThrow();
 	});
+
+	it("attach() is idempotent: double-attach triggers onSave exactly once", async () => {
+		// FIX 1a: attach the same view twice; the second call must be a no-op.
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "---\ntags: []\n---\nbody");
+		let onSaveCount = 0;
+		const hook = new CrdtFrontmatterHook({
+			getPath: (v: any) => v.file.path,
+			getYText: async () => {
+				onSaveCount++;
+				return ytext;
+			},
+		});
+		const view = fakeView("---\ntags: []\n---\nbody");
+		hook.attach(view);
+		hook.attach(view); // second attach on the same view; must be a no-op
+		view.saveFrontmatter("---\ntags: [x]\n---\nbody");
+		await Promise.resolve();
+		// If attach was not idempotent, getYText would be called twice and the
+		// Y.Text would be patched twice (double-apply). onSaveCount captures how
+		// many times getYText was invoked via the onSave callback.
+		expect(onSaveCount).toBe(1);
+	});
 });

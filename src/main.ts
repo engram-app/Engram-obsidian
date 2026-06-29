@@ -520,7 +520,7 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 		});
 
-		// CRDT editor extension — registered ONCE for the plugin's lifetime so that
+		// CRDT editor extension; registered ONCE for the plugin's lifetime so that
 		// repeated setupNoteStream() calls (settings save / reconnect) never stack
 		// additional ViewPlugin instances or workspace event listeners. The deps
 		// object forwards to the current this.crdtLiveViews at call time and
