@@ -14500,12 +14500,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           return (_b = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.seedFromEditor(p, t)) != null ? _b : Promise.resolve();
         }
       })
-    ]), this.registerEvent(
-      this.app.workspace.on("file-open", () => {
-        var _a2;
-        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
-      })
-    ), this.registerEvent(
+    ]), this.registerEvent(this.app.workspace.on("file-open", () => {
+      var _a2;
+      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+    })), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();

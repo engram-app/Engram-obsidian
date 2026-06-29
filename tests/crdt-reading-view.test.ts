@@ -1,5 +1,5 @@
 // tests/crdt-reading-view.test.ts
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { CrdtReadingView } from "../src/crdt/live/reading-view";
 
@@ -49,8 +49,12 @@ describe("CrdtReadingView", () => {
 		const view = fakeView();
 		let resolveA!: (t: Y.Text) => void;
 		let resolveB!: (t: Y.Text) => void;
-		const promiseA = new Promise<Y.Text>((res) => { resolveA = res; });
-		const promiseB = new Promise<Y.Text>((res) => { resolveB = res; });
+		const promiseA = new Promise<Y.Text>((res) => {
+			resolveA = res;
+		});
+		const promiseB = new Promise<Y.Text>((res) => {
+			resolveB = res;
+		});
 		let callCount = 0;
 		const rv = new CrdtReadingView({
 			getYText: async () => {

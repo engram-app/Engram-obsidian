@@ -184,8 +184,7 @@ export class OAuthAuth implements AuthProvider {
 			this.accessToken = null;
 			this.expiresAt = 0;
 			const status = (err as { status?: number })?.status;
-			const definitive =
-				status === 400 || status === 401 || status === 403 || status === 404;
+			const definitive = status === 400 || status === 401 || status === 403 || status === 404;
 			rlog().error(
 				"auth",
 				`OAuth refresh failed (status=${status ?? "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,

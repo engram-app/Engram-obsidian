@@ -1,5 +1,5 @@
 // tests/crdt-frontmatter-hook.test.ts
-import { describe, it, expect } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import * as Y from "yjs";
 import { CrdtFrontmatterHook } from "../src/crdt/live/frontmatter-hook";
 

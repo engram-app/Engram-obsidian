@@ -557,9 +557,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.crdtLiveViews?.seedFromEditor(p, t) ?? Promise.resolve(),
 			}),
 		]);
-		this.registerEvent(
-			this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()),
-		);
+		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
@@ -1199,7 +1197,8 @@ export default class EngramSyncPlugin extends Plugin {
 						app: this.app,
 						manager: this.crdtManager,
 						enrollment: this.crdtEnrollment,
-						flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+						flushToDisk: (path, content) =>
+							this.syncEngine.flushFromCrdt(path, content),
 					});
 					// Editor extension + workspace events are registered once in onload
 					// so repeated setupNoteStream() calls don't stack them. Trigger an
