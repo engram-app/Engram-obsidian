@@ -4,32 +4,33 @@ import * as Y from "yjs";
 import { bindSpec, reconcileEditorToYText } from "../src/crdt/live/ycollab-binding";
 
 describe("bindSpec", () => {
-	it("returns an object with extension (truthy), syncConfig (defined), and getSyncAnnotationType", () => {
+	it("returns an object with extension (truthy) and getSyncAnnotation", () => {
 		const d = new Y.Doc();
 		const t = d.getText("content");
 		const aw = new Awareness(new Y.Doc());
 		const result = bindSpec(t, aw);
 		expect(result).toBeDefined();
 		expect(result.extension).toBeTruthy();
-		expect(result.syncConfig).toBeDefined();
-		expect(typeof result.getSyncAnnotationType).toBe("function");
+		expect(typeof result.getSyncAnnotation).toBe("function");
 	});
 
-	it("syncConfig holds the same ytext that was passed in", () => {
+	it("does not expose syncConfig (internal conf is captured, not stored on BindResult)", () => {
 		const d = new Y.Doc();
 		const t = d.getText("content");
 		const aw = new Awareness(new Y.Doc());
-		const { syncConfig } = bindSpec(t, aw);
-		expect(syncConfig.ytext).toBe(t);
+		const result = bindSpec(t, aw);
+		// syncConfig was removed from BindResult; the internal conf is only
+		// accessible via getSyncAnnotation() after the first remote dispatch.
+		expect((result as Record<string, unknown>).syncConfig).toBeUndefined();
 	});
 
-	it("getSyncAnnotationType() returns null before any remote dispatch", () => {
+	it("getSyncAnnotation() returns null before any remote dispatch", () => {
 		const d = new Y.Doc();
 		const t = d.getText("content");
 		const aw = new Awareness(new Y.Doc());
-		const { getSyncAnnotationType } = bindSpec(t, aw);
-		// No ySync remote dispatch has happened, so the annotation type is not yet captured.
-		expect(getSyncAnnotationType()).toBeNull();
+		const { getSyncAnnotation } = bindSpec(t, aw);
+		// No ySync remote dispatch has happened, so the annotation is not yet captured.
+		expect(getSyncAnnotation()).toBeNull();
 	});
 });
 

@@ -14819,7 +14819,7 @@ var crdtCompartment = new import_state.Compartment();
 function ycollabExtension() {
   return crdtCompartment.of([]);
 }
-function makeSyncAnnotationCapture(syncConfig, onCapture) {
+function makeSyncAnnotationCapture(onCapture) {
   let captured = !1;
   return import_view.EditorView.updateListener.of((update) => {
     if (!captured)
@@ -14827,8 +14827,8 @@ function makeSyncAnnotationCapture(syncConfig, onCapture) {
         let rawAnnotations = tr.annotations;
         if (rawAnnotations) {
           for (let ann of rawAnnotations)
-            if (ann.value === syncConfig) {
-              captured = !0, onCapture(ann.type);
+            if (ann.value instanceof YSyncConfig) {
+              captured = !0, onCapture({ type: ann.type, conf: ann.value });
               return;
             }
         }
@@ -14836,10 +14836,10 @@ function makeSyncAnnotationCapture(syncConfig, onCapture) {
   });
 }
 function bindSpec(ytext, awareness) {
-  let syncConfig = new YSyncConfig(ytext, awareness), undoManager = new UndoManager(ytext, {
-    trackedOrigins: /* @__PURE__ */ new Set([syncConfig])
-  }), capturedAnnotationType = null, captureExt = makeSyncAnnotationCapture(syncConfig, (at) => {
-    capturedAnnotationType = at;
+  let undoManager = new UndoManager(ytext, {
+    trackedOrigins: /* @__PURE__ */ new Set()
+  }), capturedAnnotation = null, captureExt = makeSyncAnnotationCapture((captured) => {
+    capturedAnnotation = captured;
   }), ycollabExt = yCollab(ytext, awareness, { undoManager });
   return {
     extension: [
@@ -14850,8 +14850,7 @@ function bindSpec(ytext, awareness) {
       // does not also fire.
       import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap))
     ],
-    syncConfig,
-    getSyncAnnotationType: () => capturedAnnotationType
+    getSyncAnnotation: () => capturedAnnotation
   };
 }
 function reconcileEditorToYText(currentDoc, ytext) {
@@ -14902,10 +14901,10 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
     if (this.released || this.boundYtext === null || this.bindResult === null) return;
     let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
     if (changes.length > 0) {
-      let annotationType = this.bindResult.getSyncAnnotationType(), syncConfig = this.bindResult.syncConfig;
-      annotationType !== null && view.dispatch({
+      let captured = this.bindResult.getSyncAnnotation();
+      captured !== null && view.dispatch({
         changes,
-        annotations: [annotationType.of(syncConfig)]
+        annotations: [captured.type.of(captured.conf)]
       });
     }
     this.scheduleDriftCheck(view);

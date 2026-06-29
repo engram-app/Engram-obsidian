@@ -107,21 +107,23 @@ export class EditorController {
 		if (this.released || this.boundYtext === null || this.bindResult === null) return;
 		const changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
 		if (changes.length > 0) {
-			const annotationType = this.bindResult.getSyncAnnotationType();
-			const syncConfig = this.bindResult.syncConfig;
-			if (annotationType !== null) {
-				// Annotate with y-codemirror.next's ySyncAnnotation so ySync's
-				// update() check (tr.annotation(ySyncAnnotation) === this.conf)
-				// returns early and does NOT propagate the repair to Y.Text.
+			const captured = this.bindResult.getSyncAnnotation();
+			if (captured !== null) {
+				// Annotate with yCollab's INTERNAL YSyncConfig (captured.conf) so
+				// ySync's update() check (tr.annotation(ySyncAnnotation) === this.conf)
+				// matches and ySync does NOT propagate the repair to Y.Text.
+				// Using any other conf instance here would fail the === check and
+				// cause ySync to re-apply the diff: double-apply corruption.
 				view.dispatch({
 					changes,
-					annotations: [annotationType.of(syncConfig)],
+					annotations: [captured.type.of(captured.conf)],
 				});
 			} else {
-				// ySyncAnnotation not yet captured (no remote edit has arrived).
-				// Skip the repair this cycle — applying without the annotation
-				// would make ySync re-apply the diff to Y.Text (double-apply).
-				// The next interval will retry.
+				// ySyncAnnotation not yet captured (no remote edit has arrived yet).
+				// Known limitation: drift repair is inert until the first remote edit
+				// is observed. Skip this cycle. Applying without the annotation would
+				// cause ySync to re-apply the diff to Y.Text (double-apply corruption).
+				// The next interval will retry once a remote edit has been seen.
 			}
 		}
 		// Reschedule to keep checking while the note is bound.
