@@ -13899,12 +13899,23 @@ var viewSeq = 0, CrdtEditorBindingValue = class {
     this.ytext = null;
     this.observer = null;
     this.destroyed = !1;
-    if (this.view = view, this.deps = deps, this.path = deps.resolvePath(view), !this.path) return;
-    deps.onBind(this.path, this.viewId);
-    let path = this.path;
-    deps.getYText(path).then(async (ytext) => {
-      if (this.destroyed || (this.ytext = ytext, await deps.seedFromEditor(path, this.view.state.doc.toString()), this.destroyed)) return;
-      this.observer = (event, tr) => this.onYTextEvent(event, tr), ytext.observe(this.observer);
+    /** True once a path has resolved and async init has STARTED. Init is attempted
+     *  lazily (constructor AND first edits) because Obsidian may construct this
+     *  ViewPlugin before the CrdtLiveViews manager exists or before the leaf/file
+     *  association is queryable; a once-at-construct resolve would leave the
+     *  binding permanently inert and fall back to the bursty disk path. */
+    this.initStarted = !1;
+    this.view = view, this.deps = deps, this.ensureBound();
+  }
+  /** Resolve the path and start async init, at most once. Safe to call from the
+   *  constructor and from update(): the first call that can resolve a path wins;
+   *  later calls are no-ops. Returns nothing; readiness is observed via ytext. */
+  ensureBound() {
+    if (this.initStarted || this.destroyed) return;
+    let path = this.deps.resolvePath(this.view);
+    path && (this.initStarted = !0, this.path = path, this.deps.onBind(path, this.viewId), this.deps.getYText(path).then(async (ytext) => {
+      if (this.destroyed || (this.ytext = ytext, await this.deps.seedFromEditor(path, this.view.state.doc.toString()), this.destroyed)) return;
+      this.observer = (event, tr) => this.onYTextEvent(event, tr), ytext.observe(this.observer), rlog().info("crdt-live", `editor bound live to ${path}`);
       let after = ytext.toJSON(), before = this.view.state.doc.toString();
       if (before !== after) {
         if (this.destroyed) return;
@@ -13913,7 +13924,7 @@ var viewSeq = 0, CrdtEditorBindingValue = class {
           annotations: [ySyncAnnotation.of(this.view)]
         });
       }
-    });
+    }));
   }
   /** Y.Text changed. If the change did NOT originate from this binding, push it
    *  into the editor as minimal changes, marked sync-origin to avoid a loop. */
@@ -13930,7 +13941,7 @@ var viewSeq = 0, CrdtEditorBindingValue = class {
    *  and CrdtManager.onUpdate ships it to the server. */
   update(update) {
     var _a;
-    if (!update.docChanged || !this.ytext || update.transactions.some(
+    if (this.initStarted || this.ensureBound(), !update.docChanged || !this.ytext || update.transactions.some(
       (t) => t.annotation(ySyncAnnotation) === this.view
     )) return;
     let edits = [];
@@ -14082,10 +14093,24 @@ var ViewerRefcount = class {
   isBound(path) {
     return this.refcount.isBound(path);
   }
-  /** Map an EditorView to its note path for the editor binding. */
+  /** Map an EditorView to its note path for the editor binding. Resolves from
+   *  the live workspace leaves by editor identity, so it does not depend on
+   *  refresh() having pre-populated the cache before the ViewPlugin constructed
+   *  (that ordering is not guaranteed and left bindings permanently inert). The
+   *  viewPaths cache is a fast path; the leaf scan is the authoritative
+   *  fallback. */
   resolvePath(view) {
-    var _a;
-    return (_a = this.viewPaths.get(view)) != null ? _a : null;
+    let cached = this.viewPaths.get(view);
+    if (cached) return cached;
+    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      let v = leaf.view;
+      if (v instanceof import_obsidian22.MarkdownView && getEditorViewForLeaf(v) === view) {
+        let p = getMarkdownFilePath(v);
+        if (p != null && p.endsWith(".md"))
+          return this.viewPaths.set(view, p), p;
+      }
+    }
+    return null;
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager. */
   async getYText(path) {

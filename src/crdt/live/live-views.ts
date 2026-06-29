@@ -88,9 +88,26 @@ export class CrdtLiveViews {
 		return this.refcount.isBound(path);
 	}
 
-	/** Map an EditorView to its note path for the editor binding. */
+	/** Map an EditorView to its note path for the editor binding. Resolves from
+	 *  the live workspace leaves by editor identity, so it does not depend on
+	 *  refresh() having pre-populated the cache before the ViewPlugin constructed
+	 *  (that ordering is not guaranteed and left bindings permanently inert). The
+	 *  viewPaths cache is a fast path; the leaf scan is the authoritative
+	 *  fallback. */
 	resolvePath(view: EditorView): string | null {
-		return this.viewPaths.get(view) ?? null;
+		const cached = this.viewPaths.get(view);
+		if (cached) return cached;
+		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+			const v = leaf.view;
+			if (v instanceof MdView && getEditorViewForLeaf(v) === view) {
+				const p = getMarkdownFilePath(v);
+				if (p?.endsWith(".md")) {
+					this.viewPaths.set(view, p);
+					return p;
+				}
+			}
+		}
+		return null;
 	}
 
 	/** Open (or get cached) the path's Y.Text from the CRDT manager. */
