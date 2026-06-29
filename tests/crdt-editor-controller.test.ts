@@ -56,4 +56,60 @@ describe("EditorController", () => {
     await c.bindTo(v, "a.md");
     expect(calls.filter((s) => s.startsWith("bind:a.md:")).length).toBe(1);
   });
+
+  it("release clears the path and fires onRelease", async () => {
+    const d = new Y.Doc();
+    const t = d.getText("content");
+    const calls: string[] = [];
+    const c = new EditorController(deps({ "a.md": t }, calls));
+    const v = fakeView();
+    await c.bindTo(v, "a.md");
+    c.release(v);
+    expect(c.currentPath()).toBe(null);
+    expect(calls.some((s) => s.startsWith("release:a.md:"))).toBe(true);
+  });
+
+  it("rebind ordering: release old path before bind new path", async () => {
+    const d = new Y.Doc();
+    const ta = d.getText("a");
+    const tb = d.getText("b");
+    const calls: string[] = [];
+    const c = new EditorController(deps({ "a.md": ta, "b.md": tb }, calls));
+    const v = fakeView();
+    await c.bindTo(v, "a.md");
+    calls.length = 0; // clear initial calls
+    await c.bindTo(v, "b.md");
+    const releaseIdx = calls.findIndex((s) => s.startsWith("release:a.md:"));
+    const bindIdx = calls.findIndex((s) => s.startsWith("bind:b.md:"));
+    expect(releaseIdx).toBeGreaterThanOrEqual(0);
+    expect(bindIdx).toBeGreaterThanOrEqual(0);
+    expect(releaseIdx).toBeLessThan(bindIdx);
+  });
+
+  it("getYText rejection on rebind: old binding untouched, refcount balanced", async () => {
+    const d = new Y.Doc();
+    const ta = d.getText("a");
+    const calls: string[] = [];
+    const rejectDeps = {
+      getYText: async (p: string) => {
+        if (p === "b.md") throw new Error("getYText failed");
+        return ta;
+      },
+      awareness: () => new Awareness(new Y.Doc()),
+      onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+      onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+    };
+    const c = new EditorController(rejectDeps);
+    const v = fakeView();
+    await c.bindTo(v, "a.md");
+    expect(c.currentPath()).toBe("a.md");
+    calls.length = 0;
+    try {
+      await c.bindTo(v, "b.md");
+    } catch {
+      // expected rejection
+    }
+    expect(c.currentPath()).toBe("a.md"); // path unchanged
+    expect(calls.some((s) => s.startsWith("release:a.md:"))).toBe(false); // no release fired
+  });
 });

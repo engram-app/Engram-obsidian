@@ -30,8 +30,13 @@ export class EditorController {
 
 	async bindTo(view: EditorView, path: string): Promise<void> {
 		if (this.path === path) return; // already bound to this note
-		if (this.path) this.deps.onRelease(this.path, this.viewId);
+		// Fetch the new Y.Text BEFORE mutating any state. This ensures that if
+		// getYText rejects, the controller remains unchanged (no onRelease fired,
+		// path untouched, refcount balanced).
 		const ytext = await this.deps.getYText(path);
+		// Now safe to release the old binding, since getYText has resolved.
+		const oldPath = this.path;
+		if (oldPath) this.deps.onRelease(oldPath, this.viewId);
 		// yCollab only forwards future deltas, so reconcile the editor to the
 		// current Y.Text content before activating the binding.
 		const changes = reconcileEditorToYText(view.state.doc.toString(), ytext);
