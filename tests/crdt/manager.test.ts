@@ -2,9 +2,29 @@ import { describe, expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as Y from "yjs";
 import { CrdtChannel } from "../../src/crdt/channel";
-import { CrdtManager } from "../../src/crdt/manager";
+import { CrdtManager, frontmatterOf } from "../../src/crdt/manager";
 import { rlog } from "../../src/remote-log";
 import { reconcileColdStart } from "../../src/sync";
+
+// ---------------------------------------------------------------------------
+// Task 6: doc-shape constants + frontmatterOf accessor
+// ---------------------------------------------------------------------------
+
+test("frontmatterOf returns empty for a fresh doc", () => {
+	const doc = new Y.Doc();
+	expect(frontmatterOf(doc)).toEqual({ order: [], values: {} });
+});
+
+test("frontmatterOf reflects values written into Y.Map and Y.Array", () => {
+	const doc = new Y.Doc();
+	doc.getArray("frontmatter_order").push(["title", "tags"]);
+	doc.getMap("frontmatter").set("title", "Hello");
+	doc.getMap("frontmatter").set("tags", "foo bar");
+	expect(frontmatterOf(doc)).toEqual({
+		order: ["title", "tags"],
+		values: { title: "Hello", tags: "foo bar" },
+	});
+});
 
 function makeManager(captured: Uint8Array[] = []) {
 	const flushed: Record<string, string> = {};

@@ -12,6 +12,23 @@ import { diffIntoYText, seedOnce } from "./bridge";
  */
 export const REMOTE_ORIGIN = "remote";
 
+/** Y.Doc shared-type key for the frontmatter key-value map. */
+export const FRONTMATTER_KEY = "frontmatter";
+/** Y.Doc shared-type key for the ordered list of frontmatter keys. */
+export const ORDER_KEY = "frontmatter_order";
+/** Y.Doc shared-type key for the note body text. */
+export const CONTENT_KEY = "content";
+
+/**
+ * Read the frontmatter structure from a Y.Doc.
+ * Returns `{ order: [], values: {} }` for a fresh doc with no frontmatter data.
+ */
+export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
+	const order = doc.getArray<string>(ORDER_KEY).toArray();
+	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
+	return { order, values };
+}
+
 export interface CrdtManagerOptions {
 	/** Namespaces IndexedDB store names and doc ids per vault. */
 	dbPrefix: string;
@@ -236,7 +253,7 @@ export class CrdtManager {
 
 		const doc = new Y.Doc();
 		const persistence = new IndexeddbPersistence(id, doc);
-		const text = doc.getText("content");
+		const text = doc.getText(CONTENT_KEY);
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
