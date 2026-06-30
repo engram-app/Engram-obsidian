@@ -1,7 +1,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
-import { parseFrontmatter, splitFrontmatter } from "./frontmatter-codec";
+import { parseFrontmatter, projectNote, splitFrontmatter } from "./frontmatter-codec";
 
 /**
  * Transaction origin stamped on remotely-applied updates. Updates carrying
@@ -303,9 +303,13 @@ export class CrdtManager {
 		});
 
 		// Remote-merge path: flush merged content to disk; skip local-origin updates.
+		// Reconstruct the full file (frontmatter fence + body) from the Y.Map/Y.Array
+		// and body Y.Text so disk always gets a complete, valid markdown file.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (origin !== REMOTE_ORIGIN) return;
-			void this.opts.onFlushToDisk(path, text.toJSON());
+			const { order, values } = frontmatterOf(doc);
+			const body = text.toJSON();
+			void this.opts.onFlushToDisk(path, projectNote(order, values, body));
 		});
 
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);

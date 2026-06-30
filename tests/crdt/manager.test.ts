@@ -242,6 +242,37 @@ test("malformed frontmatter keeps whole text as body", async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 8: flush reconstructs full file from Y.Map + body
+// ---------------------------------------------------------------------------
+
+test("flush reconstructs full file from Y.Map + body", async () => {
+	const flushed: Array<[string, string]> = [];
+	const mgr = new CrdtManager({
+		dbPrefix: "task8",
+		onUpdate: () => {},
+		onFlushToDisk: async (p, c) => {
+			flushed.push([p, c]);
+		},
+	});
+
+	// Seed local state: frontmatter goes into Y.Map, body into Y.Text.
+	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
+
+	// Build a remote peer from the same state, append " world" to body, then
+	// send only the delta back — triggering the REMOTE_ORIGIN flush listener.
+	const peer = new Y.Doc();
+	Y.applyUpdate(peer, await mgr.encodeStateAsUpdate("N.md"));
+	peer.getText("content").insert(peer.getText("content").length, " world");
+	const remoteUpdate = Y.encodeStateAsUpdate(peer, await mgr.encodeStateVector("N.md"));
+
+	await mgr.applyRemoteUpdate("N.md", remoteUpdate);
+
+	// The flush must reconstruct the full file: frontmatter fence + body with remote change.
+	expect(flushed.at(-1)).toEqual(["N.md", "---\ntitle: Hi\n---\nbody\n world"]);
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
 // Task 7D: catch-split in reconcileColdStart
 // — write failure does NOT trigger onCorruption; decode failure DOES
 // ---------------------------------------------------------------------------
