@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { splitFrontmatter } from "../../src/crdt/frontmatter-codec";
+import {
+	canonicalJson,
+	parseFrontmatter,
+	splitFrontmatter,
+} from "../../src/crdt/frontmatter-codec";
 
 describe("splitFrontmatter", () => {
 	test("extracts yaml block and body for a well-formed fence", () => {
@@ -31,5 +35,35 @@ describe("splitFrontmatter", () => {
 			fmBlock: "title: Hi\n",
 			body: "body\n",
 		});
+	});
+});
+
+describe("parseFrontmatter", () => {
+	test("ordered keys + canonical JSON values", () => {
+		expect(parseFrontmatter("title: Hi\ntags:\n  - a\n  - b\n")).toEqual({
+			order: ["title", "tags"],
+			values: { title: '"Hi"', tags: '["a","b"]' },
+		});
+	});
+	test("empty block", () => {
+		expect(parseFrontmatter("")).toEqual({ order: [], values: {} });
+	});
+	test("nested map value uses sorted keys", () => {
+		expect(parseFrontmatter("meta:\n  b: 2\n  a: 1\n")).toEqual({
+			order: ["meta"],
+			values: { meta: '{"a":1,"b":2}' },
+		});
+	});
+	test("malformed yaml -> null", () => {
+		expect(parseFrontmatter("a: : : broken\n  - x\n")).toBeNull();
+	});
+	test("bare list (non-object) -> null", () => {
+		expect(parseFrontmatter("- a\n- b\n")).toBeNull();
+	});
+});
+
+describe("canonicalJson", () => {
+	test("sorts nested object keys, preserves array order", () => {
+		expect(canonicalJson({ b: 1, a: { d: 4, c: 3 } })).toBe('{"a":{"c":3,"d":4},"b":1}');
 	});
 });

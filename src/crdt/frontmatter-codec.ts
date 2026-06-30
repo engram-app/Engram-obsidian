@@ -2,6 +2,8 @@
 // the backend Elixir Engram.Notes.Frontmatter. No Obsidian imports so it is
 // unit-testable under bun and reusable.
 
+import { parse as yamlParse } from "yaml";
+
 const FENCE = "---";
 // Matches a closing fence line: --- with optional trailing spaces/tabs + optional CR.
 const CLOSE_MID = /\n---[ \t]*\r?\n/;
@@ -23,4 +25,50 @@ export function splitFrontmatter(raw: string): { fmBlock: string | null; body: s
 		return { fmBlock: `${rest.slice(0, eof.index)}\n`, body: "" };
 	}
 	return { fmBlock: null, body: raw };
+}
+
+export function canonicalJson(value: unknown): string {
+	return JSON.stringify(sortDeep(value));
+}
+
+function sortDeep(v: unknown): unknown {
+	if (Array.isArray(v)) return v.map(sortDeep);
+	if (v && typeof v === "object") {
+		const out: Record<string, unknown> = {};
+		for (const k of Object.keys(v as Record<string, unknown>).sort()) {
+			out[k] = sortDeep((v as Record<string, unknown>)[k]);
+		}
+		return out;
+	}
+	return v;
+}
+
+export function parseFrontmatter(
+	fmBlock: string,
+): { order: string[]; values: Record<string, string> } | null {
+	if (fmBlock === "") return { order: [], values: {} };
+	let doc: unknown;
+	try {
+		doc = yamlParse(fmBlock);
+	} catch {
+		return null;
+	}
+	if (!doc || typeof doc !== "object" || Array.isArray(doc)) return null;
+	const map = doc as Record<string, unknown>;
+	const order = topLevelKeyOrder(fmBlock, map);
+	const values: Record<string, string> = {};
+	for (const k of Object.keys(map)) values[k] = canonicalJson(map[k]);
+	return { order, values };
+}
+
+// Recover source order: top-level keys appear as `key:` at column 0.
+function topLevelKeyOrder(block: string, map: Record<string, unknown>): string[] {
+	const order: string[] = [];
+	for (const line of block.split("\n")) {
+		const m = line.match(/^([^\s:][^:]*):/);
+		if (m && Object.prototype.hasOwnProperty.call(map, m[1]) && !order.includes(m[1])) {
+			order.push(m[1]);
+		}
+	}
+	return order;
 }
