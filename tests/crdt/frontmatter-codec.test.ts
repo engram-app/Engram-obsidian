@@ -114,7 +114,7 @@ describe("frontmatter fixtures", () => {
 		projected?: string;
 	}
 
-	for (const fx of fixtures as Fixture[]) {
+	for (const fx of fixtures as unknown as Fixture[]) {
 		test(`round-trip + values: ${fx.name}`, () => {
 			const { fmBlock, body } = splitFrontmatter(fx.raw);
 			const parsed = parseFrontmatter(fmBlock ?? "");
