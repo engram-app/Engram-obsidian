@@ -2,7 +2,7 @@
 // the backend Elixir Engram.Notes.Frontmatter. No Obsidian imports so it is
 // unit-testable under bun and reusable.
 
-import { parse as yamlParse } from "yaml";
+import { parse as yamlParse, stringify as yamlStringify } from "yaml";
 
 const FENCE = "---";
 // Matches a closing fence line: --- with optional trailing spaces/tabs + optional CR.
@@ -71,4 +71,14 @@ function topLevelKeyOrder(block: string, map: Record<string, unknown>): string[]
 		}
 	}
 	return order;
+}
+
+export function emitFrontmatter(order: string[], values: Record<string, string>): string {
+	const present = order.filter((k) => Object.prototype.hasOwnProperty.call(values, k));
+	if (present.length === 0) return "";
+	// Build one object in source order; `yaml.stringify` preserves insertion order.
+	const obj: Record<string, unknown> = {};
+	for (const k of present) obj[k] = JSON.parse(values[k]);
+	const out = yamlStringify(obj);
+	return out.endsWith("\n") ? out : `${out}\n`;
 }

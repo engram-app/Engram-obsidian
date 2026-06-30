@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
 	canonicalJson,
+	emitFrontmatter,
 	parseFrontmatter,
 	splitFrontmatter,
 } from "../../src/crdt/frontmatter-codec";
@@ -65,5 +66,22 @@ describe("parseFrontmatter", () => {
 describe("canonicalJson", () => {
 	test("sorts nested object keys, preserves array order", () => {
 		expect(canonicalJson({ b: 1, a: { d: 4, c: 3 } })).toBe('{"a":{"c":3,"d":4},"b":1}');
+	});
+});
+
+describe("emitFrontmatter", () => {
+	test("round-trips through parse, preserving order", () => {
+		const order = ["title", "tags"];
+		const values = { title: '"Hi"', tags: '["a","b"]' };
+		expect(parseFrontmatter(emitFrontmatter(order, values))).toEqual({ order, values });
+	});
+	test("empty -> empty string", () => {
+		expect(emitFrontmatter([], {})).toBe("");
+	});
+	test("skips order keys missing from values", () => {
+		expect(parseFrontmatter(emitFrontmatter(["title", "x"], { title: '"Hi"' }))).toEqual({
+			order: ["title"],
+			values: { title: '"Hi"' },
+		});
 	});
 });
