@@ -67,6 +67,21 @@ describe("NoteChannel CRDT topic join", () => {
 		channel.disconnect();
 	});
 
+	test("crdt topic join payload includes crdt_proto: 2", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+
+		expect(crdtJoin).toBeDefined();
+		expect(crdtJoin![4]).toEqual({ crdt_proto: 2 });
+
+		channel.disconnect();
+	});
+
 	test("does NOT join crdt topic when vaultId is null", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
 		await channel.connect();

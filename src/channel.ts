@@ -334,7 +334,7 @@ export class NoteChannel {
 		// topic replies with an error (handled gracefully below).
 		const crdtT = this.crdtTopic;
 		if (crdtT) {
-			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", {}]);
+			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", { crdt_proto: 2 }]);
 		}
 	}
 

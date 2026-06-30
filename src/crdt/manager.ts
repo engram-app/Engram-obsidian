@@ -1,6 +1,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
+import { parseFrontmatter, projectNote, splitFrontmatter } from "./frontmatter-codec";
 
 /**
  * Transaction origin stamped on remotely-applied updates. Updates carrying
@@ -11,6 +12,23 @@ import { diffIntoYText, seedOnce } from "./bridge";
  * marker without magic strings at the call sites.
  */
 export const REMOTE_ORIGIN = "remote";
+
+/** Y.Doc shared-type key for the frontmatter key-value map. */
+export const FRONTMATTER_KEY = "frontmatter";
+/** Y.Doc shared-type key for the ordered list of frontmatter keys. */
+export const ORDER_KEY = "frontmatter_order";
+/** Y.Doc shared-type key for the note body text. */
+export const CONTENT_KEY = "content";
+
+/**
+ * Read the frontmatter structure from a Y.Doc.
+ * Returns `{ order: [], values: {} }` for a fresh doc with no frontmatter data.
+ */
+export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
+	const order = doc.getArray<string>(ORDER_KEY).toArray();
+	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
+	return { order, values };
+}
 
 export interface CrdtManagerOptions {
 	/** Namespaces IndexedDB store names and doc ids per vault. */
@@ -75,10 +93,20 @@ export class CrdtManager {
 	}
 
 	/**
-	 * Apply a disk-read content string into the doc's Y.Text.
+	 * Apply a disk-read content string into the doc's Y.Text and frontmatter
+	 * Y.Map/Y.Array.
 	 *
+	 * Frontmatter is split from the raw disk content first:
+	 * - Valid YAML frontmatter: Y.Map(FRONTMATTER_KEY) is upserted with parsed
+	 *   key-value pairs (only changed keys written), missing keys deleted, and
+	 *   Y.Array(ORDER_KEY) is replaced with the source-order key list.
+	 * - Malformed or absent frontmatter: Y.Map and Y.Array are left empty and the
+	 *   whole `diskContent` is treated as body (mirrors the backend `ingest_plaintext`
+	 *   fallback).
+	 *
+	 * The body is routed through the existing two-guard seed/diff bridge:
 	 * - First call ever for this path (no CRDT history): `seedOnce` enrolls the
-	 *   text into the shared type exactly once.
+	 *   body text into the shared type exactly once.
 	 * - Subsequent calls (`hasLca = true`, or the doc already has content):
 	 *   `diffIntoYText` patches only the changed characters, preserving the
 	 *   CRDT authorship graph.
@@ -89,8 +117,20 @@ export class CrdtManager {
 	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<void> {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
-		if (seedOnce(e.text, diskContent, lca)) return;
-		diffIntoYText(e.text, diskContent);
+
+		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
+		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
+		const order = parsed ? parsed.order : [];
+		const values = parsed ? parsed.values : {};
+		// Malformed/absent frontmatter: treat the whole raw string as body.
+		const body = parsed !== null ? splitBody : diskContent;
+
+		// Apply frontmatter into Y.Map + Y.Array inside a single transaction.
+		this.applyFrontmatterInto(e.doc, order, values);
+
+		// Route body through the existing seed-once + minimal-diff gate.
+		if (seedOnce(e.text, body, lca)) return;
+		diffIntoYText(e.text, body);
 	}
 
 	/**
@@ -116,9 +156,16 @@ export class CrdtManager {
 		return Y.encodeStateAsUpdate((await this.entry(path)).doc, sv);
 	}
 
-	/** Return the plain text content of the note. */
+	/** Return the note body (frontmatter excluded). For the full file use projectedText. */
 	async getText(path: string): Promise<string> {
 		return (await this.entry(path)).text.toJSON();
+	}
+
+	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
+	async projectedText(path: string): Promise<string> {
+		const e = await this.entry(path);
+		const { order, values } = frontmatterOf(e.doc);
+		return projectNote(order, values, e.text.toJSON());
 	}
 
 	/**
@@ -177,6 +224,7 @@ export class CrdtManager {
 		}
 
 		const plaintext = e.text.toJSON();
+		const { order, values } = frontmatterOf(e.doc);
 
 		// Tear down the bloated entry entirely (clears both IDB and the in-memory
 		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
@@ -192,19 +240,55 @@ export class CrdtManager {
 		// IndexeddbPersistence and awaits whenSynced (IDB is now empty).
 		const fresh = await this.entry(path);
 
-		// Seed the flattened plaintext with LOCAL origin so the update fires
-		// onUpdate → CrdtChannel.sendUpdateRaw. CRITICAL: must NOT use REMOTE_ORIGIN
-		// — the flattened state is a brand-new lineage the server has never seen and
-		// must be sent. If we applied it as remote the observer would suppress it, the
+		// Seed the flattened state — both frontmatter and body — with LOCAL origin
+		// inside a single transaction so the update fires onUpdate →
+		// CrdtChannel.sendUpdateRaw. CRITICAL: must NOT use REMOTE_ORIGIN — the
+		// flattened state is a brand-new lineage the server has never seen and must
+		// be sent. If we applied it as remote the observer would suppress it, the
 		// server would keep its old pre-flatten state, and the next handshake would
 		// re-merge the bloat right back (spec §4.2).
-		fresh.text.insert(0, plaintext); // local origin → propagated to the server
+		fresh.doc.transact(() => {
+			this.applyFrontmatterInto(fresh.doc, order, values);
+			fresh.text.insert(0, plaintext);
+		}); // local origin → propagated to the server
 		return true;
 	}
 
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	/**
+	 * Upsert changed frontmatter keys into Y.Map(FRONTMATTER_KEY), delete absent
+	 * keys, and replace Y.Array(ORDER_KEY) — all in a single doc transaction.
+	 *
+	 * Semantics are identical to the original inlined block in `applyLocalEdit`:
+	 * - Only keys whose value changed are written (idempotent for unchanged keys).
+	 * - Keys present in the current map but absent from `values` are deleted.
+	 * - The order array is always replaced wholesale (delete-all then insert).
+	 *
+	 * The body seed/diff gate lives OUTSIDE this helper and is not affected.
+	 * Pass an empty `order` + `values` to clear frontmatter.
+	 */
+	private applyFrontmatterInto(
+		doc: Y.Doc,
+		order: string[],
+		values: Record<string, string>,
+	): void {
+		const map = doc.getMap<string>(FRONTMATTER_KEY);
+		const arr = doc.getArray<string>(ORDER_KEY);
+		const current = map.toJSON() as Record<string, string>;
+		doc.transact(() => {
+			for (const [k, v] of Object.entries(values)) {
+				if (current[k] !== v) map.set(k, v);
+			}
+			for (const k of Object.keys(current)) {
+				if (!(k in values)) map.delete(k);
+			}
+			if (arr.length > 0) arr.delete(0, arr.length);
+			if (order.length > 0) arr.insert(0, order);
+		});
+	}
 
 	/**
 	 * Two-dimensional bloat threshold (spec §11 + backend AND gate).
@@ -236,7 +320,7 @@ export class CrdtManager {
 
 		const doc = new Y.Doc();
 		const persistence = new IndexeddbPersistence(id, doc);
-		const text = doc.getText("content");
+		const text = doc.getText(CONTENT_KEY);
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
@@ -251,9 +335,13 @@ export class CrdtManager {
 		});
 
 		// Remote-merge path: flush merged content to disk; skip local-origin updates.
+		// Reconstruct the full file (frontmatter fence + body) from the Y.Map/Y.Array
+		// and body Y.Text so disk always gets a complete, valid markdown file.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (origin !== REMOTE_ORIGIN) return;
-			void this.opts.onFlushToDisk(path, text.toJSON());
+			const { order, values } = frontmatterOf(doc);
+			const body = text.toJSON();
+			void this.opts.onFlushToDisk(path, projectNote(order, values, body));
 		});
 
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);

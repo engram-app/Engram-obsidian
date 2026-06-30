@@ -1,0 +1,22 @@
+[
+	{
+		"name": "scalar+list",
+		"raw": "---\ntitle: Hello\ntags:\n  - a\n  - b\n---\nbody\n",
+		"order": ["title", "tags"],
+		"values": { "title": "\"Hello\"", "tags": "[\"a\",\"b\"]" }
+	},
+	{
+		"name": "nested-sorted",
+		"raw": "---\nmeta:\n  b: 2\n  a: 1\n---\nx\n",
+		"order": ["meta"],
+		"values": { "meta": "{\"a\":1,\"b\":2}" },
+		"projected": "---\nmeta:\n  a: 1\n  b: 2\n---\nx\n"
+	},
+	{
+		"name": "empty-frontmatter",
+		"raw": "---\n---\nonly body\n",
+		"order": [],
+		"values": {},
+		"projected": "only body\n"
+	}
+]
