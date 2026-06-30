@@ -3,6 +3,7 @@ import {
 	canonicalJson,
 	emitFrontmatter,
 	parseFrontmatter,
+	projectNote,
 	splitFrontmatter,
 } from "../../src/crdt/frontmatter-codec";
 
@@ -83,5 +84,22 @@ describe("emitFrontmatter", () => {
 			order: ["title"],
 			values: { title: '"Hi"' },
 		});
+	});
+});
+
+describe("projectNote", () => {
+	test("wraps frontmatter in fences + body", () => {
+		expect(projectNote(["title"], { title: '"Hi"' }, "body\n")).toBe(
+			"---\ntitle: Hi\n---\nbody\n",
+		);
+	});
+	test("empty frontmatter -> body only", () => {
+		expect(projectNote([], {}, "body\n")).toBe("body\n");
+	});
+	test("split then project round-trips a real note", () => {
+		const raw = "---\ntitle: Hi\ntags:\n  - a\n---\nthe body\n";
+		const { fmBlock, body } = splitFrontmatter(raw);
+		const { order, values } = parseFrontmatter(fmBlock as string)!;
+		expect(projectNote(order, values, body)).toBe(raw);
 	});
 });

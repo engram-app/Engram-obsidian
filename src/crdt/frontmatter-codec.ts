@@ -82,3 +82,8 @@ export function emitFrontmatter(order: string[], values: Record<string, string>)
 	const out = yamlStringify(obj);
 	return out.endsWith("\n") ? out : `${out}\n`;
 }
+
+export function projectNote(order: string[], values: Record<string, string>, body: string): string {
+	const block = emitFrontmatter(order, values);
+	return block === "" ? body : `${FENCE}\n${block}${FENCE}\n${body}`;
+}
