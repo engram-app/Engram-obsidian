@@ -220,6 +220,28 @@ describe("CrdtChannel startSync enrollment", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 7 (frontmatter split): applyLocalEdit routes frontmatter into Y.Map/Array
+// ---------------------------------------------------------------------------
+
+test("applyLocalEdit splits frontmatter into Y.Map, body into Y.Text", async () => {
+	const { mgr } = makeManager();
+	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
+	const doc = await mgr.getDoc("N.md");
+	expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"Hi"' } });
+	expect(doc.getText("content").toString()).toBe("body\n");
+	await mgr.destroy();
+});
+
+test("malformed frontmatter keeps whole text as body", async () => {
+	const { mgr } = makeManager();
+	await mgr.applyLocalEdit("N.md", "---\nbroken: : :\n---\nbody\n");
+	const doc = await mgr.getDoc("N.md");
+	expect(frontmatterOf(doc)).toEqual({ order: [], values: {} });
+	expect(doc.getText("content").toString()).toBe("---\nbroken: : :\n---\nbody\n");
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
 // Task 7D: catch-split in reconcileColdStart
 // — write failure does NOT trigger onCorruption; decode failure DOES
 // ---------------------------------------------------------------------------

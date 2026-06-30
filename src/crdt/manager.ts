@@ -1,6 +1,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
+import { parseFrontmatter, splitFrontmatter } from "./frontmatter-codec";
 
 /**
  * Transaction origin stamped on remotely-applied updates. Updates carrying
@@ -92,10 +93,20 @@ export class CrdtManager {
 	}
 
 	/**
-	 * Apply a disk-read content string into the doc's Y.Text.
+	 * Apply a disk-read content string into the doc's Y.Text and frontmatter
+	 * Y.Map/Y.Array.
 	 *
+	 * Frontmatter is split from the raw disk content first:
+	 * - Valid YAML frontmatter: Y.Map(FRONTMATTER_KEY) is upserted with parsed
+	 *   key-value pairs (only changed keys written), missing keys deleted, and
+	 *   Y.Array(ORDER_KEY) is replaced with the source-order key list.
+	 * - Malformed or absent frontmatter: Y.Map and Y.Array are left empty and the
+	 *   whole `diskContent` is treated as body (mirrors the backend `ingest_plaintext`
+	 *   fallback).
+	 *
+	 * The body is routed through the existing two-guard seed/diff bridge:
 	 * - First call ever for this path (no CRDT history): `seedOnce` enrolls the
-	 *   text into the shared type exactly once.
+	 *   body text into the shared type exactly once.
 	 * - Subsequent calls (`hasLca = true`, or the doc already has content):
 	 *   `diffIntoYText` patches only the changed characters, preserving the
 	 *   CRDT authorship graph.
@@ -106,8 +117,32 @@ export class CrdtManager {
 	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<void> {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
-		if (seedOnce(e.text, diskContent, lca)) return;
-		diffIntoYText(e.text, diskContent);
+
+		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
+		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
+		const order = parsed ? parsed.order : [];
+		const values = parsed ? parsed.values : {};
+		// Malformed/absent frontmatter: treat the whole raw string as body.
+		const body = parsed !== null ? splitBody : diskContent;
+
+		// Apply frontmatter into Y.Map + Y.Array inside a single transaction.
+		const map = e.doc.getMap<string>(FRONTMATTER_KEY);
+		const arr = e.doc.getArray<string>(ORDER_KEY);
+		const current = map.toJSON() as Record<string, string>;
+		e.doc.transact(() => {
+			for (const [k, v] of Object.entries(values)) {
+				if (current[k] !== v) map.set(k, v);
+			}
+			for (const k of Object.keys(current)) {
+				if (!(k in values)) map.delete(k);
+			}
+			if (arr.length > 0) arr.delete(0, arr.length);
+			if (order.length > 0) arr.insert(0, order);
+		});
+
+		// Route body through the existing seed-once + minimal-diff gate.
+		if (seedOnce(e.text, body, lca)) return;
+		diffIntoYText(e.text, body);
 	}
 
 	/**
