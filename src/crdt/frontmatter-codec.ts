@@ -33,10 +33,11 @@ export function canonicalJson(value: unknown): string {
 
 function sortDeep(v: unknown): unknown {
 	if (Array.isArray(v)) return v.map(sortDeep);
-	if (v && typeof v === "object") {
+	if (v !== null && typeof v === "object") {
+		const rec = v as Record<string, unknown>;
 		const out: Record<string, unknown> = {};
-		for (const k of Object.keys(v as Record<string, unknown>).sort()) {
-			out[k] = sortDeep((v as Record<string, unknown>)[k]);
+		for (const k of Object.keys(rec).sort()) {
+			out[k] = sortDeep(rec[k]);
 		}
 		return out;
 	}
@@ -66,8 +67,14 @@ function topLevelKeyOrder(block: string, map: Record<string, unknown>): string[]
 	const order: string[] = [];
 	for (const line of block.split("\n")) {
 		const m = line.match(/^([^\s:][^:]*):/);
-		if (m && Object.prototype.hasOwnProperty.call(map, m[1]) && !order.includes(m[1])) {
-			order.push(m[1]);
+		if (!m) continue;
+		const key = m[1];
+		if (
+			key !== undefined &&
+			Object.prototype.hasOwnProperty.call(map, key) &&
+			!order.includes(key)
+		) {
+			order.push(key);
 		}
 	}
 	return order;
@@ -78,7 +85,7 @@ export function emitFrontmatter(order: string[], values: Record<string, string>)
 	if (present.length === 0) return "";
 	// Build one object in source order; `yaml.stringify` preserves insertion order.
 	const obj: Record<string, unknown> = {};
-	for (const k of present) obj[k] = JSON.parse(values[k]);
+	for (const k of present) obj[k] = JSON.parse(values[k]!);
 	const out = yamlStringify(obj);
 	return out.endsWith("\n") ? out : `${out}\n`;
 }
