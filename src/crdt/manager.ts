@@ -126,19 +126,7 @@ export class CrdtManager {
 		const body = parsed !== null ? splitBody : diskContent;
 
 		// Apply frontmatter into Y.Map + Y.Array inside a single transaction.
-		const map = e.doc.getMap<string>(FRONTMATTER_KEY);
-		const arr = e.doc.getArray<string>(ORDER_KEY);
-		const current = map.toJSON() as Record<string, string>;
-		e.doc.transact(() => {
-			for (const [k, v] of Object.entries(values)) {
-				if (current[k] !== v) map.set(k, v);
-			}
-			for (const k of Object.keys(current)) {
-				if (!(k in values)) map.delete(k);
-			}
-			if (arr.length > 0) arr.delete(0, arr.length);
-			if (order.length > 0) arr.insert(0, order);
-		});
+		this.applyFrontmatterInto(e.doc, order, values);
 
 		// Route body through the existing seed-once + minimal-diff gate.
 		if (seedOnce(e.text, body, lca)) return;
@@ -168,9 +156,16 @@ export class CrdtManager {
 		return Y.encodeStateAsUpdate((await this.entry(path)).doc, sv);
 	}
 
-	/** Return the plain text content of the note. */
+	/** Return the note body (frontmatter excluded). For the full file use projectedText. */
 	async getText(path: string): Promise<string> {
 		return (await this.entry(path)).text.toJSON();
+	}
+
+	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
+	async projectedText(path: string): Promise<string> {
+		const e = await this.entry(path);
+		const { order, values } = frontmatterOf(e.doc);
+		return projectNote(order, values, e.text.toJSON());
 	}
 
 	/**
@@ -229,6 +224,7 @@ export class CrdtManager {
 		}
 
 		const plaintext = e.text.toJSON();
+		const { order, values } = frontmatterOf(e.doc);
 
 		// Tear down the bloated entry entirely (clears both IDB and the in-memory
 		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
@@ -244,19 +240,55 @@ export class CrdtManager {
 		// IndexeddbPersistence and awaits whenSynced (IDB is now empty).
 		const fresh = await this.entry(path);
 
-		// Seed the flattened plaintext with LOCAL origin so the update fires
-		// onUpdate → CrdtChannel.sendUpdateRaw. CRITICAL: must NOT use REMOTE_ORIGIN
-		// — the flattened state is a brand-new lineage the server has never seen and
-		// must be sent. If we applied it as remote the observer would suppress it, the
+		// Seed the flattened state — both frontmatter and body — with LOCAL origin
+		// inside a single transaction so the update fires onUpdate →
+		// CrdtChannel.sendUpdateRaw. CRITICAL: must NOT use REMOTE_ORIGIN — the
+		// flattened state is a brand-new lineage the server has never seen and must
+		// be sent. If we applied it as remote the observer would suppress it, the
 		// server would keep its old pre-flatten state, and the next handshake would
 		// re-merge the bloat right back (spec §4.2).
-		fresh.text.insert(0, plaintext); // local origin → propagated to the server
+		fresh.doc.transact(() => {
+			this.applyFrontmatterInto(fresh.doc, order, values);
+			fresh.text.insert(0, plaintext);
+		}); // local origin → propagated to the server
 		return true;
 	}
 
 	// ---------------------------------------------------------------------------
 	// Private helpers
 	// ---------------------------------------------------------------------------
+
+	/**
+	 * Upsert changed frontmatter keys into Y.Map(FRONTMATTER_KEY), delete absent
+	 * keys, and replace Y.Array(ORDER_KEY) — all in a single doc transaction.
+	 *
+	 * Semantics are identical to the original inlined block in `applyLocalEdit`:
+	 * - Only keys whose value changed are written (idempotent for unchanged keys).
+	 * - Keys present in the current map but absent from `values` are deleted.
+	 * - The order array is always replaced wholesale (delete-all then insert).
+	 *
+	 * The body seed/diff gate lives OUTSIDE this helper and is not affected.
+	 * Pass an empty `order` + `values` to clear frontmatter.
+	 */
+	private applyFrontmatterInto(
+		doc: Y.Doc,
+		order: string[],
+		values: Record<string, string>,
+	): void {
+		const map = doc.getMap<string>(FRONTMATTER_KEY);
+		const arr = doc.getArray<string>(ORDER_KEY);
+		const current = map.toJSON() as Record<string, string>;
+		doc.transact(() => {
+			for (const [k, v] of Object.entries(values)) {
+				if (current[k] !== v) map.set(k, v);
+			}
+			for (const k of Object.keys(current)) {
+				if (!(k in values)) map.delete(k);
+			}
+			if (arr.length > 0) arr.delete(0, arr.length);
+			if (order.length > 0) arr.insert(0, order);
+		});
+	}
 
 	/**
 	 * Two-dimensional bloat threshold (spec §11 + backend AND gate).

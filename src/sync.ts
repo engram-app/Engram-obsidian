@@ -93,12 +93,13 @@ export async function reconcileColdStart(
 	crdt: {
 		applyLocalEdit: (path: string, content: string) => Promise<void>;
 		getText: (path: string) => Promise<string>;
+		projectedText: (path: string) => Promise<string>;
 	},
 	onCorruption: () => void,
 ): Promise<void> {
 	let current: string;
 	try {
-		current = await crdt.getText(file.path);
+		current = await crdt.projectedText(file.path);
 	} catch {
 		onCorruption(); // surface the existing ConflictModal only on decode failure
 		return;
@@ -376,7 +377,7 @@ export class SyncEngine {
 		// A content-bearing STEP2 raced in and created the file — nothing to do.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
 
-		const text = this.crdt ? await this.crdt.getText(path) : "";
+		const text = this.crdt ? await this.crdt.projectedText(path) : "";
 		await this.flushFromCrdt(path, text);
 	}
 

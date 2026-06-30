@@ -280,6 +280,7 @@ test("flush reconstructs full file from Y.Map + body", async () => {
 describe("reconcileColdStart catch-split", () => {
 	test("write failure (applyLocalEdit throws) does NOT trigger onCorruption", async () => {
 		let corrupted = false;
+		const projectedText = async () => "old content";
 		const getText = async () => "old content"; // decode succeeds
 		const applyLocalEdit = async () => {
 			throw new Error("storage write failed");
@@ -288,7 +289,7 @@ describe("reconcileColdStart catch-split", () => {
 		// Should not reject AND should not call onCorruption
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "new content" },
-			{ getText, applyLocalEdit },
+			{ projectedText, getText, applyLocalEdit },
 			() => {
 				corrupted = true;
 			},
@@ -299,6 +300,9 @@ describe("reconcileColdStart catch-split", () => {
 
 	test("decode failure (getText throws) DOES trigger onCorruption", async () => {
 		let corrupted = false;
+		const projectedText = async (): Promise<string> => {
+			throw new Error("decode failed");
+		};
 		const getText = async (): Promise<string> => {
 			throw new Error("decode failed");
 		};
@@ -306,7 +310,7 @@ describe("reconcileColdStart catch-split", () => {
 
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "some content" },
-			{ getText, applyLocalEdit },
+			{ projectedText, getText, applyLocalEdit },
 			() => {
 				corrupted = true;
 			},
@@ -320,6 +324,7 @@ describe("reconcileColdStart catch-split", () => {
 		const logger = rlog();
 		const warnSpy = spyOn(logger, "warn");
 
+		const projectedText = async () => "old content";
 		const getText = async () => "old content";
 		const applyLocalEdit = async () => {
 			throw new Error("storage write failed");
@@ -327,7 +332,7 @@ describe("reconcileColdStart catch-split", () => {
 
 		await reconcileColdStart(
 			{ path: "fail.md", diskContent: "new content" },
-			{ getText, applyLocalEdit },
+			{ projectedText, getText, applyLocalEdit },
 			() => {},
 		);
 
@@ -339,4 +344,82 @@ describe("reconcileColdStart catch-split", () => {
 
 		warnSpy.mockRestore();
 	});
+});
+
+// ---------------------------------------------------------------------------
+// Bug 1: flattenIfBloated must preserve frontmatter (TDD RED before fix)
+// ---------------------------------------------------------------------------
+
+test("flattenIfBloated preserves frontmatter across the flatten reset", async () => {
+	const { mgr } = makeManager();
+
+	// Seed frontmatter FIRST so the Y.Map/Y.Array are populated before bloat.
+	await mgr.applyLocalEdit("n.md", "---\ntitle: My Note\ntags: foo bar\n---\nbody text", false);
+
+	// Build bloat on top of the seeded state: 1100 distinct client-IDs, each
+	// adding 500 chars to cross both axes (> 500 KB AND > 1000 client-IDs).
+	const doc = await mgr.getDoc("n.md");
+	for (let i = 0; i < 1100; i++) {
+		const author = new Y.Doc();
+		Y.applyUpdate(author, Y.encodeStateAsUpdate(doc));
+		author.getText("content").insert(author.getText("content").length, "x".repeat(500));
+		Y.applyUpdate(doc, Y.encodeStateAsUpdate(author, Y.encodeStateVector(doc)));
+	}
+
+	const flattened = await mgr.flattenIfBloated("n.md");
+	expect(flattened).toBe(true);
+
+	// Frontmatter must survive the flatten.
+	const freshDoc = await mgr.getDoc("n.md");
+	const { values } = frontmatterOf(freshDoc);
+	expect(values).toMatchObject({ title: '"My Note"', tags: '"foo bar"' });
+
+	// projectedText must include the frontmatter fence.
+	const projected = await mgr.projectedText("n.md");
+	expect(projected).toContain("---");
+	expect(projected).toContain("title:");
+
+	await mgr.destroy();
+}, 30000);
+
+// ---------------------------------------------------------------------------
+// Bug 2: projectedText returns full file (frontmatter + body)
+// ---------------------------------------------------------------------------
+
+test("projectedText returns full file for a frontmatter note", async () => {
+	const { mgr } = makeManager();
+	await mgr.applyLocalEdit("fm.md", "---\ntitle: Hello\n---\nbody", false);
+	const result = await mgr.projectedText("fm.md");
+	expect(result).toContain("---");
+	expect(result).toContain("title:");
+	expect(result).toContain("body");
+	await mgr.destroy();
+});
+
+test("projectedText returns body-only for a plain note (no frontmatter)", async () => {
+	const { mgr } = makeManager();
+	await mgr.applyLocalEdit("plain.md", "just body", false);
+	expect(await mgr.projectedText("plain.md")).toBe("just body");
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
+// Bug 3: reconcileColdStart uses projectedText so early-return fires correctly
+// ---------------------------------------------------------------------------
+
+test("reconcileColdStart returns early when projectedText matches disk (no applyLocalEdit)", async () => {
+	let applyCallCount = 0;
+	const fullFile = "---\ntitle: T\n---\nbody";
+
+	const crdt = {
+		projectedText: async () => fullFile, // matches disk
+		getText: async () => "body", // old body-only value — would NOT match
+		applyLocalEdit: async () => {
+			applyCallCount++;
+		},
+	};
+
+	await reconcileColdStart({ path: "n.md", diskContent: fullFile }, crdt, () => {});
+	// projectedText matches diskContent, so applyLocalEdit must NOT be called.
+	expect(applyCallCount).toBe(0);
 });

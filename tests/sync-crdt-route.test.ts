@@ -333,10 +333,11 @@ describe("reconcileColdStart", () => {
 	test("disk diverged from Y.Doc: applyLocalEdit called, no corruption callback", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const getText = mock(async () => "line one");
+		const projectedText = mock(async () => "line one");
 		let corrupted = false;
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "line one\nline two" },
-			{ applyLocalEdit, getText } as any,
+			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
 			},
@@ -348,10 +349,11 @@ describe("reconcileColdStart", () => {
 	test("disk matches Y.Doc: applyLocalEdit NOT called (already in sync)", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const getText = mock(async () => "same content");
+		const projectedText = mock(async () => "same content");
 		let corrupted = false;
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "same content" },
-			{ applyLocalEdit, getText } as any,
+			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
 			},
@@ -365,10 +367,13 @@ describe("reconcileColdStart", () => {
 		const getText = mock(async () => {
 			throw new Error("decode failed");
 		});
+		const projectedText = mock(async () => {
+			throw new Error("decode failed");
+		});
 		let corrupted = false;
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "some content" },
-			{ applyLocalEdit, getText } as any,
+			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
 			},
@@ -380,10 +385,11 @@ describe("reconcileColdStart", () => {
 	test("CRDT does NOT invoke conflict modal on normal cold-start divergence", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const getText = mock(async () => "old content");
+		const projectedText = mock(async () => "old content");
 		let conflictModalShown = false;
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "old content\nnew line" },
-			{ applyLocalEdit, getText } as any,
+			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				conflictModalShown = true;
 			},
