@@ -6,6 +6,7 @@ import {
 	projectNote,
 	splitFrontmatter,
 } from "../../src/crdt/frontmatter-codec";
+import fixtures from "./frontmatter-fixtures.json";
 
 describe("splitFrontmatter", () => {
 	test("extracts yaml block and body for a well-formed fence", () => {
@@ -102,4 +103,26 @@ describe("projectNote", () => {
 		const { order, values } = parseFrontmatter(fmBlock as string)!;
 		expect(projectNote(order, values, body)).toBe(raw);
 	});
+});
+
+describe("frontmatter fixtures", () => {
+	interface Fixture {
+		name: string;
+		raw: string;
+		values: Record<string, string>;
+		order: string[];
+		projected?: string;
+	}
+
+	for (const fx of fixtures as Fixture[]) {
+		test(`round-trip + values: ${fx.name}`, () => {
+			const { fmBlock, body } = splitFrontmatter(fx.raw);
+			const parsed = parseFrontmatter(fmBlock ?? "");
+			expect(parsed).not.toBeNull();
+			expect(parsed!.order).toEqual(fx.order);
+			expect(parsed!.values).toEqual(fx.values);
+			const expectedProjected = fx.projected ?? fx.raw;
+			expect(projectNote(parsed!.order, parsed!.values, body)).toBe(expectedProjected);
+		});
+	}
 });
