@@ -143,6 +143,12 @@ export default class EngramSyncPlugin extends Plugin {
 	private crdtManager: CrdtManager | null = null;
 	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
+	/** True once onCrdtJoined has fired for the current channel session.
+	 *  Allows the disconnect handler to KEEP CRDT routing active while offline
+	 *  (Y.Doc + IndexedDB capture edits locally; reconnect handshake delivers
+	 *  them). Reset to false in setupNoteStream() so a genuine backend/vault
+	 *  switch degrades back to legacy until the new server confirms crdt: join. */
+	private crdtEverJoined = false;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -927,6 +933,19 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtChannel = null;
 		this.crdtEnrollment?.resetAll();
 		this.crdtEnrollment = null;
+		// Teardown must NOT depend on the connection-state transition that nulls
+		// the SyncEngine's CRDT manager via setConnected(false): when the offline-
+		// retention branch is active (crdtEverJoined = true and the socket was
+		// already disconnected), setConnected is transition-gated and becomes a
+		// no-op. Clear the SyncEngine references explicitly here so that a
+		// destroyed manager never outlives its channel session as a zombie.
+		this.syncEngine.setCrdtManager(null);
+		this.syncEngine.setCrdtEnrollment(null);
+		// Reset the joined flag: a new channel session must re-confirm CRDT support
+		// before offline capture stays active. This ensures a genuine backend/vault
+		// switch degrades back to legacy (crdtEverJoined = false → disconnect handler
+		// nulls the manager) until the new server confirms the crdt: topic join.
+		this.crdtEverJoined = false;
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
@@ -992,23 +1011,39 @@ export default class EngramSyncPlugin extends Plugin {
 							);
 						});
 					} else {
-						// On disconnect the crdt: topic is also gone. Clear the CRDT
-						// manager from the SyncEngine so markdown saves fall back to
-						// the legacy pushNote path until the crdt: topic re-joins on
-						// the next connection. This is the graceful-degradation gate:
-						// non-CRDT backends never fire onCrdtJoined and therefore never
-						// set the manager, but we also reset here defensively in case
-						// the channel drops mid-session.
-						this.syncEngine.setCrdtManager(null);
-						// Invalidate all synced marks: a mark means "doc reflected server
-						// state at some past connection" — a disconnect invalidates that
-						// because another device may have written content while offline.
-						// Re-established only when a non-empty STEP2 arrives after reconnect.
+						// On disconnect: if onCrdtJoined has already fired for this
+						// channel session (crdtEverJoined), KEEP the CRDT manager wired
+						// in the SyncEngine. Y.Doc + IndexedDB are offline-native —
+						// edits accumulate locally and the reconnect STEP1/STEP2
+						// handshake delivers them to the server. channel.send() drops
+						// frames on the closed socket (readyState guard in channel.ts),
+						// but the OPS survive: they are committed to the Y.Doc and
+						// persisted in IndexedDB, and travel via the reconnect handshake.
+						//
+						// If crdtEverJoined is false the server never confirmed CRDT
+						// support for this channel session (e.g. non-CRDT backend, or
+						// a brand-new channel pre-join). Fall back to the legacy path
+						// exactly as before so we don't hold a null manager as "active".
+						if (!this.crdtEverJoined) {
+							this.syncEngine.setCrdtManager(null);
+							rlog().info(
+								"crdt",
+								"Disconnected before crdt: join — CRDT routing cleared, legacy path active",
+							);
+						} else {
+							rlog().info(
+								"crdt",
+								"Disconnected — CRDT routing RETAINED for offline capture (Y.Doc + IDB)",
+							);
+						}
+						// Always invalidate synced marks on disconnect: a mark means
+						// "doc reflected server state at some past connection" — a
+						// disconnect invalidates that because another device may have
+						// written content while offline. T1's gate then declines
+						// empty-doc seeds offline (correct: fall to legacy/queue),
+						// and re-establishes marks when a non-empty STEP2 arrives
+						// after reconnect.
 						this.crdtManager?.clearSynced();
-						rlog().info(
-							"crdt",
-							"Disconnected — CRDT routing cleared, legacy path active",
-						);
 					}
 				};
 
@@ -1132,6 +1167,7 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt",
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
+						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
 					};
 				} else {

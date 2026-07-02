@@ -4965,8 +4965,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Marks the path recentlyFlushed first so the resulting vault.modify/create
    *  event is suppressed by the recentlyFlushed guard in handleModify (the
    *  'create' handler routes through handleModify too).
-   *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
+   *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
+   *  Requires the sync gate to be open — returns early when blocked so inbound
+   *  CRDT frames cannot overwrite local files before the user picks a direction. */
   async flushFromCrdt(path, content) {
+    if (this.syncBlocked) {
+      devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`);
+      return;
+    }
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     this.markRecentlyFlushed(normalized);
     try {
@@ -4991,6 +4997,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  absent, the note is genuinely empty — create it from the doc's current text
    *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
   async materializeEmptyDiscovered(path) {
+    if (this.syncBlocked) {
+      devLog().log("sync-blocked", `materializeEmptyDiscovered short-circuited \u2014 gate closed: ${path}`);
+      return;
+    }
     if (!path.endsWith(".md")) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized) || (await new Promise(
@@ -18901,6 +18911,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     this.crdtManager = null;
     this.crdtChannel = null;
     this.crdtEnrollment = null;
+    /** True once onCrdtJoined has fired for the current channel session.
+     *  Allows the disconnect handler to KEEP CRDT routing active while offline
+     *  (Y.Doc + IndexedDB capture edits locally; reconnect handshake delivers
+     *  them). Reset to false in setupNoteStream() so a genuine backend/vault
+     *  switch degrades back to legacy until the new server confirms crdt: join. */
+    this.crdtEverJoined = !1;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -18952,6 +18968,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     ), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
+        if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
         file instanceof import_obsidian23.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
@@ -19097,26 +19114,26 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         } catch (e) {
           console.error("Engram Sync: startup setup failed", e), rlog().error("lifecycle", `Startup setup failed: ${errMsg(e)}`);
         }
-      if (this.syncEngine.setReady(), this.crdtManager) {
-        let markdownFiles = this.app.vault.getMarkdownFiles();
-        for (let file of markdownFiles) {
-          let crdt = this.crdtManager;
-          this.app.vault.cachedRead(file).then(
-            (diskContent) => reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
+      if (this.syncEngine.setReady(), !!registered) {
+        if (gateOpen && this.crdtManager) {
+          let markdownFiles = this.app.vault.getMarkdownFiles();
+          for (let file of markdownFiles) {
+            let crdt = this.crdtManager;
+            this.app.vault.cachedRead(file).then(
+              (diskContent) => reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
+                rlog().warn(
+                  "crdt",
+                  `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                );
+              })
+            ).catch((e) => {
               rlog().warn(
                 "crdt",
-                `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                `reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`
               );
-            })
-          ).catch((e) => {
-            rlog().warn(
-              "crdt",
-              `reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`
-            );
-          });
+            });
+          }
         }
-      }
-      if (registered)
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
@@ -19133,6 +19150,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           }
         else
           await this.doSyncWithFirstSyncCheck();
+      }
     });
   }
   onunload() {
@@ -19251,7 +19269,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
   }
   setupNoteStream() {
     var _a, _b, _c;
-    (_a = this.crdtManager) == null || _a.destroy(), this.crdtManager = null, this.crdtChannel = null, (_b = this.crdtEnrollment) == null || _b.resetAll(), this.crdtEnrollment = null, (_c = this.noteStream) == null || _c.disconnect(), this.noteStream = null, this.channelEpoch++;
+    (_a = this.crdtManager) == null || _a.destroy(), this.crdtManager = null, this.crdtChannel = null, (_b = this.crdtEnrollment) == null || _b.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_c = this.noteStream) == null || _c.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -19286,10 +19304,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
-        })) : (this.syncEngine.setCrdtManager(null), (_b2 = this.crdtManager) == null || _b2.clearSynced(), rlog().info(
+        })) : (this.crdtEverJoined ? rlog().info(
           "crdt",
-          "Disconnected \u2014 CRDT routing cleared, legacy path active"
-        ));
+          "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
+        ) : (this.syncEngine.setCrdtManager(null), rlog().info(
+          "crdt",
+          "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
+        )), (_b2 = this.crdtManager) == null || _b2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian23.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
@@ -19351,7 +19372,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.syncEngine.setCrdtManager(this.crdtManager);
+          ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager);
         };
       } else
         rlog().info(
@@ -19450,6 +19471,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
    *  a real sync direction in the modal). Persists the fingerprint and
    *  unblocks the engine. */
   async markSyncGateAccepted() {
+    var _a;
     let fp = await computeSyncFingerprint(this.settings);
     if (fp === "") {
       rlog().warn(
@@ -19458,7 +19480,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       );
       return;
     }
-    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
+    this.syncGateAcceptedFor = fp, this.syncEngine.setSyncBlocked(!1), (_a = this.crdtEnrollment) == null || _a.resetAll(), await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus());
   }
   /** Decide which header copy the SyncPreviewModal should use based on the
    *  saved gate fingerprint. Never accepted before = first-time onboarding;
