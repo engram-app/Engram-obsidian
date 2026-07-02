@@ -4,7 +4,16 @@
  * Pushes vault changes to Engram for indexing/search.
  * Pulls MCP-created notes and changes from other devices.
  */
-import { FileSystemAdapter, Notice, Platform, Plugin, TFile, TFolder, requestUrl } from "obsidian";
+import {
+	FileSystemAdapter,
+	MarkdownView,
+	Notice,
+	Platform,
+	Plugin,
+	TFile,
+	TFolder,
+	requestUrl,
+} from "obsidian";
 import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
@@ -13,7 +22,7 @@ import {
 	type RefreshFn,
 	seededAccessToken,
 } from "./auth";
-import { migrateCloudApiUrl } from "./auth-state";
+import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
@@ -353,6 +362,15 @@ export default class EngramSyncPlugin extends Plugin {
 				new Notice("Engram sync: syncing...");
 				const { pulled, pushed } = await this.syncEngine.fullSync();
 				new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+			},
+		});
+
+		this.addCommand({
+			id: "disconnect",
+			name: "Disconnect (clear login)",
+			callback: async () => {
+				await this.clearAuthAndPromptRelink("manual disconnect command", false);
+				new Notice("Engram: disconnected. Open Engram settings to reconnect.");
 			},
 		});
 
@@ -797,6 +815,38 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 	}
 
+	/**
+	 * Clear all persisted login state and drop back to the unlinked state so the
+	 * user can re-link. Used by both the auto-heal path (the server definitively
+	 * rejected the stored refresh token) and the manual "Disconnect" command.
+	 * Idempotent — a no-op once auth is already cleared.
+	 */
+	private async clearAuthAndPromptRelink(reason: string, notify: boolean): Promise<void> {
+		if (!this.settings.refreshToken && !this.settings.apiKey) return;
+		rlog().info("auth", `Clearing auth + prompting re-link (${reason})`);
+		Object.assign(this.settings, withClearedAuth(this.settings));
+		this.api.setAuthProvider(null);
+		this.authProvider = null;
+		this.noteStream?.disconnect();
+		this.noteStream = null;
+		this.liveConnected = false;
+		await this.savePluginData(this.syncEngine.getLastSync());
+		this.updateStatusBar(this.syncEngine.getStatus());
+		if (notify) {
+			new Notice("Engram: your login expired — open Engram settings to reconnect.");
+		}
+	}
+
+	/**
+	 * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
+	 * token (revoked / rotated-away / expired → 4xx). Self-heals the previously
+	 * stuck "token invalid" state: without this, the plugin replayed a dead token
+	 * forever with no recovery and no unlink button.
+	 */
+	private handleAuthInvalidated(): void {
+		void this.clearAuthAndPromptRelink("server rejected refresh token", true);
+	}
+
 	private createAuthProvider(): AuthProvider | null {
 		if (this.settings.refreshToken) {
 			const refreshFn: RefreshFn = async (token) => {
@@ -810,7 +860,14 @@ export default class EngramSyncPlugin extends Plugin {
 					throw: false,
 				});
 				if (resp.status < 200 || resp.status >= 300) {
-					throw new Error(`Refresh failed: ${resp.status}`);
+					// Carry the HTTP status so OAuthAuth can distinguish a definitive
+					// rejection (revoked/expired token → 4xx, clear + re-link) from a
+					// transient failure (5xx/network → keep the token, retry later).
+					const e = new Error(`Refresh failed: ${resp.status}`) as Error & {
+						status?: number;
+					};
+					e.status = resp.status;
+					throw e;
 				}
 				return resp.json as {
 					access_token: string;
@@ -862,6 +919,7 @@ export default class EngramSyncPlugin extends Plugin {
 				},
 				seed.token,
 				seed.expiresAt,
+				() => this.handleAuthInvalidated(),
 			);
 		}
 
@@ -934,6 +992,31 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 
 		this.connectChannel();
+	}
+
+	/**
+	 * Re-enroll every currently-open markdown note into the CRDT handshake so the
+	 * server re-registers this device as an observer of each note's room. Called
+	 * on every crdt: topic (re)join. For each open note it clears the once-per-doc
+	 * STEP1 guard (reset) then enrolls (sends STEP1), which is order-independent
+	 * and idempotent — on the initial join the active note is already enrolled, so
+	 * this just re-advertises; after a reconnect it restores the observer
+	 * subscription that a tab left open across the drop would otherwise lose.
+	 */
+	private reEnrollOpenCrdtNotes(): void {
+		const enrollment = this.crdtEnrollment;
+		if (!enrollment) return;
+		const seen = new Set<string>();
+		for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MarkdownView)) continue;
+			const file = view.file;
+			if (!(file instanceof TFile) || file.extension !== "md") continue;
+			if (seen.has(file.path)) continue;
+			seen.add(file.path);
+			enrollment.reset(file.path);
+			enrollment.enroll(file.path);
+		}
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -1104,6 +1187,14 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
 						this.syncEngine.setCrdtManager(this.crdtManager);
+						// Re-enroll every open markdown note so the server re-registers
+						// this device as a room observer after a (re)connect. The active-
+						// leaf-change handler only fires on a tab switch, so a note left
+						// open across a socket drop would otherwise never re-send STEP1 and
+						// go deaf to live updates until the user switches tabs or hits Sync.
+						// Mirrors the web client's reconnect resync. Runs on every crdt:
+						// (re)join; on the initial join it is a near no-op (already enrolled).
+						this.reEnrollOpenCrdtNotes();
 					};
 				} else {
 					rlog().info(
