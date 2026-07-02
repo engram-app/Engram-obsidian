@@ -255,6 +255,50 @@ export class CrdtManager {
 		this.synced.delete(id);
 	}
 
+	/**
+	 * Permanently remove the Y.Doc and its IndexedDB store for `path`.
+	 *
+	 * Call when a note is deleted or renamed (old path) so the ghost lineage
+	 * does not resurrect stale content if the note is later recreated at the
+	 * same path. Mirrors the teardown sequence in `flattenIfBloated`:
+	 *   doc.destroy() → persistence.clearData() → persistence.destroy()
+	 *   → docs.delete() → synced.delete()
+	 *
+	 * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
+	 * the path, `indexedDB.deleteDatabase(docId)` clears the IDB store directly.
+	 * This covers the case where another session wrote to IDB but the current
+	 * session never opened the doc. The database name matches the docId
+	 * (`${dbPrefix}/${path}`) — the same naming convention `entry()` uses when
+	 * constructing IndexeddbPersistence (y-indexeddb uses the docId as the
+	 * database name). Resolves without throwing regardless of whether the DB
+	 * existed.
+	 */
+	async removeDoc(path: string): Promise<void> {
+		const id = this.docId(path);
+		const e = this.docs.get(id);
+		if (e) {
+			// In-memory entry exists: mirror flattenIfBloated's teardown sequence.
+			e.doc.destroy();
+			await e.persistence.clearData();
+			await e.persistence.destroy();
+			this.docs.delete(id);
+		} else {
+			// No in-memory entry — the doc may still exist in IDB from a previous
+			// session. Delete the database directly by name (= docId) to prevent
+			// ghost resurrection on the next open. This is the same pattern that
+			// ensureDocSchema uses for the one-time schema wipe (schema.ts).
+			await new Promise<void>((resolve) => {
+				const req = indexedDB.deleteDatabase(id);
+				req.onsuccess = () => resolve();
+				req.onerror = () => resolve(); // non-fatal — DB may not exist
+				req.onblocked = () => resolve(); // resolve even if another tab has it open
+			});
+		}
+		// Clear the synced mark regardless of which branch ran. A recreated note
+		// at the same path must go through the full STEP2 handshake before seeding.
+		this.synced.delete(id);
+	}
+
 	/** Tear down all open docs. Call on plugin unload. */
 	async destroy(): Promise<void> {
 		for (const [id, e] of this.docs) {

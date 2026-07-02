@@ -187,7 +187,12 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 
 	test("DELETE event for markdown still processes via legacy path when CRDT active", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		// removeDoc is called by handleStreamEvent on md deletes (Task 5 teardown).
+		// Provide a stub so the call doesn't throw at runtime.
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async () => {}),
+			removeDoc: mock(async () => {}),
+		} as any);
 
 		const existingFile = new TFile("Notes/delete-me.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);

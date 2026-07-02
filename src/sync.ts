@@ -97,7 +97,7 @@ export async function reconcileColdStart(
 		// ignored here — a DECLINED write (handshake gate) is treated identically
 		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
 		// those files until their STEP2 handshake completes.
-		applyLocalEdit: (path: string, content: string) => Promise<boolean | void>;
+		applyLocalEdit: (path: string, content: string) => Promise<boolean | undefined>;
 		getText: (path: string) => Promise<string>;
 		projectedText: (path: string) => Promise<string>;
 	},
@@ -325,10 +325,17 @@ export class SyncEngine {
 	 *  CRDT-managed markdown note we don't have locally enrolls it (sends a
 	 *  sync-step-1) so the body is pulled over the y-protocols handshake — the
 	 *  level-triggered discovery path that backstops the edge-triggered
-	 *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
-	private crdtEnrollment: { enroll(path: string): void } | null = null;
+	 *  crdt_doc_ready announce.
+	 *
+	 *  Both `enroll` and `reset` are exposed: `enroll` kicks off the STEP1
+	 *  handshake; `reset` (Task 5) clears the once-per-session enroll guard so a
+	 *  note recreated at the same path re-runs the full handshake rather than
+	 *  silently reusing the stale enrolled state from before the delete/rename. */
+	private crdtEnrollment: { enroll(path: string): void; reset(path: string): void } | null = null;
 
-	setCrdtEnrollment(enrollment: { enroll(path: string): void } | null): void {
+	setCrdtEnrollment(
+		enrollment: { enroll(path: string): void; reset(path: string): void } | null,
+	): void {
 		this.crdtEnrollment = enrollment;
 	}
 
@@ -379,7 +386,10 @@ export class SyncEngine {
 	 *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
 	async materializeEmptyDiscovered(path: string): Promise<void> {
 		if (this.syncBlocked) {
-			devLog().log("sync-blocked", `materializeEmptyDiscovered short-circuited — gate closed: ${path}`);
+			devLog().log(
+				"sync-blocked",
+				`materializeEmptyDiscovered short-circuited — gate closed: ${path}`,
+			);
 			return;
 		}
 		if (!path.endsWith(".md")) return;
@@ -737,10 +747,20 @@ export class SyncEngine {
 				await this.api.deleteNote(file.path);
 			}
 			this.goOnline();
+			// Tear down the CRDT doc so a note recreated at the same path starts
+			// fresh — no ghost lineage that would resurrect stale content (P1-3).
+			if (!isBinary) {
+				await this.crdt?.removeDoc(file.path);
+				this.crdtEnrollment?.reset(file.path);
+			}
 		} catch (e) {
-			// 404 means already deleted — treat as success
+			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
+				if (!isBinary) {
+					await this.crdt?.removeDoc(file.path);
+					this.crdtEnrollment?.reset(file.path);
+				}
 				return;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
@@ -776,10 +796,20 @@ export class SyncEngine {
 					await this.api.deleteNote(oldPath);
 				}
 				this.goOnline();
+				// Tear down the CRDT doc for the OLD path so the lineage is gone
+				// once the note moves to its new path (P1-3: no ghost on rename).
+				if (!isBinary) {
+					await this.crdt?.removeDoc(oldPath);
+					this.crdtEnrollment?.reset(oldPath);
+				}
 			} catch (e) {
-				// 404 means already deleted — treat as success
+				// 404 means already deleted — treat as success; still tear down CRDT.
 				if (isHttpStatus(e, 404)) {
 					this.goOnline();
+					if (!isBinary) {
+						await this.crdt?.removeDoc(oldPath);
+						this.crdtEnrollment?.reset(oldPath);
+					}
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
@@ -2068,6 +2098,14 @@ export class SyncEngine {
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
+			}
+			// Tear down the CRDT doc for md paths regardless of whether the file
+			// existed locally. The ghost lineage in IDB/memory must be cleared so a
+			// note recreated at the same path starts fresh (P1-3). Non-md paths are
+			// never CRDT-managed — skip them to avoid spurious removeDoc overhead.
+			if (normalized.endsWith(".md")) {
+				await this.crdt?.removeDoc(normalized);
+				this.crdtEnrollment?.reset(normalized);
 			}
 			return;
 		}

@@ -450,3 +450,47 @@ test("reconcileColdStart returns early when projectedText matches disk (no apply
 	// projectedText matches diskContent, so applyLocalEdit must NOT be called.
 	expect(applyCallCount).toBe(0);
 });
+
+// ---------------------------------------------------------------------------
+// Task 5: removeDoc — tear down Y.Doc + IndexedDB on delete/rename
+// ---------------------------------------------------------------------------
+
+test("removeDoc clears IDB: re-opening the same path yields an empty doc", async () => {
+	const { mgr } = makeManager();
+	// Seed content into the doc and wait for IDB flush.
+	mgr.markSynced("gone.md");
+	await mgr.applyLocalEdit("gone.md", "content that should vanish", false);
+	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush
+
+	// Remove the doc — must destroy in-memory state AND clear IDB.
+	await mgr.removeDoc("gone.md");
+
+	// Open a fresh manager backed by the SAME IDB store (same dbPrefix = "vault-A").
+	// If IDB was not cleared, getText would return the old content.
+	const { mgr: mgr2 } = makeManager();
+	const text = await mgr2.getText("gone.md");
+	expect(text).toBe(""); // IDB was wiped — fresh empty doc
+	await mgr2.destroy();
+	await mgr.destroy();
+});
+
+test("removeDoc on a never-opened path does not throw", async () => {
+	const { mgr } = makeManager();
+	// Path was never opened this session — no in-memory entry exists.
+	// removeDoc must still clear any IDB state (or be a no-op) without throwing.
+	await expect(mgr.removeDoc("never-opened.md")).resolves.toBeUndefined();
+	await mgr.destroy();
+});
+
+test("removeDoc clears the synced mark so re-opening triggers a fresh handshake gate", async () => {
+	const { mgr } = makeManager();
+	mgr.markSynced("a.md");
+	expect(mgr.isSynced("a.md")).toBe(true);
+
+	await mgr.removeDoc("a.md");
+
+	// After removal the synced mark must be gone so a re-created note
+	// goes through the full handshake gate before seeding.
+	expect(mgr.isSynced("a.md")).toBe(false);
+	await mgr.destroy();
+});
