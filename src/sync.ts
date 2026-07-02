@@ -2131,6 +2131,10 @@ export class SyncEngine {
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
 					// (disk write re-enters handleModify → applyLocalEdit).
+					// P2-1: If this device is not currently observing the note's CRDT room
+					// (enrolled elsewhere after last tab-open), enroll now to receive live
+					// updates. enroll() is idempotent — already-enrolled notes are no-ops.
+					this.crdtEnrollment?.enroll(event.path);
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP

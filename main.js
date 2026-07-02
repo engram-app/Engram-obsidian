@@ -4910,7 +4910,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
      *  level-triggered discovery path that backstops the edge-triggered
-     *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
+     *  crdt_doc_ready announce.
+     *
+     *  Both `enroll` and `reset` are exposed: `enroll` kicks off the STEP1
+     *  handshake; `reset` (Task 5) clears the once-per-session enroll guard so a
+     *  note recreated at the same path re-runs the full handshake rather than
+     *  silently reusing the stale enrolled state from before the delete/rename. */
     this.crdtEnrollment = null;
     /** Persistent record of files that failed to sync, with reason. Surfaced
      *  in the Sync Center "Issues" panel and used to short-circuit the offline
@@ -4998,7 +5003,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
   async materializeEmptyDiscovered(path) {
     if (this.syncBlocked) {
-      devLog().log("sync-blocked", `materializeEmptyDiscovered short-circuited \u2014 gate closed: ${path}`);
+      devLog().log(
+        "sync-blocked",
+        `materializeEmptyDiscovered short-circuited \u2014 gate closed: ${path}`
+      );
       return;
     }
     if (!path.endsWith(".md")) return;
@@ -5171,7 +5179,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
-    var _a;
+    var _a, _b, _c, _d, _e;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleDelete short-circuited \u2014 gate closed");
       return;
@@ -5180,10 +5188,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     try {
-      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline();
+      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), isBinary || (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(file.path)), (_b = this.crdtEnrollment) == null || _b.reset(file.path));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline();
+        this.goOnline(), isBinary || (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(file.path)), (_d = this.crdtEnrollment) == null || _d.reset(file.path));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -5191,13 +5199,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         action: "delete",
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
-        vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
+        vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
       }), this.maybeGoOffline(e);
     }
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -5206,17 +5214,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (!this.shouldIgnore(oldPath))
       try {
-        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline();
+        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline(), isBinary || (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(oldPath)), (_b = this.crdtEnrollment) == null || _b.reset(oldPath));
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? (this.goOnline(), isBinary || (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(oldPath)), (_d = this.crdtEnrollment) == null || _d.reset(oldPath))) : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
+          vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || (_b = this.baseStore) == null || _b.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || (_f = this.baseStore) == null || _f.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -5958,7 +5966,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -5985,7 +5993,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian21.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
-      existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized));
+      existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized)), normalized.endsWith(".md") && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(normalized)), (_e = this.crdtEnrollment) == null || _e.reset(normalized));
       return;
     }
     if (event.event_type === "upsert")
@@ -6004,17 +6012,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             attachment.content_base64
           );
         } else if (this.crdt && event.path.endsWith(".md"))
-          rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+          (_f = this.crdtEnrollment) == null || _f.enroll(event.path), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
         else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_d = event.title) != null ? _d : "",
+            title: (_g = event.title) != null ? _g : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_e = event.folder) != null ? _e : "",
-            tags: (_f = event.tags) != null ? _f : [],
-            mtime: (_g = event.mtime) != null ? _g : Date.now(),
-            updated_at: (_h = event.updated_at) != null ? _h : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_h = event.folder) != null ? _h : "",
+            tags: (_i = event.tags) != null ? _i : [],
+            mtime: (_j = event.mtime) != null ? _j : Date.now(),
+            updated_at: (_k = event.updated_at) != null ? _k : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6024,13 +6032,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_i = note.content_hash) != null ? _i : event.content_hash,
+            content_hash: (_l = note.content_hash) != null ? _l : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_j = note.version) != null ? _j : event.version
+            version: (_m = note.version) != null ? _m : event.version
           });
         }
       } catch (e) {
@@ -18497,6 +18505,31 @@ var _CrdtManager = class _CrdtManager {
   closeDoc(path) {
     let id2 = this.docId(path), e = this.docs.get(id2);
     e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2), this.synced.delete(id2));
+  }
+  /**
+   * Permanently remove the Y.Doc and its IndexedDB store for `path`.
+   *
+   * Call when a note is deleted or renamed (old path) so the ghost lineage
+   * does not resurrect stale content if the note is later recreated at the
+   * same path. Mirrors the teardown sequence in `flattenIfBloated`:
+   *   doc.destroy() → persistence.clearData() → persistence.destroy()
+   *   → docs.delete() → synced.delete()
+   *
+   * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
+   * the path, `indexedDB.deleteDatabase(docId)` clears the IDB store directly.
+   * This covers the case where another session wrote to IDB but the current
+   * session never opened the doc. The database name matches the docId
+   * (`${dbPrefix}/${path}`) — the same naming convention `entry()` uses when
+   * constructing IndexeddbPersistence (y-indexeddb uses the docId as the
+   * database name). Resolves without throwing regardless of whether the DB
+   * existed.
+   */
+  async removeDoc(path) {
+    let id2 = this.docId(path), e = this.docs.get(id2);
+    e ? (e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2)) : await new Promise((resolve) => {
+      let req = indexedDB.deleteDatabase(id2);
+      req.onsuccess = () => resolve(), req.onerror = () => resolve(), req.onblocked = () => resolve();
+    }), this.synced.delete(id2);
   }
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {

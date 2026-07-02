@@ -169,6 +169,57 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
+	test("upsert for markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/test.md",
+			timestamp: Date.now(),
+			content: "# From server",
+			title: "test",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Legacy disk-write must NOT happen — CRDT owns the content
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		// But enroll MUST be called to ensure the device stays in sync if not currently observing
+		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
+	});
+
+	test("upsert for non-markdown or attachments CRDT-gated does NOT call enroll", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// canvas file — not .md — should not enroll
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/board.canvas",
+			timestamp: Date.now(),
+			content: '{"nodes":[],"edges":[]}',
+			title: "board",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Non-markdown: enroll NOT called
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
 	test("upsert hash-only (no inline content) does NOT call getNote/vault.create when CRDT active (markdown)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
