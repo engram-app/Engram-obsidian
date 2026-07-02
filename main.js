@@ -1311,6 +1311,7 @@ var NoteChannel = class {
     this.userJoinRef = "2";
     this.crdtJoinRef = "3";
     this.heartbeatTimer = null;
+    this.pendingHeartbeatRef = null;
     this.reconnectTimer = null;
     this.reconnectMs = 1e3;
     this.maxReconnectMs = 6e4;
@@ -1435,7 +1436,7 @@ var NoteChannel = class {
       return;
     }
     this.ws.onopen = () => {
-      opened = !0, this.reconnectMs = 1e3, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+      opened = !0, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
@@ -1465,10 +1466,24 @@ var NoteChannel = class {
     crdtT && this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", { crdt_proto: 2 }]);
   }
   startHeartbeat() {
-    this.heartbeatTimer = window.setInterval(() => {
-      var _a;
-      ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN && this.send([null, String(++this.ref), "phoenix", "heartbeat", {}]);
-    }, 3e4);
+    this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 3e4);
+  }
+  /** Interval body for the heartbeat. Extracted so tests can drive it directly
+   *  without fake timers. Called once per 30s interval while the socket is open.
+   *
+   *  If `pendingHeartbeatRef` is still set from the previous tick the server never
+   *  replied — the socket is half-dead (classic mobile app-resume state). Force
+   *  close so the existing onclose → scheduleReconnect machinery can recover.
+   *  Otherwise stamp a new pending ref and send the heartbeat frame. */
+  heartbeatTick() {
+    var _a, _b;
+    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+      if (this.pendingHeartbeatRef !== null) {
+        rlog().warn("channel", "heartbeat unanswered \u2014 closing dead socket"), (_b = this.ws) == null || _b.close();
+        return;
+      }
+      this.pendingHeartbeatRef = String(++this.ref), this.send([null, this.pendingHeartbeatRef, "phoenix", "heartbeat", {}]);
+    }
   }
   handleMessage(raw) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
@@ -1481,6 +1496,10 @@ var NoteChannel = class {
     }
     let [, , topic, event, payload] = msg;
     if (event === "phx_reply") {
+      if (topic === "phoenix") {
+        this.pendingHeartbeatRef = null;
+        return;
+      }
       let status = payload.status;
       if (status === "ok")
         if (topic === this.topic) {
@@ -1564,7 +1583,7 @@ var NoteChannel = class {
     this.connected !== value && (this.connected = value, value || (this.crdtJoined = !1), (_a = this.onStatusChange) == null || _a.call(this, value));
   }
   clearTimers() {
-    this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null);
+    this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null), this.pendingHeartbeatRef = null;
   }
   scheduleReconnect(overrideMs) {
     let base = overrideMs != null ? overrideMs : this.reconnectMs, jitter = Math.random() * base * 0.5;
