@@ -129,3 +129,61 @@ describe("atomicWriteJson + resilientReadJson", () => {
 		expect(result.data).toEqual({ v: "good" });
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Reload race (e2e test_64 regression): onunload fire-and-forgets an atomic
+// save while enablePlugin's load runs concurrently. The multi-step atomic
+// write (write .tmp -> demote .bak -> promote) has wide interleave windows
+// where the primary is either stale or momentarily absent. Reads must await
+// the in-flight write; writes must serialize. The lock lives on globalThis so
+// it survives the plugin module reload (a new module instance still sees the
+// previous instance's dangling write).
+// ---------------------------------------------------------------------------
+
+describe("write/read serialization across the reload race", () => {
+	let adapter: ReturnType<typeof makeFakeAdapter>;
+
+	beforeEach(() => {
+		adapter = makeFakeAdapter();
+	});
+
+	it("a read started mid-write returns the data being written, not the stale primary", async () => {
+		await atomicWriteJson(adapter, PATH, { conflictResolution: "auto" });
+
+		// Slow down the demote step so the read lands mid-chain.
+		const origRename = adapter.rename;
+		adapter.rename = mock(async (from: string, to: string) => {
+			await new Promise((r) => setTimeout(r, 20));
+			return origRename(from, to);
+		});
+
+		// Fire-and-forget save (the onunload shape), then read immediately (the
+		// enablePlugin/loadPluginData shape).
+		const dangling = atomicWriteJson(adapter, PATH, { conflictResolution: "modal" });
+		const result = await resilientReadJson<{ conflictResolution: string }>(adapter, PATH);
+		await dangling;
+
+		expect(result.data).toEqual({ conflictResolution: "modal" });
+		expect(result.source).toBe("primary");
+	});
+
+	it("concurrent writes serialize — last write wins, no rename collisions", async () => {
+		await atomicWriteJson(adapter, PATH, { v: 0 });
+
+		const origRename = adapter.rename;
+		adapter.rename = mock(async (from: string, to: string) => {
+			await new Promise((r) => setTimeout(r, 5));
+			return origRename(from, to);
+		});
+
+		await Promise.all([
+			atomicWriteJson(adapter, PATH, { v: 1 }),
+			atomicWriteJson(adapter, PATH, { v: 2 }),
+			atomicWriteJson(adapter, PATH, { v: 3 }),
+		]);
+
+		const result = await resilientReadJson<{ v: number }>(adapter, PATH);
+		expect(result.data).toEqual({ v: 3 });
+		expect(result.source).toBe("primary");
+	});
+});

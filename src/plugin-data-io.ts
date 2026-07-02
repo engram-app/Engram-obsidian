@@ -42,10 +42,44 @@ function tmpPath(path: string): string {
 	return `${path}.tmp`;
 }
 
+// Per-path in-flight write chain. The multi-step atomic write has interleave
+// windows where the primary is stale or momentarily absent, and the plugin's
+// onunload save is fire-and-forget — a disable/enable cycle can start the next
+// instance's load mid-chain (the e2e test_64 "settings lost on reload" race).
+// Reads await the pending write; writes chain behind each other. The map lives
+// on the renderer `window` because a plugin reload creates a NEW module
+// instance — a module-local would not see the previous instance's dangling
+// write. Settled promises stay in the map; awaiting them is a no-op.
+const LOCKS_KEY = "__engramDataIoLocks__";
+
+function writeLocks(): Map<string, Promise<void>> {
+	const g = window as unknown as Record<string, unknown>;
+	if (!(g[LOCKS_KEY] instanceof Map)) g[LOCKS_KEY] = new Map<string, Promise<void>>();
+	return g[LOCKS_KEY] as Map<string, Promise<void>>;
+}
+
 /** Atomically write `data` as JSON to `path`, retaining the previous content in
  *  `${path}.bak`. Throws if the underlying adapter fails; on the final-promote
- *  failure the primary is left untouched (old good content), never truncated. */
+ *  failure the primary is left untouched (old good content), never truncated.
+ *  Writes to the same path serialize behind each other (see writeLocks). */
 export async function atomicWriteJson(
+	adapter: JsonIoAdapter,
+	path: string,
+	data: unknown,
+): Promise<void> {
+	const prev = writeLocks().get(path) ?? Promise.resolve();
+	// Chain behind the previous write regardless of its outcome; publish a
+	// settle-only view so one failed write never poisons the chain for later
+	// writers/readers, while the caller still observes this write's own error.
+	const run = prev.then(() => doAtomicWriteJson(adapter, path, data));
+	writeLocks().set(
+		path,
+		run.catch(() => {}),
+	);
+	await run;
+}
+
+async function doAtomicWriteJson(
 	adapter: JsonIoAdapter,
 	path: string,
 	data: unknown,
@@ -92,11 +126,15 @@ async function tryReadParse<T>(
 }
 
 /** Read JSON from `path`, falling back to `${path}.bak` then `${path}.tmp` if the
- *  primary is missing, empty, or corrupt. Reports where the data came from. */
+ *  primary is missing, empty, or corrupt. Reports where the data came from.
+ *  Awaits any in-flight atomic write to the path first, so a load racing a
+ *  fire-and-forget save (plugin disable→enable) sees the saved state. */
 export async function resilientReadJson<T>(
 	adapter: JsonIoAdapter,
 	path: string,
 ): Promise<ResilientReadResult<T>> {
+	const pending = writeLocks().get(path);
+	if (pending) await pending;
 	const candidates: Array<[string, Exclude<ReadSource, "absent" | "corrupt">]> = [
 		[path, "primary"],
 		[bakPath(path), "backup"],

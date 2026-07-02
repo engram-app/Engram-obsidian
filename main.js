@@ -19952,7 +19952,21 @@ function bakPath(path) {
 function tmpPath(path) {
   return `${path}.tmp`;
 }
+var LOCKS_KEY = "__engramDataIoLocks__";
+function writeLocks() {
+  let g = window;
+  return g[LOCKS_KEY] instanceof Map || (g[LOCKS_KEY] = /* @__PURE__ */ new Map()), g[LOCKS_KEY];
+}
 async function atomicWriteJson(adapter, path, data) {
+  var _a;
+  let run = ((_a = writeLocks().get(path)) != null ? _a : Promise.resolve()).then(() => doAtomicWriteJson(adapter, path, data));
+  writeLocks().set(
+    path,
+    run.catch(() => {
+    })
+  ), await run;
+}
+async function doAtomicWriteJson(adapter, path, data) {
   let tmp = tmpPath(path), bak = bakPath(path);
   await adapter.write(tmp, JSON.stringify(data)), await adapter.exists(path) && (await adapter.exists(bak) && await adapter.remove(bak), await adapter.rename(path, bak)), await adapter.rename(tmp, path);
 }
@@ -19971,6 +19985,8 @@ async function tryReadParse(adapter, path) {
   }
 }
 async function resilientReadJson(adapter, path) {
+  let pending = writeLocks().get(path);
+  pending && await pending;
   let candidates = [
     [path, "primary"],
     [bakPath(path), "backup"],
