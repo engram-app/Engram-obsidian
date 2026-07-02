@@ -41,6 +41,7 @@ import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtManager } from "./crdt/manager";
+import { ensureDocSchema } from "./crdt/schema";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
@@ -948,7 +949,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.api
 			.getMe()
-			.then((user) => {
+			.then(async (user) => {
 				// A newer setupNoteStream() superseded this connect while getMe()
 				// was in flight — abort so we don't create an orphan channel.
 				if (epoch !== this.channelEpoch) {
@@ -1043,6 +1044,22 @@ export default class EngramSyncPlugin extends Plugin {
 				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
 				if (this.settings.enableCrdt && this.settings.vaultId) {
 					const dbPrefix = this.settings.vaultId;
+					// One-time schema upgrade: wipe v1 CRDT stores if needed.
+					if (typeof indexedDB.databases === "function") {
+						await ensureDocSchema(dbPrefix, window.localStorage, {
+							list: () => indexedDB.databases(),
+							drop: (name) =>
+								new Promise<void>((resolve) => {
+									const req = indexedDB.deleteDatabase(name);
+									req.onsuccess = req.onerror = req.onblocked = () => resolve();
+								}),
+						});
+					} else {
+						rlog().warn(
+							"crdt",
+							"indexedDB.databases() not available — skipping v1 schema wipe",
+						);
+					}
 					this.crdtManager = new CrdtManager({
 						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),

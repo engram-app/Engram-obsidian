@@ -18721,6 +18721,20 @@ var CrdtEnrollment = class {
   }
 };
 
+// src/crdt/schema.ts
+async function ensureDocSchema(vaultId, storage, dbs) {
+  let markerKey = `engram-crdt-doc-schema/${vaultId}`;
+  if (storage.getItem(markerKey) === "2")
+    return !1;
+  let allDbs = await dbs.list(), prefix = `${vaultId}/`, dbsToWipe = allDbs.filter((db) => {
+    var _a, _b;
+    return (_b = (_a = db.name) == null ? void 0 : _a.startsWith(prefix)) != null ? _b : !1;
+  }).map((db) => db.name);
+  for (let name of dbsToWipe)
+    await dbs.drop(name);
+  return storage.setItem(markerKey, "2"), !0;
+}
+
 // src/explicit-folders.ts
 var ExplicitFolders = class {
   constructor(adapter, path) {
@@ -19251,7 +19265,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     rlog().info(
       "channel",
       `connectChannel(attempt=${attempt}) \u2014 apiKeyLen=${(_b = (_a = this.settings.apiKey) == null ? void 0 : _a.length) != null ? _b : 0} refreshTokenLen=${(_d = (_c = this.settings.refreshToken) == null ? void 0 : _c.length) != null ? _d : 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${(_f = (_e = this.authProvider) == null ? void 0 : _e.constructor.name) != null ? _f : "none"} vaultId=${(_g = this.settings.vaultId) != null ? _g : "null"}`
-    ), this.api.getMe().then((user) => {
+    ), this.api.getMe().then(async (user) => {
       if (epoch !== this.channelEpoch) {
         rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
         return;
@@ -19284,7 +19298,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
-        this.crdtManager = new CrdtManager({
+        typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
+          list: () => indexedDB.databases(),
+          drop: (name) => new Promise((resolve) => {
+            let req = indexedDB.deleteDatabase(name);
+            req.onsuccess = req.onerror = req.onblocked = () => resolve();
+          })
+        }) : rlog().warn(
+          "crdt",
+          "indexedDB.databases() not available \u2014 skipping v1 schema wipe"
+        ), this.crdtManager = new CrdtManager({
           dbPrefix,
           onUpdate: (docId, update) => {
             var _a2;
