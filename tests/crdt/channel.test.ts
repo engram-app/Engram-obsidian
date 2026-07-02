@@ -48,6 +48,9 @@ function flush() {
 
 test("step1 handshake transfers state to a fresh peer (real y-protocols frames)", async () => {
 	const { mgrA, mgrB, chanB } = pair();
+	// markSynced required before seeding (audit P0-1 fix): the gate must be
+	// cleared before applyLocalEdit will seed content into an empty doc.
+	mgrA.markSynced("note.md");
 	await mgrA.applyLocalEdit("note.md", "alpha content", false);
 
 	// B starts empty, asks A for state via step1. A replies step2; B applies it.
@@ -75,11 +78,55 @@ test("handshake terminates — no step1 ping-pong storm between two empty peers"
 	await mgrB.destroy();
 });
 
+// ---------------------------------------------------------------------------
+// Review finding 1+2 (mark-synced semantics): non-empty-only marking rule
+// ---------------------------------------------------------------------------
+
+test("handleFrame: inbound frame that populates the doc marks isSynced true", async () => {
+	// A's doc has content; B is empty. After B applies the STEP2 from A, B's doc
+	// should be non-empty and B's manager must mark the path as synced.
+	const { mgrA, mgrB, chanB } = pair();
+
+	// Seed A so B gets non-empty content via STEP2.
+	mgrA.markSynced("note.md");
+	await mgrA.applyLocalEdit("note.md", "hello world", false);
+
+	// B sends STEP1 → A sends STEP2 with "hello world" → B's handleFrame fires.
+	await chanB.startSync("note.md");
+	await flush();
+
+	// B received a content-bearing STEP2 — must be marked synced.
+	expect(mgrB.isSynced("note.md")).toBe(true);
+
+	await mgrA.destroy();
+	await mgrB.destroy();
+});
+
+test("handleFrame: inbound frame that leaves the doc empty does NOT mark isSynced", async () => {
+	// Both peers start empty. B sends STEP1 to A; A replies with an empty STEP2
+	// (it has no history). Applying an empty STEP2 integrates zero ops — the doc
+	// stays at text.length === 0 — so the non-empty guard must decline to mark.
+	const { mgrA, mgrB, chanB } = pair();
+
+	// Neither side has content — empty-vs-empty handshake.
+	await chanB.startSync("note.md");
+	await flush();
+
+	// A's empty STEP2 should NOT have marked B as synced.
+	expect(mgrB.isSynced("note.md")).toBe(false);
+
+	await mgrA.destroy();
+	await mgrB.destroy();
+});
+
 test("concurrent edits on both peers converge", async () => {
 	const { mgrA, mgrB } = pair();
 
 	// Seed the same base independently on both sides (no channel routing for seeds).
 	// Both docs get "shared" as their starting text via their own IDB-backed docs.
+	// markSynced required before seeding on each side (audit P0-1 fix).
+	mgrA.markSynced("note.md");
+	mgrB.markSynced("note.md");
 	await mgrA.applyLocalEdit("note.md", "shared", false);
 	await mgrB.applyLocalEdit("note.md", "shared", false);
 	await flush();

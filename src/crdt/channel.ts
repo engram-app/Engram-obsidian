@@ -82,6 +82,30 @@ export class CrdtChannel {
 	 * (`length > 1`) — a STEP2/UPDATE produces an empty reply, so there is no
 	 * automatic STEP1 back and thus no handshake storm. Mirrors the
 	 * `encoding.length(encoder) > 1` gate in Relay's `onmessage` handler.
+	 *
+	 * After the frame is applied we call `manager.markSynced(path)` ONLY when the
+	 * doc's body text is non-empty after the frame. An empty STEP2 (server has no
+	 * history yet) must NOT mark the path synced — marking on an empty reply opened
+	 * two duplication races:
+	 *   (i)  A stale mark surviving reconnect while another device had since filled
+	 *        the note: the next `applyLocalEdit` would believe the handshake had
+	 *        completed and seed a second local lineage, which merges with the
+	 *        server's lineage into duplicated body text.
+	 *   (ii) The decline→legacy-POST flow racing its own empty STEP2: the empty
+	 *        STEP2 would mark the path synced before the legacy POST result returned,
+	 *        causing the next save to route through CRDT and seed a second lineage
+	 *        on top of the REST-merged server doc.
+	 *
+	 * With non-empty-only marking, a note's first content ALWAYS travels the legacy
+	 * path (backend merges convergently via PR #846), and CRDT seeding only ever
+	 * happens for paths the server has confirmed have content. New-note content
+	 * enters via legacy push; the CRDT doc adopts the server lineage once the
+	 * server's next STEP2 delivers the merged body.
+	 *
+	 * An empty STEP2 IS delivered (the server does not suppress it at the `length > 1`
+	 * gate for STEP2 replies — only the client drops empty replies to inbound STEP1).
+	 * It integrates zero ops into the doc, produces no doc-update event, no flush,
+	 * and leaves text.length === 0, so the non-empty guard correctly declines to mark.
 	 */
 	async handleFrame(path: string, b64: string): Promise<void> {
 		const doc = await this.mgr.getDoc(path);
@@ -92,6 +116,12 @@ export class CrdtChannel {
 		const replyEncoder = encoding.createEncoder();
 		encoding.writeVarUint(replyEncoder, MESSAGE_SYNC);
 		syncProtocol.readSyncMessage(decoder, replyEncoder, doc, REMOTE_ORIGIN);
+
+		// Mark synced only when the doc has content after applying the frame.
+		// An empty STEP2 integrates no ops and must not mark — see JSDoc above.
+		if ((await this.mgr.getText(path)).length > 0) {
+			this.mgr.markSynced(path);
+		}
 
 		if (encoding.length(replyEncoder) > 1) {
 			this.transport(this.mgr.docId(path), toB64(encoding.toUint8Array(replyEncoder)));

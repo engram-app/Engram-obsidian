@@ -992,6 +992,11 @@ export default class EngramSyncPlugin extends Plugin {
 						// set the manager, but we also reset here defensively in case
 						// the channel drops mid-session.
 						this.syncEngine.setCrdtManager(null);
+						// Invalidate all synced marks: a mark means "doc reflected server
+						// state at some past connection" — a disconnect invalidates that
+						// because another device may have written content while offline.
+						// Re-established only when a non-empty STEP2 arrives after reconnect.
+						this.crdtManager?.clearSynced();
 						rlog().info(
 							"crdt",
 							"Disconnected — CRDT routing cleared, legacy path active",

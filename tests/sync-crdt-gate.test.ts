@@ -393,8 +393,10 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		void oldManager?.destroy();
 		crdtManager = null;
 
-		// Wire new manager (re-creation)
-		const newApplyLocalEdit = mock(async () => {});
+		// Wire new manager (re-creation).
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const newApplyLocalEdit = mock(async () => true);
 		const newManager = { applyLocalEdit: newApplyLocalEdit };
 
 		// Verify old manager got its destroy called
@@ -471,7 +473,9 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 
 	test("with CRDT manager set (non-null vaultId case), markdown pushNote is skipped", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("note.md");
@@ -529,8 +533,10 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 	test("after onCrdtJoined fires (setCrdtManager called), CRDT path is active and legacy is gated", async () => {
 		const engine = createEngine();
 
-		// Simulate the sequence from main.ts: manager is wired only after join
-		const applyLocalEdit = mock(async () => {});
+		// Simulate the sequence from main.ts: manager is wired only after join.
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		const manager = { applyLocalEdit } as any;
 
 		// Before join: manager not set

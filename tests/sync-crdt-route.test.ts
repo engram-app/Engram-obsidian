@@ -8,7 +8,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
+import { MAX_CRDT_NOTE_BYTES, SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +19,11 @@ describe("routeModify helper", () => {
 	const BIG = 8 * 1024 * 1024;
 
 	test("markdown modify routes to CRDT, never to pushNote", async () => {
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true (consumed) so routeModify returns true.
+		// After the handshake-gate fix, routeModify forwards the boolean from
+		// applyLocalEdit; a mock returning void (undefined/falsy) would make the
+		// result false, breaking the consumed assertion.
+		const applyLocalEdit = mock(async () => true);
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
 			{ isMarkdown: true, path: "n.md", readContent: async () => "body" },
@@ -172,7 +176,10 @@ beforeEach(() => {
 describe("SyncEngine handleModify with CrdtManager", () => {
 	test("markdown modify calls applyLocalEdit, NOT pushNote", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so pushFile treats the edit as consumed
+		// and does NOT fall through to pushNote (handshake-gate fix: routeModify
+		// now forwards applyLocalEdit's boolean, so a void/falsy mock falls through).
+		const applyLocalEdit = mock(async () => true);
 		const mockCrdt = { applyLocalEdit } as any;
 		engine.setCrdtManager(mockCrdt);
 
@@ -187,7 +194,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("image.png");
@@ -223,7 +230,9 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so pushFile treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("Canvases/overview.md");
@@ -233,6 +242,54 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 		expect(applyLocalEdit).toHaveBeenCalledWith("Canvases/overview.md", "body");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 3+4a: declined path — legacy push AND conditional enroll
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
+	test("declined md fires legacy pushNote AND enroll for a small file", async () => {
+		const engine = createEngine();
+		// applyLocalEdit returns false → routeModify returns false → declined path.
+		const applyLocalEdit = mock(async () => false);
+		const enroll = mock((_path: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// Default cachedRead returns "body" (well under MAX_CRDT_NOTE_BYTES).
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		// Legacy push must fire.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// Enroll must also fire (kicks off the STEP1 handshake for the declined note).
+		expect(enroll).toHaveBeenCalledWith("note.md");
+	});
+
+	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => false);
+		const enroll = mock((_path: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// Stub cachedRead to return a 5 MB string (> 4 MB cap).
+		const hugeMd = "x".repeat(5 * 1024 * 1024);
+		expect(new TextEncoder().encode(hugeMd).length).toBeGreaterThan(MAX_CRDT_NOTE_BYTES);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(hugeMd);
+
+		const file = new TFile("big.md");
+		engine.handleModify(file);
+		await flush();
+
+		// Legacy push fires (size gate is in routeModify, which returns false for oversized).
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// Enroll must NOT fire — enrolling an oversized note elicits a multi-MB STEP2
+		// that can hit Bandit's 8 MB WS frame limit and crash the socket.
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
 

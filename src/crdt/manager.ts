@@ -72,9 +72,59 @@ export class CrdtManager {
 	private readonly opts: CrdtManagerOptions;
 	/** Keyed by docId (= `dbPrefix/path`). */
 	private readonly docs = new Map<string, Entry>();
+	/**
+	 * Per-session set of doc IDs for which at least one inbound server sync
+	 * frame has been applied (i.e. the STEP2 handshake has completed for the
+	 * path). Keyed by docId — same key space as `docs`.
+	 *
+	 * Seeding is gated on membership here: a fresh-IDB device must NOT insert
+	 * local content into a Y.Text before the server's STEP2 arrives, because
+	 * doing so mints a second lineage that merges with the server's history into
+	 * duplicated body text (audit P0-1). Once a STEP2 is applied, an empty doc
+	 * is a genuine server-side empty note and seeding is safe.
+	 *
+	 * Cleared by `closeDoc`, `clearSynced`, and `destroy` to prevent stale marks
+	 * across doc lifecycle events. (`removeDoc` is forward-looking — cleared by
+	 * closeDoc/destroy and clearSynced; see Task 5.)
+	 */
+	private readonly synced = new Set<string>();
 
 	constructor(opts: CrdtManagerOptions) {
 		this.opts = opts;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Handshake-gate API
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Mark `path` as having completed its server handshake (STEP2 received).
+	 * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
+	 * to the doc. Idempotent — safe to call on every inbound frame.
+	 */
+	markSynced(path: string): void {
+		this.synced.add(this.docId(path));
+	}
+
+	/**
+	 * Returns true if `path`'s handshake has completed this session (i.e.
+	 * `markSynced` has been called for it). Used by `applyLocalEdit` to guard
+	 * seeding of empty docs.
+	 */
+	isSynced(path: string): boolean {
+		return this.synced.has(this.docId(path));
+	}
+
+	/**
+	 * Clear ALL synced marks for this session. Call on WebSocket disconnect so
+	 * that stale marks cannot survive a reconnect: a mark means "doc reflected
+	 * server state at some past time" — a disconnect invalidates that guarantee
+	 * because another device may have written content while we were offline. The
+	 * next reconnect fires a fresh STEP1 handshake per enrolled path, and
+	 * `markSynced` is re-established only when a non-empty STEP2 arrives.
+	 */
+	clearSynced(): void {
+		this.synced.clear();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -113,10 +163,30 @@ export class CrdtManager {
 	 *
 	 * Both code paths run with the default (`undefined`) origin so the resulting
 	 * update IS forwarded to the server via `onUpdate`.
+	 *
+	 * **Returns** `true` when the content was consumed by the CRDT layer (seeded
+	 * or diffed), `false` when it was declined. Declining happens when the Y.Text
+	 * is empty AND no LCA is established AND the path has not yet received its
+	 * first server sync frame (`markSynced` not yet called). In that case the
+	 * caller must fall back to the legacy push path, which the backend (PR #846)
+	 * merges convergently into the server CRDT doc; the resulting lineage arrives
+	 * via the eventual STEP2. Declining is SIDE-EFFECT-FREE — no frontmatter
+	 * write and no Y.Doc update are emitted, so the legacy path owns the write.
 	 */
-	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<void> {
+	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
+
+		// Handshake gate (audit P0-1): if the doc is still empty AND no LCA is
+		// established AND the server STEP2 has not yet been applied this session,
+		// decline without touching the doc. A fresh-IDB device must not seed a
+		// second local lineage before the server's history arrives — the two
+		// full-text insertions would merge into duplicated body text vault-wide.
+		// Once `markSynced` fires (first inbound sync frame), an empty doc is a
+		// genuine server-empty note and seeding is safe.
+		if (e.text.length === 0 && !lca && !this.isSynced(path)) {
+			return false;
+		}
 
 		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
 		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
@@ -129,8 +199,9 @@ export class CrdtManager {
 		this.applyFrontmatterInto(e.doc, order, values);
 
 		// Route body through the existing seed-once + minimal-diff gate.
-		if (seedOnce(e.text, body, lca)) return;
+		if (seedOnce(e.text, body, lca)) return true;
 		diffIntoYText(e.text, body);
+		return true;
 	}
 
 	/**
@@ -171,6 +242,8 @@ export class CrdtManager {
 	/**
 	 * Close and clean up a single doc entry (destroys the Y.Doc and the
 	 * IndexeddbPersistence instance). Use when a note is closed in the editor.
+	 * Also clears the synced mark so a future `openDoc` + `startSync` begins a
+	 * fresh handshake.
 	 */
 	closeDoc(path: string): void {
 		const id = this.docId(path);
@@ -179,6 +252,7 @@ export class CrdtManager {
 		e.doc.destroy();
 		void e.persistence.destroy();
 		this.docs.delete(id);
+		this.synced.delete(id);
 	}
 
 	/** Tear down all open docs. Call on plugin unload. */
@@ -188,6 +262,7 @@ export class CrdtManager {
 			await e.persistence.destroy();
 			this.docs.delete(id);
 		}
+		this.synced.clear();
 	}
 
 	/**

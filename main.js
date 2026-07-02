@@ -4743,7 +4743,7 @@ var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 async function routeModify(file, crdt, maxBytes) {
   if (!file.isMarkdown) return !1;
   let content = await file.readContent();
-  return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes ? !1 : (await crdt.applyLocalEdit(file.path, content), !0);
+  return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes ? !1 : await crdt.applyLocalEdit(file.path, content);
 }
 async function reconcileColdStart(file, crdt, onCorruption) {
   let current;
@@ -4979,11 +4979,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *
    *  A non-empty note discovered on this device materializes through the normal
    *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
-   *  applying it fires a doc update, and that writes the file. An EMPTY note has
-   *  no such body — an empty-vs-empty handshake produces a zero-length STEP2 that
-   *  the server suppresses (the `length > 1` gate), so no frame ever arrives and
-   *  the file is never created. The announce itself is then the only evidence the
-   *  note exists.
+   *  applying it fires a doc-update event, and that writes the file. An EMPTY
+   *  note has no such body — an empty-vs-empty handshake delivers a STEP2 that
+   *  integrates zero ops into the doc, so no doc-update event fires and no flush
+   *  creates the file. The `crdt_doc_ready` announce is then the only evidence
+   *  the note exists.
    *
    *  So after a discovery announce for a note we don't have on disk, wait out the
    *  handshake window: if a STEP2 had carried content it would have created the
@@ -5327,7 +5327,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -5368,16 +5368,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash });
       } else {
         let content = await this.app.vault.cachedRead(file);
-        if (this.crdt && await routeModify(
-          {
-            isMarkdown: file.extension === "md",
-            path: file.path,
-            readContent: async () => content
-          },
-          this.crdt,
-          MAX_CRDT_NOTE_BYTES
-        ))
-          return (_b = this.crdtEnrollment) == null || _b.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+        if (this.crdt) {
+          if (await routeModify(
+            {
+              isMarkdown: file.extension === "md",
+              path: file.path,
+              readContent: async () => content
+            },
+            this.crdt,
+            MAX_CRDT_NOTE_BYTES
+          ))
+            return (_b = this.crdtEnrollment) == null || _b.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_c = this.crdtEnrollment) == null || _c.enroll(file.path));
+        }
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
@@ -5391,7 +5394,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             "conflict",
             `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
           );
-          let pushBase = (_c = this.baseStore) == null ? void 0 : _c.get((0, import_obsidian21.normalizePath)(file.path));
+          let pushBase = (_d = this.baseStore) == null ? void 0 : _d.get((0, import_obsidian21.normalizePath)(file.path));
           if (pushBase) {
             let merge2 = threeWayMerge(pushBase.content, content, serverNote.content);
             if (merge2.clean) {
@@ -5406,7 +5409,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge2.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_d = this.baseStore) == null || _d.set(np, merge2.merged, mergeResp.note.version));
+                }), mergeResp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, merge2.merged, mergeResp.note.version));
               }
               return rlog().info(
                 "conflict",
@@ -5435,7 +5438,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, forceResp.note.version));
+              }), forceResp.note.version != null && ((_f = this.baseStore) == null || _f.set(np, content, forceResp.note.version));
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5446,7 +5449,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_f = this.baseStore) == null || _f.set(np, serverNote.content, serverNote.version);
+              }), (_g = this.baseStore) == null || _g.set(np, serverNote.content, serverNote.version);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5460,7 +5463,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_g = this.baseStore) == null || _g.set(
+              }), mergeResp.note.version != null && ((_h = this.baseStore) == null || _h.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
@@ -5484,13 +5487,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_h = this.baseStore) == null || _h.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_i = this.baseStore) == null || _i.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
+          }), (_i = this.baseStore) == null || _i.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_j = this.baseStore) == null || _j.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_j = this.baseStore) == null || _j.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
+          }), serverVersion != null && ((_k = this.baseStore) == null || _k.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -5511,8 +5514,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_l = (_k = this.issues.get(file.path)) == null ? void 0 : _k.attempts) != null ? _l : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_m = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_m = (_l = this.issues.get(file.path)) == null ? void 0 : _l.attempts) != null ? _m : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_n = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -5522,7 +5525,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_n = this.settings.vaultId) != null ? _n : void 0
+        vaultId: (_o = this.settings.vaultId) != null ? _o : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
@@ -18348,7 +18351,53 @@ var _CrdtManager = class _CrdtManager {
   constructor(opts) {
     /** Keyed by docId (= `dbPrefix/path`). */
     this.docs = /* @__PURE__ */ new Map();
+    /**
+     * Per-session set of doc IDs for which at least one inbound server sync
+     * frame has been applied (i.e. the STEP2 handshake has completed for the
+     * path). Keyed by docId — same key space as `docs`.
+     *
+     * Seeding is gated on membership here: a fresh-IDB device must NOT insert
+     * local content into a Y.Text before the server's STEP2 arrives, because
+     * doing so mints a second lineage that merges with the server's history into
+     * duplicated body text (audit P0-1). Once a STEP2 is applied, an empty doc
+     * is a genuine server-side empty note and seeding is safe.
+     *
+     * Cleared by `closeDoc`, `clearSynced`, and `destroy` to prevent stale marks
+     * across doc lifecycle events. (`removeDoc` is forward-looking — cleared by
+     * closeDoc/destroy and clearSynced; see Task 5.)
+     */
+    this.synced = /* @__PURE__ */ new Set();
     this.opts = opts;
+  }
+  // ---------------------------------------------------------------------------
+  // Handshake-gate API
+  // ---------------------------------------------------------------------------
+  /**
+   * Mark `path` as having completed its server handshake (STEP2 received).
+   * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
+   * to the doc. Idempotent — safe to call on every inbound frame.
+   */
+  markSynced(path) {
+    this.synced.add(this.docId(path));
+  }
+  /**
+   * Returns true if `path`'s handshake has completed this session (i.e.
+   * `markSynced` has been called for it). Used by `applyLocalEdit` to guard
+   * seeding of empty docs.
+   */
+  isSynced(path) {
+    return this.synced.has(this.docId(path));
+  }
+  /**
+   * Clear ALL synced marks for this session. Call on WebSocket disconnect so
+   * that stale marks cannot survive a reconnect: a mark means "doc reflected
+   * server state at some past time" — a disconnect invalidates that guarantee
+   * because another device may have written content while we were offline. The
+   * next reconnect fires a fresh STEP1 handshake per enrolled path, and
+   * `markSynced` is re-established only when a non-empty STEP2 arrives.
+   */
+  clearSynced() {
+    this.synced.clear();
   }
   // ---------------------------------------------------------------------------
   // Public API
@@ -18383,10 +18432,22 @@ var _CrdtManager = class _CrdtManager {
    *
    * Both code paths run with the default (`undefined`) origin so the resulting
    * update IS forwarded to the server via `onUpdate`.
+   *
+   * **Returns** `true` when the content was consumed by the CRDT layer (seeded
+   * or diffed), `false` when it was declined. Declining happens when the Y.Text
+   * is empty AND no LCA is established AND the path has not yet received its
+   * first server sync frame (`markSynced` not yet called). In that case the
+   * caller must fall back to the legacy push path, which the backend (PR #846)
+   * merges convergently into the server CRDT doc; the resulting lineage arrives
+   * via the eventual STEP2. Declining is SIDE-EFFECT-FREE — no frontmatter
+   * write and no Y.Doc update are emitted, so the legacy path owns the write.
    */
   async applyLocalEdit(path, diskContent, hasLca) {
-    let e = await this.entry(path), lca = hasLca != null ? hasLca : this.textHasHistory(e.text), { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
-    this.applyFrontmatterInto(e.doc, order, values), !seedOnce(e.text, body, lca) && diffIntoYText(e.text, body);
+    let e = await this.entry(path), lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
+    if (e.text.length === 0 && !lca && !this.isSynced(path))
+      return !1;
+    let { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
+    return this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body), !0;
   }
   /**
    * Apply a binary Yjs update received from the server.
@@ -18420,15 +18481,18 @@ var _CrdtManager = class _CrdtManager {
   /**
    * Close and clean up a single doc entry (destroys the Y.Doc and the
    * IndexeddbPersistence instance). Use when a note is closed in the editor.
+   * Also clears the synced mark so a future `openDoc` + `startSync` begins a
+   * fresh handshake.
    */
   closeDoc(path) {
     let id2 = this.docId(path), e = this.docs.get(id2);
-    e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2));
+    e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2), this.synced.delete(id2));
   }
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {
     for (let [id2, e] of this.docs)
       e.doc.destroy(), await e.persistence.destroy(), this.docs.delete(id2);
+    this.synced.clear();
   }
   /**
    * Flatten the doc to a single-client-ID snapshot ONLY when both axes of the
@@ -18590,12 +18654,36 @@ var CrdtChannel = class {
    * (`length > 1`) — a STEP2/UPDATE produces an empty reply, so there is no
    * automatic STEP1 back and thus no handshake storm. Mirrors the
    * `encoding.length(encoder) > 1` gate in Relay's `onmessage` handler.
+   *
+   * After the frame is applied we call `manager.markSynced(path)` ONLY when the
+   * doc's body text is non-empty after the frame. An empty STEP2 (server has no
+   * history yet) must NOT mark the path synced — marking on an empty reply opened
+   * two duplication races:
+   *   (i)  A stale mark surviving reconnect while another device had since filled
+   *        the note: the next `applyLocalEdit` would believe the handshake had
+   *        completed and seed a second local lineage, which merges with the
+   *        server's lineage into duplicated body text.
+   *   (ii) The decline→legacy-POST flow racing its own empty STEP2: the empty
+   *        STEP2 would mark the path synced before the legacy POST result returned,
+   *        causing the next save to route through CRDT and seed a second lineage
+   *        on top of the REST-merged server doc.
+   *
+   * With non-empty-only marking, a note's first content ALWAYS travels the legacy
+   * path (backend merges convergently via PR #846), and CRDT seeding only ever
+   * happens for paths the server has confirmed have content. New-note content
+   * enters via legacy push; the CRDT doc adopts the server lineage once the
+   * server's next STEP2 delivers the merged body.
+   *
+   * An empty STEP2 IS delivered (the server does not suppress it at the `length > 1`
+   * gate for STEP2 replies — only the client drops empty replies to inbound STEP1).
+   * It integrates zero ops into the doc, produces no doc-update event, no flush,
+   * and leaves text.length === 0, so the non-empty guard correctly declines to mark.
    */
   async handleFrame(path, b64) {
     let doc2 = await this.mgr.getDoc(path), decoder = createDecoder(fromB64(b64));
     if (readVarUint(decoder) !== MESSAGE_SYNC) return;
     let replyEncoder = createEncoder();
-    writeVarUint(replyEncoder, MESSAGE_SYNC), readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
+    writeVarUint(replyEncoder, MESSAGE_SYNC), readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN), (await this.mgr.getText(path)).length > 0 && this.mgr.markSynced(path), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
   }
 };
 
@@ -19178,13 +19266,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       if (channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        var _a2;
+        var _a2, _b2;
         this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? ((_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
           console.error("Engram Sync: catch-up pull failed", e), rlog().error(
             "channel",
             `Catch-up pull on reconnect failed: ${errMsg(e)}`
           );
-        })) : (this.syncEngine.setCrdtManager(null), rlog().info(
+        })) : (this.syncEngine.setCrdtManager(null), (_b2 = this.crdtManager) == null || _b2.clearSynced(), rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing cleared, legacy path active"
         ));

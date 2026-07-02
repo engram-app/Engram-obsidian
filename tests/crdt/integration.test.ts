@@ -73,6 +73,10 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 
 	// ── Assertion 1: seed on A propagates to B after handshake ──────────────
 	// Seed A without LCA (first write ever for this doc).
+	// markSynced required before seeding (audit P0-1 fix): in a real flow A's
+	// markSynced fires when its STEP2 arrives; in this test A is the originator
+	// so we mark it directly to simulate an already-established lineage on A.
+	mgrA.markSynced("n.md");
 	await mgrA.applyLocalEdit("n.md", "genesis", false);
 
 	// B starts the handshake. A's STEP2 reply carries the missing state.

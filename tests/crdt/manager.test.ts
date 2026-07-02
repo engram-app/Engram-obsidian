@@ -40,6 +40,9 @@ function makeManager(captured: Uint8Array[] = []) {
 
 test("applyLocalEdit seeds a fresh doc once then diffs subsequent edits", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding: simulates STEP2 handshake completion.
+	// Without it, applyLocalEdit returns false and declines the seed (audit P0-1 fix).
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "first body", false);
 	expect(await mgr.getText("note.md")).toBe("first body");
 
@@ -52,6 +55,10 @@ test("applyLocalEdit seeds a fresh doc once then diffs subsequent edits", async 
 test("local edits emit a v1 update via onUpdate", async () => {
 	const captured: Uint8Array[] = [];
 	const { mgr } = makeManager(captured);
+	// markSynced required: the seeding gate must be cleared before the doc can
+	// accept local content (audit P0-1 fix). Without it, applyLocalEdit declines
+	// and no update is emitted, which would make captured.length === 0.
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "hello", false);
 	expect(captured.length).toBeGreaterThan(0);
 
@@ -64,6 +71,8 @@ test("local edits emit a v1 update via onUpdate", async () => {
 
 test("applyRemoteUpdate flushes merged text to disk", async () => {
 	const { mgr, flushed } = makeManager();
+	// markSynced required before local seed (audit P0-1 fix).
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "base", false);
 
 	// Build a remote update on top of the same state.
@@ -79,6 +88,8 @@ test("applyRemoteUpdate flushes merged text to disk", async () => {
 
 test("state persists to IndexedDB across a manager restart", async () => {
 	const a = makeManager();
+	// markSynced required before first seed (audit P0-1 fix).
+	a.mgr.markSynced("note.md");
 	await a.mgr.applyLocalEdit("note.md", "survives reload", false);
 	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush
 	await a.mgr.destroy();
@@ -104,6 +115,8 @@ test("persist errors surface via onPersistError, not by throwing into sync", asy
 		},
 	});
 	// applyLocalEdit must resolve even if the (simulated) persistence layer errors.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "content", false);
 	expect(await mgr.getText("n.md")).toBe("content"); // in-memory state intact
 	await mgr.destroy();
@@ -144,6 +157,8 @@ test("flattenIfBloated does NOT flatten a large single-author doc (only one axis
 		onFlushToDisk: async () => {},
 	});
 	// > 500 KB but a single client-ID — the AND gate must leave it alone.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "x".repeat(600_000), false);
 	expect(await mgr.flattenIfBloated("n.md")).toBe(false);
 	await mgr.destroy();
@@ -225,6 +240,8 @@ describe("CrdtChannel startSync enrollment", () => {
 
 test("applyLocalEdit splits frontmatter into Y.Map, body into Y.Text", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
 	const doc = await mgr.getDoc("N.md");
 	expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"Hi"' } });
@@ -234,6 +251,8 @@ test("applyLocalEdit splits frontmatter into Y.Map, body into Y.Text", async () 
 
 test("malformed frontmatter keeps whole text as body", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\nbroken: : :\n---\nbody\n");
 	const doc = await mgr.getDoc("N.md");
 	expect(frontmatterOf(doc)).toEqual({ order: [], values: {} });
@@ -256,6 +275,8 @@ test("flush reconstructs full file from Y.Map + body", async () => {
 	});
 
 	// Seed local state: frontmatter goes into Y.Map, body into Y.Text.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
 
 	// Build a remote peer from the same state, append " world" to body, then
@@ -354,6 +375,8 @@ test("flattenIfBloated preserves frontmatter across the flatten reset", async ()
 	const { mgr } = makeManager();
 
 	// Seed frontmatter FIRST so the Y.Map/Y.Array are populated before bloat.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "---\ntitle: My Note\ntags: foo bar\n---\nbody text", false);
 
 	// Build bloat on top of the seeded state: 1100 distinct client-IDs, each
@@ -388,6 +411,8 @@ test("flattenIfBloated preserves frontmatter across the flatten reset", async ()
 
 test("projectedText returns full file for a frontmatter note", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("fm.md");
 	await mgr.applyLocalEdit("fm.md", "---\ntitle: Hello\n---\nbody", false);
 	const result = await mgr.projectedText("fm.md");
 	expect(result).toContain("---");
@@ -398,6 +423,8 @@ test("projectedText returns full file for a frontmatter note", async () => {
 
 test("projectedText returns body-only for a plain note (no frontmatter)", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("plain.md");
 	await mgr.applyLocalEdit("plain.md", "just body", false);
 	expect(await mgr.projectedText("plain.md")).toBe("just body");
 	await mgr.destroy();

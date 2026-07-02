@@ -57,7 +57,7 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
 export async function routeModify(
 	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
-	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
+	crdt: { applyLocalEdit: (path: string, content: string) => Promise<boolean> },
 	maxBytes: number,
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
@@ -72,8 +72,10 @@ export async function routeModify(
 	if (maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes) {
 		return false;
 	}
-	await crdt.applyLocalEdit(file.path, content);
-	return true;
+	// applyLocalEdit returns false when the handshake gate declines seeding
+	// (empty doc, no LCA, STEP2 not yet received). The legacy push path then
+	// owns the write convergently (backend PR #846) until the STEP2 arrives.
+	return await crdt.applyLocalEdit(file.path, content);
 }
 
 /** At startup, the on-disk file may have changed while the app was closed
@@ -91,7 +93,11 @@ export async function routeModify(
 export async function reconcileColdStart(
 	file: { path: string; diskContent: string },
 	crdt: {
-		applyLocalEdit: (path: string, content: string) => Promise<void>;
+		// Returns boolean (consumed/declined) but the value is intentionally
+		// ignored here — a DECLINED write (handshake gate) is treated identically
+		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
+		// those files until their STEP2 handshake completes.
+		applyLocalEdit: (path: string, content: string) => Promise<boolean | void>;
 		getText: (path: string) => Promise<string>;
 		projectedText: (path: string) => Promise<string>;
 	},
@@ -354,11 +360,11 @@ export class SyncEngine {
 	 *
 	 *  A non-empty note discovered on this device materializes through the normal
 	 *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
-	 *  applying it fires a doc update, and that writes the file. An EMPTY note has
-	 *  no such body — an empty-vs-empty handshake produces a zero-length STEP2 that
-	 *  the server suppresses (the `length > 1` gate), so no frame ever arrives and
-	 *  the file is never created. The announce itself is then the only evidence the
-	 *  note exists.
+	 *  applying it fires a doc-update event, and that writes the file. An EMPTY
+	 *  note has no such body — an empty-vs-empty handshake delivers a STEP2 that
+	 *  integrates zero ops into the doc, so no doc-update event fires and no flush
+	 *  creates the file. The `crdt_doc_ready` announce is then the only evidence
+	 *  the note exists.
 	 *
 	 *  So after a discovery announce for a note we don't have on disk, wait out the
 	 *  handshake window: if a STEP2 had carried content it would have created the
@@ -1081,6 +1087,25 @@ export class SyncEngine {
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
 						return true;
+					}
+					// DECLINED (handshake gate): applyLocalEdit returned false because
+					// the doc is empty and the STEP2 has not yet arrived this session.
+					// The legacy push path below owns this write convergently (backend
+					// PR #846 merges legacy REST pushes into the server CRDT doc). We
+					// still enroll the markdown path so the STEP1 handshake kicks off —
+					// once STEP2 arrives, markSynced fires and future edits route through
+					// CRDT normally. Guard: enroll is md-gated + idempotent per session.
+					//
+					// Oversized notes must NOT be enrolled: enrolling elicits a STEP2
+					// that encodes the full doc history (~+33% base64), which for a note
+					// at or above MAX_CRDT_NOTE_BYTES can exceed Bandit's 8 MB WebSocket
+					// frame limit (1009 close) and — because the bloated doc persists in
+					// IndexedDB — re-crashes on every reconnect, killing all vault sync.
+					if (
+						file.extension === "md" &&
+						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+					) {
+						this.crdtEnrollment?.enroll(file.path);
 					}
 				}
 
