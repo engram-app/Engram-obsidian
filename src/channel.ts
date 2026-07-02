@@ -93,6 +93,16 @@ export class NoteChannel {
 	 *  active against non-CRDT backends (which reply with a join error and
 	 *  never fire this callback). */
 	onCrdtJoined: (() => void) | null = null;
+	/** Fired when the `crdt:` topic join (or REJOIN) is rejected by the server.
+	 *  `reason` is the `response.reason` string from the server payload (undefined
+	 *  if absent). `min` is the server's minimum supported proto version, present
+	 *  only when `reason === "crdt_proto_too_old"`.
+	 *
+	 *  In main.ts, wire this to reset `crdtEverJoined = false` and call
+	 *  `setCrdtManager(null)` so that a failed rejoin (e.g. backend downgrade or
+	 *  transient error after a previously successful join) degrades to the legacy
+	 *  pushNote path rather than silently dropping edits into a dead transport. */
+	onCrdtJoinError: ((reason: string | undefined, min?: number) => void) | null = null;
 
 	constructor(
 		baseUrl: string,
@@ -404,6 +414,18 @@ export class NoteChannel {
 					"channel",
 					`Channel join error on ${topic}: ${JSON.stringify(payload)}`,
 				);
+				if (topic === this.crdtTopic) {
+					// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
+					// routing was previously active (the T4 folded finding: a REJOIN
+					// error while crdtEverJoined=true would otherwise leave routing
+					// active on a dead transport — every md edit silently dropped).
+					const response = (payload as { response?: { reason?: unknown; min?: unknown } })
+						.response;
+					const reason =
+						typeof response?.reason === "string" ? response.reason : undefined;
+					const min = typeof response?.min === "number" ? response.min : undefined;
+					this.onCrdtJoinError?.(reason, min);
+				}
 			}
 			return;
 		}

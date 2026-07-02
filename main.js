@@ -1341,6 +1341,16 @@ var NoteChannel = class {
      *  active against non-CRDT backends (which reply with a join error and
      *  never fire this callback). */
     this.onCrdtJoined = null;
+    /** Fired when the `crdt:` topic join (or REJOIN) is rejected by the server.
+     *  `reason` is the `response.reason` string from the server payload (undefined
+     *  if absent). `min` is the server's minimum supported proto version, present
+     *  only when `reason === "crdt_proto_too_old"`.
+     *
+     *  In main.ts, wire this to reset `crdtEverJoined = false` and call
+     *  `setCrdtManager(null)` so that a failed rejoin (e.g. backend downgrade or
+     *  transient error after a previously successful join) degrades to the legacy
+     *  pushNote path rather than silently dropping edits into a dead transport. */
+    this.onCrdtJoinError = null;
     this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
@@ -1461,7 +1471,7 @@ var NoteChannel = class {
     }, 3e4);
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1480,28 +1490,31 @@ var NoteChannel = class {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
         } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
-      else status === "error" && rlog().error(
+      else if (status === "error" && (rlog().error(
         "channel",
         `Channel join error on ${topic}: ${JSON.stringify(payload)}`
-      );
+      ), topic === this.crdtTopic)) {
+        let response = payload.response, reason = typeof (response == null ? void 0 : response.reason) == "string" ? response.reason : void 0, min2 = typeof (response == null ? void 0 : response.min) == "number" ? response.min : void 0;
+        (_c = this.onCrdtJoinError) == null || _c.call(this, reason, min2);
+      }
       return;
     }
     if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_c = this.onPlanState) == null || _c.call(this, payload);
+      rlog().info("channel", "Received subscription_activated event"), (_d = this.onPlanState) == null || _d.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_d = this.onVaultDeleted) == null || _d.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_e = this.onVaultDeleted) == null || _e.call(this);
       return;
     }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_e = this.onCrdtMessage) == null || _e.call(this, docId, b64));
+      docId && b64 && ((_f = this.onCrdtMessage) == null || _f.call(this, docId, b64));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_f = this.onCrdtDocReady) == null || _f.call(this, docId));
+      docId && ((_g = this.onCrdtDocReady) == null || _g.call(this, docId));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1509,7 +1522,7 @@ var NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_g = p.kind) != null ? _g : "note",
+        kind: (_h = p.kind) != null ? _h : "note",
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -1519,10 +1532,10 @@ var NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_h = this.onEvent) == null || _h.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_i = this.onEvent) == null || _i.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_i = payload.notes) != null ? _i : [];
+      let notes = (_j = payload.notes) != null ? _j : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1538,7 +1551,7 @@ var NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_j = this.onEvent) == null || _j.call(this, streamEvent);
+        (_k = this.onEvent) == null || _k.call(this, streamEvent);
       }
     }
   }
@@ -18950,6 +18963,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
      *  them). Reset to false in setupNoteStream() so a genuine backend/vault
      *  switch degrades back to legacy until the new server confirms crdt: join. */
     this.crdtEverJoined = !1;
+    /** Guards the "plugin needs update" Notice from firing more than once per
+     *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
+     *  showing repeated toasts would be noisy. */
+    this.crdtProtoTooOldNoticeShown = !1;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -19406,6 +19423,18 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
           ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager);
+        }, channel.onCrdtJoinError = (reason, min2) => {
+          var _a2, _b2;
+          rlog().warn(
+            "crdt",
+            `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian23.Notice(
+            "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
+            1e4
+          ), rlog().warn(
+            "crdt",
+            `crdt_proto_too_old: server requires proto >= ${min2 != null ? min2 : "unknown"}; update the plugin`
+          )));
         };
       } else
         rlog().info(

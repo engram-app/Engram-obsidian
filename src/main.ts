@@ -149,6 +149,10 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  them). Reset to false in setupNoteStream() so a genuine backend/vault
 	 *  switch degrades back to legacy until the new server confirms crdt: join. */
 	private crdtEverJoined = false;
+	/** Guards the "plugin needs update" Notice from firing more than once per
+	 *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
+	 *  showing repeated toasts would be noisy. */
+	private crdtProtoTooOldNoticeShown = false;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -1169,6 +1173,41 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
+					};
+					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
+					// (backend downgrade, transient error, or this plugin being too old),
+					// CRDT routing must be torn down even if it was previously active.
+					// Without this, crdtEverJoined stays true and the disconnect handler
+					// retains the manager, routing every md edit into a dead transport
+					// where frames are silently dropped and legacy never engages.
+					channel.onCrdtJoinError = (reason, min) => {
+						rlog().warn(
+							"crdt",
+							`crdt: topic join rejected (reason=${reason ?? "unknown"}) — degrading to legacy pushNote path`,
+						);
+						// Degrade to legacy: mirror the "never-joined disconnect" path.
+						this.crdtEverJoined = false;
+						this.syncEngine.setCrdtManager(null);
+						// Invalidate any handshake marks so a future re-join starts clean.
+						this.crdtManager?.clearSynced();
+						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
+						this.crdtEnrollment?.resetAll();
+						if (reason === "crdt_proto_too_old") {
+							// The server requires a newer CRDT protocol than this plugin
+							// speaks — surface a user-visible notice, but only once per
+							// session to avoid toast spam on every reconnect.
+							if (!this.crdtProtoTooOldNoticeShown) {
+								this.crdtProtoTooOldNoticeShown = true;
+								new Notice(
+									"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.",
+									10000,
+								);
+								rlog().warn(
+									"crdt",
+									`crdt_proto_too_old: server requires proto >= ${min ?? "unknown"}; update the plugin`,
+								);
+							}
+						}
 					};
 				} else {
 					rlog().info(
