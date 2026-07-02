@@ -443,6 +443,69 @@ describe("reconcileColdStart", () => {
 		expect(corrupted).toBe(true);
 	});
 
+	// Adopt-first gate follow-up (#846 review): when the doc is history-less and
+	// the seed gate skips inside applyLocalEdit, the note converges ONLY via the
+	// STEP1/STEP2 handshake — so a drifted note must always be enrolled, or it
+	// silently sits out live sync until the user opens it (IDB-evicted docs,
+	// reinstall-with-restored-data.json).
+	test("drifted note is enrolled so the handshake adoption is guaranteed", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "");
+		const projectedText = mock(async () => "");
+		const enroll = mock(() => {});
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "pulled earlier, doc evicted" },
+			{ applyLocalEdit, getText, projectedText, enroll } as any,
+			() => {},
+		);
+		expect(enroll).toHaveBeenCalledWith("n.md");
+	});
+
+	test("in-sync note is NOT enrolled (no handshake churn for healthy docs)", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "same");
+		const projectedText = mock(async () => "same");
+		const enroll = mock(() => {});
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "same" },
+			{ applyLocalEdit, getText, projectedText, enroll } as any,
+			() => {},
+		);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("corrupted doc is NOT enrolled (conflict modal owns recovery)", async () => {
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => {
+			throw new Error("decode failed");
+		});
+		const projectedText = mock(async () => {
+			throw new Error("decode failed");
+		});
+		const enroll = mock(() => {});
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "x" },
+			{ applyLocalEdit, getText, projectedText, enroll } as any,
+			() => {},
+		);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("enroll fires even when the local write fails (handshake still converges)", async () => {
+		const applyLocalEdit = mock(async () => {
+			throw new Error("storage write failed");
+		});
+		const getText = mock(async () => "old");
+		const projectedText = mock(async () => "old");
+		const enroll = mock(() => {});
+		await reconcileColdStart(
+			{ path: "n.md", diskContent: "old plus offline edit" },
+			{ applyLocalEdit, getText, projectedText, enroll } as any,
+			() => {},
+		);
+		expect(enroll).toHaveBeenCalledWith("n.md");
+	});
+
 	test("CRDT does NOT invoke conflict modal on normal cold-start divergence", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const getText = mock(async () => "old content");

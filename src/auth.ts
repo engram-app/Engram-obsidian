@@ -101,6 +101,12 @@ export class OAuthAuth implements AuthProvider {
 	private onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>;
 	private authenticated = true;
 	private inflightRefresh: Promise<string> | null = null;
+	// Invoked once when the refresh token is DEFINITIVELY rejected by the server
+	// (revoked / rotated-away / expired → 400/401/403/404), as opposed to a
+	// transient error (network / 5xx / 429). The host clears persisted auth and
+	// prompts a re-link so a dead token can't be replayed forever.
+	private readonly onAuthInvalidated?: () => void | Promise<void>;
+	private authInvalidatedFired = false;
 
 	/** Buffer in ms — refresh if token expires within this window. */
 	private static EXPIRY_BUFFER_MS = 60_000;
@@ -113,6 +119,7 @@ export class OAuthAuth implements AuthProvider {
 		onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>,
 		initialAccessToken: string | null = null,
 		initialExpiresAt = 0,
+		onAuthInvalidated?: () => void | Promise<void>,
 	) {
 		this.refreshToken = refreshToken;
 		this.vaultId = vaultId;
@@ -121,6 +128,7 @@ export class OAuthAuth implements AuthProvider {
 		this.onTokenRotated = onTokenRotated;
 		this.accessToken = initialAccessToken;
 		this.expiresAt = initialExpiresAt;
+		this.onAuthInvalidated = onAuthInvalidated;
 	}
 
 	async getToken(): Promise<string> {
@@ -147,6 +155,12 @@ export class OAuthAuth implements AuthProvider {
 	}
 
 	private async doRefresh(): Promise<string> {
+		// A cleared token (after a definitive rejection) can never succeed — fail
+		// fast instead of replaying an empty/dead token against the server.
+		if (!this.refreshToken) {
+			this.authenticated = false;
+			throw new Error("Not authenticated: refresh token cleared");
+		}
 		try {
 			const result = await this.refreshFn(this.refreshToken);
 			this.accessToken = result.access_token;
@@ -169,11 +183,30 @@ export class OAuthAuth implements AuthProvider {
 			this.authenticated = false;
 			this.accessToken = null;
 			this.expiresAt = 0;
+			const status = (err as { status?: number })?.status;
+			const definitive = status === 400 || status === 401 || status === 403 || status === 404;
 			rlog().error(
 				"auth",
-				`OAuth refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+				`OAuth refresh failed (status=${status ?? "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
 				err instanceof Error ? err.stack : undefined,
 			);
+			if (definitive && !this.authInvalidatedFired) {
+				// The refresh token itself is rejected (revoked / rotated-away /
+				// expired) — it will never succeed again. Drop it so we stop
+				// replaying a dead token, and signal the host to clear persisted
+				// auth + prompt a re-link. Transient errors (network / 5xx / 429)
+				// deliberately keep the token so a blip doesn't force a re-login.
+				this.authInvalidatedFired = true;
+				this.refreshToken = "";
+				try {
+					await this.onAuthInvalidated?.();
+				} catch (cbErr) {
+					rlog().error(
+						"auth",
+						`onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`,
+					);
+				}
+			}
 			throw err;
 		}
 	}

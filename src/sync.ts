@@ -100,6 +100,7 @@ export async function reconcileColdStart(
 		applyLocalEdit: (path: string, content: string) => Promise<boolean | undefined>;
 		getText: (path: string) => Promise<string>;
 		projectedText: (path: string) => Promise<string>;
+		enroll?: (path: string) => void;
 	},
 	onCorruption: () => void,
 ): Promise<void> {
@@ -118,6 +119,13 @@ export async function reconcileColdStart(
 		// handshake will converge the state once connectivity is restored.
 		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
 	}
+	// A drifted note must always get a handshake: when the doc is history-less
+	// and the adopt-first seed gate skipped inside applyLocalEdit (IDB-evicted
+	// doc whose disk content matches the last-synced hash), the note converges
+	// ONLY via STEP1/STEP2 — without enrolling here it would silently sit out
+	// live sync until the user opens it. Enrollment is idempotent (once per
+	// session), so seeding paths pay nothing extra.
+	crdt.enroll?.(file.path);
 }
 
 /** Check if an error is an HTTP response with the given status code.
@@ -337,6 +345,29 @@ export class SyncEngine {
 		enrollment: { enroll(path: string): void; reset(path: string): void } | null,
 	): void {
 		this.crdtEnrollment = enrollment;
+	}
+
+	/** True when a path currently has a live editor binding (an open, bound
+	 *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
+	 *  writer for the note (Relay's "editor owns the file while open"): the disk
+	 *  path must NOT also feed disk content into the Y.Text, or Obsidian's ~2s
+	 *  autosave re-diffs the whole file into the doc every cycle and fights the
+	 *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
+	 *  and headless contexts behave exactly as before. */
+	private isLiveBound: (path: string) => boolean = () => false;
+
+	setLiveBoundCheck(fn: (path: string) => boolean): void {
+		this.isLiveBound = fn;
+	}
+
+	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
+	 *  `content` hashes to exactly what this engine last synced for `path` —
+	 *  i.e. the server already holds this content, so a history-less Y.Doc must
+	 *  adopt the server lineage instead of re-encoding it (backend #846
+	 *  lineage doubling). Unknown paths return false (authored notes seed). */
+	isUnchangedSynced(path: string, content: string): boolean {
+		const state = this.syncState.get(normalizePath(path));
+		return state !== undefined && state.hash === fnv1a(content);
 	}
 
 	/** Write a remote-merged CRDT result to disk.
@@ -701,6 +732,18 @@ export class SyncEngine {
 		const crdtManaged = !!this.crdt && this.isMarkdown(file);
 		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
+			return;
+		}
+
+		// Editor-owns-the-file gate (Relay's active-vs-idle model): if the note has
+		// a live editor binding, that binding already streamed this edit into the
+		// Y.Text per keystroke. Obsidian's autosave disk write is just local
+		// persistence; re-feeding it through routeModify -> applyLocalEdit would
+		// diff the whole file back into the doc every ~2s and churn it (the
+		// delete/insert flicker). Skip the disk-driven CRDT route while bound. The
+		// disk path still serves closed notes, reading-view-only notes, and
+		// external edits (none of which are live-bound).
+		if (crdtManaged && this.isLiveBound(file.path)) {
 			return;
 		}
 

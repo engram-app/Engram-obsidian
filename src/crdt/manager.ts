@@ -58,6 +58,19 @@ export interface CrdtManagerOptions {
 	 * testing (iOS + Android) is required before GA.
 	 */
 	onPersistError?: (path: string, err: unknown) => void;
+	/**
+	 * Adopt-first seed gate (backend #846 lineage doubling). Returns true when
+	 * `content` is byte-identical to the last content synced for `path` (the
+	 * SyncEngine's per-path hash). A history-less doc must NOT seed such
+	 * content: the server already holds it on its own Yjs lineage, and a
+	 * client re-encoding it produces concurrent "same text" ops Yjs cannot
+	 * dedup — the note body doubles once the two lineages union. Instead the
+	 * doc stays empty and adopts the server lineage from the first STEP2.
+	 * Content that DIFFERS from the last-synced hash (real offline edits)
+	 * seeds as before, so nothing local is ever dropped. If omitted, the gate
+	 * is off (every history-less doc seeds — the pre-gate behavior).
+	 */
+	isUnchangedSynced?: (path: string, content: string) => boolean;
 }
 
 interface Entry {
@@ -177,13 +190,29 @@ export class CrdtManager {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
+		// Adopt-first seed gate (#161): a history-less doc whose disk content is
+		// byte-identical to the last-synced content has nothing local to
+		// preserve — seeding it would re-encode server-known content on this
+		// client's lineage (the #846 doubling). Leave the doc empty (body AND
+		// frontmatter) and let the first STEP2 populate it on the server's
+		// lineage; later real edits diff in on that shared history. Returns
+		// `true` ("handled, nothing to push") — a legacy fallback here would
+		// mass re-push every known-synced file on a fresh-IDB cold start.
+		// MUST run before the handshake gate below, which would otherwise
+		// route these same files (empty doc, no LCA, no frame yet) to legacy.
+		if (!lca && this.opts.isUnchangedSynced?.(path, diskContent)) {
+			return true;
+		}
+
 		// Handshake gate (audit P0-1): if the doc is still empty AND no LCA is
 		// established AND the server STEP2 has not yet been applied this session,
 		// decline without touching the doc. A fresh-IDB device must not seed a
 		// second local lineage before the server's history arrives — the two
 		// full-text insertions would merge into duplicated body text vault-wide.
 		// Once `markSynced` fires (first inbound sync frame), an empty doc is a
-		// genuine server-empty note and seeding is safe.
+		// genuine server-empty note and seeding is safe. Reached only when the
+		// disk content actually differs from the last-synced state (or was never
+		// synced) — i.e. genuinely NEW content the legacy path must deliver.
 		if (e.text.length === 0 && !lca && !this.isSynced(path)) {
 			return false;
 		}
@@ -297,6 +326,17 @@ export class CrdtManager {
 		// Clear the synced mark regardless of which branch ran. A recreated note
 		// at the same path must go through the full STEP2 handshake before seeding.
 		this.synced.delete(id);
+	}
+
+	/**
+	 * On note rename, drop the old-path doc entry (close + clear) so the new
+	 * path opens a fresh doc that re-syncs from the server via enrollment.
+	 * Keeping the old entry would leave it accumulating edits under a path the
+	 * server no longer maps, and orphan its IndexedDB store.
+	 */
+	renameDoc(oldPath: string, newPath: string): void {
+		if (oldPath === newPath) return;
+		this.closeDoc(oldPath);
 	}
 
 	/** Tear down all open docs. Call on plugin unload. */
