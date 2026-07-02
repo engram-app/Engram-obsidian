@@ -314,8 +314,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// The once-per-doc guard inside CrdtEnrollment and CrdtChannel ensures the
 		// STEP1 handshake fires exactly once even if the same note is opened
 		// repeatedly, and resets on channel reconnect for a fresh handshake.
+		// Enrollment is skipped while the sync gate is closed: the handshake would
+		// pull remote content before the user has chosen a direction, which could
+		// overwrite local files after a vault switch. After the gate opens,
+		// markSyncGateAccepted calls crdtEnrollment.resetAll() so gated-away
+		// STEP1s re-fire and remote state re-flushes.
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => {
+				if (this.syncEngine.isSyncBlocked()) return;
 				const file = this.app.workspace.getActiveFile();
 				if (file instanceof TFile && file.extension === "md") {
 					this.crdtEnrollment?.enroll(file.path);
@@ -566,12 +572,15 @@ export default class EngramSyncPlugin extends Plugin {
 			// readiness must not depend on a user-driven modal choice.
 			this.syncEngine.setReady();
 
+			if (!registered) return;
+
 			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
 			// doc for any markdown file that changed while the app was closed
 			// (external editor, another sync app, OS). Runs after readiness is
 			// set so the resulting applyLocalEdit fires normally through the CRDT
-			// route. Only runs when a CrdtManager is available (auth configured).
-			if (this.crdtManager) {
+			// route. Only runs when registered and the sync gate is open so that
+			// content is never transmitted before the user picks a direction.
+			if (gateOpen && this.crdtManager) {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;
@@ -593,8 +602,6 @@ export default class EngramSyncPlugin extends Plugin {
 						});
 				}
 			}
-
-			if (!registered) return;
 
 			if (gateOpen) {
 				// User has already accepted a direction for this fingerprint —
@@ -1277,6 +1284,10 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		this.syncGateAcceptedFor = fp;
 		this.syncEngine.setSyncBlocked(false);
+		// Re-fire gated-away STEP1 handshakes now that writes are allowed.
+		// Active-leaf-change enrollment was skipped while the gate was closed;
+		// resetAll re-issues STEP1 for all known paths so remote state re-flushes.
+		this.crdtEnrollment?.resetAll();
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 	}

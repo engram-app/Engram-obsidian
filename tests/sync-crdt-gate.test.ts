@@ -596,3 +596,121 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/remote.md", "# After reconnect");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// P0-2 — sync gate blocks all CRDT inbound paths
+// ---------------------------------------------------------------------------
+
+/** Access private recentlyFlushed map via type cast (same pattern as seedSyncState). */
+function getRecentlyFlushed(engine: SyncEngine): Map<string, number> {
+	return (engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed;
+}
+
+describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
+	test("flushFromCrdt does NOT call vault.modify when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// Simulate existing file on disk
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+
+		await engine.flushFromCrdt("Notes/target.md", "remote content");
+
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("flushFromCrdt does NOT call vault.create when syncBlocked (discovery path)", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// No file on disk — discovery path
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/new.md", "remote content");
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("flushFromCrdt does NOT mark recentlyFlushed when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
+
+		// recentlyFlushed must be empty — a gated flush must leave no echo-suppression residue
+		expect(getRecentlyFlushed(engine).has("Notes/echo-test.md")).toBe(false);
+	});
+
+	test("a blocked flushFromCrdt leaves no echo-suppression: subsequent handleModify for same path is NOT suppressed", async () => {
+		const engine = createEngine();
+		// No CRDT manager — so handleModify uses the legacy path where recentlyFlushed matters
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
+
+		// Now unblock and verify handleModify proceeds (not echo-suppressed)
+		engine.setSyncBlocked(false);
+
+		const file = new TFile("Notes/echo-test.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// pushNote should have been called — the file was NOT echo-suppressed
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+
+	test("flushFromCrdt still works (writes disk) when syncBlocked is false", async () => {
+		const engine = createEngine();
+
+		const existingFile = new TFile("Notes/ok.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+
+		await engine.flushFromCrdt("Notes/ok.md", "new content");
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(existingFile, "new content");
+	});
+});
+
+describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
+	test("materializeEmptyDiscovered does NOT create a file when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// File not on disk — would normally trigger creation
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("materializeEmptyDiscovered does NOT mark recentlyFlushed when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		expect(getRecentlyFlushed(engine).has("Notes/empty.md")).toBe(false);
+	});
+
+	test("materializeEmptyDiscovered still works when syncBlocked is false", async () => {
+		const engine = createEngine();
+
+		// File not on disk (simulating discovery)
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		// No CRDT manager → projectedText falls back to ""
+		engine.setCrdtManager(null as any);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		// Should create the file (empty content)
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+});

@@ -336,8 +336,14 @@ export class SyncEngine {
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
 	 *  'create' handler routes through handleModify too).
-	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
+	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
+	 *  Requires the sync gate to be open — returns early when blocked so inbound
+	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
 	async flushFromCrdt(path: string, content: string): Promise<void> {
+		if (this.syncBlocked) {
+			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
+			return;
+		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
 		this.markRecentlyFlushed(normalized);
@@ -372,6 +378,10 @@ export class SyncEngine {
 	 *  absent, the note is genuinely empty — create it from the doc's current text
 	 *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
 	async materializeEmptyDiscovered(path: string): Promise<void> {
+		if (this.syncBlocked) {
+			devLog().log("sync-blocked", `materializeEmptyDiscovered short-circuited — gate closed: ${path}`);
+			return;
+		}
 		if (!path.endsWith(".md")) return;
 		const normalized = normalizePath(path);
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
