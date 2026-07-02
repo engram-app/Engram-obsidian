@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch3 = function() {
+    var diff_match_patch4 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch3.Diff = function(op, text2) {
+    diff_match_patch4.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch3.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch3.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch3.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch3.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch3.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch3.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch3.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch3.Diff(
+          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch4.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch3.Diff(DIFF_DELETE, text1),
-          new diff_match_patch3.Diff(DIFF_INSERT, text2)
+          new diff_match_patch4.Diff(DIFF_DELETE, text1),
+          new diff_match_patch4.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch3.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch3.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch3.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch3.Diff(DIFF_DELETE, text1),
-        new diff_match_patch3.Diff(DIFF_INSERT, text2)
+        new diff_match_patch4.Diff(DIFF_DELETE, text1),
+        new diff_match_patch4.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch3.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch3.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch3.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch3.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,19 +224,19 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch3.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
       if (longtext.length < 4 || shorttext.length * 2 < longtext.length)
         return null;
-      var dmp3 = this;
+      var dmp4 = this;
       function diff_halfMatchI_(longtext2, shorttext2, i) {
         for (var seed = longtext2.substring(i, i + Math.floor(longtext2.length / 4)), j = -1, best_common = "", best_longtext_a, best_longtext_b, best_shorttext_a, best_shorttext_b; (j = shorttext2.indexOf(seed, j + 1)) != -1; ) {
-          var prefixLength = dmp3.diff_commonPrefix(
+          var prefixLength = dmp4.diff_commonPrefix(
             longtext2.substring(i),
             shorttext2.substring(j)
-          ), suffixLength = dmp3.diff_commonSuffix(
+          ), suffixLength = dmp4.diff_commonSuffix(
             longtext2.substring(0, i),
             shorttext2.substring(0, j)
           );
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch3.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch3.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch3.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch3.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch3.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch3.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch3.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch3.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch3.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch3.whitespaceRegex_ = /\s/;
-    diff_match_patch3.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch3.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch3.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch3.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch4.whitespaceRegex_ = /\s/;
+    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch3.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch3.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch3.prototype.diff_text1 = function(diffs) {
+    diff_match_patch4.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_text2 = function(diffs) {
+    diff_match_patch4.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch3.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch3.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,18 +454,18 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch3.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch3.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
-      var s = this.match_alphabet_(pattern), dmp3 = this;
+      var s = this.match_alphabet_(pattern), dmp4 = this;
       function match_bitapScore_(e, x) {
         var accuracy = e / pattern.length, proximity = Math.abs(loc - x);
-        return dmp3.Match_Distance ? accuracy + proximity / dmp3.Match_Distance : proximity ? 1 : accuracy;
+        return dmp4.Match_Distance ? accuracy + proximity / dmp4.Match_Distance : proximity ? 1 : accuracy;
       }
       var score_threshold = this.Match_Threshold, best_loc = text2.indexOf(pattern, loc);
       best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold), best_loc = text2.lastIndexOf(pattern, loc + pattern.length), best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold)));
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch3.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch3.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch3.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch3.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch3.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch3.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch3.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch3.prototype.patch_addPadding = function(patches) {
+    diff_match_patch4.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch3.prototype.patch_splitMax = function(patches) {
+    diff_match_patch4.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch3.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch4.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch3.prototype.patch_toText = function(patches) {
+    diff_match_patch4.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch3.prototype.patch_fromText = function(textline) {
+    diff_match_patch4.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch3.patch_obj();
+        var patch = new diff_match_patch4.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch3.patch_obj = function() {
+    diff_match_patch4.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch3.patch_obj.prototype.toString = function() {
+    diff_match_patch4.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch3;
-    module2.exports.diff_match_patch = diff_match_patch3;
+    module2.exports = diff_match_patch4;
+    module2.exports.diff_match_patch = diff_match_patch4;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -731,7 +731,7 @@ __export(main_exports, {
   default: () => EngramSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
@@ -1969,8 +1969,8 @@ var import_obsidian4 = require("obsidian"), WidthMatchedInputSuggest = class ext
 };
 
 // src/folder-suggest.ts
-function folderSuggestions(allFolders, fragment) {
-  let frag = fragment.trim().toLowerCase();
+function folderSuggestions(allFolders, fragment2) {
+  let frag = fragment2.trim().toLowerCase();
   return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
 }
 var FolderInputSuggest = class extends WidthMatchedInputSuggest {
@@ -2176,8 +2176,8 @@ async function searchHybrid(query, ctx, opts, fuzzy) {
 }
 
 // src/tag-suggest.ts
-function tagSuggestions(allTags, fragment, selected) {
-  let frag = fragment.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
+function tagSuggestions(allTags, fragment2, selected) {
+  let frag = fragment2.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
   return allTags.filter((t) => {
     let lc = t.replace(/^#/, "").toLowerCase();
     return !chosen.has(lc) && (frag === "" || lc.includes(frag));
@@ -4173,9 +4173,9 @@ function renderEngramUrlSetting(ctx) {
       status.removeClasses(STATUS_CLASSES), status.setText("");
       return;
     }
-    let seq2 = ++probeSeq;
+    let seq3 = ++probeSeq;
     status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+      seq3 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
     });
   };
   setting.addText((text2) => {
@@ -4579,8 +4579,8 @@ var import_obsidian21 = require("obsidian");
 
 // src/cursor.ts
 var MAX_CURSOR_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-function encodeCursor(seq2, id2) {
-  return btoa(`${seq2}:${id2}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+function encodeCursor(seq3, id2) {
+  return btoa(`${seq3}:${id2}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 // src/dev-log.ts
@@ -4931,6 +4931,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  level-triggered discovery path that backstops the edge-triggered
      *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
     this.crdtEnrollment = null;
+    /** True when a path currently has a live editor binding (an open, bound
+     *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
+     *  writer for the note (Relay's "editor owns the file while open"): the disk
+     *  path must NOT also feed disk content into the Y.Text, or Obsidian's ~2s
+     *  autosave re-diffs the whole file into the doc every cycle and fights the
+     *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
+     *  and headless contexts behave exactly as before. */
+    this.isLiveBound = () => !1;
     /** Persistent record of files that failed to sync, with reason. Surfaced
      *  in the Sync Center "Issues" panel and used to short-circuit the offline
      *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -4979,6 +4987,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
+  }
+  setLiveBoundCheck(fn) {
+    this.isLiveBound = fn;
   }
   /** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
    *  `content` hashes to exactly what this engine last synced for `path` —
@@ -5176,10 +5187,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pendingPostPullPushes.add(file.path);
       return;
     }
-    if (!(!!this.crdt && this.isMarkdown(file)) && this.recentlyFlushed.has(file.path)) {
+    let crdtManaged = !!this.crdt && this.isMarkdown(file);
+    if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
+    if (crdtManaged && this.isLiveBound(file.path))
+      return;
     let existing = this.debounceTimers.get(file.path);
     existing && window.clearTimeout(existing);
     let timer = window.setTimeout(() => {
@@ -7918,6 +7932,7 @@ var Pair = class {
     this.left = left, this.right = right;
   }
 }, create5 = (left, right) => new Pair(left, right);
+var forEach2 = (arr, f) => arr.forEach((p) => f(p.left, p.right));
 
 // node_modules/lib0/prng.js
 var bool = (gen) => gen.next() >= 0.5, int53 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
@@ -8529,16 +8544,23 @@ ${err.toString()}`);
 var doc = (
   /** @type {Document} */
   typeof document != "undefined" ? document : {}
-);
-var $fragment = $custom((el) => el.nodeType === DOCUMENT_FRAGMENT_NODE);
-var domParser = (
+), createElement = (name) => doc.createElement(name), createDocumentFragment = () => doc.createDocumentFragment(), $fragment = $custom((el) => el.nodeType === DOCUMENT_FRAGMENT_NODE), createTextNode = (text2) => doc.createTextNode(text2), domParser = (
   /** @type {DOMParser} */
   typeof DOMParser != "undefined" ? new DOMParser() : null
 );
-var $element = $custom((el) => el.nodeType === ELEMENT_NODE);
-var $text = $custom((el) => el.nodeType === TEXT_NODE);
+var setAttributes = (el, attrs) => (forEach2(attrs, (key, value) => {
+  value === !1 ? el.removeAttribute(key) : value === !0 ? el.setAttribute(key, "") : el.setAttribute(key, value);
+}), el);
+var fragment = (children) => {
+  let fragment2 = createDocumentFragment();
+  for (let i = 0; i < children.length; i++)
+    appendChild(fragment2, children[i]);
+  return fragment2;
+}, append = (parent, nodes) => (appendChild(parent, fragment(nodes)), parent);
+var element = (name, attrs = [], children = []) => append(setAttributes(createElement(name), attrs), children), $element = $custom((el) => el.nodeType === ELEMENT_NODE);
+var text = createTextNode, $text = $custom((el) => el.nodeType === TEXT_NODE);
 var mapToStyleString = (m) => map(m, (value, key) => `${key}:${value};`).join("");
-var ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
+var appendChild = (parent, child) => parent.appendChild(child), ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
 
 // node_modules/lib0/symbol.js
 var create6 = Symbol;
@@ -9627,8 +9649,100 @@ var findRootTypeKey = (type) => {
     if (value === type)
       return key;
   throw unexpectedCase();
+}, isParentOf = (parent, child) => {
+  for (; child !== null; ) {
+    if (child.parent === parent)
+      return !0;
+    child = /** @type {AbstractType<any>} */
+    child.parent._item;
+  }
+  return !1;
 };
-var Snapshot = class {
+var RelativePosition = class {
+  /**
+   * @param {ID|null} type
+   * @param {string|null} tname
+   * @param {ID|null} item
+   * @param {number} assoc
+   */
+  constructor(type, tname, item, assoc = 0) {
+    this.type = type, this.tname = tname, this.item = item, this.assoc = assoc;
+  }
+}, relativePositionToJSON = (rpos) => {
+  let json = {};
+  return rpos.type && (json.type = rpos.type), rpos.tname && (json.tname = rpos.tname), rpos.item && (json.item = rpos.item), rpos.assoc != null && (json.assoc = rpos.assoc), json;
+}, createRelativePositionFromJSON = (json) => {
+  var _a;
+  return new RelativePosition(json.type == null ? null : createID(json.type.client, json.type.clock), (_a = json.tname) != null ? _a : null, json.item == null ? null : createID(json.item.client, json.item.clock), json.assoc == null ? 0 : json.assoc);
+}, AbsolutePosition = class {
+  /**
+   * @param {AbstractType<any>} type
+   * @param {number} index
+   * @param {number} [assoc]
+   */
+  constructor(type, index, assoc = 0) {
+    this.type = type, this.index = index, this.assoc = assoc;
+  }
+}, createAbsolutePosition = (type, index, assoc = 0) => new AbsolutePosition(type, index, assoc), createRelativePosition = (type, item, assoc) => {
+  let typeid = null, tname = null;
+  return type._item === null ? tname = findRootTypeKey(type) : typeid = createID(type._item.id.client, type._item.id.clock), new RelativePosition(typeid, tname, item, assoc);
+}, createRelativePositionFromTypeIndex = (type, index, assoc = 0) => {
+  let t = type._start;
+  if (assoc < 0) {
+    if (index === 0)
+      return createRelativePosition(type, null, assoc);
+    index--;
+  }
+  for (; t !== null; ) {
+    if (!t.deleted && t.countable) {
+      if (t.length > index)
+        return createRelativePosition(type, createID(t.id.client, t.id.clock + index), assoc);
+      index -= t.length;
+    }
+    if (t.right === null && assoc < 0)
+      return createRelativePosition(type, t.lastId, assoc);
+    t = t.right;
+  }
+  return createRelativePosition(type, null, assoc);
+};
+var getItemWithOffset = (store, id2) => {
+  let item = getItem(store, id2), diff = id2.clock - item.id.clock;
+  return {
+    item,
+    diff
+  };
+}, createAbsolutePositionFromRelativePosition = (rpos, doc2, followUndoneDeletions = !0) => {
+  let store = doc2.store, rightID = rpos.item, typeID = rpos.type, tname = rpos.tname, assoc = rpos.assoc, type = null, index = 0;
+  if (rightID !== null) {
+    if (getState(store, rightID.client) <= rightID.clock)
+      return null;
+    let res = followUndoneDeletions ? followRedone(store, rightID) : getItemWithOffset(store, rightID), right = res.item;
+    if (!(right instanceof Item))
+      return null;
+    if (type = /** @type {AbstractType<any>} */
+    right.parent, type._item === null || !type._item.deleted) {
+      index = right.deleted || !right.countable ? 0 : res.diff + (assoc >= 0 ? 0 : 1);
+      let n = right.left;
+      for (; n !== null; )
+        !n.deleted && n.countable && (index += n.length), n = n.left;
+    }
+  } else {
+    if (tname !== null)
+      type = doc2.get(tname);
+    else if (typeID !== null) {
+      if (getState(store, typeID.client) <= typeID.clock)
+        return null;
+      let { item } = followUndoneDeletions ? followRedone(store, typeID) : { item: getItem(store, typeID) };
+      if (item instanceof Item && item.content instanceof ContentType)
+        type = item.content.type;
+      else
+        return null;
+    } else
+      throw unexpectedCase();
+    assoc >= 0 ? index = type._length : index = 0;
+  }
+  return createAbsolutePosition(type, index, rpos.assoc);
+}, compareRelativePositions = (a, b) => a === b || a !== null && b !== null && a.tname === b.tname && compareIDs(a.item, b.item) && compareIDs(a.type, b.type) && a.assoc === b.assoc, Snapshot = class {
   /**
    * @param {DeleteSet} ds
    * @param {Map<number,number>} sv state map
@@ -9842,6 +9956,222 @@ var cleanupTransactions = (transactionCleanups, i) => {
     }
   }
   return result;
+}, StackItem = class {
+  /**
+   * @param {DeleteSet} deletions
+   * @param {DeleteSet} insertions
+   */
+  constructor(deletions, insertions) {
+    this.insertions = insertions, this.deletions = deletions, this.meta = /* @__PURE__ */ new Map();
+  }
+}, clearUndoManagerStackItem = (tr, um, stackItem) => {
+  iterateDeletedStructs(tr, stackItem.deletions, (item) => {
+    item instanceof Item && um.scope.some((type) => type === tr.doc || isParentOf(
+      /** @type {AbstractType<any>} */
+      type,
+      item
+    )) && keepItem(item, !1);
+  });
+}, popStackItem = (undoManager, stack, eventType) => {
+  let _tr = null, doc2 = undoManager.doc, scope = undoManager.scope;
+  transact(doc2, (transaction) => {
+    for (; stack.length > 0 && undoManager.currStackItem === null; ) {
+      let store = doc2.store, stackItem = (
+        /** @type {StackItem} */
+        stack.pop()
+      ), itemsToRedo = /* @__PURE__ */ new Set(), itemsToDelete = [], performedChange = !1;
+      iterateDeletedStructs(transaction, stackItem.insertions, (struct) => {
+        if (struct instanceof Item) {
+          if (struct.redone !== null) {
+            let { item, diff } = followRedone(store, struct.id);
+            diff > 0 && (item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff))), struct = item;
+          }
+          !struct.deleted && scope.some((type) => type === transaction.doc || isParentOf(
+            /** @type {AbstractType<any>} */
+            type,
+            /** @type {Item} */
+            struct
+          )) && itemsToDelete.push(struct);
+        }
+      }), iterateDeletedStructs(transaction, stackItem.deletions, (struct) => {
+        struct instanceof Item && scope.some((type) => type === transaction.doc || isParentOf(
+          /** @type {AbstractType<any>} */
+          type,
+          struct
+        )) && // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
+        !isDeleted(stackItem.insertions, struct.id) && itemsToRedo.add(struct);
+      }), itemsToRedo.forEach((struct) => {
+        performedChange = redoItem(transaction, struct, itemsToRedo, stackItem.insertions, undoManager.ignoreRemoteMapChanges, undoManager) !== null || performedChange;
+      });
+      for (let i = itemsToDelete.length - 1; i >= 0; i--) {
+        let item = itemsToDelete[i];
+        undoManager.deleteFilter(item) && (item.delete(transaction), performedChange = !0);
+      }
+      undoManager.currStackItem = performedChange ? stackItem : null;
+    }
+    transaction.changed.forEach((subProps, type) => {
+      subProps.has(null) && type._searchMarker && (type._searchMarker.length = 0);
+    }), _tr = transaction;
+  }, undoManager);
+  let res = undoManager.currStackItem;
+  if (res != null) {
+    let changedParentTypes = _tr.changedParentTypes;
+    undoManager.emit("stack-item-popped", [{ stackItem: res, type: eventType, changedParentTypes, origin: undoManager }, undoManager]), undoManager.currStackItem = null;
+  }
+  return res;
+}, UndoManager = class extends ObservableV2 {
+  /**
+   * @param {Doc|AbstractType<any>|Array<AbstractType<any>>} typeScope Limits the scope of the UndoManager. If this is set to a ydoc instance, all changes on that ydoc will be undone. If set to a specific type, only changes on that type or its children will be undone. Also accepts an array of types.
+   * @param {UndoManagerOptions} options
+   */
+  constructor(typeScope, {
+    captureTimeout = 500,
+    captureTransaction = (_tr) => !0,
+    deleteFilter = () => !0,
+    trackedOrigins = /* @__PURE__ */ new Set([null]),
+    ignoreRemoteMapChanges = !1,
+    doc: doc2 = (
+      /** @type {Doc} */
+      isArray(typeScope) ? typeScope[0].doc : typeScope instanceof Doc ? typeScope : typeScope.doc
+    )
+  } = {}) {
+    super(), this.scope = [], this.doc = doc2, this.addToScope(typeScope), this.deleteFilter = deleteFilter, trackedOrigins.add(this), this.trackedOrigins = trackedOrigins, this.captureTransaction = captureTransaction, this.undoStack = [], this.redoStack = [], this.undoing = !1, this.redoing = !1, this.currStackItem = null, this.lastChange = 0, this.ignoreRemoteMapChanges = ignoreRemoteMapChanges, this.captureTimeout = captureTimeout, this.afterTransactionHandler = (transaction) => {
+      if (!this.captureTransaction(transaction) || !this.scope.some((type) => transaction.changedParentTypes.has(
+        /** @type {AbstractType<any>} */
+        type
+      ) || type === this.doc) || !this.trackedOrigins.has(transaction.origin) && (!transaction.origin || !this.trackedOrigins.has(transaction.origin.constructor)))
+        return;
+      let undoing = this.undoing, redoing = this.redoing, stack = undoing ? this.redoStack : this.undoStack;
+      undoing ? this.stopCapturing() : redoing || this.clear(!1, !0);
+      let insertions = new DeleteSet();
+      transaction.afterState.forEach((endClock, client) => {
+        let startClock = transaction.beforeState.get(client) || 0, len = endClock - startClock;
+        len > 0 && addToDeleteSet(insertions, client, startClock, len);
+      });
+      let now = getUnixTime(), didAdd = !1;
+      if (this.lastChange > 0 && now - this.lastChange < this.captureTimeout && stack.length > 0 && !undoing && !redoing) {
+        let lastOp = stack[stack.length - 1];
+        lastOp.deletions = mergeDeleteSets([lastOp.deletions, transaction.deleteSet]), lastOp.insertions = mergeDeleteSets([lastOp.insertions, insertions]);
+      } else
+        stack.push(new StackItem(transaction.deleteSet, insertions)), didAdd = !0;
+      !undoing && !redoing && (this.lastChange = now), iterateDeletedStructs(
+        transaction,
+        transaction.deleteSet,
+        /** @param {Item|GC} item */
+        (item) => {
+          item instanceof Item && this.scope.some((type) => type === transaction.doc || isParentOf(
+            /** @type {AbstractType<any>} */
+            type,
+            item
+          )) && keepItem(item, !0);
+        }
+      );
+      let changeEvent = [{ stackItem: stack[stack.length - 1], origin: transaction.origin, type: undoing ? "redo" : "undo", changedParentTypes: transaction.changedParentTypes }, this];
+      didAdd ? this.emit("stack-item-added", changeEvent) : this.emit("stack-item-updated", changeEvent);
+    }, this.doc.on("afterTransaction", this.afterTransactionHandler), this.doc.on("destroy", () => {
+      this.destroy();
+    });
+  }
+  /**
+   * Extend the scope.
+   *
+   * @param {Array<AbstractType<any> | Doc> | AbstractType<any> | Doc} ytypes
+   */
+  addToScope(ytypes) {
+    let tmpSet = new Set(this.scope);
+    ytypes = isArray(ytypes) ? ytypes : [ytypes], ytypes.forEach((ytype) => {
+      tmpSet.has(ytype) || (tmpSet.add(ytype), (ytype instanceof AbstractType ? ytype.doc !== this.doc : ytype !== this.doc) && warn("[yjs#509] Not same Y.Doc"), this.scope.push(ytype));
+    });
+  }
+  /**
+   * @param {any} origin
+   */
+  addTrackedOrigin(origin) {
+    this.trackedOrigins.add(origin);
+  }
+  /**
+   * @param {any} origin
+   */
+  removeTrackedOrigin(origin) {
+    this.trackedOrigins.delete(origin);
+  }
+  clear(clearUndoStack = !0, clearRedoStack = !0) {
+    (clearUndoStack && this.canUndo() || clearRedoStack && this.canRedo()) && this.doc.transact((tr) => {
+      clearUndoStack && (this.undoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item)), this.undoStack = []), clearRedoStack && (this.redoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item)), this.redoStack = []), this.emit("stack-cleared", [{ undoStackCleared: clearUndoStack, redoStackCleared: clearRedoStack }]);
+    });
+  }
+  /**
+   * UndoManager merges Undo-StackItem if they are created within time-gap
+   * smaller than `options.captureTimeout`. Call `um.stopCapturing()` so that the next
+   * StackItem won't be merged.
+   *
+   *
+   * @example
+   *     // without stopCapturing
+   *     ytext.insert(0, 'a')
+   *     ytext.insert(1, 'b')
+   *     um.undo()
+   *     ytext.toString() // => '' (note that 'ab' was removed)
+   *     // with stopCapturing
+   *     ytext.insert(0, 'a')
+   *     um.stopCapturing()
+   *     ytext.insert(0, 'b')
+   *     um.undo()
+   *     ytext.toString() // => 'a' (note that only 'b' was removed)
+   *
+   */
+  stopCapturing() {
+    this.lastChange = 0;
+  }
+  /**
+   * Undo last changes on type.
+   *
+   * @return {StackItem?} Returns StackItem if a change was applied
+   */
+  undo() {
+    this.undoing = !0;
+    let res;
+    try {
+      res = popStackItem(this, this.undoStack, "undo");
+    } finally {
+      this.undoing = !1;
+    }
+    return res;
+  }
+  /**
+   * Redo last undo operation.
+   *
+   * @return {StackItem?} Returns StackItem if a change was applied
+   */
+  redo() {
+    this.redoing = !0;
+    let res;
+    try {
+      res = popStackItem(this, this.redoStack, "redo");
+    } finally {
+      this.redoing = !1;
+    }
+    return res;
+  }
+  /**
+   * Are undo steps available?
+   *
+   * @return {boolean} `true` if undo is possible
+   */
+  canUndo() {
+    return this.undoStack.length > 0;
+  }
+  /**
+   * Are redo steps available?
+   *
+   * @return {boolean} `true` if redo is possible
+   */
+  canRedo() {
+    return this.redoStack.length > 0;
+  }
+  destroy() {
+    this.trackedOrigins.delete(this), this.doc.off("afterTransaction", this.afterTransactionHandler), super.destroy();
+  }
 };
 function* lazyStructReaderGenerator(decoder) {
   let numOfStateUpdates = readVarUint(decoder.restDecoder);
@@ -11843,10 +12173,10 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
    * @public
    */
   toDOM(_document = document, hooks = {}, binding) {
-    let fragment = _document.createDocumentFragment();
-    return binding !== void 0 && binding._createAssociation(fragment, this), typeListForEach(this, (xmlType) => {
-      fragment.insertBefore(xmlType.toDOM(_document, hooks, binding), null);
-    }), fragment;
+    let fragment2 = _document.createDocumentFragment();
+    return binding !== void 0 && binding._createAssociation(fragment2, this), typeListForEach(this, (xmlType) => {
+      fragment2.insertBefore(xmlType.toDOM(_document, hooks, binding), null);
+    }), fragment2;
   }
   /**
    * Inserts new content at an index.
@@ -13127,8 +13457,20 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
   getRef() {
     return 7;
   }
-}, readContentType = (decoder) => new ContentType(typeRefs[decoder.readTypeRef()](decoder));
-var splitItem = (transaction, leftItem, diff) => {
+}, readContentType = (decoder) => new ContentType(typeRefs[decoder.readTypeRef()](decoder)), followRedone = (store, id2) => {
+  let nextID = id2, diff = 0, item;
+  do
+    diff > 0 && (nextID = createID(nextID.client, nextID.clock + diff)), item = getItem(store, nextID), diff = nextID.clock - item.id.clock, nextID = item.redone;
+  while (nextID !== null && item instanceof Item);
+  return {
+    item,
+    diff
+  };
+}, keepItem = (item, keep) => {
+  for (; item !== null && item.keep !== keep; )
+    item.keep = keep, item = /** @type {AbstractType<any>} */
+    item.parent._item;
+}, splitItem = (transaction, leftItem, diff) => {
   let { client, clock } = leftItem.id, rightItem = new Item(
     createID(client, clock + diff),
     leftItem,
@@ -13140,8 +13482,79 @@ var splitItem = (transaction, leftItem, diff) => {
     leftItem.content.splice(diff)
   );
   return leftItem.deleted && rightItem.markDeleted(), leftItem.keep && (rightItem.keep = !0), leftItem.redone !== null && (rightItem.redone = createID(leftItem.redone.client, leftItem.redone.clock + diff)), leftItem.right = rightItem, rightItem.right !== null && (rightItem.right.left = rightItem), transaction._mergeStructs.push(rightItem), rightItem.parentSub !== null && rightItem.right === null && rightItem.parent._map.set(rightItem.parentSub, rightItem), leftItem.length = diff, rightItem;
-};
-var Item = class _Item extends AbstractStruct {
+}, isDeletedByUndoStack = (stack, id2) => some(
+  stack,
+  /** @param {StackItem} s */
+  (s) => isDeleted(s.deletions, id2)
+), redoItem = (transaction, item, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) => {
+  let doc2 = transaction.doc, store = doc2.store, ownClientID = doc2.clientID, redone = item.redone;
+  if (redone !== null)
+    return getItemCleanStart(transaction, redone);
+  let parentItem = (
+    /** @type {AbstractType<any>} */
+    item.parent._item
+  ), left = null, right;
+  if (parentItem !== null && parentItem.deleted === !0) {
+    if (parentItem.redone === null && (!redoitems.has(parentItem) || redoItem(transaction, parentItem, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) === null))
+      return null;
+    for (; parentItem.redone !== null; )
+      parentItem = getItemCleanStart(transaction, parentItem.redone);
+  }
+  let parentType = parentItem === null ? (
+    /** @type {AbstractType<any>} */
+    item.parent
+  ) : (
+    /** @type {ContentType} */
+    parentItem.content.type
+  );
+  if (item.parentSub === null) {
+    for (left = item.left, right = item; left !== null; ) {
+      let leftTrace = left;
+      for (; leftTrace !== null && /** @type {AbstractType<any>} */
+      leftTrace.parent._item !== parentItem; )
+        leftTrace = leftTrace.redone === null ? null : getItemCleanStart(transaction, leftTrace.redone);
+      if (leftTrace !== null && /** @type {AbstractType<any>} */
+      leftTrace.parent._item === parentItem) {
+        left = leftTrace;
+        break;
+      }
+      left = left.left;
+    }
+    for (; right !== null; ) {
+      let rightTrace = right;
+      for (; rightTrace !== null && /** @type {AbstractType<any>} */
+      rightTrace.parent._item !== parentItem; )
+        rightTrace = rightTrace.redone === null ? null : getItemCleanStart(transaction, rightTrace.redone);
+      if (rightTrace !== null && /** @type {AbstractType<any>} */
+      rightTrace.parent._item === parentItem) {
+        right = rightTrace;
+        break;
+      }
+      right = right.right;
+    }
+  } else {
+    if (right = null, item.right && !ignoreRemoteMapChanges) {
+      for (left = item; left !== null && left.right !== null && (left.right.redone || isDeleted(itemsToDelete, left.right.id) || isDeletedByUndoStack(um.undoStack, left.right.id) || isDeletedByUndoStack(um.redoStack, left.right.id)); )
+        for (left = left.right; left.redone; ) left = getItemCleanStart(transaction, left.redone);
+      if (left && left.right !== null)
+        return null;
+    } else
+      left = parentType._map.get(item.parentSub) || null;
+    left !== null && /** @type {AbstractType<any>} */
+    left.parent._item !== parentItem && (left = parentType._map.get(item.parentSub) || null);
+  }
+  let nextClock = getState(store, ownClientID), nextId = createID(ownClientID, nextClock), redoneItem = new Item(
+    nextId,
+    left,
+    left && left.lastId,
+    right,
+    right && right.id,
+    parentType,
+    item.parentSub,
+    item.content.copy()
+  );
+  return item.redone = nextId, keepItem(redoneItem, !0), redoneItem.integrate(transaction, 0), redoneItem;
+}, Item = class _Item extends AbstractStruct {
   /**
    * @param {ID} id
    * @param {Item | null} left
@@ -15091,12 +15504,12 @@ var YAMLSeq = class extends Collection {
     isScalar(prev) && isScalarValue(value) ? prev.value = value : this.items[idx] = value;
   }
   toJSON(_, ctx) {
-    let seq2 = [];
-    ctx != null && ctx.onCreate && ctx.onCreate(seq2);
+    let seq3 = [];
+    ctx != null && ctx.onCreate && ctx.onCreate(seq3);
     let i = 0;
     for (let item of this.items)
-      seq2.push(toJS(item, String(i++), ctx));
-    return seq2;
+      seq3.push(toJS(item, String(i++), ctx));
+    return seq3;
   }
   toString(ctx, onComment, onChompKeep) {
     return ctx ? stringifyCollection(this, ctx, {
@@ -15108,7 +15521,7 @@ var YAMLSeq = class extends Collection {
     }) : JSON.stringify(this);
   }
   static from(schema4, obj, ctx) {
-    let { replacer } = ctx, seq2 = new this(schema4);
+    let { replacer } = ctx, seq3 = new this(schema4);
     if (obj && Symbol.iterator in Object(obj)) {
       let i = 0;
       for (let it of obj) {
@@ -15116,10 +15529,10 @@ var YAMLSeq = class extends Collection {
           let key = obj instanceof Set ? it : String(i++);
           it = replacer.call(obj, key, it);
         }
-        seq2.items.push(createNode(it, void 0, ctx));
+        seq3.items.push(createNode(it, void 0, ctx));
       }
     }
-    return seq2;
+    return seq3;
   }
 };
 function asItemIndex(key) {
@@ -15133,8 +15546,8 @@ var seq = {
   default: !0,
   nodeClass: YAMLSeq,
   tag: "tag:yaml.org,2002:seq",
-  resolve(seq2, onError) {
-    return isSeq(seq2) || onError("Expected a sequence for this tag"), seq2;
+  resolve(seq3, onError) {
+    return isSeq(seq3) || onError("Expected a sequence for this tag"), seq3;
   },
   createNode: (schema4, obj, ctx) => YAMLSeq.from(schema4, obj, ctx)
 };
@@ -15373,11 +15786,11 @@ var binary = {
 };
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
-function resolvePairs(seq2, onError) {
+function resolvePairs(seq3, onError) {
   var _a;
-  if (isSeq(seq2))
-    for (let i = 0; i < seq2.items.length; ++i) {
-      let item = seq2.items[i];
+  if (isSeq(seq3))
+    for (let i = 0; i < seq3.items.length; ++i) {
+      let item = seq3.items[i];
       if (!isPair(item)) {
         if (isMap(item)) {
           item.items.length > 1 && onError("Each pair must have its own sequence indicator");
@@ -15390,12 +15803,12 @@ ${cn.comment}` : item.comment;
           }
           item = pair;
         }
-        seq2.items[i] = isPair(item) ? item : new Pair2(item);
+        seq3.items[i] = isPair(item) ? item : new Pair2(item);
       }
     }
   else
     onError("Expected a sequence for this tag");
-  return seq2;
+  return seq3;
 }
 function createPairs(schema4, iterable, ctx) {
   let { replacer } = ctx, pairs2 = new YAMLSeq(schema4);
@@ -15464,8 +15877,8 @@ var omap = {
   nodeClass: YAMLOMap,
   default: !1,
   tag: "tag:yaml.org,2002:omap",
-  resolve(seq2, onError) {
-    let pairs2 = resolvePairs(seq2, onError), seenKeys = [];
+  resolve(seq3, onError) {
+    let pairs2 = resolvePairs(seq3, onError), seenKeys = [];
     for (let { key } of pairs2.items)
       isScalar(key) && (seenKeys.includes(key.value) ? onError(`Ordered maps must not include duplicate keys: ${key.value}`) : seenKeys.push(key.value));
     return Object.assign(new YAMLOMap(), pairs2);
@@ -16265,7 +16678,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
 // node_modules/yaml/browser/dist/compose/resolve-block-seq.js
 function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bs, onError, tag) {
   var _a;
-  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq2 = new NodeClass(ctx.schema);
+  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq3 = new NodeClass(ctx.schema);
   ctx.atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
   let offset = bs.offset, commentEnd = null;
   for (let { start, value } of bs.items) {
@@ -16281,13 +16694,13 @@ function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeE
       if (props.anchor || props.tag || value)
         (value == null ? void 0 : value.type) === "block-seq" ? onError(props.end, "BAD_INDENT", "All sequence items must start at the same column") : onError(offset, "MISSING_CHAR", "Sequence item without - indicator");
       else {
-        commentEnd = props.end, props.comment && (seq2.comment = props.comment);
+        commentEnd = props.end, props.comment && (seq3.comment = props.comment);
         continue;
       }
     let node = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, start, null, props, onError);
-    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq2.items.push(node);
+    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq3.items.push(node);
   }
-  return seq2.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq2;
+  return seq3.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq3;
 }
 
 // node_modules/yaml/browser/dist/compose/resolve-end.js
@@ -18051,26 +18464,26 @@ var Parser = class {
     }
     yield* this.pop(), yield* this.step();
   }
-  *blockSequence(seq2) {
+  *blockSequence(seq3) {
     var _a;
-    let it = seq2.items[seq2.items.length - 1];
+    let it = seq3.items[seq3.items.length - 1];
     switch (this.type) {
       case "newline":
         if (it.value) {
           let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
-          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq2.items.push({ start: [this.sourceToken] });
+          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq3.items.push({ start: [this.sourceToken] });
         } else
           it.start.push(this.sourceToken);
         return;
       case "space":
       case "comment":
         if (it.value)
-          seq2.items.push({ start: [this.sourceToken] });
+          seq3.items.push({ start: [this.sourceToken] });
         else {
-          if (this.atIndentedComment(it.start, seq2.indent)) {
-            let prev = seq2.items[seq2.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
+          if (this.atIndentedComment(it.start, seq3.indent)) {
+            let prev = seq3.items[seq3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), seq2.items.pop();
+              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), seq3.items.pop();
               return;
             }
           }
@@ -18079,18 +18492,18 @@ var Parser = class {
         return;
       case "anchor":
       case "tag":
-        if (it.value || this.indent <= seq2.indent)
+        if (it.value || this.indent <= seq3.indent)
           break;
         it.start.push(this.sourceToken);
         return;
       case "seq-item-ind":
-        if (this.indent !== seq2.indent)
+        if (this.indent !== seq3.indent)
           break;
-        it.value || includesToken(it.start, "seq-item-ind") ? seq2.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
+        it.value || includesToken(it.start, "seq-item-ind") ? seq3.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
         return;
     }
-    if (this.indent > seq2.indent) {
-      let bv = this.startBlockValue(seq2);
+    if (this.indent > seq3.indent) {
+      let bv = this.startBlockValue(seq3);
       if (bv) {
         this.stack.push(bv);
         return;
@@ -18457,6 +18870,15 @@ var _CrdtManager = class _CrdtManager {
     let id2 = this.docId(path), e = this.docs.get(id2);
     e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2));
   }
+  /**
+   * On note rename, drop the old-path doc entry (close + clear) so the new
+   * path opens a fresh doc that re-syncs from the server via enrollment.
+   * Keeping the old entry would leave it accumulating edits under a path the
+   * server no longer maps, and orphan its IndexedDB store.
+   */
+  renameDoc(oldPath, newPath) {
+    oldPath !== newPath && this.closeDoc(oldPath);
+  }
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {
     for (let [id2, e] of this.docs)
@@ -18665,6 +19087,841 @@ var CrdtEnrollment = class {
   }
 };
 
+// src/crdt/live/live-views.ts
+var import_obsidian22 = require("obsidian");
+
+// node_modules/y-protocols/awareness.js
+var outdatedTimeout = 3e4, Awareness = class extends Observable {
+  /**
+   * @param {Y.Doc} doc
+   */
+  constructor(doc2) {
+    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
+    setInterval(() => {
+      let now = getUnixTime();
+      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
+      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
+      let remove = [];
+      this.meta.forEach((meta, clientid) => {
+        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
+      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
+    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
+      this.destroy();
+    }), this.setLocalState({});
+  }
+  destroy() {
+    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
+  }
+  /**
+   * @return {Object<string,any>|null}
+   */
+  getLocalState() {
+    return this.states.get(this.clientID) || null;
+  }
+  /**
+   * @param {Object<string,any>|null} state
+   */
+  setLocalState(state) {
+    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
+    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
+      clock,
+      lastUpdated: getUnixTime()
+    });
+    let added = [], updated = [], filteredUpdated = [], removed = [];
+    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
+  }
+  /**
+   * @param {string} field
+   * @param {any} value
+   */
+  setLocalStateField(field, value) {
+    let state = this.getLocalState();
+    state !== null && this.setLocalState({
+      ...state,
+      [field]: value
+    });
+  }
+  /**
+   * @return {Map<number,Object<string,any>>}
+   */
+  getStates() {
+    return this.states;
+  }
+}, removeAwarenessStates = (awareness, clients, origin) => {
+  let removed = [];
+  for (let i = 0; i < clients.length; i++) {
+    let clientID = clients[i];
+    if (awareness.states.has(clientID)) {
+      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
+        let curMeta = (
+          /** @type {MetaClientState} */
+          awareness.meta.get(clientID)
+        );
+        awareness.meta.set(clientID, {
+          clock: curMeta.clock + 1,
+          lastUpdated: getUnixTime()
+        });
+      }
+      removed.push(clientID);
+    }
+  }
+  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
+};
+
+// src/crdt/live/ycollab-binding.ts
+var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
+
+// node_modules/y-codemirror.next/src/index.js
+var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
+
+// node_modules/y-codemirror.next/src/y-range.js
+var YRange = class _YRange {
+  /**
+   * @param {Y.RelativePosition} yanchor
+   * @param {Y.RelativePosition} yhead
+   */
+  constructor(yanchor, yhead) {
+    this.yanchor = yanchor, this.yhead = yhead;
+  }
+  /**
+   * @returns {any}
+   */
+  toJSON() {
+    return {
+      yanchor: relativePositionToJSON(this.yanchor),
+      yhead: relativePositionToJSON(this.yhead)
+    };
+  }
+  /**
+   * @param {any} json
+   * @return {YRange}
+   */
+  static fromJSON(json) {
+    return new _YRange(createRelativePositionFromJSON(json.yanchor), createRelativePositionFromJSON(json.yhead));
+  }
+};
+
+// node_modules/y-codemirror.next/src/y-sync.js
+var cmState = __toESM(require("@codemirror/state"), 1), cmView = __toESM(require("@codemirror/view"), 1);
+var YSyncConfig = class {
+  constructor(ytext, awareness) {
+    this.ytext = ytext, this.awareness = awareness, this.undoManager = new UndoManager(ytext);
+  }
+  /**
+   * Helper function to transform an absolute index position to a Yjs-based relative position
+   * (https://docs.yjs.dev/api/relative-positions).
+   *
+   * A relative position can be transformed back to an absolute position even after the document has changed. The position is
+   * automatically adapted. This does not require any position transformations. Relative positions are computed based on
+   * the internal Yjs document model. Peers that share content through Yjs are guaranteed that their positions will always
+   * synced up when using relatve positions.
+   *
+   * ```js
+   * import { ySyncFacet } from 'y-codemirror'
+   *
+   * ..
+   * const ysync = view.state.facet(ySyncFacet)
+   * // transform an absolute index position to a ypos
+   * const ypos = ysync.getYPos(3)
+   * // transform the ypos back to an absolute position
+   * ysync.fromYPos(ypos) // => 3
+   * ```
+   *
+   * It cannot be guaranteed that absolute index positions can be synced up between peers.
+   * This might lead to undesired behavior when implementing features that require that all peers see the
+   * same marked range (e.g. a comment plugin).
+   *
+   * @param {number} pos
+   * @param {number} [assoc]
+   */
+  toYPos(pos, assoc = 0) {
+    return createRelativePositionFromTypeIndex(this.ytext, pos, assoc);
+  }
+  /**
+   * @param {Y.RelativePosition | Object} rpos
+   */
+  fromYPos(rpos) {
+    let pos = createAbsolutePositionFromRelativePosition(createRelativePositionFromJSON(rpos), this.ytext.doc);
+    if (pos == null || pos.type !== this.ytext)
+      throw new Error("[y-codemirror] The position you want to retrieve was created by a different document");
+    return {
+      pos: pos.index,
+      assoc: pos.assoc
+    };
+  }
+  /**
+   * @param {cmState.SelectionRange} range
+   * @return {YRange}
+   */
+  toYRange(range) {
+    let assoc = range.assoc, yanchor = this.toYPos(range.anchor, assoc), yhead = this.toYPos(range.head, assoc);
+    return new YRange(yanchor, yhead);
+  }
+  /**
+   * @param {YRange} yrange
+   */
+  fromYRange(yrange) {
+    let anchor = this.fromYPos(yrange.yanchor), head = this.fromYPos(yrange.yhead);
+    return anchor.pos === head.pos ? cmState.EditorSelection.cursor(head.pos, head.assoc) : cmState.EditorSelection.range(anchor.pos, head.pos);
+  }
+}, ySyncFacet = cmState.Facet.define({
+  combine(inputs) {
+    return inputs[inputs.length - 1];
+  }
+}), ySyncAnnotation = cmState.Annotation.define(), YSyncPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.view = view, this.conf = view.state.facet(ySyncFacet), this._observer = (event, tr) => {
+      if (tr.origin !== this.conf) {
+        let delta = event.delta, changes = [], pos = 0;
+        for (let i = 0; i < delta.length; i++) {
+          let d = delta[i];
+          d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : pos += d.retain;
+        }
+        view.dispatch({ changes, annotations: [ySyncAnnotation.of(this.conf)] });
+      }
+    }, this._ytext = this.conf.ytext, this._ytext.observe(this._observer);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    if (!update.docChanged || update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.conf)
+      return;
+    let ytext = this.conf.ytext;
+    ytext.doc.transact(() => {
+      let adj = 0;
+      update.changes.iterChanges((fromA, toA, fromB, toB, insert) => {
+        let insertText2 = insert.sliceString(0, insert.length, `
+`);
+        fromA !== toA && ytext.delete(fromA + adj, toA - fromA), insertText2.length > 0 && ytext.insert(fromA + adj, insertText2), adj += insertText2.length - (toA - fromA);
+      });
+    }, this.conf);
+  }
+  destroy() {
+    this._ytext.unobserve(this._observer);
+  }
+}, ySync = cmView.ViewPlugin.fromClass(YSyncPluginValue);
+
+// node_modules/y-codemirror.next/src/y-remote-selections.js
+var cmView2 = __toESM(require("@codemirror/view"), 1), cmState2 = __toESM(require("@codemirror/state"), 1);
+var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
+  ".cm-ySelection": {},
+  ".cm-yLineSelection": {
+    padding: 0,
+    margin: "0px 2px 0px 4px"
+  },
+  ".cm-ySelectionCaret": {
+    position: "relative",
+    borderLeft: "1px solid black",
+    borderRight: "1px solid black",
+    marginLeft: "-1px",
+    marginRight: "-1px",
+    boxSizing: "border-box",
+    display: "inline"
+  },
+  ".cm-ySelectionCaretDot": {
+    borderRadius: "50%",
+    position: "absolute",
+    width: ".4em",
+    height: ".4em",
+    top: "-.2em",
+    left: "-.2em",
+    backgroundColor: "inherit",
+    transition: "transform .3s ease-in-out",
+    boxSizing: "border-box"
+  },
+  ".cm-ySelectionCaret:hover > .cm-ySelectionCaretDot": {
+    transformOrigin: "bottom center",
+    transform: "scale(0)"
+  },
+  ".cm-ySelectionInfo": {
+    position: "absolute",
+    top: "-1.05em",
+    left: "-1px",
+    fontSize: ".75em",
+    fontFamily: "serif",
+    fontStyle: "normal",
+    fontWeight: "normal",
+    lineHeight: "normal",
+    userSelect: "none",
+    color: "white",
+    paddingLeft: "2px",
+    paddingRight: "2px",
+    zIndex: 101,
+    transition: "opacity .3s ease-in-out",
+    backgroundColor: "inherit",
+    // these should be separate
+    opacity: 0,
+    transitionDelay: "0s",
+    whiteSpace: "nowrap"
+  },
+  ".cm-ySelectionCaret:hover > .cm-ySelectionInfo": {
+    opacity: 1,
+    transitionDelay: "0s"
+  }
+}), yRemoteSelectionsAnnotation = cmState2.Annotation.define(), YRemoteCaretWidget = class extends cmView2.WidgetType {
+  /**
+   * @param {string} color
+   * @param {string} name
+   */
+  constructor(color, name) {
+    super(), this.color = color, this.name = name;
+  }
+  toDOM() {
+    return (
+      /** @type {HTMLElement} */
+      element("span", [create5("class", "cm-ySelectionCaret"), create5("style", `background-color: ${this.color}; border-color: ${this.color}`)], [
+        text("\u2060"),
+        element("div", [
+          create5("class", "cm-ySelectionCaretDot")
+        ]),
+        text("\u2060"),
+        element("div", [
+          create5("class", "cm-ySelectionInfo")
+        ], [
+          text(this.name)
+        ]),
+        text("\u2060")
+      ])
+    );
+  }
+  eq(widget) {
+    return widget.color === this.color;
+  }
+  compare(widget) {
+    return widget.color === this.color;
+  }
+  updateDOM() {
+    return !1;
+  }
+  get estimatedHeight() {
+    return -1;
+  }
+  ignoreEvent() {
+    return !0;
+  }
+}, YRemoteSelectionsPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.conf = view.state.facet(ySyncFacet), this._listener = ({ added, updated, removed }, s, t) => {
+      added.concat(updated).concat(removed).findIndex((id2) => id2 !== this.conf.awareness.doc.clientID) >= 0 && view.dispatch({ annotations: [yRemoteSelectionsAnnotation.of([])] });
+    }, this._awareness = this.conf.awareness, this._awareness.on("change", this._listener), this.decorations = cmState2.RangeSet.of([]);
+  }
+  destroy() {
+    this._awareness.off("change", this._listener);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    let ytext = this.conf.ytext, ydoc = (
+      /** @type {Y.Doc} */
+      ytext.doc
+    ), awareness = this.conf.awareness, decorations = [], localAwarenessState = this.conf.awareness.getLocalState();
+    if (localAwarenessState != null) {
+      let hasFocus = update.view.hasFocus && update.view.dom.ownerDocument.hasFocus(), sel = hasFocus ? update.state.selection.main : null, currentAnchor = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.anchor), currentHead = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.head);
+      if (sel != null) {
+        let anchor = createRelativePositionFromTypeIndex(ytext, sel.anchor), head = createRelativePositionFromTypeIndex(ytext, sel.head);
+        (localAwarenessState.cursor == null || !compareRelativePositions(currentAnchor, anchor) || !compareRelativePositions(currentHead, head)) && awareness.setLocalStateField("cursor", {
+          anchor,
+          head
+        });
+      } else localAwarenessState.cursor != null && hasFocus && awareness.setLocalStateField("cursor", null);
+    }
+    awareness.getStates().forEach((state, clientid) => {
+      if (clientid === awareness.doc.clientID)
+        return;
+      let cursor = state.cursor;
+      if (cursor == null || cursor.anchor == null || cursor.head == null)
+        return;
+      let anchor = createAbsolutePositionFromRelativePosition(cursor.anchor, ydoc), head = createAbsolutePositionFromRelativePosition(cursor.head, ydoc);
+      if (anchor == null || head == null || anchor.type !== ytext || head.type !== ytext)
+        return;
+      let { color = "#30bced", name = "Anonymous" } = state.user || {}, colorLight = state.user && state.user.colorLight || color + "33", start = min(anchor.index, head.index), end = max(anchor.index, head.index), startLine = update.view.state.doc.lineAt(start), endLine = update.view.state.doc.lineAt(end);
+      if (startLine.number === endLine.number)
+        decorations.push({
+          from: start,
+          to: end,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        });
+      else {
+        decorations.push({
+          from: start,
+          to: startLine.from + startLine.length,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        }), decorations.push({
+          from: endLine.from,
+          to: end,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        });
+        for (let i = startLine.number + 1; i < endLine.number; i++) {
+          let linePos = update.view.state.doc.line(i).from;
+          decorations.push({
+            from: linePos,
+            to: linePos,
+            value: cmView2.Decoration.line({
+              attributes: { style: `background-color: ${colorLight}`, class: "cm-yLineSelection" }
+            })
+          });
+        }
+      }
+      decorations.push({
+        from: head.index,
+        to: head.index,
+        value: cmView2.Decoration.widget({
+          side: head.index - anchor.index > 0 ? -1 : 1,
+          // the local cursor should be rendered outside the remote selection
+          block: !1,
+          widget: new YRemoteCaretWidget(color, name)
+        })
+      });
+    }), this.decorations = cmView2.Decoration.set(decorations, !0);
+  }
+}, yRemoteSelections = cmView2.ViewPlugin.fromClass(YRemoteSelectionsPluginValue, {
+  decorations: (v) => v.decorations
+});
+
+// node_modules/y-codemirror.next/src/y-undomanager.js
+var cmState3 = __toESM(require("@codemirror/state"), 1), cmView3 = __toESM(require("@codemirror/view"), 1);
+
+// node_modules/lib0/mutex.js
+var createMutex = () => {
+  let token = !0;
+  return (f, g) => {
+    if (token) {
+      token = !1;
+      try {
+        f();
+      } finally {
+        token = !0;
+      }
+    } else g !== void 0 && g();
+  };
+};
+
+// node_modules/y-codemirror.next/src/y-undomanager.js
+var YUndoManagerConfig = class {
+  /**
+   * @param {Y.UndoManager} undoManager
+   */
+  constructor(undoManager) {
+    this.undoManager = undoManager;
+  }
+  /**
+   * @param {any} origin
+   */
+  addTrackedOrigin(origin) {
+    this.undoManager.addTrackedOrigin(origin);
+  }
+  /**
+   * @param {any} origin
+   */
+  removeTrackedOrigin(origin) {
+    this.undoManager.removeTrackedOrigin(origin);
+  }
+  /**
+   * @return {boolean} Whether a change was undone.
+   */
+  undo() {
+    return this.undoManager.undo() != null;
+  }
+  /**
+   * @return {boolean} Whether a change was redone.
+   */
+  redo() {
+    return this.undoManager.redo() != null;
+  }
+}, yUndoManagerFacet = cmState3.Facet.define({
+  combine(inputs) {
+    return inputs[inputs.length - 1];
+  }
+}), yUndoManagerAnnotation = cmState3.Annotation.define(), YUndoManagerPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.view = view, this.conf = view.state.facet(yUndoManagerFacet), this._undoManager = this.conf.undoManager, this.syncConf = view.state.facet(ySyncFacet), this._beforeChangeSelection = null, this._mux = createMutex(), this._onStackItemAdded = ({ stackItem, changedParentTypes }) => {
+      changedParentTypes.has(this.syncConf.ytext) && this._beforeChangeSelection && !stackItem.meta.has(this) && stackItem.meta.set(this, this._beforeChangeSelection);
+    }, this._onStackItemPopped = ({ stackItem }) => {
+      let sel = stackItem.meta.get(this);
+      if (sel) {
+        let selection = this.syncConf.fromYRange(sel);
+        view.dispatch(view.state.update({
+          selection,
+          effects: [cmView3.EditorView.scrollIntoView(selection)]
+        })), this._storeSelection();
+      }
+    }, this._storeSelection = () => {
+      this._beforeChangeSelection = this.syncConf.toYRange(this.view.state.selection.main);
+    }, this._undoManager.on("stack-item-added", this._onStackItemAdded), this._undoManager.on("stack-item-popped", this._onStackItemPopped), this._undoManager.addTrackedOrigin(this.syncConf);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(ySyncAnnotation) !== this.syncConf) && this._storeSelection();
+  }
+  destroy() {
+    this._undoManager.off("stack-item-added", this._onStackItemAdded), this._undoManager.off("stack-item-popped", this._onStackItemPopped), this._undoManager.removeTrackedOrigin(this.syncConf);
+  }
+}, yUndoManager = cmView3.ViewPlugin.fromClass(YUndoManagerPluginValue), undo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).undo() || !0, redo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).redo() || !0;
+var yUndoManagerKeymap = [
+  { key: "Mod-z", run: undo, preventDefault: !0 },
+  { key: "Mod-y", mac: "Mod-Shift-z", run: redo, preventDefault: !0 },
+  { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
+];
+
+// node_modules/y-codemirror.next/src/index.js
+var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
+  let ySyncConfig = new YSyncConfig(ytext, awareness), plugins = [
+    ySyncFacet.of(ySyncConfig),
+    ySync
+  ];
+  return awareness && plugins.push(
+    yRemoteSelectionsTheme,
+    yRemoteSelections
+  ), undoManager !== !1 && plugins.push(
+    yUndoManagerFacet.of(new YUndoManagerConfig(undoManager)),
+    yUndoManager,
+    cmView4.EditorView.domEventHandlers({
+      beforeinput(e, view) {
+        return e.inputType === "historyUndo" ? undo(view) : e.inputType === "historyRedo" ? redo(view) : !1;
+      }
+    })
+  ), plugins;
+};
+
+// src/crdt/live/cm-yjs-bridge.ts
+var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp3 = new import_diff_match_patch3.diff_match_patch();
+function textDiffToChangeSpec(before, after) {
+  if (before === after) return [];
+  let diffs = dmp3.diff_main(before, after);
+  dmp3.diff_cleanupSemantic(diffs);
+  let changes = [], cursor = 0;
+  for (let [op, data] of diffs)
+    op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
+  return changes;
+}
+
+// src/crdt/live/ycollab-binding.ts
+var crdtCompartment = new import_state.Compartment();
+function ycollabExtension() {
+  return crdtCompartment.of([]);
+}
+function makeSyncAnnotationCapture(onCapture) {
+  let captured = !1;
+  return import_view.EditorView.updateListener.of((update) => {
+    if (!captured)
+      for (let tr of update.transactions) {
+        let rawAnnotations = tr.annotations;
+        if (rawAnnotations) {
+          for (let ann of rawAnnotations)
+            if (ann.value instanceof YSyncConfig) {
+              captured = !0, onCapture({ type: ann.type, conf: ann.value });
+              return;
+            }
+        }
+      }
+  });
+}
+function rerouteUndoFilter(router) {
+  return import_state.EditorState.transactionFilter.of((tr) => tr.isUserEvent("undo") ? (queueMicrotask(() => router.undo()), []) : tr.isUserEvent("redo") ? (queueMicrotask(() => router.redo()), []) : tr);
+}
+function handleUndoBeforeInput(inputType, router) {
+  return inputType === "historyUndo" ? (router.undo(), !0) : inputType === "historyRedo" ? (router.redo(), !0) : !1;
+}
+function bindSpec(ytext, awareness) {
+  let undoManager = new UndoManager(ytext, {
+    trackedOrigins: /* @__PURE__ */ new Set()
+  }), capturedAnnotation = null, captureExt = makeSyncAnnotationCapture((captured) => {
+    capturedAnnotation = captured;
+  }), ycollabExt = yCollab(ytext, awareness, { undoManager }), router = {
+    undo: () => undoManager.undo(),
+    redo: () => undoManager.redo()
+  }, beforeInputHandler = import_state.Prec.highest(
+    import_view.EditorView.domEventHandlers({
+      beforeinput(e) {
+        return handleUndoBeforeInput(e.inputType, router) ? (e.preventDefault(), !0) : !1;
+      }
+    })
+  );
+  return {
+    extension: [
+      captureExt,
+      ycollabExt,
+      // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
+      // Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
+      // native history does not also fire on the keyboard path.
+      import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap)),
+      beforeInputHandler,
+      // Layer 3: catch any native-history transaction that beat Layers 1-2.
+      rerouteUndoFilter(router)
+    ],
+    getSyncAnnotation: () => capturedAnnotation
+  };
+}
+function reconcileEditorToYText(currentDoc, ytext) {
+  return textDiffToChangeSpec(currentDoc, ytext.toJSON());
+}
+
+// src/crdt/live/editor-controller.ts
+var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
+  constructor(deps) {
+    this.viewId = `cm-${seq2++}`;
+    this.path = null;
+    /** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
+     *  getYText. Once released, the controller is permanently inert: refresh()
+     *  drops it from the map and mints a fresh one on next refresh. */
+    this.released = !1;
+    this.bindResult = null;
+    this.boundYtext = null;
+    this.driftTimer = null;
+    this.deps = deps;
+  }
+  currentPath() {
+    return this.path;
+  }
+  async bindTo(view, path) {
+    if (this.path === path) return;
+    let ytext = await this.deps.getYText(path);
+    if (this.released) return;
+    let oldPath = this.path;
+    oldPath && this.deps.onRelease(oldPath, this.viewId);
+    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
+    view.dispatch({
+      changes,
+      effects: crdtCompartment.reconfigure(result.extension)
+    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+  }
+  release(view) {
+    this.released = !0, this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+  }
+  clearDriftTimer() {
+    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
+  }
+  scheduleDriftCheck(view) {
+    this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
+      this.driftTimer = null, this.runDriftCheck(view);
+    }, DRIFT_CHECK_INTERVAL_MS);
+  }
+  runDriftCheck(view) {
+    if (this.released || this.boundYtext === null || this.bindResult === null) return;
+    let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
+    if (changes.length > 0) {
+      let captured = this.bindResult.getSyncAnnotation();
+      captured !== null && view.dispatch({
+        changes,
+        annotations: [captured.type.of(captured.conf)]
+      });
+    }
+    this.scheduleDriftCheck(view);
+  }
+};
+
+// src/crdt/live/obsidian-internals.ts
+function getEditorViewForLeaf(view) {
+  var _a;
+  let cm = (_a = view == null ? void 0 : view.editor) == null ? void 0 : _a.cm;
+  return cm && typeof cm.dispatch == "function" ? cm : null;
+}
+function getMarkdownFilePath(view) {
+  var _a;
+  let path = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
+  return typeof path == "string" ? path : null;
+}
+function setPreviewRendered(view, text2) {
+  var _a, _b;
+  let pm = view == null ? void 0 : view.previewMode;
+  if (!(pm != null && pm.renderer) || typeof pm.renderer.set != "function") return !1;
+  try {
+    return pm.renderer.set(text2), (_a = view == null ? void 0 : view.editor) != null && _a.cm || (_b = view.onInternalDataChange) == null || _b.call(view), !0;
+  } catch (e) {
+    return !1;
+  }
+}
+function patchFrontmatterSave(view, onSave) {
+  let v = view;
+  if (typeof v.saveFrontmatter != "function") return null;
+  let original = v.saveFrontmatter.bind(v);
+  return v.saveFrontmatter = (...args2) => {
+    let result = original(...args2);
+    try {
+      typeof v.text == "string" && onSave(v.text);
+    } catch (e) {
+    }
+    return result;
+  }, () => {
+    v.saveFrontmatter = original;
+  };
+}
+
+// src/crdt/live/frontmatter-hook.ts
+var CrdtFrontmatterHook = class {
+  constructor(deps) {
+    this.uninstallers = /* @__PURE__ */ new WeakMap();
+    /** Strong-reference set so detachAll() can iterate all attached views.
+     *  The WeakMap alone is not iterable. */
+    this.attached = /* @__PURE__ */ new Set();
+    this.deps = deps;
+  }
+  attach(view) {
+    if (typeof view != "object" || view === null || this.uninstallers.has(view)) return;
+    let path = this.deps.getPath(view);
+    if (!path) return;
+    let uninstall = patchFrontmatterSave(view, (newText) => {
+      this.deps.getYText(path).then((ytext) => {
+        diffIntoYText(ytext, newText);
+      }).catch(
+        (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
+      );
+    });
+    if (!uninstall) {
+      rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
+      return;
+    }
+    this.uninstallers.set(view, uninstall), this.attached.add(view);
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let uninstall = this.uninstallers.get(view);
+    uninstall && (uninstall(), this.uninstallers.delete(view), this.attached.delete(view));
+  }
+  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
+  detachAll() {
+    for (let view of this.attached)
+      this.detach(view);
+    this.attached.clear();
+  }
+};
+
+// src/crdt/live/reading-view.ts
+var CrdtReadingView = class {
+  constructor(deps) {
+    this.observers = /* @__PURE__ */ new WeakMap();
+    /** Strong-reference set so detachAll() can iterate all attached views.
+     *  The WeakMap alone is not iterable. */
+    this.attached = /* @__PURE__ */ new Set();
+    this.deps = deps;
+  }
+  async attach(view, path) {
+    if (typeof view != "object" || view === null || this.observers.has(view)) return;
+    this.observers.set(view, () => {
+    }), this.attached.add(view);
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
+    if (!ytext) return;
+    let handler = () => {
+      this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
+    };
+    ytext.observe(handler), this.observers.set(view, () => ytext.unobserve(handler));
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let off = this.observers.get(view);
+    off && (off(), this.observers.delete(view), this.attached.delete(view));
+  }
+  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
+  detachAll() {
+    for (let view of this.attached)
+      this.detach(view);
+    this.attached.clear();
+  }
+};
+
+// src/crdt/live/live-views.ts
+var ViewerRefcount = class {
+  constructor(onLastRelease) {
+    this.viewers = /* @__PURE__ */ new Map();
+    this.onLastRelease = onLastRelease;
+  }
+  bind(path, viewId) {
+    let set2 = this.viewers.get(path);
+    set2 || (set2 = /* @__PURE__ */ new Set(), this.viewers.set(path, set2)), set2.add(viewId);
+  }
+  release(path, viewId) {
+    let set2 = this.viewers.get(path);
+    !set2 || !set2.has(viewId) || (set2.delete(viewId), set2.size === 0 && (this.viewers.delete(path), this.onLastRelease(path)));
+  }
+  isBound(path) {
+    var _a, _b;
+    return ((_b = (_a = this.viewers.get(path)) == null ? void 0 : _a.size) != null ? _b : 0) > 0;
+  }
+  /** Returns all paths that currently have at least one active viewer. */
+  boundPaths() {
+    return [...this.viewers.keys()];
+  }
+}, CrdtLiveViews = class {
+  constructor(deps) {
+    /** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
+    this.awarenessDoc = new Doc();
+    /** Single local-only awareness instance shared across all editor controllers. */
+    this.localAwareness = new Awareness(this.awarenessDoc);
+    /** One EditorController per live CodeMirror EditorView. */
+    this.controllers = /* @__PURE__ */ new Map();
+    this.deps = deps, this.refcount = new ViewerRefcount((path) => {
+      this.deps.manager.getText(path).then((t) => this.deps.flushToDisk(path, t));
+    }), this.frontmatter = new CrdtFrontmatterHook({
+      getPath: (v) => getMarkdownFilePath(v),
+      getYText: (path) => this.getYText(path)
+    }), this.reading = new CrdtReadingView({
+      getYText: (path) => this.getYText(path),
+      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
+    });
+  }
+  isBound(path) {
+    return this.refcount.isBound(path);
+  }
+  /** Open (or get cached) the path's Y.Text from the CRDT manager. */
+  async getYText(path) {
+    return (await this.deps.manager.getDoc(path)).getText("content");
+  }
+  /** Re-evaluate open markdown leaves: bind each editor's controller to its
+   *  current path; release and drop controllers whose editor is gone.
+   *  Detaches frontmatter + reading hooks for views whose path changed before
+   *  re-attaching, so the idempotency guard does not block the rebind. */
+  refresh() {
+    let seen = /* @__PURE__ */ new Set();
+    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
+      let path = getMarkdownFilePath(view);
+      if (!path || !path.endsWith(".md")) continue;
+      let cm = getEditorViewForLeaf(view);
+      if (!cm) continue;
+      seen.add(cm);
+      let ctrl = this.controllers.get(cm);
+      ctrl || (ctrl = new EditorController({
+        getYText: (p) => this.getYText(p),
+        awareness: () => this.localAwareness,
+        onBind: (p, id2) => this.refcount.bind(p, id2),
+        onRelease: (p, id2) => this.refcount.release(p, id2)
+      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(path), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+    }
+    for (let [cm, ctrl] of this.controllers)
+      seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
+  }
+  destroy() {
+    for (let [cm, ctrl] of this.controllers)
+      ctrl.release(cm);
+    this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
+    for (let path of this.refcount.boundPaths())
+      this.deps.manager.getText(path).then((content) => this.deps.flushToDisk(path, content));
+  }
+};
+
 // src/explicit-folders.ts
 var ExplicitFolders = class {
   constructor(adapter, path) {
@@ -18703,6 +19960,60 @@ var ExplicitFolders = class {
     await this.adapter.write(this.path, JSON.stringify(Array.from(this.set)));
   }
 };
+
+// src/plugin-data-io.ts
+function bakPath(path) {
+  return `${path}.bak`;
+}
+function tmpPath(path) {
+  return `${path}.tmp`;
+}
+var LOCKS_KEY = "__engramDataIoLocks__";
+function writeLocks() {
+  let g = window;
+  return g[LOCKS_KEY] instanceof Map || (g[LOCKS_KEY] = /* @__PURE__ */ new Map()), g[LOCKS_KEY];
+}
+async function atomicWriteJson(adapter, path, data) {
+  var _a;
+  let run = ((_a = writeLocks().get(path)) != null ? _a : Promise.resolve()).then(() => doAtomicWriteJson(adapter, path, data));
+  writeLocks().set(
+    path,
+    run.catch(() => {
+    })
+  ), await run;
+}
+async function doAtomicWriteJson(adapter, path, data) {
+  let tmp = tmpPath(path), bak = bakPath(path);
+  await adapter.write(tmp, JSON.stringify(data)), await adapter.exists(path) && (await adapter.exists(bak) && await adapter.remove(bak), await adapter.rename(path, bak)), await adapter.rename(tmp, path);
+}
+async function tryReadParse(adapter, path) {
+  let raw;
+  try {
+    raw = await adapter.read(path);
+  } catch (e) {
+    return { parsed: null, existed: !1 };
+  }
+  if (raw.trim() === "") return { parsed: null, existed: !0 };
+  try {
+    return { parsed: JSON.parse(raw), existed: !0 };
+  } catch (e) {
+    return { parsed: null, existed: !0 };
+  }
+}
+async function resilientReadJson(adapter, path) {
+  let pending = writeLocks().get(path);
+  pending && await pending;
+  let candidates = [
+    [path, "primary"],
+    [bakPath(path), "backup"],
+    [tmpPath(path), "tmp"]
+  ], anyExisted = !1;
+  for (let [candidate, source] of candidates) {
+    let { parsed, existed } = await tryReadParse(adapter, candidate);
+    if (anyExisted = anyExisted || existed, parsed !== null) return { data: parsed, source };
+  }
+  return { data: null, source: anyExisted ? "corrupt" : "absent" };
+}
 
 // src/sync-fingerprint.ts
 async function computeSyncFingerprint(settings) {
@@ -18744,14 +20055,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian22 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian23 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian22.Modal {
+}, SyncLogModal = class extends import_obsidian23.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -18788,10 +20099,10 @@ var import_obsidian22 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian23.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian24.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -18831,6 +20142,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     this.crdtManager = null;
     this.crdtChannel = null;
     this.crdtEnrollment = null;
+    this.crdtLiveViews = null;
     /** Saved fingerprint from prior session — null on first load or after
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
@@ -18839,6 +20151,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
     this.syncPreviewGuard = createSingleFlight();
+    /** True once we have surfaced a data.json recovery/corruption Notice this
+     *  session, so the two load paths (loadSettings + onload restore) don't
+     *  double-toast the user. */
+    this.dataRecoveryNotified = !1;
   }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
@@ -18855,10 +20171,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian23.Platform.isMobile ? "mobile" : "desktop"
+      import_obsidian24.Platform.isMobile ? "mobile" : "desktop"
     ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian23.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian24.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
@@ -18874,7 +20190,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     }, this.syncEngine.queue.onPersist(async (entries) => {
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
     });
-    let saved = await this.loadData();
+    let saved = await this.loadPluginData();
     saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
@@ -18883,15 +20199,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian23.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
+        file instanceof import_obsidian24.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        this.syncEngine.handleRename(file, oldPath);
+        var _a2, _b;
+        this.syncEngine.handleRename(file, oldPath), file instanceof import_obsidian24.TFile && file.extension === "md" && ((_a2 = this.crdtManager) == null || _a2.renameDoc(oldPath, file.path)), (_b = this.crdtLiveViews) == null || _b.refresh();
       })
     ), this.registerDomEvent(activeDocument, "visibilitychange", () => {
       var _a2;
@@ -18900,50 +20217,50 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: syncing...");
+        new import_obsidian24.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "disconnect",
       name: "Disconnect (clear login)",
       callback: async () => {
-        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian23.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian24.Notice("Engram: disconnected. Open Engram settings to reconnect.");
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian23.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian24.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: checking...");
+        new import_obsidian24.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian23.Notice(
+          new import_obsidian24.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian23.Notice("Engram sync: everything in sync");
+          new import_obsidian24.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian23.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian24.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian23.Notice("Engram sync: pulling all from server...");
+        new import_obsidian24.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian23.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian24.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -19002,8 +20319,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian23.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian24.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -19016,14 +20333,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian23.Notice("Engram sync: sync failed");
+          ), new import_obsidian24.Notice("Engram sync: sync failed");
         });
       }
-    }), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
+    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", () => {
+      var _a2;
+      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+    })), this.registerEvent(
+      this.app.workspace.on("active-leaf-change", () => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+      })
+    ), this.registerEvent(
+      this.app.workspace.on("layout-change", () => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+      })
+    ), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
       var _a2, _b;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian23.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b = this.explicitFolders) == null ? void 0 : _b.load());
       let registered = !1, gateOpen = !1;
@@ -19073,7 +20403,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
-            (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+            (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -19089,15 +20419,19 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     });
   }
   onunload() {
-    var _a, _b, _c, _d, _e;
-    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtManager) == null || _e.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    var _a, _b, _c, _d, _e, _f;
+    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
-    let data = await this.loadData();
+    let data = await this.loadPluginData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null;
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
-    migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.saveData({ ...data, settings: this.settings, deviceId: this.deviceId });
+    migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
+      ...data,
+      settings: this.settings,
+      deviceId: this.deviceId
+    });
   }
   async saveSettings() {
     this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
@@ -19106,7 +20440,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -19143,9 +20477,56 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       ), !1) : (console.error("Engram Sync: vault registration failed", e), rlog().error("lifecycle", `Vault registration failed: ${errMsg(e)}`), !1);
     }
   }
+  /** Absolute (vault-relative) path of the plugin's data.json. Matches the
+   *  path Obsidian's own loadData()/saveData() use. */
+  pluginDataPath() {
+    return (0, import_obsidian24.normalizePath)(`${this.manifest.dir}/data.json`);
+  }
+  /** Resilient replacement for this.loadData(). Reads data.json, falling back
+   *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
+   *  outage scenario: a non-atomic saveData() interrupted mid-write leaves a
+   *  0-byte data.json, which the stock loadData() JSON.parse turns into an
+   *  onload-aborting throw). On a successful recovery the primary is healed in
+   *  place; on unrecoverable corruption the user is warned and we fall back to
+   *  defaults rather than crashing the whole plugin. */
+  async loadPluginData() {
+    let path = this.pluginDataPath(), { data, source } = await resilientReadJson(
+      this.app.vault.adapter,
+      path
+    );
+    if (source === "backup" || source === "tmp") {
+      if (rlog().error(
+        "lifecycle",
+        `data.json was unreadable; recovered settings from ${source} sidecar`
+      ), data !== null)
+        try {
+          await atomicWriteJson(this.app.vault.adapter, path, data);
+        } catch (e) {
+          rlog().error(
+            "lifecycle",
+            `Failed to heal data.json after recovery: ${errMsg(e)}`
+          );
+        }
+      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian24.Notice(
+        "Engram: recovered plugin settings from a backup after a corrupted save."
+      ));
+    } else source === "corrupt" && (rlog().error(
+      "lifecycle",
+      "data.json and its backups were all unreadable; falling back to defaults"
+    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian24.Notice(
+      "Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings."
+    )));
+    return data;
+  }
+  /** Resilient replacement for this.saveData(). Writes data.json atomically
+   *  (stage .tmp, demote current to .bak, rename .tmp over primary) so an
+   *  interrupted write can never leave a 0-byte data.json. */
+  async writePluginData(data) {
+    await atomicWriteJson(this.app.vault.adapter, this.pluginDataPath(), data);
+  }
   async savePluginData(lastSync, offlineQueue) {
     var _a, _b;
-    await this.saveData({
+    await this.writePluginData({
       settings: this.settings,
       lastSync,
       // Top-level, device-local; saveData() overwrites data.json wholesale,
@@ -19172,7 +20553,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian23.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian24.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -19187,7 +20568,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian23.requestUrl)({
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian24.requestUrl)({
           url: `${apiUrl}/auth/token/refresh`,
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -19225,8 +20606,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
-    var _a, _b, _c;
-    (_a = this.crdtManager) == null || _a.destroy(), this.crdtManager = null, this.crdtChannel = null, (_b = this.crdtEnrollment) == null || _b.resetAll(), this.crdtEnrollment = null, (_c = this.noteStream) == null || _c.disconnect(), this.noteStream = null, this.channelEpoch++;
+    var _a, _b, _c, _d;
+    (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -19249,9 +20630,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (!(view instanceof import_obsidian23.MarkdownView)) continue;
+      if (!(view instanceof import_obsidian24.MarkdownView)) continue;
       let file = view.file;
-      !(file instanceof import_obsidian23.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
+      !(file instanceof import_obsidian24.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
     }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -19287,7 +20668,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         ));
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian23.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian24.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
@@ -19299,7 +20680,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             var _a2;
             return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
           },
-          onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          onFlushToDisk: (path, content) => {
+            var _a2;
+            return (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content);
+          },
           // Adopt-first seed gate: never re-encode content the server
           // already holds (see CrdtManagerOptions.isUnchangedSynced).
           isUnchangedSynced: (path, content) => this.syncEngine.isUnchangedSynced(path, content),
@@ -19328,7 +20712,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             var _a2;
             await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(path));
           }
-        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), channel.onCrdtMessage = (docId, b64) => {
+        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+          app: this.app,
+          manager: this.crdtManager,
+          enrollment: this.crdtEnrollment,
+          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
+        }), this.syncEngine.setLiveBoundCheck(
+          (path) => {
+            var _a2, _b2;
+            return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
+          }
+        ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
@@ -19370,27 +20764,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
-        return new import_obsidian23.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
-        return new import_obsidian23.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian24.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -19487,7 +20881,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync preview failed", e), new import_obsidian23.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian24.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }
     });
   }
@@ -19523,7 +20917,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.pull();
-          pulled > 0 && new import_obsidian23.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic pull failed", e);
         }

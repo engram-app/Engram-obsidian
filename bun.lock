@@ -5,6 +5,8 @@
     "": {
       "name": "engram-obsidian-sync",
       "dependencies": {
+        "@codemirror/state": "^6.0.0",
+        "@codemirror/view": "^6.0.0",
         "diff-match-patch": "^1.0.5",
         "lib0": "^0.2.117",
         "y-indexeddb": "^9.0.12",
@@ -34,6 +36,7 @@
         "tslib": "^2.8.1",
         "typescript": "^5.9.3",
         "typescript-eslint": "^8.59.3",
+        "y-codemirror.next": "^0.3.5",
       },
     },
   },
@@ -864,6 +867,8 @@
     "word-wrap": ["word-wrap@1.2.5", "http://10.0.20.214:4873/word-wrap/-/word-wrap-1.2.5.tgz", {}, "sha512-BN22B5eaMMI9UMtjrGd5g5eCYPpCPDUy0FJXbYsaT5zYxjFOckS53SQDE3pWkVoWpHXVb3BrYcEN4Twa55B5cA=="],
 
     "write-file-atomic": ["write-file-atomic@7.0.1", "http://10.0.20.214:4873/write-file-atomic/-/write-file-atomic-7.0.1.tgz", { "dependencies": { "signal-exit": "^4.0.1" } }, "sha512-OTIk8iR8/aCRWBqvxrzxR0hgxWpnYBblY1S5hDWBQfk/VFmJwzmJgQFN3WsoUKHISv2eAwe+PpbUzyL1CKTLXg=="],
+
+    "y-codemirror.next": ["y-codemirror.next@0.3.5", "http://10.0.20.214:4873/y-codemirror.next/-/y-codemirror.next-0.3.5.tgz", { "dependencies": { "lib0": "^0.2.42" }, "peerDependencies": { "@codemirror/state": "^6.0.0", "@codemirror/view": "^6.0.0", "yjs": "^13.5.6" } }, "sha512-VluNu3e5HfEXybnypnsGwKAj+fKLd4iAnR7JuX1Sfyydmn1jCBS5wwEL/uS04Ch2ib0DnMAOF6ZRR/8kK3wyGw=="],
 
     "y-indexeddb": ["y-indexeddb@9.0.12", "http://10.0.20.214:4873/y-indexeddb/-/y-indexeddb-9.0.12.tgz", { "dependencies": { "lib0": "^0.2.74" }, "peerDependencies": { "yjs": "^13.0.0" } }, "sha512-9oCFRSPPzBK7/w5vOkJBaVCQZKHXB/v6SIT+WYhnJxlEC61juqG0hBrAf+y3gmSMLFLwICNH9nQ53uscuse6Hg=="],
 

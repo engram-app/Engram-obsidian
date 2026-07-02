@@ -12,6 +12,7 @@ import {
 	Plugin,
 	TFile,
 	TFolder,
+	normalizePath,
 	requestUrl,
 } from "obsidian";
 import { EngramApi } from "./api";
@@ -49,10 +50,13 @@ import {
 import { BaseStore } from "./base-store";
 import { CrdtChannel } from "./crdt/channel";
 import { CrdtEnrollment } from "./crdt/enrollment";
+import { CrdtLiveViews } from "./crdt/live/live-views";
+import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtManager } from "./crdt/manager";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
+import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
@@ -151,6 +155,7 @@ export default class EngramSyncPlugin extends Plugin {
 	private crdtManager: CrdtManager | null = null;
 	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
+	private crdtLiveViews: CrdtLiveViews | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
 	 *  auth/vault change. Compared against current fingerprint to decide
@@ -270,7 +275,7 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 
 		// Restore last sync timestamp, offline queue, and sync state
-		const saved = (await this.loadData()) as Partial<PluginData> | null;
+		const saved = await this.loadPluginData();
 		if (saved?.lastSync) {
 			this.syncEngine.setLastSync(saved.lastSync);
 		}
@@ -342,6 +347,10 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
 				void this.syncEngine.handleRename(file, oldPath);
+				if (file instanceof TFile && file.extension === "md") {
+					this.crdtManager?.renameDoc(oldPath, file.path);
+				}
+				this.crdtLiveViews?.refresh();
 			}),
 		);
 
@@ -535,6 +544,19 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 		});
 
+		// CRDT editor extension; registered ONCE for the plugin's lifetime so that
+		// repeated setupNoteStream() calls (settings save / reconnect) never stack
+		// additional ViewPlugin instances or workspace event listeners. The
+		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
+		// reconfigures it for each open note via EditorController.bindTo().
+		this.registerEditorExtension([ycollabExtension()]);
+		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
+		this.registerEvent(
+			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
+		);
+		this.registerEvent(
+			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
+		);
 		// WebSocket live sync
 		this.setupNoteStream();
 
@@ -665,6 +687,8 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.baseStore?.save();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
+		this.crdtLiveViews?.destroy();
+		this.crdtLiveViews = null;
 		void this.crdtManager?.destroy();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
 		// open resources; the WebSocket it dispatches over is owned by the Phoenix
@@ -686,7 +710,7 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		const data = (await this.loadData()) as Partial<PluginData> | null;
+		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
@@ -714,7 +738,11 @@ export default class EngramSyncPlugin extends Plugin {
 			dirty = true;
 		}
 		if (dirty) {
-			await this.saveData({ ...data, settings: this.settings, deviceId: this.deviceId });
+			await this.writePluginData({
+				...data,
+				settings: this.settings,
+				deviceId: this.deviceId,
+			});
 		}
 		// NOTE: this.api is replaced with a configured instance in onload() right
 		// after loadSettings() returns; the device id is wired there via
@@ -808,8 +836,77 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/** True once we have surfaced a data.json recovery/corruption Notice this
+	 *  session, so the two load paths (loadSettings + onload restore) don't
+	 *  double-toast the user. */
+	private dataRecoveryNotified = false;
+
+	/** Absolute (vault-relative) path of the plugin's data.json. Matches the
+	 *  path Obsidian's own loadData()/saveData() use. */
+	private pluginDataPath(): string {
+		return normalizePath(`${this.manifest.dir}/data.json`);
+	}
+
+	/** Resilient replacement for this.loadData(). Reads data.json, falling back
+	 *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
+	 *  outage scenario: a non-atomic saveData() interrupted mid-write leaves a
+	 *  0-byte data.json, which the stock loadData() JSON.parse turns into an
+	 *  onload-aborting throw). On a successful recovery the primary is healed in
+	 *  place; on unrecoverable corruption the user is warned and we fall back to
+	 *  defaults rather than crashing the whole plugin. */
+	private async loadPluginData(): Promise<Partial<PluginData> | null> {
+		const path = this.pluginDataPath();
+		const { data, source } = await resilientReadJson<Partial<PluginData>>(
+			this.app.vault.adapter,
+			path,
+		);
+		if (source === "backup" || source === "tmp") {
+			rlog().error(
+				"lifecycle",
+				`data.json was unreadable; recovered settings from ${source} sidecar`,
+			);
+			// Heal the primary so the next load is clean and the recovered state
+			// is the canonical copy again.
+			if (data !== null) {
+				try {
+					await atomicWriteJson(this.app.vault.adapter, path, data);
+				} catch (e) {
+					rlog().error(
+						"lifecycle",
+						`Failed to heal data.json after recovery: ${errMsg(e)}`,
+					);
+				}
+			}
+			if (!this.dataRecoveryNotified) {
+				this.dataRecoveryNotified = true;
+				new Notice(
+					"Engram: recovered plugin settings from a backup after a corrupted save.",
+				);
+			}
+		} else if (source === "corrupt") {
+			rlog().error(
+				"lifecycle",
+				"data.json and its backups were all unreadable; falling back to defaults",
+			);
+			if (!this.dataRecoveryNotified) {
+				this.dataRecoveryNotified = true;
+				new Notice(
+					"Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings.",
+				);
+			}
+		}
+		return data;
+	}
+
+	/** Resilient replacement for this.saveData(). Writes data.json atomically
+	 *  (stage .tmp, demote current to .bak, rename .tmp over primary) so an
+	 *  interrupted write can never leave a 0-byte data.json. */
+	private async writePluginData(data: Partial<PluginData>): Promise<void> {
+		await atomicWriteJson(this.app.vault.adapter, this.pluginDataPath(), data);
+	}
+
 	private async savePluginData(lastSync: string, offlineQueue?: QueueEntry[]): Promise<void> {
-		await this.saveData({
+		await this.writePluginData({
 			settings: this.settings,
 			lastSync,
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
@@ -986,6 +1083,8 @@ export default class EngramSyncPlugin extends Plugin {
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
 		// IndexeddbPersistence listeners — each overwrites the references but the
 		// old objects stay alive with their observers still firing.
+		this.crdtLiveViews?.destroy();
+		this.crdtLiveViews = null;
 		void this.crdtManager?.destroy();
 		this.crdtManager = null;
 		this.crdtChannel = null;
@@ -1139,7 +1238,9 @@ export default class EngramSyncPlugin extends Plugin {
 						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
 						onFlushToDisk: (path, content) =>
-							this.syncEngine.flushFromCrdt(path, content),
+							this.crdtLiveViews?.isBound(path)
+								? Promise.resolve()
+								: this.syncEngine.flushFromCrdt(path, content),
 						// Adopt-first seed gate: never re-encode content the server
 						// already holds (see CrdtManagerOptions.isUnchangedSynced).
 						isUnchangedSynced: (path, content) =>
@@ -1175,6 +1276,24 @@ export default class EngramSyncPlugin extends Plugin {
 					// crdt_doc_ready announce for a device that was offline / not yet
 					// subscribed when the other device opened the room.
 					this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
+					this.crdtLiveViews = new CrdtLiveViews({
+						app: this.app,
+						manager: this.crdtManager,
+						enrollment: this.crdtEnrollment,
+						flushToDisk: (path, content) =>
+							this.syncEngine.flushFromCrdt(path, content),
+					});
+					// Tell the sync engine which paths have a live editor binding so its
+					// disk-modify handler skips re-feeding disk content into the Y.Text for
+					// open notes (the binding owns them). Without this, Obsidian's autosave
+					// churns the doc every ~2s.
+					this.syncEngine.setLiveBoundCheck(
+						(path) => this.crdtLiveViews?.isBound(path) ?? false,
+					);
+					// Editor extension + workspace events are registered once in onload
+					// so repeated setupNoteStream() calls don't stack them. Trigger an
+					// initial refresh here so the new manager sees currently-open leaves.
+					this.crdtLiveViews.refresh();
 					channel.onCrdtMessage = (docId, b64) => {
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;

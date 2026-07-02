@@ -334,6 +334,19 @@ export class SyncEngine {
 		this.crdtEnrollment = enrollment;
 	}
 
+	/** True when a path currently has a live editor binding (an open, bound
+	 *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
+	 *  writer for the note (Relay's "editor owns the file while open"): the disk
+	 *  path must NOT also feed disk content into the Y.Text, or Obsidian's ~2s
+	 *  autosave re-diffs the whole file into the doc every cycle and fights the
+	 *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
+	 *  and headless contexts behave exactly as before. */
+	private isLiveBound: (path: string) => boolean = () => false;
+
+	setLiveBoundCheck(fn: (path: string) => boolean): void {
+		this.isLiveBound = fn;
+	}
+
 	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
 	 *  `content` hashes to exactly what this engine last synced for `path` —
 	 *  i.e. the server already holds this content, so a history-less Y.Doc must
@@ -693,6 +706,18 @@ export class SyncEngine {
 		const crdtManaged = !!this.crdt && this.isMarkdown(file);
 		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
+			return;
+		}
+
+		// Editor-owns-the-file gate (Relay's active-vs-idle model): if the note has
+		// a live editor binding, that binding already streamed this edit into the
+		// Y.Text per keystroke. Obsidian's autosave disk write is just local
+		// persistence; re-feeding it through routeModify -> applyLocalEdit would
+		// diff the whole file back into the doc every ~2s and churn it (the
+		// delete/insert flicker). Skip the disk-driven CRDT route while bound. The
+		// disk path still serves closed notes, reading-view-only notes, and
+		// external edits (none of which are live-bound).
+		if (crdtManaged && this.isLiveBound(file.path)) {
 			return;
 		}
 

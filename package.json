@@ -1,6 +1,6 @@
 {
   "name": "engram-obsidian",
-  "version": "1.10.4",
+  "version": "1.10.5",
   "description": "Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.",
   "main": "main.js",
   "type": "module",
@@ -45,9 +45,12 @@
     "stylelint-config-standard": "^40.0.0",
     "tslib": "^2.8.1",
     "typescript": "^5.9.3",
-    "typescript-eslint": "^8.59.3"
+    "typescript-eslint": "^8.59.3",
+    "y-codemirror.next": "^0.3.5"
   },
   "dependencies": {
+    "@codemirror/state": "^6.0.0",
+    "@codemirror/view": "^6.0.0",
     "diff-match-patch": "^1.0.5",
     "lib0": "^0.2.117",
     "y-indexeddb": "^9.0.12",

@@ -204,6 +204,17 @@ export class CrdtManager {
 		this.docs.delete(id);
 	}
 
+	/**
+	 * On note rename, drop the old-path doc entry (close + clear) so the new
+	 * path opens a fresh doc that re-syncs from the server via enrollment.
+	 * Keeping the old entry would leave it accumulating edits under a path the
+	 * server no longer maps, and orphan its IndexedDB store.
+	 */
+	renameDoc(oldPath: string, newPath: string): void {
+		if (oldPath === newPath) return;
+		this.closeDoc(oldPath);
+	}
+
 	/** Tear down all open docs. Call on plugin unload. */
 	async destroy(): Promise<void> {
 		for (const [id, e] of this.docs) {
