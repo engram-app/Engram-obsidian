@@ -393,3 +393,58 @@ describe("OAuthAuth", () => {
 		expect(auth.isAuthenticated()).toBe(true);
 	});
 });
+
+describe("OAuthAuth self-heal on definitive rejection", () => {
+	const throwingRefresh = (status: number) =>
+		mock(async () => {
+			const e = new Error(`Refresh failed: ${status}`) as Error & { status?: number };
+			e.status = status;
+			throw e;
+		});
+
+	it("clears the refresh token and fires onAuthInvalidated on a 4xx rejection", async () => {
+		const refresh = throwingRefresh(404);
+		const onInvalidated = mock(() => {});
+		const auth = new OAuthAuth(
+			"engram_rt_dead",
+			"vault-1",
+			"user@test.com",
+			refresh,
+			undefined,
+			null,
+			0,
+			onInvalidated,
+		);
+
+		await expect(auth.getToken()).rejects.toThrow();
+		expect(onInvalidated).toHaveBeenCalledTimes(1);
+		expect(auth.getRefreshToken()).toBe("");
+		expect(auth.isAuthenticated()).toBe(false);
+
+		// Token cleared → a later getToken must fast-fail without replaying it,
+		// and must not fire the callback again.
+		refresh.mockClear();
+		await expect(auth.getToken()).rejects.toThrow();
+		expect(refresh).not.toHaveBeenCalled();
+		expect(onInvalidated).toHaveBeenCalledTimes(1);
+	});
+
+	it("keeps the refresh token and does NOT fire onAuthInvalidated on a transient 5xx", async () => {
+		const refresh = throwingRefresh(503);
+		const onInvalidated = mock(() => {});
+		const auth = new OAuthAuth(
+			"engram_rt_live",
+			"vault-1",
+			"user@test.com",
+			refresh,
+			undefined,
+			null,
+			0,
+			onInvalidated,
+		);
+
+		await expect(auth.getToken()).rejects.toThrow();
+		expect(onInvalidated).not.toHaveBeenCalled();
+		expect(auth.getRefreshToken()).toBe("engram_rt_live");
+	});
+});
