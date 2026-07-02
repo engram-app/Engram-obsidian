@@ -94,6 +94,7 @@ export async function reconcileColdStart(
 		applyLocalEdit: (path: string, content: string) => Promise<void>;
 		getText: (path: string) => Promise<string>;
 		projectedText: (path: string) => Promise<string>;
+		enroll?: (path: string) => void;
 	},
 	onCorruption: () => void,
 ): Promise<void> {
@@ -112,6 +113,13 @@ export async function reconcileColdStart(
 		// handshake will converge the state once connectivity is restored.
 		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
 	}
+	// A drifted note must always get a handshake: when the doc is history-less
+	// and the adopt-first seed gate skipped inside applyLocalEdit (IDB-evicted
+	// doc whose disk content matches the last-synced hash), the note converges
+	// ONLY via STEP1/STEP2 — without enrolling here it would silently sit out
+	// live sync until the user opens it. Enrollment is idempotent (once per
+	// session), so seeding paths pay nothing extra.
+	crdt.enroll?.(file.path);
 }
 
 /** Check if an error is an HTTP response with the given status code.
