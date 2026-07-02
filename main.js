@@ -1218,12 +1218,13 @@ var ApiKeyAuth = class {
     this.apiKey = "", this.vaultId = null;
   }
 }, _OAuthAuth = class _OAuthAuth {
-  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0) {
+  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0, onAuthInvalidated) {
     this.accessToken = null;
     this.expiresAt = 0;
     this.authenticated = !0;
     this.inflightRefresh = null;
-    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt;
+    this.authInvalidatedFired = !1;
+    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt, this.onAuthInvalidated = onAuthInvalidated;
   }
   async getToken() {
     if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
@@ -1241,7 +1242,9 @@ var ApiKeyAuth = class {
     }
   }
   async doRefresh() {
-    var _a;
+    var _a, _b;
+    if (!this.refreshToken)
+      throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
     try {
       let result = await this.refreshFn(this.refreshToken);
       return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
@@ -1253,11 +1256,24 @@ var ApiKeyAuth = class {
         `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
       ), this.accessToken;
     } catch (err) {
-      throw this.authenticated = !1, this.accessToken = null, this.expiresAt = 0, rlog().error(
+      this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
+      let status = err == null ? void 0 : err.status, definitive = status === 400 || status === 401 || status === 403 || status === 404;
+      if (rlog().error(
         "auth",
-        `OAuth refresh failed: ${err instanceof Error ? err.message : String(err)}`,
+        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
         err instanceof Error ? err.stack : void 0
-      ), err;
+      ), definitive && !this.authInvalidatedFired) {
+        this.authInvalidatedFired = !0, this.refreshToken = "";
+        try {
+          await ((_b = this.onAuthInvalidated) == null ? void 0 : _b.call(this));
+        } catch (cbErr) {
+          rlog().error(
+            "auth",
+            `onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`
+          );
+        }
+      }
+      throw err;
     }
   }
   getVaultId() {
@@ -4960,6 +4976,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
+  }
+  /** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
+   *  `content` hashes to exactly what this engine last synced for `path` —
+   *  i.e. the server already holds this content, so a history-less Y.Doc must
+   *  adopt the server lineage instead of re-encoding it (backend #846
+   *  lineage doubling). Unknown paths return false (authored notes seed). */
+  isUnchangedSynced(path, content) {
+    let state = this.syncState.get((0, import_obsidian21.normalizePath)(path));
+    return state !== void 0 && state.hash === fnv1a(content);
   }
   /** Write a remote-merged CRDT result to disk.
    *  Marks the path recentlyFlushed first so the resulting vault.modify/create
@@ -18385,7 +18410,11 @@ var _CrdtManager = class _CrdtManager {
    * update IS forwarded to the server via `onUpdate`.
    */
   async applyLocalEdit(path, diskContent, hasLca) {
-    let e = await this.entry(path), lca = hasLca != null ? hasLca : this.textHasHistory(e.text), { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
+    var _a, _b;
+    let e = await this.entry(path), lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
+    if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, path, diskContent)))
+      return;
+    let { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
     this.applyFrontmatterInto(e.doc, order, values), !seedOnce(e.text, body, lca) && diffIntoYText(e.text, body);
   }
   /**
@@ -18873,6 +18902,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         new import_obsidian23.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
+      id: "disconnect",
+      name: "Disconnect (clear login)",
+      callback: async () => {
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian23.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+      }
+    }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
@@ -19109,6 +19144,25 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       syncGateAcceptedFor: this.syncGateAcceptedFor
     });
   }
+  /**
+   * Clear all persisted login state and drop back to the unlinked state so the
+   * user can re-link. Used by both the auto-heal path (the server definitively
+   * rejected the stored refresh token) and the manual "Disconnect" command.
+   * Idempotent — a no-op once auth is already cleared.
+   */
+  async clearAuthAndPromptRelink(reason, notify) {
+    var _a;
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian23.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+  }
+  /**
+   * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
+   * token (revoked / rotated-away / expired → 4xx). Self-heals the previously
+   * stuck "token invalid" state: without this, the plugin replayed a dead token
+   * forever with no recovery and no unlink button.
+   */
+  handleAuthInvalidated() {
+    this.clearAuthAndPromptRelink("server rejected refresh token", !0);
+  }
   createAuthProvider() {
     var _a, _b, _c;
     if (this.settings.refreshToken) {
@@ -19120,8 +19174,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           body: JSON.stringify({ refresh_token: token }),
           throw: !1
         });
-        if (resp.status < 200 || resp.status >= 300)
-          throw new Error(`Refresh failed: ${resp.status}`);
+        if (resp.status < 200 || resp.status >= 300) {
+          let e = new Error(`Refresh failed: ${resp.status}`);
+          throw e.status = resp.status, e;
+        }
         return resp.json;
       }, seed = seededAccessToken(this.settings);
       return this.settings.accessToken && !seed.token && rlog().warn(
@@ -19136,7 +19192,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           this.settings.refreshToken = refreshToken, this.settings.accessToken = accessToken, this.settings.accessTokenExpiresAt = expiresAt, this.settings.accessTokenVaultId = this.settings.vaultId, rlog().info("auth", "Tokens rotated \u2014 persisting refresh + access"), await this.savePluginData(this.syncEngine.getLastSync());
         },
         seed.token,
-        seed.expiresAt
+        seed.expiresAt,
+        () => this.handleAuthInvalidated()
       );
     }
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
@@ -19156,6 +19213,26 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
       return;
     }
     this.connectChannel();
+  }
+  /**
+   * Re-enroll every currently-open markdown note into the CRDT handshake so the
+   * server re-registers this device as an observer of each note's room. Called
+   * on every crdt: topic (re)join. For each open note it clears the once-per-doc
+   * STEP1 guard (reset) then enrolls (sends STEP1), which is order-independent
+   * and idempotent — on the initial join the active note is already enrolled, so
+   * this just re-advertises; after a reconnect it restores the observer
+   * subscription that a tab left open across the drop would otherwise lose.
+   */
+  reEnrollOpenCrdtNotes() {
+    let enrollment = this.crdtEnrollment;
+    if (!enrollment) return;
+    let seen = /* @__PURE__ */ new Set();
+    for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (!(view instanceof import_obsidian23.MarkdownView)) continue;
+      let file = view.file;
+      !(file instanceof import_obsidian23.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
+    }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
   connectChannel(attempt = 0, epoch = this.channelEpoch) {
@@ -19203,6 +19280,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
             return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
           },
           onFlushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          // Adopt-first seed gate: never re-encode content the server
+          // already holds (see CrdtManagerOptions.isUnchangedSynced).
+          isUnchangedSynced: (path, content) => this.syncEngine.isUnchangedSynced(path, content),
           onPersistError: (path, err) => {
             rlog().warn(
               "crdt",
@@ -19240,7 +19320,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.syncEngine.setCrdtManager(this.crdtManager);
+          ), this.syncEngine.setCrdtManager(this.crdtManager), this.reEnrollOpenCrdtNotes();
         };
       } else
         rlog().info(

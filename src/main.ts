@@ -1126,6 +1126,10 @@ export default class EngramSyncPlugin extends Plugin {
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
 						onFlushToDisk: (path, content) =>
 							this.syncEngine.flushFromCrdt(path, content),
+						// Adopt-first seed gate: never re-encode content the server
+						// already holds (see CrdtManagerOptions.isUnchangedSynced).
+						isUnchangedSynced: (path, content) =>
+							this.syncEngine.isUnchangedSynced(path, content),
 						onPersistError: (path, err) => {
 							rlog().warn(
 								"crdt",
