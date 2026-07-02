@@ -4762,6 +4762,7 @@ async function routeModify(file, crdt, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes ? !1 : (await crdt.applyLocalEdit(file.path, content), !0);
 }
 async function reconcileColdStart(file, crdt, onCorruption) {
+  var _a;
   let current;
   try {
     current = await crdt.projectedText(file.path);
@@ -4769,12 +4770,14 @@ async function reconcileColdStart(file, crdt, onCorruption) {
     onCorruption();
     return;
   }
-  if (current !== file.diskContent)
+  if (current !== file.diskContent) {
     try {
       await crdt.applyLocalEdit(file.path, file.diskContent);
     } catch (e) {
       rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
     }
+    (_a = crdt.enroll) == null || _a.call(crdt, file.path);
+  }
 }
 function isHttpStatus(e, status) {
   return typeof e == "object" && e !== null && e.status === status;
@@ -19035,12 +19038,29 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         for (let file of markdownFiles) {
           let crdt = this.crdtManager;
           this.app.vault.cachedRead(file).then(
-            (diskContent) => reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
-              rlog().warn(
-                "crdt",
-                `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
-              );
-            })
+            (diskContent) => reconcileColdStart(
+              {
+                path: file.path,
+                diskContent
+              },
+              {
+                applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
+                getText: crdt.getText.bind(crdt),
+                projectedText: crdt.projectedText.bind(crdt),
+                // Guarantee the STEP1/STEP2 adoption for drifted notes even
+                // when the adopt-first seed gate skips the local write.
+                enroll: (path) => {
+                  var _a3;
+                  return (_a3 = this.crdtEnrollment) == null ? void 0 : _a3.enroll(path);
+                }
+              },
+              () => {
+                rlog().warn(
+                  "crdt",
+                  `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                );
+              }
+            )
           ).catch((e) => {
             rlog().warn(
               "crdt",
