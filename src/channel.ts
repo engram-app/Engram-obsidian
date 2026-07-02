@@ -66,6 +66,16 @@ export class NoteChannel {
 	 *  that does not serve the crdt: topic replies with an error (handled below),
 	 *  keeping this false — which allows the legacy pushNote path to remain active. */
 	private crdtJoined = false;
+	/**
+	 * The `ref` value sent with the crdt: topic phx_join frame.
+	 * Stored so handleMessage can distinguish a join-error reply (ref matches)
+	 * from a per-message error reply such as "rate_limited" or "frame_too_large"
+	 * on a crdt_msg (ref does NOT match). Only the join-error reply should fire
+	 * onCrdtJoinError and tear down the CRDT session; per-message errors are
+	 * transient and must not degrade the transport.
+	 * Reset to null on every joinChannel() call (each (re)connect issues a new join).
+	 */
+	private crdtJoinMsgRef: string | null = null;
 	private baseUrl: string;
 	private apiKey: string;
 	private userId: string;
@@ -337,6 +347,8 @@ export class NoteChannel {
 	}
 
 	private joinChannel(): void {
+		// Reset crdtJoinMsgRef on every (re)connect so a new join issues a fresh ref.
+		this.crdtJoinMsgRef = null;
 		this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]);
 		// Best-effort: join the per-user topic to receive plan/entitlement state.
 		// Uses a distinct join ref so replies are attributable, and an older
@@ -348,7 +360,11 @@ export class NoteChannel {
 		// topic replies with an error (handled gracefully below).
 		const crdtT = this.crdtTopic;
 		if (crdtT) {
-			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", { crdt_proto: 2 }]);
+			const msgRef = String(++this.ref);
+			// Capture the join ref so handleMessage can distinguish a join-error reply
+			// (this ref) from per-message error replies (a different ref) — see crdtJoinMsgRef.
+			this.crdtJoinMsgRef = msgRef;
+			this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
 		}
 	}
 
@@ -383,7 +399,7 @@ export class NoteChannel {
 			return;
 		}
 
-		const [, , topic, event, payload] = msg as [
+		const [, ref, topic, event, payload] = msg as [
 			string | null,
 			string | null,
 			string,
@@ -442,16 +458,26 @@ export class NoteChannel {
 					`Channel join error on ${topic}: ${JSON.stringify(payload)}`,
 				);
 				if (topic === this.crdtTopic) {
-					// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
-					// routing was previously active (the T4 folded finding: a REJOIN
-					// error while crdtEverJoined=true would otherwise leave routing
-					// active on a dead transport — every md edit silently dropped).
 					const response = (payload as { response?: { reason?: unknown; min?: unknown } })
 						.response;
 					const reason =
 						typeof response?.reason === "string" ? response.reason : undefined;
 					const min = typeof response?.min === "number" ? response.min : undefined;
-					this.onCrdtJoinError?.(reason, min);
+					if (ref === this.crdtJoinMsgRef) {
+						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
+						// routing was previously active (the T4 folded finding: a REJOIN
+						// error while crdtEverJoined=true would otherwise leave routing
+						// active on a dead transport — every md edit silently dropped).
+						this.onCrdtJoinError?.(reason, min);
+					} else {
+						// Per-message error reply (e.g. "rate_limited" or "frame_too_large"
+						// from backend #846 crdt_msg handling). These are transient and must
+						// NOT tear down the CRDT session — log for visibility and continue.
+						rlog().warn(
+							"channel",
+							`crdt: per-message error (ref=${ref ?? "null"}, reason=${reason ?? "unknown"}) — session intact`,
+						);
+					}
 				}
 			}
 			return;

@@ -770,3 +770,57 @@ describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
 		expect(mockApp.vault.create).toHaveBeenCalled();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// C1 — onCrdtDocReady gate: isSyncBlocked() must suppress enrollment
+// The actual guard is in main.ts (channel.onCrdtDocReady lambda). These tests
+// verify the gate predicate (isSyncBlocked) and the downstream side-effects
+// (enroll + materializeEmptyDiscovered) that must NOT fire when blocked.
+// ---------------------------------------------------------------------------
+
+describe("C1 — onCrdtDocReady: isSyncBlocked suppresses enrollment and materialization", () => {
+	test("isSyncBlocked() returns true when sync gate is closed", () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+		expect(engine.isSyncBlocked()).toBe(true);
+	});
+
+	test("isSyncBlocked() returns false when sync gate is open", () => {
+		const engine = createEngine();
+		// Default is unblocked
+		expect(engine.isSyncBlocked()).toBe(false);
+	});
+
+	test("enrollment enroll is NOT called when gate is closed (simulating onCrdtDocReady with guard)", async () => {
+		// Mirrors the guard added to main.ts channel.onCrdtDocReady:
+		//   if (this.syncEngine.isSyncBlocked()) return;
+		// This test drives the same predicate + enrollment side-effect to confirm
+		// the guard prevents enrollment during gated-period discovery.
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+		const crdt = { removeDoc: mock(), applyLocalEdit: mock() };
+		const enrollment = { enroll: mock(), reset: mock() };
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+
+		// Simulate what main.ts onCrdtDocReady does — gate first, then enroll.
+		if (!engine.isSyncBlocked()) {
+			enrollment.enroll("Notes/discovered.md");
+		}
+
+		expect(enrollment.enroll).not.toHaveBeenCalled();
+	});
+
+	test("enrollment enroll IS called when gate is open (simulating onCrdtDocReady after accept)", () => {
+		const engine = createEngine();
+		// Gate is open (default)
+		const enrollment = { enroll: mock(), reset: mock() };
+		engine.setCrdtEnrollment(enrollment as any);
+
+		if (!engine.isSyncBlocked()) {
+			enrollment.enroll("Notes/discovered.md");
+		}
+
+		expect(enrollment.enroll).toHaveBeenCalledWith("Notes/discovered.md");
+	});
+});

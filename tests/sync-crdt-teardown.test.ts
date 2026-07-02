@@ -201,6 +201,22 @@ describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => 
 		expect(enrollment.reset).not.toHaveBeenCalled();
 	});
 
+	test("canvas file delete does NOT call removeDoc (canvas is syncable text but not CRDT-managed)", async () => {
+		// .canvas files pass through isBinary=false but are not CRDT-managed.
+		// The teardown gate uses .endsWith(".md") so canvas deletes must not hit removeDoc.
+		const engine = createEngine();
+		const crdt = fakeCrdt();
+		const enrollment = fakeEnrollment();
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+
+		const file = new TFile("Notes/board.canvas");
+		await engine.handleDelete(file);
+
+		expect(crdt.removeDoc).not.toHaveBeenCalled();
+		expect(enrollment.reset).not.toHaveBeenCalled();
+	});
+
 	test("removeDoc not called when no CRDT manager is wired", async () => {
 		const engine = createEngine();
 		// No setCrdtManager — exercises the null-guard path
@@ -262,6 +278,22 @@ describe("handleRename — old-path md branch calls removeDoc + enrollment.reset
 		await engine.handleRename(file, "Assets/old.png");
 
 		// Binary files: no CRDT teardown for old path
+		expect(crdt.removeDoc).not.toHaveBeenCalled();
+		expect(enrollment.reset).not.toHaveBeenCalled();
+	});
+
+	test("canvas rename does NOT call removeDoc for old path (canvas is not CRDT-managed)", async () => {
+		// .canvas renames previously hit removeDoc via the !isBinary branch.
+		// The gate now uses oldPath.endsWith(".md") so canvas is excluded.
+		const engine = createEngine();
+		const crdt = fakeCrdt();
+		const enrollment = fakeEnrollment();
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+
+		const file = new TFile("Notes/new-board.canvas");
+		await engine.handleRename(file, "Notes/old-board.canvas");
+
 		expect(crdt.removeDoc).not.toHaveBeenCalled();
 		expect(enrollment.reset).not.toHaveBeenCalled();
 	});

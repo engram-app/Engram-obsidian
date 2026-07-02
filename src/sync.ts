@@ -749,7 +749,9 @@ export class SyncEngine {
 			this.goOnline();
 			// Tear down the CRDT doc so a note recreated at the same path starts
 			// fresh — no ghost lineage that would resurrect stale content (P1-3).
-			if (!isBinary) {
+			// Gate on .md (not !isBinary) so .canvas files never hit removeDoc:
+			// canvas files are syncable text but not CRDT-managed.
+			if (file.path.endsWith(".md")) {
 				await this.crdt?.removeDoc(file.path);
 				this.crdtEnrollment?.reset(file.path);
 			}
@@ -757,7 +759,7 @@ export class SyncEngine {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
-				if (!isBinary) {
+				if (file.path.endsWith(".md")) {
 					await this.crdt?.removeDoc(file.path);
 					this.crdtEnrollment?.reset(file.path);
 				}
@@ -798,7 +800,8 @@ export class SyncEngine {
 				this.goOnline();
 				// Tear down the CRDT doc for the OLD path so the lineage is gone
 				// once the note moves to its new path (P1-3: no ghost on rename).
-				if (!isBinary) {
+				// Gate on .md (not !isBinary) so .canvas renames never hit removeDoc.
+				if (oldPath.endsWith(".md")) {
 					await this.crdt?.removeDoc(oldPath);
 					this.crdtEnrollment?.reset(oldPath);
 				}
@@ -806,7 +809,7 @@ export class SyncEngine {
 				// 404 means already deleted — treat as success; still tear down CRDT.
 				if (isHttpStatus(e, 404)) {
 					this.goOnline();
-					if (!isBinary) {
+					if (oldPath.endsWith(".md")) {
 						await this.crdt?.removeDoc(oldPath);
 						this.crdtEnrollment?.reset(oldPath);
 					}

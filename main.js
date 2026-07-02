@@ -1322,6 +1322,16 @@ var NoteChannel = class {
      *  that does not serve the crdt: topic replies with an error (handled below),
      *  keeping this false — which allows the legacy pushNote path to remain active. */
     this.crdtJoined = !1;
+    /**
+     * The `ref` value sent with the crdt: topic phx_join frame.
+     * Stored so handleMessage can distinguish a join-error reply (ref matches)
+     * from a per-message error reply such as "rate_limited" or "frame_too_large"
+     * on a crdt_msg (ref does NOT match). Only the join-error reply should fire
+     * onCrdtJoinError and tear down the CRDT session; per-message errors are
+     * transient and must not degrade the transport.
+     * Reset to null on every joinChannel() call (each (re)connect issues a new join).
+     */
+    this.crdtJoinMsgRef = null;
     this.authProvider = null;
     this.onEvent = null;
     this.onStatusChange = null;
@@ -1461,9 +1471,12 @@ var NoteChannel = class {
     };
   }
   joinChannel() {
-    this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
+    this.crdtJoinMsgRef = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
     let crdtT = this.crdtTopic;
-    crdtT && this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", { crdt_proto: 2 }]);
+    if (crdtT) {
+      let msgRef = String(++this.ref);
+      this.crdtJoinMsgRef = msgRef, this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+    }
   }
   startHeartbeat() {
     this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 3e4);
@@ -1494,7 +1507,7 @@ var NoteChannel = class {
       rlog().error("channel", `Failed to parse message: ${raw}`);
       return;
     }
-    let [, , topic, event, payload] = msg;
+    let [, ref, topic, event, payload] = msg;
     if (event === "phx_reply") {
       if (topic === "phoenix") {
         this.pendingHeartbeatRef = null;
@@ -1514,7 +1527,10 @@ var NoteChannel = class {
         `Channel join error on ${topic}: ${JSON.stringify(payload)}`
       ), topic === this.crdtTopic)) {
         let response = payload.response, reason = typeof (response == null ? void 0 : response.reason) == "string" ? response.reason : void 0, min2 = typeof (response == null ? void 0 : response.min) == "number" ? response.min : void 0;
-        (_c = this.onCrdtJoinError) == null || _c.call(this, reason, min2);
+        ref === this.crdtJoinMsgRef ? (_c = this.onCrdtJoinError) == null || _c.call(this, reason, min2) : rlog().warn(
+          "channel",
+          `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
+        );
       }
       return;
     }
@@ -5220,10 +5236,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     try {
-      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), isBinary || (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(file.path)), (_b = this.crdtEnrollment) == null || _b.reset(file.path));
+      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(file.path)), (_b = this.crdtEnrollment) == null || _b.reset(file.path));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), isBinary || (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(file.path)), (_d = this.crdtEnrollment) == null || _d.reset(file.path));
+        this.goOnline(), file.path.endsWith(".md") && (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(file.path)), (_d = this.crdtEnrollment) == null || _d.reset(file.path));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -5246,9 +5262,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (!this.shouldIgnore(oldPath))
       try {
-        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline(), isBinary || (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(oldPath)), (_b = this.crdtEnrollment) == null || _b.reset(oldPath));
+        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline(), oldPath.endsWith(".md") && (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(oldPath)), (_b = this.crdtEnrollment) == null || _b.reset(oldPath));
       } catch (e) {
-        isHttpStatus(e, 404) ? (this.goOnline(), isBinary || (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(oldPath)), (_d = this.crdtEnrollment) == null || _d.reset(oldPath))) : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? (this.goOnline(), oldPath.endsWith(".md") && (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(oldPath)), (_d = this.crdtEnrollment) == null || _d.reset(oldPath))) : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -19388,7 +19404,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
-        typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
+        if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),
           drop: (name) => new Promise((resolve) => {
             let req = indexedDB.deleteDatabase(name);
@@ -19397,7 +19413,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
         }) : rlog().warn(
           "crdt",
           "indexedDB.databases() not available \u2014 skipping v1 schema wipe"
-        ), this.crdtManager = new CrdtManager({
+        ), epoch !== this.channelEpoch) {
+          rlog().info(
+            "channel",
+            "connectChannel aborted after ensureDocSchema \u2014 superseded by newer setup"
+          );
+          return;
+        }
+        this.crdtManager = new CrdtManager({
           dbPrefix,
           onUpdate: (docId, update) => {
             var _a2;
@@ -19435,6 +19458,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian23.Plugin
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
+          if (this.syncEngine.isSyncBlocked()) return;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
           (_a2 = this.crdtEnrollment) == null || _a2.enroll(path), this.syncEngine.materializeEmptyDiscovered(path);
         }, channel.onCrdtJoined = () => {

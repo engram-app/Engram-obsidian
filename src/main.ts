@@ -1106,6 +1106,15 @@ export default class EngramSyncPlugin extends Plugin {
 							"indexedDB.databases() not available — skipping v1 schema wipe",
 						);
 					}
+					// Re-check epoch after the async wipe — a superseding setupNoteStream
+					// during a long schema wipe must not be overwritten by this stale continuation.
+					if (epoch !== this.channelEpoch) {
+						rlog().info(
+							"channel",
+							"connectChannel aborted after ensureDocSchema — superseded by newer setup",
+						);
+						return;
+					}
 					this.crdtManager = new CrdtManager({
 						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
@@ -1154,6 +1163,15 @@ export default class EngramSyncPlugin extends Plugin {
 					// (B only observes rooms it itself sends a `crdt_msg` for), and the
 					// C1 guard suppresses the legacy note_changed discovery path.
 					channel.onCrdtDocReady = (docId) => {
+						// Gate: while the sync gate is closed, skip enrollment entirely.
+						// Without this gate, STEP2 ops integrate into the Y.Doc but can
+						// never flush to disk. After gate-accept the re-handshake delivers
+						// zero new ops, so the absorbed content is never written — and the
+						// next restart's reconcileColdStart diffs the stale disk state into
+						// the doc, reverting the other device's edits everywhere. Gating
+						// here keeps gated-period state out of the doc entirely; the
+						// announce re-fires via pull discovery once the gate opens.
+						if (this.syncEngine.isSyncBlocked()) return;
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						this.crdtEnrollment?.enroll(path);
@@ -1361,7 +1379,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.setSyncBlocked(false);
 		// Re-fire gated-away STEP1 handshakes now that writes are allowed.
 		// Active-leaf-change enrollment was skipped while the gate was closed;
-		// resetAll re-issues STEP1 for all known paths so remote state re-flushes.
+		// resetAll clears the once-per-session guards so the next enroll re-issues STEP1.
 		this.crdtEnrollment?.resetAll();
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());

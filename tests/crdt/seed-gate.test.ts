@@ -108,20 +108,10 @@ describe("handshake-gated seeding", () => {
 		expect(m.isSynced("e.md")).toBe(false);
 	});
 
-	it("applyLocalEdit with hasLca=true declines (not-yet-synced, empty doc, explicit LCA flag)", async () => {
-		// hasLca=true means the caller believes history exists, but the doc is empty
-		// (IDB was wiped). In this case seedOnce would return false (hasLca guard),
-		// and diffIntoYText would be a no-op on equal empty strings. The current
-		// path falls through to diffIntoYText which produces no ops for "" vs content
-		// — this case is a diff, not a seed, and the gate must NOT decline it because
-		// the doc is non-empty from the hasLca perspective.
-		//
-		// Actually: hasLca=true means "another device established the base" so
-		// seedOnce skips. diffIntoYText with empty text vs non-empty content WOULD
-		// insert the full content — which is effectively a re-seed. The gate only
-		// checks `e.text.length === 0 && !lca && !this.isSynced(path)`, so when
-		// hasLca=true the gate is NOT triggered and the diff path runs unconditionally.
-		// This test documents that behavior: hasLca=true bypasses the seed gate.
+	it("hasLca=true bypasses the seed gate", async () => {
+		// hasLca=true means "another device established the base", so seedOnce skips
+		// and the gate check (`e.text.length === 0 && !lca && !this.isSynced(path)`)
+		// is not triggered. The diff path runs unconditionally — consumed === true.
 		const m = makeManager();
 		// No markSynced; hasLca=true means the caller knows history exists elsewhere.
 		const consumed = await m.applyLocalEdit("f.md", "some content", true);

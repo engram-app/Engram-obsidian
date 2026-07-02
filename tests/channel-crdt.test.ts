@@ -488,18 +488,31 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 	// re-fire STEP1s; resetAll clears the once-per-session guard so enrollment can re-enroll paths
 	// that were previously marked as synced. Unit testing of this logic is via channel.ts tests below;
 	// the enrollment integration is simple enough for review verification.
+	//
+	// C2 ref-matching: onCrdtJoinError now only fires when the error reply's ref matches
+	// crdtJoinMsgRef (the ref sent with the crdt: phx_join). The channel sends 3 frames on
+	// connect: sync join (ref="1"), user join (ref="2"), crdt join (ref="3"). So the join
+	// error reply must carry ref="3" to trigger onCrdtJoinError. The pre-ref-matching
+	// behavior (any error on the crdt topic fires) is intentionally updated here.
 
-	test("fires onCrdtJoinError with the reason string when crdt: topic errors", async () => {
+	test("fires onCrdtJoinError with the reason string when crdt: topic errors (join ref matches)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
+		// Capture the ref the channel sent in the crdt phx_join frame (should be "3").
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+		const joinRef = crdtJoin![1] as string; // position 1 = msg ref
+
 		const errors: { reason: string | undefined; min?: number }[] = [];
 		channel.onCrdtJoinError = (reason, min) => errors.push({ reason, min });
 
+		// Reply with the actual join ref — this is the join error path.
 		simulateMessage(lastWsInstance, [
 			"3",
-			"2",
+			joinRef,
 			"crdt:u1:v1",
 			"phx_reply",
 			{ status: "error", response: { reason: "unmatched topic" } },
@@ -512,17 +525,22 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 		channel.disconnect();
 	});
 
-	test("fires onCrdtJoinError with undefined reason when no reason in payload", async () => {
+	test("fires onCrdtJoinError with undefined reason when no reason in payload (join ref matches)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
+
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+		const joinRef = crdtJoin![1] as string;
 
 		const errors: { reason: string | undefined; min?: number }[] = [];
 		channel.onCrdtJoinError = (reason, min) => errors.push({ reason, min });
 
 		simulateMessage(lastWsInstance, [
 			"3",
-			"2",
+			joinRef,
 			"crdt:u1:v1",
 			"phx_reply",
 			{ status: "error", response: {} },
@@ -531,6 +549,34 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 		expect(errors.length).toBe(1);
 		expect(errors[0]!.reason).toBeUndefined();
 		expect(errors[0]!.min).toBeUndefined();
+
+		channel.disconnect();
+	});
+
+	test("does NOT fire onCrdtJoinError for a crdt_msg error reply (non-matching ref — rate_limited)", async () => {
+		// Backend #846 adds per-message error replies on crdt_msg frames (e.g. "rate_limited",
+		// "frame_too_large"). These carry a DIFFERENT ref than the join frame. A single
+		// rate-limit trip must NOT tear down the CRDT session.
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		let fired = false;
+		channel.onCrdtJoinError = () => {
+			fired = true;
+		};
+
+		// Simulate a crdt_msg error reply with a ref that does NOT match the join ref.
+		// The join ref is "3"; a crdt_msg reply would carry a later ref like "99".
+		simulateMessage(lastWsInstance, [
+			"3",
+			"99",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "rate_limited" } },
+		]);
+
+		expect(fired).toBe(false);
 
 		channel.disconnect();
 	});
@@ -591,17 +637,22 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 // ---------------------------------------------------------------------------
 
 describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () => {
-	test("fires onCrdtJoinError with reason and min when crdt_proto_too_old", async () => {
+	test("fires onCrdtJoinError with reason and min when crdt_proto_too_old (join ref matches)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
+
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+		const joinRef = crdtJoin![1] as string;
 
 		const errors: { reason: string | undefined; min?: number }[] = [];
 		channel.onCrdtJoinError = (reason, min) => errors.push({ reason, min });
 
 		simulateMessage(lastWsInstance, [
 			"3",
-			"2",
+			joinRef,
 			"crdt:u1:v1",
 			"phx_reply",
 			{ status: "error", response: { reason: "crdt_proto_too_old", min: 3 } },
@@ -614,17 +665,22 @@ describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () =>
 		channel.disconnect();
 	});
 
-	test("fires onCrdtJoinError with min undefined when crdt_proto_too_old but no min field", async () => {
+	test("fires onCrdtJoinError with min undefined when crdt_proto_too_old but no min field (join ref matches)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
+
+		const crdtJoin = lastWsInstance.sent
+			.map((s: string) => JSON.parse(s) as unknown[])
+			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
+		const joinRef = crdtJoin![1] as string;
 
 		const errors: { reason: string | undefined; min?: number }[] = [];
 		channel.onCrdtJoinError = (reason, min) => errors.push({ reason, min });
 
 		simulateMessage(lastWsInstance, [
 			"3",
-			"2",
+			joinRef,
 			"crdt:u1:v1",
 			"phx_reply",
 			{ status: "error", response: { reason: "crdt_proto_too_old" } },
