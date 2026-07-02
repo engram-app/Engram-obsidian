@@ -326,6 +326,16 @@ export class SyncEngine {
 		this.crdtEnrollment = enrollment;
 	}
 
+	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
+	 *  `content` hashes to exactly what this engine last synced for `path` —
+	 *  i.e. the server already holds this content, so a history-less Y.Doc must
+	 *  adopt the server lineage instead of re-encoding it (backend #846
+	 *  lineage doubling). Unknown paths return false (authored notes seed). */
+	isUnchangedSynced(path: string, content: string): boolean {
+		const state = this.syncState.get(normalizePath(path));
+		return state !== undefined && state.hash === fnv1a(content);
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the

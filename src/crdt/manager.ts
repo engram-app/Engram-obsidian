@@ -58,6 +58,19 @@ export interface CrdtManagerOptions {
 	 * testing (iOS + Android) is required before GA.
 	 */
 	onPersistError?: (path: string, err: unknown) => void;
+	/**
+	 * Adopt-first seed gate (backend #846 lineage doubling). Returns true when
+	 * `content` is byte-identical to the last content synced for `path` (the
+	 * SyncEngine's per-path hash). A history-less doc must NOT seed such
+	 * content: the server already holds it on its own Yjs lineage, and a
+	 * client re-encoding it produces concurrent "same text" ops Yjs cannot
+	 * dedup — the note body doubles once the two lineages union. Instead the
+	 * doc stays empty and adopts the server lineage from the first STEP2.
+	 * Content that DIFFERS from the last-synced hash (real offline edits)
+	 * seeds as before, so nothing local is ever dropped. If omitted, the gate
+	 * is off (every history-less doc seeds — the pre-gate behavior).
+	 */
+	isUnchangedSynced?: (path: string, content: string) => boolean;
 }
 
 interface Entry {
@@ -117,6 +130,16 @@ export class CrdtManager {
 	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<void> {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
+
+		// Adopt-first seed gate: a history-less doc whose disk content is
+		// byte-identical to the last-synced content has nothing local to
+		// preserve — seeding it would re-encode server-known content on this
+		// client's lineage (the #846 doubling). Leave the doc empty (body AND
+		// frontmatter) and let the first STEP2 populate it on the server's
+		// lineage; later real edits diff in on that shared history.
+		if (!lca && this.opts.isUnchangedSynced?.(path, diskContent)) {
+			return;
+		}
 
 		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
 		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);

@@ -49,6 +49,68 @@ test("applyLocalEdit seeds a fresh doc once then diffs subsequent edits", async 
 	await mgr.destroy();
 });
 
+// ---------------------------------------------------------------------------
+// Adopt-first seed gate (backend #846 lineage doubling): a history-less doc
+// whose disk content is byte-identical to the last-synced content must NOT be
+// seeded — seeding re-encodes server-known content on the plugin's own Yjs
+// lineage, and the server cannot dedup it against its merge-lineage encoding
+// (text doubles: "Iteration 2" + tail replay -> "Iteration 22"). The doc stays
+// empty and adopts the server lineage from the first STEP2 instead. Content
+// that DIFFERS from the last-synced hash (real offline edits) keeps today's
+// seed behavior — no data loss.
+// ---------------------------------------------------------------------------
+
+test("applyLocalEdit adopts-first: no seed, no ops when content is unchanged-synced", async () => {
+	const captured: Uint8Array[] = [];
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-gate-1",
+		onUpdate: (_docId, update) => captured.push(update),
+		onFlushToDisk: async () => {},
+		isUnchangedSynced: (path, content) =>
+			path === "synced.md" && content === "---\ntitle: T\n---\n# Pulled\nbody",
+	});
+	await mgr.applyLocalEdit("synced.md", "---\ntitle: T\n---\n# Pulled\nbody", false);
+	expect(await mgr.getText("synced.md")).toBe("");
+	expect(frontmatterOf(await mgr.getDoc("synced.md"))).toEqual({ order: [], values: {} });
+	expect(captured.length).toBe(0);
+	await mgr.destroy();
+});
+
+test("applyLocalEdit still seeds when content differs from last-synced (offline edits preserved)", async () => {
+	const captured: Uint8Array[] = [];
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-gate-2",
+		onUpdate: (_docId, update) => captured.push(update),
+		onFlushToDisk: async () => {},
+		isUnchangedSynced: () => false,
+	});
+	await mgr.applyLocalEdit("edited.md", "# Edited offline", false);
+	expect(await mgr.getText("edited.md")).toBe("# Edited offline");
+	expect(captured.length).toBeGreaterThan(0);
+	await mgr.destroy();
+});
+
+test("the adopt-first gate does not fire once the doc has history", async () => {
+	const captured: Uint8Array[] = [];
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-gate-3",
+		onUpdate: (_docId, update) => captured.push(update),
+		onFlushToDisk: async () => {},
+		isUnchangedSynced: () => true,
+	});
+	// Adopt server state first (remote origin — not re-broadcast).
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "server body");
+	await mgr.applyRemoteUpdate("synced.md", Y.encodeStateAsUpdate(server));
+	expect(await mgr.getText("synced.md")).toBe("server body");
+
+	// A real local edit after adoption must diff in on the adopted lineage.
+	await mgr.applyLocalEdit("synced.md", "server body plus local", true);
+	expect(await mgr.getText("synced.md")).toBe("server body plus local");
+	expect(captured.length).toBeGreaterThan(0);
+	await mgr.destroy();
+});
+
 test("local edits emit a v1 update via onUpdate", async () => {
 	const captured: Uint8Array[] = [];
 	const { mgr } = makeManager(captured);
