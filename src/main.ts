@@ -617,12 +617,26 @@ export default class EngramSyncPlugin extends Plugin {
 					this.app.vault
 						.cachedRead(file)
 						.then((diskContent) =>
-							reconcileColdStart({ path: file.path, diskContent }, crdt, () => {
-								rlog().warn(
-									"crdt",
-									`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
-								);
-							}),
+							reconcileColdStart(
+								{
+									path: file.path,
+									diskContent,
+								},
+								{
+									applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
+									getText: crdt.getText.bind(crdt),
+									projectedText: crdt.projectedText.bind(crdt),
+									// Guarantee the STEP1/STEP2 adoption for drifted notes even
+									// when the adopt-first seed gate skips the local write.
+									enroll: (path) => this.crdtEnrollment?.enroll(path),
+								},
+								() => {
+									rlog().warn(
+										"crdt",
+										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+									);
+								},
+							),
 						)
 						.catch((e) => {
 							rlog().warn(
@@ -1227,6 +1241,10 @@ export default class EngramSyncPlugin extends Plugin {
 							this.crdtLiveViews?.isBound(path)
 								? Promise.resolve()
 								: this.syncEngine.flushFromCrdt(path, content),
+						// Adopt-first seed gate: never re-encode content the server
+						// already holds (see CrdtManagerOptions.isUnchangedSynced).
+						isUnchangedSynced: (path, content) =>
+							this.syncEngine.isUnchangedSynced(path, content),
 						onPersistError: (path, err) => {
 							rlog().warn(
 								"crdt",
