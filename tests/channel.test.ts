@@ -417,3 +417,118 @@ describe("NoteChannel.setAuthProvider", () => {
 		channel.disconnect();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Task 8: Heartbeat reply timeout — half-dead socket detection
+// Tests use (channel as any).heartbeatTick() to drive the interval body
+// directly without relying on fake timers.
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel heartbeat reply timeout", () => {
+	/** MockWebSocket variant that tracks close() calls so we can assert the
+	 *  channel forces a close when a heartbeat goes unanswered. */
+	class TrackingWebSocket {
+		static OPEN = 1;
+		readyState = TrackingWebSocket.OPEN;
+		onopen: (() => void) | null = null;
+		onclose: (() => void) | null = null;
+		onmessage: ((evt: { data: string }) => void) | null = null;
+		onerror: ((e: any) => void) | null = null;
+		sent: string[] = [];
+		closeCalls = 0;
+
+		constructor(_url: string) {
+			lastWsInstance = this;
+		}
+
+		send(data: string): void {
+			this.sent.push(data);
+		}
+
+		close(): void {
+			this.closeCalls++;
+			// Simulate Chromium behaviour: onclose fires locally regardless of
+			// whether the remote peer is reachable.
+			const cb = this.onclose;
+			this.onclose = null;
+			cb?.();
+		}
+	}
+
+	test("heartbeat reply (phoenix phx_reply) clears pendingHeartbeatRef so subsequent ticks send a fresh heartbeat", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		const ws = lastWsInstance as TrackingWebSocket;
+		ws.onopen?.();
+
+		const countBefore = ws.sent.length;
+
+		// First tick — should stamp a pending ref and send a heartbeat
+		(channel as any).heartbeatTick();
+		const afterFirstTick = ws.sent.length;
+		expect(afterFirstTick).toBe(countBefore + 1);
+		const hb1 = JSON.parse(ws.sent[afterFirstTick - 1]!);
+		expect(hb1[2]).toBe("phoenix");
+		expect(hb1[3]).toBe("heartbeat");
+		const sentRef = hb1[1] as string;
+
+		// Simulate the server replying to the heartbeat
+		ws.onmessage?.({
+			data: JSON.stringify([
+				null,
+				sentRef,
+				"phoenix",
+				"phx_reply",
+				{ status: "ok", response: {} },
+			]),
+		});
+
+		// Second tick — pendingHeartbeatRef should be null, so a new heartbeat is sent
+		(channel as any).heartbeatTick();
+		expect(ws.sent.length).toBe(countBefore + 2);
+		expect(ws.closeCalls).toBe(0);
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+
+	test("no reply between ticks — second tick detects unanswered heartbeat and calls ws.close()", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		const ws = lastWsInstance as TrackingWebSocket;
+		ws.onopen?.();
+
+		// First tick sends a heartbeat, leaves pendingHeartbeatRef set
+		(channel as any).heartbeatTick();
+		expect(ws.closeCalls).toBe(0);
+
+		// Second tick fires with pendingHeartbeatRef still set — must close the socket
+		(channel as any).heartbeatTick();
+		expect(ws.closeCalls).toBe(1);
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+
+	test("pendingHeartbeatRef is cleared on socket open (reset across reconnects)", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		const ws = lastWsInstance as TrackingWebSocket;
+		ws.onopen?.();
+
+		// Stamp a pending ref via first tick
+		(channel as any).heartbeatTick();
+		expect((channel as any).pendingHeartbeatRef).not.toBeNull();
+
+		// Simulate reconnect: a new open fires startHeartbeat
+		// The open handler must reset pendingHeartbeatRef
+		ws.onopen?.();
+		expect((channel as any).pendingHeartbeatRef).toBeNull();
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+});

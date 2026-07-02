@@ -55,6 +55,7 @@ export class NoteChannel {
 	private readonly userJoinRef = "2";
 	private readonly crdtJoinRef = "3";
 	private heartbeatTimer: number | null = null;
+	private pendingHeartbeatRef: string | null = null;
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
 	private readonly maxReconnectMs = 60_000;
@@ -272,6 +273,9 @@ export class NoteChannel {
 		this.ws.onopen = () => {
 			opened = true;
 			this.reconnectMs = 1000;
+			// Clear any pending heartbeat from a previous connection so the first
+			// tick of the new connection doesn't incorrectly detect a timeout.
+			this.pendingHeartbeatRef = null;
 			this.joinChannel();
 			this.startHeartbeat();
 			rlog().info("channel", "WebSocket opened, joining channel");
@@ -349,11 +353,25 @@ export class NoteChannel {
 	}
 
 	private startHeartbeat(): void {
-		this.heartbeatTimer = window.setInterval(() => {
-			if (this.ws?.readyState === WebSocket.OPEN) {
-				this.send([null, String(++this.ref), "phoenix", "heartbeat", {}]);
-			}
-		}, 30_000);
+		this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 30_000);
+	}
+
+	/** Interval body for the heartbeat. Extracted so tests can drive it directly
+	 *  without fake timers. Called once per 30s interval while the socket is open.
+	 *
+	 *  If `pendingHeartbeatRef` is still set from the previous tick the server never
+	 *  replied — the socket is half-dead (classic mobile app-resume state). Force
+	 *  close so the existing onclose → scheduleReconnect machinery can recover.
+	 *  Otherwise stamp a new pending ref and send the heartbeat frame. */
+	private heartbeatTick(): void {
+		if (this.ws?.readyState !== WebSocket.OPEN) return;
+		if (this.pendingHeartbeatRef !== null) {
+			rlog().warn("channel", "heartbeat unanswered — closing dead socket");
+			this.ws?.close();
+			return;
+		}
+		this.pendingHeartbeatRef = String(++this.ref);
+		this.send([null, this.pendingHeartbeatRef, "phoenix", "heartbeat", {}]);
 	}
 
 	private handleMessage(raw: string): void {
@@ -374,6 +392,15 @@ export class NoteChannel {
 		];
 
 		if (event === "phx_reply") {
+			// Clear the outstanding heartbeat ref when the phoenix topic replies.
+			// We clear on any phoenix phx_reply rather than matching the exact ref
+			// because the topic is unambiguous — only heartbeats produce phoenix
+			// phx_reply frames, and a reply to any heartbeat proves the socket is
+			// alive regardless of which specific tick it answered.
+			if (topic === "phoenix") {
+				this.pendingHeartbeatRef = null;
+				return;
+			}
 			const status = (payload as { status?: string }).status;
 			if (status === "ok") {
 				// The plugin's connected state is keyed ONLY on the sync topic.
@@ -534,6 +561,9 @@ export class NoteChannel {
 			window.clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
 		}
+		// Reset the pending heartbeat so a reconnect's first tick doesn't
+		// misfire a stale-ref close.
+		this.pendingHeartbeatRef = null;
 	}
 
 	private scheduleReconnect(overrideMs?: number): void {
