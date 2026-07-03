@@ -255,7 +255,29 @@ export class NoteChannel {
 	// Private
 	// ---------------------------------------------------------------------------
 
+	/** Guards openSocket against re-entry across its async token fetch. */
+	private opening = false;
+
 	private async openSocket(): Promise<void> {
+		// Single-flight: if a socket already exists (an external connect() won
+		// the race against a still-pending reconnect timer) or another
+		// openSocket is suspended on the token fetch, bail. A second live
+		// socket fights over this.ws/connected — the orphan's onclose clobbers
+		// the current connection's state, leaving a zombie channel that
+		// reports connected while the server holds no subscription.
+		if (this.ws || this.opening) {
+			rlog().info("channel", "openSocket skipped — socket already present or opening");
+			return;
+		}
+		this.opening = true;
+		try {
+			await this.openSocketInner();
+		} finally {
+			this.opening = false;
+		}
+	}
+
+	private async openSocketInner(): Promise<void> {
 		let token: string;
 		let source: string;
 		try {
@@ -648,6 +670,12 @@ export class NoteChannel {
 	}
 
 	private scheduleReconnect(overrideMs?: number): void {
+		// Replace, never stack: an orphaned earlier timer would double-fire
+		// openSocket (see the single-flight guard there).
+		if (this.reconnectTimer) {
+			window.clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+		}
 		const base = overrideMs ?? this.reconnectMs;
 		const jitter = Math.random() * base * 0.5;
 		this.reconnectTimer = window.setTimeout(() => {
