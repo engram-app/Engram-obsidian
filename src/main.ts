@@ -53,6 +53,7 @@ import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtManager } from "./crdt/manager";
+import { ensureDocSchema } from "./crdt/schema";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
@@ -155,6 +156,16 @@ export default class EngramSyncPlugin extends Plugin {
 	private crdtManager: CrdtManager | null = null;
 	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
+	/** True once onCrdtJoined has fired for the current channel session.
+	 *  Allows the disconnect handler to KEEP CRDT routing active while offline
+	 *  (Y.Doc + IndexedDB capture edits locally; reconnect handshake delivers
+	 *  them). Reset to false in setupNoteStream() so a genuine backend/vault
+	 *  switch degrades back to legacy until the new server confirms crdt: join. */
+	private crdtEverJoined = false;
+	/** Guards the "plugin needs update" Notice from firing more than once per
+	 *  session. A crdt_proto_too_old rejoin error can fire on every reconnect;
+	 *  showing repeated toasts would be noisy. */
+	private crdtProtoTooOldNoticeShown = false;
 	private crdtLiveViews: CrdtLiveViews | null = null;
 
 	/** Saved fingerprint from prior session — null on first load or after
@@ -327,8 +338,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// The once-per-doc guard inside CrdtEnrollment and CrdtChannel ensures the
 		// STEP1 handshake fires exactly once even if the same note is opened
 		// repeatedly, and resets on channel reconnect for a fresh handshake.
+		// Enrollment is skipped while the sync gate is closed: the handshake would
+		// pull remote content before the user has chosen a direction, which could
+		// overwrite local files after a vault switch. After the gate opens,
+		// markSyncGateAccepted calls crdtEnrollment.resetAll() so gated-away
+		// STEP1s re-fire and remote state re-flushes.
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => {
+				if (this.syncEngine.isSyncBlocked()) return;
 				const file = this.app.workspace.getActiveFile();
 				if (file instanceof TFile && file.extension === "md") {
 					this.crdtEnrollment?.enroll(file.path);
@@ -605,12 +622,15 @@ export default class EngramSyncPlugin extends Plugin {
 			// readiness must not depend on a user-driven modal choice.
 			this.syncEngine.setReady();
 
+			if (!registered) return;
+
 			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
 			// doc for any markdown file that changed while the app was closed
 			// (external editor, another sync app, OS). Runs after readiness is
 			// set so the resulting applyLocalEdit fires normally through the CRDT
-			// route. Only runs when a CrdtManager is available (auth configured).
-			if (this.crdtManager) {
+			// route. Only runs when registered and the sync gate is open so that
+			// content is never transmitted before the user picks a direction.
+			if (gateOpen && this.crdtManager) {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;
@@ -646,8 +666,6 @@ export default class EngramSyncPlugin extends Plugin {
 						});
 				}
 			}
-
-			if (!registered) return;
 
 			if (gateOpen) {
 				// User has already accepted a direction for this fingerprint —
@@ -1090,6 +1108,19 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtChannel = null;
 		this.crdtEnrollment?.resetAll();
 		this.crdtEnrollment = null;
+		// Teardown must NOT depend on the connection-state transition that nulls
+		// the SyncEngine's CRDT manager via setConnected(false): when the offline-
+		// retention branch is active (crdtEverJoined = true and the socket was
+		// already disconnected), setConnected is transition-gated and becomes a
+		// no-op. Clear the SyncEngine references explicitly here so that a
+		// destroyed manager never outlives its channel session as a zombie.
+		this.syncEngine.setCrdtManager(null);
+		this.syncEngine.setCrdtEnrollment(null);
+		// Reset the joined flag: a new channel session must re-confirm CRDT support
+		// before offline capture stays active. This ensures a genuine backend/vault
+		// switch degrades back to legacy (crdtEverJoined = false → disconnect handler
+		// nulls the manager) until the new server confirms the crdt: topic join.
+		this.crdtEverJoined = false;
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
@@ -1144,7 +1175,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.api
 			.getMe()
-			.then((user) => {
+			.then(async (user) => {
 				// A newer setupNoteStream() superseded this connect while getMe()
 				// was in flight — abort so we don't create an orphan channel.
 				if (epoch !== this.channelEpoch) {
@@ -1180,18 +1211,39 @@ export default class EngramSyncPlugin extends Plugin {
 							);
 						});
 					} else {
-						// On disconnect the crdt: topic is also gone. Clear the CRDT
-						// manager from the SyncEngine so markdown saves fall back to
-						// the legacy pushNote path until the crdt: topic re-joins on
-						// the next connection. This is the graceful-degradation gate:
-						// non-CRDT backends never fire onCrdtJoined and therefore never
-						// set the manager, but we also reset here defensively in case
-						// the channel drops mid-session.
-						this.syncEngine.setCrdtManager(null);
-						rlog().info(
-							"crdt",
-							"Disconnected — CRDT routing cleared, legacy path active",
-						);
+						// On disconnect: if onCrdtJoined has already fired for this
+						// channel session (crdtEverJoined), KEEP the CRDT manager wired
+						// in the SyncEngine. Y.Doc + IndexedDB are offline-native —
+						// edits accumulate locally and the reconnect STEP1/STEP2
+						// handshake delivers them to the server. channel.send() drops
+						// frames on the closed socket (readyState guard in channel.ts),
+						// but the OPS survive: they are committed to the Y.Doc and
+						// persisted in IndexedDB, and travel via the reconnect handshake.
+						//
+						// If crdtEverJoined is false the server never confirmed CRDT
+						// support for this channel session (e.g. non-CRDT backend, or
+						// a brand-new channel pre-join). Fall back to the legacy path
+						// exactly as before so we don't hold a null manager as "active".
+						if (!this.crdtEverJoined) {
+							this.syncEngine.setCrdtManager(null);
+							rlog().info(
+								"crdt",
+								"Disconnected before crdt: join — CRDT routing cleared, legacy path active",
+							);
+						} else {
+							rlog().info(
+								"crdt",
+								"Disconnected — CRDT routing RETAINED for offline capture (Y.Doc + IDB)",
+							);
+						}
+						// Always invalidate synced marks on disconnect: a mark means
+						// "doc reflected server state at some past connection" — a
+						// disconnect invalidates that because another device may have
+						// written content while offline. T1's gate then declines
+						// empty-doc seeds offline (correct: fall to legacy/queue),
+						// and re-establishes marks when a non-empty STEP2 arrives
+						// after reconnect.
+						this.crdtManager?.clearSynced();
 					}
 				};
 
@@ -1234,6 +1286,31 @@ export default class EngramSyncPlugin extends Plugin {
 				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
 				if (this.settings.enableCrdt && this.settings.vaultId) {
 					const dbPrefix = this.settings.vaultId;
+					// One-time schema upgrade: wipe v1 CRDT stores if needed.
+					if (typeof indexedDB.databases === "function") {
+						await ensureDocSchema(dbPrefix, window.localStorage, {
+							list: () => indexedDB.databases(),
+							drop: (name) =>
+								new Promise<void>((resolve) => {
+									const req = indexedDB.deleteDatabase(name);
+									req.onsuccess = req.onerror = req.onblocked = () => resolve();
+								}),
+						});
+					} else {
+						rlog().warn(
+							"crdt",
+							"indexedDB.databases() not available — skipping v1 schema wipe",
+						);
+					}
+					// Re-check epoch after the async wipe — a superseding setupNoteStream
+					// during a long schema wipe must not be overwritten by this stale continuation.
+					if (epoch !== this.channelEpoch) {
+						rlog().info(
+							"channel",
+							"connectChannel aborted after ensureDocSchema — superseded by newer setup",
+						);
+						return;
+					}
 					this.crdtManager = new CrdtManager({
 						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
@@ -1306,6 +1383,15 @@ export default class EngramSyncPlugin extends Plugin {
 					// (B only observes rooms it itself sends a `crdt_msg` for), and the
 					// C1 guard suppresses the legacy note_changed discovery path.
 					channel.onCrdtDocReady = (docId) => {
+						// Gate: while the sync gate is closed, skip enrollment entirely.
+						// Without this gate, STEP2 ops integrate into the Y.Doc but can
+						// never flush to disk. After gate-accept the re-handshake delivers
+						// zero new ops, so the absorbed content is never written — and the
+						// next restart's reconcileColdStart diffs the stale disk state into
+						// the doc, reverting the other device's edits everywhere. Gating
+						// here keeps gated-period state out of the doc entirely; the
+						// announce re-fires via pull discovery once the gate opens.
+						if (this.syncEngine.isSyncBlocked()) return;
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						this.crdtEnrollment?.enroll(path);
@@ -1323,6 +1409,7 @@ export default class EngramSyncPlugin extends Plugin {
 							"crdt",
 							"crdt: topic joined — activating CRDT routing in SyncEngine",
 						);
+						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
 						// Re-enroll every open markdown note so the server re-registers
 						// this device as a room observer after a (re)connect. The active-
@@ -1332,6 +1419,41 @@ export default class EngramSyncPlugin extends Plugin {
 						// Mirrors the web client's reconnect resync. Runs on every crdt:
 						// (re)join; on the initial join it is a near no-op (already enrolled).
 						this.reEnrollOpenCrdtNotes();
+					};
+					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
+					// (backend downgrade, transient error, or this plugin being too old),
+					// CRDT routing must be torn down even if it was previously active.
+					// Without this, crdtEverJoined stays true and the disconnect handler
+					// retains the manager, routing every md edit into a dead transport
+					// where frames are silently dropped and legacy never engages.
+					channel.onCrdtJoinError = (reason, min) => {
+						rlog().warn(
+							"crdt",
+							`crdt: topic join rejected (reason=${reason ?? "unknown"}) — degrading to legacy pushNote path`,
+						);
+						// Degrade to legacy: mirror the "never-joined disconnect" path.
+						this.crdtEverJoined = false;
+						this.syncEngine.setCrdtManager(null);
+						// Invalidate any handshake marks so a future re-join starts clean.
+						this.crdtManager?.clearSynced();
+						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
+						this.crdtEnrollment?.resetAll();
+						if (reason === "crdt_proto_too_old") {
+							// The server requires a newer CRDT protocol than this plugin
+							// speaks — surface a user-visible notice, but only once per
+							// session to avoid toast spam on every reconnect.
+							if (!this.crdtProtoTooOldNoticeShown) {
+								this.crdtProtoTooOldNoticeShown = true;
+								new Notice(
+									"Engram sync: live sync requires a plugin update — please update the Engram vault sync plugin.",
+									10000,
+								);
+								rlog().warn(
+									"crdt",
+									`crdt_proto_too_old: server requires proto >= ${min ?? "unknown"}; update the plugin`,
+								);
+							}
+						}
 					};
 				} else {
 					rlog().info(
@@ -1483,6 +1605,10 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		this.syncGateAcceptedFor = fp;
 		this.syncEngine.setSyncBlocked(false);
+		// Re-fire gated-away STEP1 handshakes now that writes are allowed.
+		// Active-leaf-change enrollment was skipped while the gate was closed;
+		// resetAll clears the once-per-session guards so the next enroll re-issues STEP1.
+		this.crdtEnrollment?.resetAll();
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 	}

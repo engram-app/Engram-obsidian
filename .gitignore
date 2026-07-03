@@ -28,3 +28,4 @@ data.json
 
 # Local-only obsidianmd reviewer eslint config (uses absolute /tmp paths)
 .eslint-obsidian.config.mjs
+.superpowers/

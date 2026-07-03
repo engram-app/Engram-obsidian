@@ -40,6 +40,9 @@ function makeManager(captured: Uint8Array[] = []) {
 
 test("applyLocalEdit seeds a fresh doc once then diffs subsequent edits", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding: simulates STEP2 handshake completion.
+	// Without it, applyLocalEdit returns false and declines the seed (audit P0-1 fix).
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "first body", false);
 	expect(await mgr.getText("note.md")).toBe("first body");
 
@@ -84,6 +87,9 @@ test("applyLocalEdit still seeds when content differs from last-synced (offline 
 		onFlushToDisk: async () => {},
 		isUnchangedSynced: () => false,
 	});
+	// Handshake gate (audit P0-1) declines any seed before STEP2 completes;
+	// markSynced simulates the completed handshake so the differs-path seeds.
+	mgr.markSynced("edited.md");
 	await mgr.applyLocalEdit("edited.md", "# Edited offline", false);
 	expect(await mgr.getText("edited.md")).toBe("# Edited offline");
 	expect(captured.length).toBeGreaterThan(0);
@@ -114,6 +120,10 @@ test("the adopt-first gate does not fire once the doc has history", async () => 
 test("local edits emit a v1 update via onUpdate", async () => {
 	const captured: Uint8Array[] = [];
 	const { mgr } = makeManager(captured);
+	// markSynced required: the seeding gate must be cleared before the doc can
+	// accept local content (audit P0-1 fix). Without it, applyLocalEdit declines
+	// and no update is emitted, which would make captured.length === 0.
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "hello", false);
 	expect(captured.length).toBeGreaterThan(0);
 
@@ -126,6 +136,8 @@ test("local edits emit a v1 update via onUpdate", async () => {
 
 test("applyRemoteUpdate flushes merged text to disk", async () => {
 	const { mgr, flushed } = makeManager();
+	// markSynced required before local seed (audit P0-1 fix).
+	mgr.markSynced("note.md");
 	await mgr.applyLocalEdit("note.md", "base", false);
 
 	// Build a remote update on top of the same state.
@@ -141,6 +153,8 @@ test("applyRemoteUpdate flushes merged text to disk", async () => {
 
 test("state persists to IndexedDB across a manager restart", async () => {
 	const a = makeManager();
+	// markSynced required before first seed (audit P0-1 fix).
+	a.mgr.markSynced("note.md");
 	await a.mgr.applyLocalEdit("note.md", "survives reload", false);
 	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush
 	await a.mgr.destroy();
@@ -166,6 +180,8 @@ test("persist errors surface via onPersistError, not by throwing into sync", asy
 		},
 	});
 	// applyLocalEdit must resolve even if the (simulated) persistence layer errors.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "content", false);
 	expect(await mgr.getText("n.md")).toBe("content"); // in-memory state intact
 	await mgr.destroy();
@@ -206,6 +222,8 @@ test("flattenIfBloated does NOT flatten a large single-author doc (only one axis
 		onFlushToDisk: async () => {},
 	});
 	// > 500 KB but a single client-ID — the AND gate must leave it alone.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "x".repeat(600_000), false);
 	expect(await mgr.flattenIfBloated("n.md")).toBe(false);
 	await mgr.destroy();
@@ -287,6 +305,8 @@ describe("CrdtChannel startSync enrollment", () => {
 
 test("applyLocalEdit splits frontmatter into Y.Map, body into Y.Text", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
 	const doc = await mgr.getDoc("N.md");
 	expect(frontmatterOf(doc)).toEqual({ order: ["title"], values: { title: '"Hi"' } });
@@ -296,6 +316,8 @@ test("applyLocalEdit splits frontmatter into Y.Map, body into Y.Text", async () 
 
 test("malformed frontmatter keeps whole text as body", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\nbroken: : :\n---\nbody\n");
 	const doc = await mgr.getDoc("N.md");
 	expect(frontmatterOf(doc)).toEqual({ order: [], values: {} });
@@ -318,6 +340,8 @@ test("flush reconstructs full file from Y.Map + body", async () => {
 	});
 
 	// Seed local state: frontmatter goes into Y.Map, body into Y.Text.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("N.md");
 	await mgr.applyLocalEdit("N.md", "---\ntitle: Hi\n---\nbody\n");
 
 	// Build a remote peer from the same state, append " world" to body, then
@@ -368,7 +392,7 @@ describe("reconcileColdStart catch-split", () => {
 		const getText = async (): Promise<string> => {
 			throw new Error("decode failed");
 		};
-		const applyLocalEdit = async () => {};
+		const applyLocalEdit = async () => true;
 
 		await reconcileColdStart(
 			{ path: "n.md", diskContent: "some content" },
@@ -416,6 +440,8 @@ test("flattenIfBloated preserves frontmatter across the flatten reset", async ()
 	const { mgr } = makeManager();
 
 	// Seed frontmatter FIRST so the Y.Map/Y.Array are populated before bloat.
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("n.md");
 	await mgr.applyLocalEdit("n.md", "---\ntitle: My Note\ntags: foo bar\n---\nbody text", false);
 
 	// Build bloat on top of the seeded state: 1100 distinct client-IDs, each
@@ -450,6 +476,8 @@ test("flattenIfBloated preserves frontmatter across the flatten reset", async ()
 
 test("projectedText returns full file for a frontmatter note", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("fm.md");
 	await mgr.applyLocalEdit("fm.md", "---\ntitle: Hello\n---\nbody", false);
 	const result = await mgr.projectedText("fm.md");
 	expect(result).toContain("---");
@@ -460,6 +488,8 @@ test("projectedText returns full file for a frontmatter note", async () => {
 
 test("projectedText returns body-only for a plain note (no frontmatter)", async () => {
 	const { mgr } = makeManager();
+	// markSynced required before seeding (audit P0-1 fix).
+	mgr.markSynced("plain.md");
 	await mgr.applyLocalEdit("plain.md", "just body", false);
 	expect(await mgr.projectedText("plain.md")).toBe("just body");
 	await mgr.destroy();
@@ -478,10 +508,55 @@ test("reconcileColdStart returns early when projectedText matches disk (no apply
 		getText: async () => "body", // old body-only value — would NOT match
 		applyLocalEdit: async () => {
 			applyCallCount++;
+			return true;
 		},
 	};
 
 	await reconcileColdStart({ path: "n.md", diskContent: fullFile }, crdt, () => {});
 	// projectedText matches diskContent, so applyLocalEdit must NOT be called.
 	expect(applyCallCount).toBe(0);
+});
+
+// ---------------------------------------------------------------------------
+// Task 5: removeDoc — tear down Y.Doc + IndexedDB on delete/rename
+// ---------------------------------------------------------------------------
+
+test("removeDoc clears IDB: re-opening the same path yields an empty doc", async () => {
+	const { mgr } = makeManager();
+	// Seed content into the doc and wait for IDB flush.
+	mgr.markSynced("gone.md");
+	await mgr.applyLocalEdit("gone.md", "content that should vanish", false);
+	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush
+
+	// Remove the doc — must destroy in-memory state AND clear IDB.
+	await mgr.removeDoc("gone.md");
+
+	// Open a fresh manager backed by the SAME IDB store (same dbPrefix = "vault-A").
+	// If IDB was not cleared, getText would return the old content.
+	const { mgr: mgr2 } = makeManager();
+	const text = await mgr2.getText("gone.md");
+	expect(text).toBe(""); // IDB was wiped — fresh empty doc
+	await mgr2.destroy();
+	await mgr.destroy();
+});
+
+test("removeDoc on a never-opened path does not throw", async () => {
+	const { mgr } = makeManager();
+	// Path was never opened this session — no in-memory entry exists.
+	// removeDoc must still clear any IDB state (or be a no-op) without throwing.
+	await expect(mgr.removeDoc("never-opened.md")).resolves.toBeUndefined();
+	await mgr.destroy();
+});
+
+test("removeDoc clears the synced mark so re-opening triggers a fresh handshake gate", async () => {
+	const { mgr } = makeManager();
+	mgr.markSynced("a.md");
+	expect(mgr.isSynced("a.md")).toBe(true);
+
+	await mgr.removeDoc("a.md");
+
+	// After removal the synced mark must be gone so a re-created note
+	// goes through the full handshake gate before seeding.
+	expect(mgr.isSynced("a.md")).toBe(false);
+	await mgr.destroy();
 });

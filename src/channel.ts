@@ -55,6 +55,7 @@ export class NoteChannel {
 	private readonly userJoinRef = "2";
 	private readonly crdtJoinRef = "3";
 	private heartbeatTimer: number | null = null;
+	private pendingHeartbeatRef: string | null = null;
 	private reconnectTimer: number | null = null;
 	private reconnectMs = 1000;
 	private readonly maxReconnectMs = 60_000;
@@ -65,6 +66,16 @@ export class NoteChannel {
 	 *  that does not serve the crdt: topic replies with an error (handled below),
 	 *  keeping this false — which allows the legacy pushNote path to remain active. */
 	private crdtJoined = false;
+	/**
+	 * The `ref` value sent with the crdt: topic phx_join frame.
+	 * Stored so handleMessage can distinguish a join-error reply (ref matches)
+	 * from a per-message error reply such as "rate_limited" or "frame_too_large"
+	 * on a crdt_msg (ref does NOT match). Only the join-error reply should fire
+	 * onCrdtJoinError and tear down the CRDT session; per-message errors are
+	 * transient and must not degrade the transport.
+	 * Reset to null on every joinChannel() call (each (re)connect issues a new join).
+	 */
+	private crdtJoinMsgRef: string | null = null;
 	private baseUrl: string;
 	private apiKey: string;
 	private userId: string;
@@ -93,6 +104,16 @@ export class NoteChannel {
 	 *  active against non-CRDT backends (which reply with a join error and
 	 *  never fire this callback). */
 	onCrdtJoined: (() => void) | null = null;
+	/** Fired when the `crdt:` topic join (or REJOIN) is rejected by the server.
+	 *  `reason` is the `response.reason` string from the server payload (undefined
+	 *  if absent). `min` is the server's minimum supported proto version, present
+	 *  only when `reason === "crdt_proto_too_old"`.
+	 *
+	 *  In main.ts, wire this to reset `crdtEverJoined = false` and call
+	 *  `setCrdtManager(null)` so that a failed rejoin (e.g. backend downgrade or
+	 *  transient error after a previously successful join) degrades to the legacy
+	 *  pushNote path rather than silently dropping edits into a dead transport. */
+	onCrdtJoinError: ((reason: string | undefined, min?: number) => void) | null = null;
 
 	constructor(
 		baseUrl: string,
@@ -262,6 +283,9 @@ export class NoteChannel {
 		this.ws.onopen = () => {
 			opened = true;
 			this.reconnectMs = 1000;
+			// Clear any pending heartbeat from a previous connection so the first
+			// tick of the new connection doesn't incorrectly detect a timeout.
+			this.pendingHeartbeatRef = null;
 			this.joinChannel();
 			this.startHeartbeat();
 			rlog().info("channel", "WebSocket opened, joining channel");
@@ -323,6 +347,8 @@ export class NoteChannel {
 	}
 
 	private joinChannel(): void {
+		// Reset crdtJoinMsgRef on every (re)connect so a new join issues a fresh ref.
+		this.crdtJoinMsgRef = null;
 		this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]);
 		// Best-effort: join the per-user topic to receive plan/entitlement state.
 		// Uses a distinct join ref so replies are attributable, and an older
@@ -334,16 +360,34 @@ export class NoteChannel {
 		// topic replies with an error (handled gracefully below).
 		const crdtT = this.crdtTopic;
 		if (crdtT) {
-			this.send([this.crdtJoinRef, String(++this.ref), crdtT, "phx_join", { crdt_proto: 2 }]);
+			const msgRef = String(++this.ref);
+			// Capture the join ref so handleMessage can distinguish a join-error reply
+			// (this ref) from per-message error replies (a different ref) — see crdtJoinMsgRef.
+			this.crdtJoinMsgRef = msgRef;
+			this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
 		}
 	}
 
 	private startHeartbeat(): void {
-		this.heartbeatTimer = window.setInterval(() => {
-			if (this.ws?.readyState === WebSocket.OPEN) {
-				this.send([null, String(++this.ref), "phoenix", "heartbeat", {}]);
-			}
-		}, 30_000);
+		this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 30_000);
+	}
+
+	/** Interval body for the heartbeat. Extracted so tests can drive it directly
+	 *  without fake timers. Called once per 30s interval while the socket is open.
+	 *
+	 *  If `pendingHeartbeatRef` is still set from the previous tick the server never
+	 *  replied — the socket is half-dead (classic mobile app-resume state). Force
+	 *  close so the existing onclose → scheduleReconnect machinery can recover.
+	 *  Otherwise stamp a new pending ref and send the heartbeat frame. */
+	private heartbeatTick(): void {
+		if (this.ws?.readyState !== WebSocket.OPEN) return;
+		if (this.pendingHeartbeatRef !== null) {
+			rlog().warn("channel", "heartbeat unanswered — closing dead socket");
+			this.ws?.close();
+			return;
+		}
+		this.pendingHeartbeatRef = String(++this.ref);
+		this.send([null, this.pendingHeartbeatRef, "phoenix", "heartbeat", {}]);
 	}
 
 	private handleMessage(raw: string): void {
@@ -355,7 +399,7 @@ export class NoteChannel {
 			return;
 		}
 
-		const [, , topic, event, payload] = msg as [
+		const [, ref, topic, event, payload] = msg as [
 			string | null,
 			string | null,
 			string,
@@ -364,6 +408,15 @@ export class NoteChannel {
 		];
 
 		if (event === "phx_reply") {
+			// Clear the outstanding heartbeat ref when the phoenix topic replies.
+			// We clear on any phoenix phx_reply rather than matching the exact ref
+			// because the topic is unambiguous — only heartbeats produce phoenix
+			// phx_reply frames, and a reply to any heartbeat proves the socket is
+			// alive regardless of which specific tick it answered.
+			if (topic === "phoenix") {
+				this.pendingHeartbeatRef = null;
+				return;
+			}
 			const status = (payload as { status?: string }).status;
 			if (status === "ok") {
 				// The plugin's connected state is keyed ONLY on the sync topic.
@@ -404,6 +457,28 @@ export class NoteChannel {
 					"channel",
 					`Channel join error on ${topic}: ${JSON.stringify(payload)}`,
 				);
+				if (topic === this.crdtTopic) {
+					const response = (payload as { response?: { reason?: unknown; min?: unknown } })
+						.response;
+					const reason =
+						typeof response?.reason === "string" ? response.reason : undefined;
+					const min = typeof response?.min === "number" ? response.min : undefined;
+					if (ref === this.crdtJoinMsgRef) {
+						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
+						// routing was previously active (the T4 folded finding: a REJOIN
+						// error while crdtEverJoined=true would otherwise leave routing
+						// active on a dead transport — every md edit silently dropped).
+						this.onCrdtJoinError?.(reason, min);
+					} else {
+						// Per-message error reply (e.g. "rate_limited" or "frame_too_large"
+						// from backend #846 crdt_msg handling). These are transient and must
+						// NOT tear down the CRDT session — log for visibility and continue.
+						rlog().warn(
+							"channel",
+							`crdt: per-message error (ref=${ref ?? "null"}, reason=${reason ?? "unknown"}) — session intact`,
+						);
+					}
+				}
 			}
 			return;
 		}
@@ -512,6 +587,9 @@ export class NoteChannel {
 			window.clearTimeout(this.reconnectTimer);
 			this.reconnectTimer = null;
 		}
+		// Reset the pending heartbeat so a reconnect's first tick doesn't
+		// misfire a stale-ref close.
+		this.pendingHeartbeatRef = null;
 	}
 
 	private scheduleReconnect(overrideMs?: number): void {

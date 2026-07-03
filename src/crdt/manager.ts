@@ -85,9 +85,59 @@ export class CrdtManager {
 	private readonly opts: CrdtManagerOptions;
 	/** Keyed by docId (= `dbPrefix/path`). */
 	private readonly docs = new Map<string, Entry>();
+	/**
+	 * Per-session set of doc IDs for which at least one inbound server sync
+	 * frame has been applied (i.e. the STEP2 handshake has completed for the
+	 * path). Keyed by docId — same key space as `docs`.
+	 *
+	 * Seeding is gated on membership here: a fresh-IDB device must NOT insert
+	 * local content into a Y.Text before the server's STEP2 arrives, because
+	 * doing so mints a second lineage that merges with the server's history into
+	 * duplicated body text (audit P0-1). Once a STEP2 is applied, an empty doc
+	 * is a genuine server-side empty note and seeding is safe.
+	 *
+	 * Cleared by `closeDoc`, `clearSynced`, and `destroy` to prevent stale marks
+	 * across doc lifecycle events. (`removeDoc` is forward-looking — cleared by
+	 * closeDoc/destroy and clearSynced; see Task 5.)
+	 */
+	private readonly synced = new Set<string>();
 
 	constructor(opts: CrdtManagerOptions) {
 		this.opts = opts;
+	}
+
+	// ---------------------------------------------------------------------------
+	// Handshake-gate API
+	// ---------------------------------------------------------------------------
+
+	/**
+	 * Mark `path` as having completed its server handshake (STEP2 received).
+	 * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
+	 * to the doc. Idempotent — safe to call on every inbound frame.
+	 */
+	markSynced(path: string): void {
+		this.synced.add(this.docId(path));
+	}
+
+	/**
+	 * Returns true if `path`'s handshake has completed this session (i.e.
+	 * `markSynced` has been called for it). Used by `applyLocalEdit` to guard
+	 * seeding of empty docs.
+	 */
+	isSynced(path: string): boolean {
+		return this.synced.has(this.docId(path));
+	}
+
+	/**
+	 * Clear ALL synced marks for this session. Call on WebSocket disconnect so
+	 * that stale marks cannot survive a reconnect: a mark means "doc reflected
+	 * server state at some past time" — a disconnect invalidates that guarantee
+	 * because another device may have written content while we were offline. The
+	 * next reconnect fires a fresh STEP1 handshake per enrolled path, and
+	 * `markSynced` is re-established only when a non-empty STEP2 arrives.
+	 */
+	clearSynced(): void {
+		this.synced.clear();
 	}
 
 	// ---------------------------------------------------------------------------
@@ -126,19 +176,27 @@ export class CrdtManager {
 	 *
 	 * Both code paths run with the default (`undefined`) origin so the resulting
 	 * update IS forwarded to the server via `onUpdate`.
+	 *
+	 * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
+	 * diffed, or adopted). The one non-writing path is the adopt-first gate
+	 * below, which still returns `true` ("handled, nothing to push") so the
+	 * caller never mass-re-pushes known-synced files via the legacy path on a
+	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
 	 */
-	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<void> {
+	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
 		const e = await this.entry(path);
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
-		// Adopt-first seed gate: a history-less doc whose disk content is
+		// Adopt-first seed gate (#161): a history-less doc whose disk content is
 		// byte-identical to the last-synced content has nothing local to
 		// preserve — seeding it would re-encode server-known content on this
 		// client's lineage (the #846 doubling). Leave the doc empty (body AND
 		// frontmatter) and let the first STEP2 populate it on the server's
-		// lineage; later real edits diff in on that shared history.
+		// lineage; later real edits diff in on that shared history. Returns
+		// `true` ("handled, nothing to push") — a legacy fallback here would
+		// mass re-push every known-synced file on a fresh-IDB cold start.
 		if (!lca && this.opts.isUnchangedSynced?.(path, diskContent)) {
-			return;
+			return true;
 		}
 
 		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
@@ -152,8 +210,9 @@ export class CrdtManager {
 		this.applyFrontmatterInto(e.doc, order, values);
 
 		// Route body through the existing seed-once + minimal-diff gate.
-		if (seedOnce(e.text, body, lca)) return;
+		if (seedOnce(e.text, body, lca)) return true;
 		diffIntoYText(e.text, body);
+		return true;
 	}
 
 	/**
@@ -194,6 +253,8 @@ export class CrdtManager {
 	/**
 	 * Close and clean up a single doc entry (destroys the Y.Doc and the
 	 * IndexeddbPersistence instance). Use when a note is closed in the editor.
+	 * Also clears the synced mark so a future `openDoc` + `startSync` begins a
+	 * fresh handshake.
 	 */
 	closeDoc(path: string): void {
 		const id = this.docId(path);
@@ -202,6 +263,51 @@ export class CrdtManager {
 		e.doc.destroy();
 		void e.persistence.destroy();
 		this.docs.delete(id);
+		this.synced.delete(id);
+	}
+
+	/**
+	 * Permanently remove the Y.Doc and its IndexedDB store for `path`.
+	 *
+	 * Call when a note is deleted or renamed (old path) so the ghost lineage
+	 * does not resurrect stale content if the note is later recreated at the
+	 * same path. Mirrors the teardown sequence in `flattenIfBloated`:
+	 *   doc.destroy() → persistence.clearData() → persistence.destroy()
+	 *   → docs.delete() → synced.delete()
+	 *
+	 * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
+	 * the path, `indexedDB.deleteDatabase(docId)` clears the IDB store directly.
+	 * This covers the case where another session wrote to IDB but the current
+	 * session never opened the doc. The database name matches the docId
+	 * (`${dbPrefix}/${path}`) — the same naming convention `entry()` uses when
+	 * constructing IndexeddbPersistence (y-indexeddb uses the docId as the
+	 * database name). Resolves without throwing regardless of whether the DB
+	 * existed.
+	 */
+	async removeDoc(path: string): Promise<void> {
+		const id = this.docId(path);
+		const e = this.docs.get(id);
+		if (e) {
+			// In-memory entry exists: mirror flattenIfBloated's teardown sequence.
+			e.doc.destroy();
+			await e.persistence.clearData();
+			await e.persistence.destroy();
+			this.docs.delete(id);
+		} else {
+			// No in-memory entry — the doc may still exist in IDB from a previous
+			// session. Delete the database directly by name (= docId) to prevent
+			// ghost resurrection on the next open. This is the same pattern that
+			// ensureDocSchema uses for the one-time schema wipe (schema.ts).
+			await new Promise<void>((resolve) => {
+				const req = indexedDB.deleteDatabase(id);
+				req.onsuccess = () => resolve();
+				req.onerror = () => resolve(); // non-fatal — DB may not exist
+				req.onblocked = () => resolve(); // resolve even if another tab has it open
+			});
+		}
+		// Clear the synced mark regardless of which branch ran. A recreated note
+		// at the same path must go through the full STEP2 handshake before seeding.
+		this.synced.delete(id);
 	}
 
 	/**
@@ -222,6 +328,7 @@ export class CrdtManager {
 			await e.persistence.destroy();
 			this.docs.delete(id);
 		}
+		this.synced.clear();
 	}
 
 	/**

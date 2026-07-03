@@ -4,11 +4,12 @@
  * - binary modify → legacy path (NOT CrdtManager)
  * - flushFromCrdt → vault.modify + echo suppression
  * - onFlushToDisk echo: remote-applied disk write does not re-enqueue a local push
+ * - offline CRDT capture: consumed md edits do NOT enter the legacy offline queue
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
+import { MAX_CRDT_NOTE_BYTES, SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,11 @@ describe("routeModify helper", () => {
 	const BIG = 8 * 1024 * 1024;
 
 	test("markdown modify routes to CRDT, never to pushNote", async () => {
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true (consumed) so routeModify returns true.
+		// After the handshake-gate fix, routeModify forwards the boolean from
+		// applyLocalEdit; a mock returning void (undefined/falsy) would make the
+		// result false, breaking the consumed assertion.
+		const applyLocalEdit = mock(async () => true);
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
 			{ isMarkdown: true, path: "n.md", readContent: async () => "body" },
@@ -162,6 +167,9 @@ beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
 		.mockResolvedValue({ note: {}, chunks_indexed: 1 });
+	(mockApi.pushAttachment as ReturnType<typeof mock>)
+		.mockReset()
+		.mockResolvedValue({ attachment: {} });
 	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue("body");
 	(mockApp.vault.modify as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
@@ -172,7 +180,10 @@ beforeEach(() => {
 describe("SyncEngine handleModify with CrdtManager", () => {
 	test("markdown modify calls applyLocalEdit, NOT pushNote", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so pushFile treats the edit as consumed
+		// and does NOT fall through to pushNote (handshake-gate fix: routeModify
+		// now forwards applyLocalEdit's boolean, so a void/falsy mock falls through).
+		const applyLocalEdit = mock(async () => true);
 		const mockCrdt = { applyLocalEdit } as any;
 		engine.setCrdtManager(mockCrdt);
 
@@ -187,7 +198,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("image.png");
@@ -223,7 +234,9 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so pushFile treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("Canvases/overview.md");
@@ -233,6 +246,54 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 		expect(applyLocalEdit).toHaveBeenCalledWith("Canvases/overview.md", "body");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review finding 3+4a: declined path — legacy push AND conditional enroll
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
+	test("declined md fires legacy pushNote AND enroll for a small file", async () => {
+		const engine = createEngine();
+		// applyLocalEdit returns false → routeModify returns false → declined path.
+		const applyLocalEdit = mock(async () => false);
+		const enroll = mock((_path: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// Default cachedRead returns "body" (well under MAX_CRDT_NOTE_BYTES).
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		// Legacy push must fire.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// Enroll must also fire (kicks off the STEP1 handshake for the declined note).
+		expect(enroll).toHaveBeenCalledWith("note.md");
+	});
+
+	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => false);
+		const enroll = mock((_path: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// Stub cachedRead to return a 5 MB string (> 4 MB cap).
+		const hugeMd = "x".repeat(5 * 1024 * 1024);
+		expect(new TextEncoder().encode(hugeMd).length).toBeGreaterThan(MAX_CRDT_NOTE_BYTES);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(hugeMd);
+
+		const file = new TFile("big.md");
+		engine.handleModify(file);
+		await flush();
+
+		// Legacy push fires (size gate is in routeModify, which returns false for oversized).
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		// Enroll must NOT fire — enrolling an oversized note elicits a multi-MB STEP2
+		// that can hit Bandit's 8 MB WS frame limit and crash the socket.
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
 
@@ -458,5 +519,140 @@ describe("reconcileColdStart", () => {
 			},
 		);
 		expect(conflictModalShown).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Offline CRDT capture — Task 4 (audit P1-1)
+//
+// Regression pins that lock in the existing pushFile early-return behaviour:
+// a consumed md edit returns from pushFile BEFORE the catch/enqueue path, so
+// the legacy offline queue stays empty. These tests also verify the correct
+// behaviour for the declined and non-md paths, guarding the T1 interplay.
+// ---------------------------------------------------------------------------
+
+describe("offline CRDT capture — queue behaviour", () => {
+	// Helper: throw a plain network error (no .status) so categorizeError
+	// classifies it as "network" → shouldRetryAfterFailure → enqueue path.
+	function networkError(): Error {
+		return new Error("Failed to fetch");
+	}
+
+	test("(a) consumed md edit while CRDT is active does NOT enqueue — queue stays empty", async () => {
+		// pushFile's CRDT branch calls routeModify; when applyLocalEdit returns true
+		// pushFile returns immediately (line ~1099) without ever reaching the catch
+		// block that calls enqueueChange. This is the core offline-capture guarantee:
+		// the edit lives in the Y.Doc + IndexedDB, not the stale-snapshot queue.
+		const engine = createEngine();
+		// applyLocalEdit returns true → consumed
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(engine.queue.size).toBe(0);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("(b) declined md edit (applyLocalEdit false) + network failure → queue entry EXISTS", async () => {
+		// Regression guard for the T1 interplay: a declined edit (empty doc, no
+		// handshake yet) falls through to legacy pushNote. If the network is down
+		// pushNote throws, which must enqueue so the note retries on reconnect.
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => false);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		// Stub pushNote to simulate a connection-lost error
+		(mockApi.pushNote as ReturnType<typeof mock>).mockRejectedValueOnce(networkError());
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush(100);
+
+		// The edit must be queued for retry on reconnect
+		expect(engine.queue.size).toBe(1);
+		expect(engine.queue.all()[0]?.path).toBe("note.md");
+	});
+
+	test("(c) non-md file (attachment) + network failure → queue entry EXISTS", async () => {
+		// Deletes/renames/attachments must always queue when offline — CRDT does not
+		// manage binary files.
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		// pushAttachment throws a network error
+		(mockApi.pushAttachment as ReturnType<typeof mock>).mockRejectedValueOnce(networkError());
+
+		const file = new TFile("image.png");
+		engine.handleModify(file);
+		await flush(100);
+
+		// Attachment failure must queue; applyLocalEdit must NOT have been called
+		expect(engine.queue.size).toBe(1);
+		expect(engine.queue.all()[0]?.path).toBe("image.png");
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("(d) reconnect replay: flushQueue after a consumed edit does NOT re-push via pushNote", async () => {
+		// After a CRDT-consumed edit the legacy queue stays empty (pinned by test (a)).
+		// This test adds a second assertion: an explicit queue flush (the reconnect
+		// recovery path) must not phantom-replay the consumed edit via pushNote.
+		// Regression guard: if the consumed-edit somehow ended up in the queue, a
+		// flush on reconnect would push a stale full-document snapshot over the CRDT
+		// ops that were already committed to Y.Doc + IndexedDB during the offline window.
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+
+		// Consume a markdown edit via CRDT (queue must stay empty).
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(engine.queue.size).toBe(0);
+
+		// Simulate reconnect recovery: trigger a queue flush.
+		// An empty queue must drain instantly with 0 pushes — the consumed edit
+		// must not be replayed as a legacy pushNote call.
+		await engine.flushQueue();
+
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Teardown fix — setupNoteStream must clear SyncEngine CRDT references
+//
+// Regression pin for the Important-1 review finding: the old teardown relied on
+// setConnected(false) → setCrdtManager(null), but setConnected is transition-
+// gated and is a no-op when the socket is already disconnected (the offline-
+// retention branch). The fix calls setCrdtManager/setCrdtEnrollment explicitly.
+// This test exercises the SyncEngine seam directly — no plugin scaffolding
+// needed because both setters are public.
+// ---------------------------------------------------------------------------
+
+describe("teardown: setCrdtManager(null) degrades subsequent edits to legacy", () => {
+	test("after teardown clears the crdt manager, handleModify routes to pushNote", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock() } as any);
+
+		// Simulate the teardown calls from setupNoteStream (the Important-1 fix).
+		// A destroyed manager must not be reachable — teardown clears both seams.
+		engine.setCrdtManager(null);
+		engine.setCrdtEnrollment(null);
+
+		// A subsequent md edit must fall through to the legacy pushNote path,
+		// NOT call applyLocalEdit on the now-nulled (formerly-destroyed) manager.
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });

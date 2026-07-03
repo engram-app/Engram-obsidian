@@ -57,7 +57,7 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
 export async function routeModify(
 	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
-	crdt: { applyLocalEdit: (path: string, content: string) => Promise<void> },
+	crdt: { applyLocalEdit: (path: string, content: string) => Promise<boolean> },
 	maxBytes: number,
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
@@ -72,8 +72,10 @@ export async function routeModify(
 	if (maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes) {
 		return false;
 	}
-	await crdt.applyLocalEdit(file.path, content);
-	return true;
+	// applyLocalEdit returns false when the handshake gate declines seeding
+	// (empty doc, no LCA, STEP2 not yet received). The legacy push path then
+	// owns the write convergently (backend PR #846) until the STEP2 arrives.
+	return await crdt.applyLocalEdit(file.path, content);
 }
 
 /** At startup, the on-disk file may have changed while the app was closed
@@ -91,7 +93,11 @@ export async function routeModify(
 export async function reconcileColdStart(
 	file: { path: string; diskContent: string },
 	crdt: {
-		applyLocalEdit: (path: string, content: string) => Promise<void>;
+		// Returns boolean (consumed/declined) but the value is intentionally
+		// ignored here — a DECLINED write (handshake gate) is treated identically
+		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
+		// those files until their STEP2 handshake completes.
+		applyLocalEdit: (path: string, content: string) => Promise<boolean | undefined>;
 		getText: (path: string) => Promise<string>;
 		projectedText: (path: string) => Promise<string>;
 		enroll?: (path: string) => void;
@@ -327,10 +333,17 @@ export class SyncEngine {
 	 *  CRDT-managed markdown note we don't have locally enrolls it (sends a
 	 *  sync-step-1) so the body is pulled over the y-protocols handshake — the
 	 *  level-triggered discovery path that backstops the edge-triggered
-	 *  crdt_doc_ready announce. Only the `enroll` method is needed here. */
-	private crdtEnrollment: { enroll(path: string): void } | null = null;
+	 *  crdt_doc_ready announce.
+	 *
+	 *  Both `enroll` and `reset` are exposed: `enroll` kicks off the STEP1
+	 *  handshake; `reset` (Task 5) clears the once-per-session enroll guard so a
+	 *  note recreated at the same path re-runs the full handshake rather than
+	 *  silently reusing the stale enrolled state from before the delete/rename. */
+	private crdtEnrollment: { enroll(path: string): void; reset(path: string): void } | null = null;
 
-	setCrdtEnrollment(enrollment: { enroll(path: string): void } | null): void {
+	setCrdtEnrollment(
+		enrollment: { enroll(path: string): void; reset(path: string): void } | null,
+	): void {
 		this.crdtEnrollment = enrollment;
 	}
 
@@ -361,8 +374,14 @@ export class SyncEngine {
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
 	 *  'create' handler routes through handleModify too).
-	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed. */
+	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
+	 *  Requires the sync gate to be open — returns early when blocked so inbound
+	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
 	async flushFromCrdt(path: string, content: string): Promise<void> {
+		if (this.syncBlocked) {
+			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
+			return;
+		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
 		this.markRecentlyFlushed(normalized);
@@ -385,11 +404,11 @@ export class SyncEngine {
 	 *
 	 *  A non-empty note discovered on this device materializes through the normal
 	 *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
-	 *  applying it fires a doc update, and that writes the file. An EMPTY note has
-	 *  no such body — an empty-vs-empty handshake produces a zero-length STEP2 that
-	 *  the server suppresses (the `length > 1` gate), so no frame ever arrives and
-	 *  the file is never created. The announce itself is then the only evidence the
-	 *  note exists.
+	 *  applying it fires a doc-update event, and that writes the file. An EMPTY
+	 *  note has no such body — an empty-vs-empty handshake delivers a STEP2 that
+	 *  integrates zero ops into the doc, so no doc-update event fires and no flush
+	 *  creates the file. The `crdt_doc_ready` announce is then the only evidence
+	 *  the note exists.
 	 *
 	 *  So after a discovery announce for a note we don't have on disk, wait out the
 	 *  handshake window: if a STEP2 had carried content it would have created the
@@ -397,6 +416,13 @@ export class SyncEngine {
 	 *  absent, the note is genuinely empty — create it from the doc's current text
 	 *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
 	async materializeEmptyDiscovered(path: string): Promise<void> {
+		if (this.syncBlocked) {
+			devLog().log(
+				"sync-blocked",
+				`materializeEmptyDiscovered short-circuited — gate closed: ${path}`,
+			);
+			return;
+		}
 		if (!path.endsWith(".md")) return;
 		const normalized = normalizePath(path);
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
@@ -764,10 +790,22 @@ export class SyncEngine {
 				await this.api.deleteNote(file.path);
 			}
 			this.goOnline();
+			// Tear down the CRDT doc so a note recreated at the same path starts
+			// fresh — no ghost lineage that would resurrect stale content (P1-3).
+			// Gate on .md (not !isBinary) so .canvas files never hit removeDoc:
+			// canvas files are syncable text but not CRDT-managed.
+			if (file.path.endsWith(".md")) {
+				await this.crdt?.removeDoc(file.path);
+				this.crdtEnrollment?.reset(file.path);
+			}
 		} catch (e) {
-			// 404 means already deleted — treat as success
+			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
+				if (file.path.endsWith(".md")) {
+					await this.crdt?.removeDoc(file.path);
+					this.crdtEnrollment?.reset(file.path);
+				}
 				return;
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
@@ -803,10 +841,21 @@ export class SyncEngine {
 					await this.api.deleteNote(oldPath);
 				}
 				this.goOnline();
+				// Tear down the CRDT doc for the OLD path so the lineage is gone
+				// once the note moves to its new path (P1-3: no ghost on rename).
+				// Gate on .md (not !isBinary) so .canvas renames never hit removeDoc.
+				if (oldPath.endsWith(".md")) {
+					await this.crdt?.removeDoc(oldPath);
+					this.crdtEnrollment?.reset(oldPath);
+				}
 			} catch (e) {
-				// 404 means already deleted — treat as success
+				// 404 means already deleted — treat as success; still tear down CRDT.
 				if (isHttpStatus(e, 404)) {
 					this.goOnline();
+					if (oldPath.endsWith(".md")) {
+						await this.crdt?.removeDoc(oldPath);
+						this.crdtEnrollment?.reset(oldPath);
+					}
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
@@ -1124,6 +1173,25 @@ export class SyncEngine {
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
 						return true;
+					}
+					// DECLINED (handshake gate): applyLocalEdit returned false because
+					// the doc is empty and the STEP2 has not yet arrived this session.
+					// The legacy push path below owns this write convergently (backend
+					// PR #846 merges legacy REST pushes into the server CRDT doc). We
+					// still enroll the markdown path so the STEP1 handshake kicks off —
+					// once STEP2 arrives, markSynced fires and future edits route through
+					// CRDT normally. Guard: enroll is md-gated + idempotent per session.
+					//
+					// Oversized notes must NOT be enrolled: enrolling elicits a STEP2
+					// that encodes the full doc history (~+33% base64), which for a note
+					// at or above MAX_CRDT_NOTE_BYTES can exceed Bandit's 8 MB WebSocket
+					// frame limit (1009 close) and — because the bloated doc persists in
+					// IndexedDB — re-crashes on every reconnect, killing all vault sync.
+					if (
+						file.extension === "md" &&
+						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+					) {
+						this.crdtEnrollment?.enroll(file.path);
 					}
 				}
 
@@ -2077,6 +2145,14 @@ export class SyncEngine {
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
 			}
+			// Tear down the CRDT doc for md paths regardless of whether the file
+			// existed locally. The ghost lineage in IDB/memory must be cleared so a
+			// note recreated at the same path starts fresh (P1-3). Non-md paths are
+			// never CRDT-managed — skip them to avoid spurious removeDoc overhead.
+			if (normalized.endsWith(".md")) {
+				await this.crdt?.removeDoc(normalized);
+				this.crdtEnrollment?.reset(normalized);
+			}
 			return;
 		}
 
@@ -2101,6 +2177,10 @@ export class SyncEngine {
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
 					// (disk write re-enters handleModify → applyLocalEdit).
+					// P2-1: If this device is not currently observing the note's CRDT room
+					// (enrolled elsewhere after last tab-open), enroll now to receive live
+					// updates. enroll() is idempotent — already-enrolled notes are no-ops.
+					this.crdtEnrollment?.enroll(event.path);
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP

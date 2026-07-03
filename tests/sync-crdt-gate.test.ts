@@ -169,6 +169,57 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
+	test("upsert for markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/test.md",
+			timestamp: Date.now(),
+			content: "# From server",
+			title: "test",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Legacy disk-write must NOT happen — CRDT owns the content
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		// But enroll MUST be called to ensure the device stays in sync if not currently observing
+		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
+	});
+
+	test("upsert for non-markdown or attachments CRDT-gated does NOT call enroll", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		// canvas file — not .md — should not enroll
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/board.canvas",
+			timestamp: Date.now(),
+			content: '{"nodes":[],"edges":[]}',
+			title: "board",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Non-markdown: enroll NOT called
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
 	test("upsert hash-only (no inline content) does NOT call getNote/vault.create when CRDT active (markdown)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
@@ -187,7 +238,12 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 
 	test("DELETE event for markdown still processes via legacy path when CRDT active", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		// removeDoc is called by handleStreamEvent on md deletes (Task 5 teardown).
+		// Provide a stub so the call doesn't throw at runtime.
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async () => {}),
+			removeDoc: mock(async () => {}),
+		} as any);
 
 		const existingFile = new TFile("Notes/delete-me.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
@@ -393,8 +449,10 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		void oldManager?.destroy();
 		crdtManager = null;
 
-		// Wire new manager (re-creation)
-		const newApplyLocalEdit = mock(async () => {});
+		// Wire new manager (re-creation).
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const newApplyLocalEdit = mock(async () => true);
 		const newManager = { applyLocalEdit: newApplyLocalEdit };
 
 		// Verify old manager got its destroy called
@@ -471,7 +529,9 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 
 	test("with CRDT manager set (non-null vaultId case), markdown pushNote is skipped", async () => {
 		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
 		const file = new TFile("note.md");
@@ -529,8 +589,10 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 	test("after onCrdtJoined fires (setCrdtManager called), CRDT path is active and legacy is gated", async () => {
 		const engine = createEngine();
 
-		// Simulate the sequence from main.ts: manager is wired only after join
-		const applyLocalEdit = mock(async () => {});
+		// Simulate the sequence from main.ts: manager is wired only after join.
+		// applyLocalEdit must return true so routeModify treats the edit as consumed
+		// and does not fall through to pushNote (handshake-gate fix).
+		const applyLocalEdit = mock(async () => true);
 		const manager = { applyLocalEdit } as any;
 
 		// Before join: manager not set
@@ -588,5 +650,177 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 
 		// Legacy must apply the change now that CRDT is down
 		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/remote.md", "# After reconnect");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// P0-2 — sync gate blocks all CRDT inbound paths
+// ---------------------------------------------------------------------------
+
+/** Access private recentlyFlushed map via type cast (same pattern as seedSyncState). */
+function getRecentlyFlushed(engine: SyncEngine): Map<string, number> {
+	return (engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed;
+}
+
+describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
+	test("flushFromCrdt does NOT call vault.modify when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// Simulate existing file on disk
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+
+		await engine.flushFromCrdt("Notes/target.md", "remote content");
+
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("flushFromCrdt does NOT call vault.create when syncBlocked (discovery path)", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// No file on disk — discovery path
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/new.md", "remote content");
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("flushFromCrdt does NOT mark recentlyFlushed when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
+
+		// recentlyFlushed must be empty — a gated flush must leave no echo-suppression residue
+		expect(getRecentlyFlushed(engine).has("Notes/echo-test.md")).toBe(false);
+	});
+
+	test("a blocked flushFromCrdt leaves no echo-suppression: subsequent handleModify for same path is NOT suppressed", async () => {
+		const engine = createEngine();
+		// No CRDT manager — so handleModify uses the legacy path where recentlyFlushed matters
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
+
+		// Now unblock and verify handleModify proceeds (not echo-suppressed)
+		engine.setSyncBlocked(false);
+
+		const file = new TFile("Notes/echo-test.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// pushNote should have been called — the file was NOT echo-suppressed
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+
+	test("flushFromCrdt still works (writes disk) when syncBlocked is false", async () => {
+		const engine = createEngine();
+
+		const existingFile = new TFile("Notes/ok.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+
+		await engine.flushFromCrdt("Notes/ok.md", "new content");
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(existingFile, "new content");
+	});
+});
+
+describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
+	test("materializeEmptyDiscovered does NOT create a file when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		// File not on disk — would normally trigger creation
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("materializeEmptyDiscovered does NOT mark recentlyFlushed when syncBlocked", async () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		expect(getRecentlyFlushed(engine).has("Notes/empty.md")).toBe(false);
+	});
+
+	test("materializeEmptyDiscovered still works when syncBlocked is false", async () => {
+		const engine = createEngine();
+
+		// File not on disk (simulating discovery)
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		// No CRDT manager → projectedText falls back to ""
+		engine.setCrdtManager(null as any);
+
+		await engine.materializeEmptyDiscovered("Notes/empty.md");
+
+		// Should create the file (empty content)
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// C1 — onCrdtDocReady gate: isSyncBlocked() must suppress enrollment
+// The actual guard is in main.ts (channel.onCrdtDocReady lambda). These tests
+// verify the gate predicate (isSyncBlocked) and the downstream side-effects
+// (enroll + materializeEmptyDiscovered) that must NOT fire when blocked.
+// ---------------------------------------------------------------------------
+
+describe("C1 — onCrdtDocReady: isSyncBlocked suppresses enrollment and materialization", () => {
+	test("isSyncBlocked() returns true when sync gate is closed", () => {
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+		expect(engine.isSyncBlocked()).toBe(true);
+	});
+
+	test("isSyncBlocked() returns false when sync gate is open", () => {
+		const engine = createEngine();
+		// Default is unblocked
+		expect(engine.isSyncBlocked()).toBe(false);
+	});
+
+	test("enrollment enroll is NOT called when gate is closed (simulating onCrdtDocReady with guard)", async () => {
+		// Mirrors the guard added to main.ts channel.onCrdtDocReady:
+		//   if (this.syncEngine.isSyncBlocked()) return;
+		// This test drives the same predicate + enrollment side-effect to confirm
+		// the guard prevents enrollment during gated-period discovery.
+		const engine = createEngine();
+		engine.setSyncBlocked(true);
+		const crdt = { removeDoc: mock(), applyLocalEdit: mock() };
+		const enrollment = { enroll: mock(), reset: mock() };
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+
+		// Simulate what main.ts onCrdtDocReady does — gate first, then enroll.
+		if (!engine.isSyncBlocked()) {
+			enrollment.enroll("Notes/discovered.md");
+		}
+
+		expect(enrollment.enroll).not.toHaveBeenCalled();
+	});
+
+	test("enrollment enroll IS called when gate is open (simulating onCrdtDocReady after accept)", () => {
+		const engine = createEngine();
+		// Gate is open (default)
+		const enrollment = { enroll: mock(), reset: mock() };
+		engine.setCrdtEnrollment(enrollment as any);
+
+		if (!engine.isSyncBlocked()) {
+			enrollment.enroll("Notes/discovered.md");
+		}
+
+		expect(enrollment.enroll).toHaveBeenCalledWith("Notes/discovered.md");
 	});
 });
