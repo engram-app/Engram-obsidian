@@ -13,6 +13,11 @@ export interface RemoteLogEntry {
 	stack?: string;
 	plugin_version: string;
 	platform: string;
+	conn_id?: string;
+	device_id?: string;
+	vault_id?: string;
+	seq?: number;
+	diagnostic?: boolean;
 }
 
 type PushFn = (entries: RemoteLogEntry[]) => Promise<void>;
@@ -29,6 +34,10 @@ export class RemoteLogger {
 	private pluginVersion = "";
 	private platform = "";
 	private flushing = false;
+	private connId: string | null = null;
+	private deviceId: string | null = null;
+	private vaultId: string | null = null;
+	private seq = 0;
 
 	configure(pushFn: PushFn, pluginVersion: string, platform: string): void {
 		this.pushFn = pushFn;
@@ -56,6 +65,21 @@ export class RemoteLogger {
 
 	info(category: string, message: string): void {
 		this.addEntry("info", category, message);
+	}
+
+	setConnId(id: string | null): void {
+		this.connId = id;
+	}
+
+	setClientContext(deviceId: string | null, vaultId: string | null): void {
+		this.deviceId = deviceId;
+		this.vaultId = vaultId;
+	}
+
+	/** Diagnostic-flagged info entry (verbose firehose). The backend ships
+	 *  diagnostic entries to Loki even at info level. */
+	diag(category: string, message: string): void {
+		this.addEntry("info", category, message, undefined, true);
 	}
 
 	async flush(): Promise<void> {
@@ -89,6 +113,7 @@ export class RemoteLogger {
 		category: string,
 		message: string,
 		stack?: string,
+		diagnostic?: boolean,
 	): void {
 		if (!this.enabled || !this.pushFn) return;
 
@@ -99,8 +124,13 @@ export class RemoteLogger {
 			message,
 			plugin_version: this.pluginVersion,
 			platform: this.platform,
+			seq: this.seq++,
 		};
 		if (stack) entry.stack = stack;
+		if (this.connId) entry.conn_id = this.connId;
+		if (this.deviceId) entry.device_id = this.deviceId;
+		if (this.vaultId) entry.vault_id = this.vaultId;
+		if (diagnostic) entry.diagnostic = true;
 
 		this.buffer.push(entry);
 
@@ -134,6 +164,9 @@ interface NoopLogger {
 	error(category: string, message: string, stack?: string): void;
 	warn(category: string, message: string): void;
 	info(category: string, message: string): void;
+	diag(category: string, message: string): void;
+	setConnId(id: string | null): void;
+	setClientContext(deviceId: string | null, vaultId: string | null): void;
 	flush(): Promise<void>;
 	destroy(): Promise<void>;
 	setEnabled(enabled: boolean): void;
@@ -144,6 +177,9 @@ const _noop: NoopLogger = {
 	error() {},
 	warn() {},
 	info() {},
+	diag() {},
+	setConnId() {},
+	setClientContext() {},
 	async flush() {},
 	async destroy() {},
 	setEnabled() {},

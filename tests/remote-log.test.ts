@@ -2,7 +2,13 @@
  * Tests for remote-log.ts — RemoteLogger buffer, flush, threshold, ring buffer.
  */
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
-import { RemoteLogger, destroyRemoteLog, initRemoteLog, rlog } from "../src/remote-log";
+import {
+	RemoteLogger,
+	type RemoteLogEntry,
+	destroyRemoteLog,
+	initRemoteLog,
+	rlog,
+} from "../src/remote-log";
 
 beforeEach(() => {
 	jest.clearAllMocks();
@@ -225,5 +231,48 @@ describe("remote-log singleton", () => {
 		// Should return noop (not the destroyed instance)
 		const logger = rlog();
 		expect(logger).not.toBeInstanceOf(RemoteLogger);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// conn_id / device_id / vault_id / seq / diag
+// ---------------------------------------------------------------------------
+
+function makeLogger() {
+	const sent: RemoteLogEntry[] = [];
+	const logger = new RemoteLogger();
+	logger.configure(
+		async (entries) => {
+			sent.push(...entries);
+		},
+		"1.2.3",
+		"desktop",
+	);
+	logger.setEnabled(true);
+	return { logger, sent };
+}
+
+describe("RemoteLogger client context + seq + diag", () => {
+	test("stamps conn_id, device_id, vault_id and a monotonic seq", async () => {
+		const { logger, sent } = makeLogger();
+		logger.setClientContext("dev-1", "vault-9");
+		logger.setConnId("conn-abc");
+
+		logger.info("channel", "first");
+		logger.info("channel", "second");
+		await logger.flush();
+
+		expect(sent[0].conn_id).toBe("conn-abc");
+		expect(sent[0].device_id).toBe("dev-1");
+		expect(sent[0].vault_id).toBe("vault-9");
+		expect(sent[1].seq).toBe((sent[0].seq as number) + 1);
+	});
+
+	test("diag() marks entries diagnostic", async () => {
+		const { logger, sent } = makeLogger();
+		logger.diag("vault", "modify path=a.md bytes=12");
+		await logger.flush();
+		expect(sent[0].diagnostic).toBe(true);
+		expect(sent[0].level).toBe("info");
 	});
 });
