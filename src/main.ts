@@ -1132,6 +1132,11 @@ export default class EngramSyncPlugin extends Plugin {
 		this.noteStream = null;
 		this.channelEpoch++;
 
+		// Keep the remote logger's client context current. vaultId can change on a
+		// vault switch or first-run registration after onload, so refresh it here;
+		// setupNoteStream fires on every settings save, reconnect, or vault switch.
+		rlog().setClientContext(this.deviceId, this.settings.vaultId);
+
 		const hasAuth = this.settings.apiKey || this.settings.refreshToken;
 		if (!this.settings.apiUrl || !hasAuth) {
 			this.liveConnected = false;
