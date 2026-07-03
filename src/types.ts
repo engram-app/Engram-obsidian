@@ -14,6 +14,9 @@ export interface EngramSyncSettings {
 	conflictViewMode: "unified" | "side-by-side";
 	/** Send errors and sync lifecycle events to the server for remote debugging */
 	remoteLoggingEnabled: boolean;
+	/** Verbose diagnostic firehose: log vault/editor + WS/sync events (metadata
+	 *  only, never content). Requires remoteLoggingEnabled. Default OFF. */
+	diagnosticMode: boolean;
 	/** How to handle conflicts that can't be auto-merged.
 	 *  "auto" creates a conflict copy file (non-blocking).
 	 *  "modal" shows the interactive diff modal. */
@@ -91,6 +94,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	debounceMs: 2000,
 	conflictViewMode: "unified",
 	remoteLoggingEnabled: false,
+	diagnosticMode: false,
 	conflictResolution: "auto",
 	enableCrdt: true,
 	vaultId: null,

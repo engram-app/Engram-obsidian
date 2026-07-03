@@ -2933,6 +2933,7 @@ var DEFAULT_SETTINGS = {
   debounceMs: 2e3,
   conflictViewMode: "unified",
   remoteLoggingEnabled: !1,
+  diagnosticMode: !1,
   conflictResolution: "auto",
   enableCrdt: !0,
   vaultId: null,
@@ -4495,6 +4496,12 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
   }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Remote logging").setDesc("Send sync events to the server for remote debugging.").addToggle(
     (toggle) => toggle.setValue(plugin.settings.remoteLoggingEnabled).onChange(async (value) => {
       plugin.settings.remoteLoggingEnabled = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Diagnostic mode (verbose)").setDesc(
+    "Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires Remote logging. Leave off for normal use."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
+      plugin.settings.diagnosticMode = value, await plugin.saveSettings();
     })
   ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
