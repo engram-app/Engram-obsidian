@@ -95,7 +95,7 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	new Setting(containerEl)
 		.setName("Diagnostic mode (verbose)")
 		.setDesc(
-			"Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires Remote logging. Leave off for normal use.",
+			"Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use.",
 		)
 		.addToggle((toggle) =>
 			toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {

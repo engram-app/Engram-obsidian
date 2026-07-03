@@ -55,6 +55,7 @@ import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtManager } from "./crdt/manager";
 import { ensureDocSchema } from "./crdt/schema";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
@@ -371,6 +372,8 @@ export default class EngramSyncPlugin extends Plugin {
 				this.crdtLiveViews?.refresh();
 			}),
 		);
+
+		registerDiagnostics(this);
 
 		// Flush remote logs when app goes to background (mobile)
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
