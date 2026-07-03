@@ -80,6 +80,9 @@ export class NoteChannel {
 	private apiKey: string;
 	private userId: string;
 	private vaultId: string | null;
+	private deviceId: string | null;
+	/** Current connection id, minted fresh per physical socket. */
+	private connId: string | null = null;
 	/** Opt-in gate for the `crdt:` topic. When false the channel never joins the
 	 *  CRDT topic and behaves exactly like a non-CRDT build (legacy path only). */
 	private readonly enableCrdt: boolean;
@@ -121,12 +124,14 @@ export class NoteChannel {
 		userId: string,
 		vaultId: string | null = null,
 		enableCrdt = false,
+		deviceId: string | null = null,
 	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
 		this.enableCrdt = enableCrdt;
+		this.deviceId = deviceId;
 		rlog().info(
 			"channel",
 			`NoteChannel ctor — userId=${userId} vaultId=${vaultId ?? "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`,
@@ -151,11 +156,13 @@ export class NoteChannel {
 		apiKey: string,
 		userId: string,
 		vaultId: string | null = null,
+		deviceId: string | null = this.deviceId,
 	): void {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		this.deviceId = deviceId;
 		// A backend/vault switch invalidates the window the old server advertised;
 		// the next sync join reply re-populates it (or the default floor applies).
 		this.reconnectJitterMaxMs = null;
@@ -206,6 +213,8 @@ export class NoteChannel {
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
 		this.setConnected(false);
+		this.connId = null;
+		rlog().setConnId(null);
 		// Drop the cached server window so a later connect to a different backend
 		// that advertises none falls back to the default floor, not a stale value.
 		this.reconnectJitterMaxMs = null;
@@ -227,6 +236,11 @@ export class NoteChannel {
 	 *  sync join reply has been received. Exposed for tests. */
 	getReconnectJitterMaxMs(): number | null {
 		return this.reconnectJitterMaxMs;
+	}
+
+	/** Current connection id (fresh per physical socket). Exposed for tests. */
+	getConnId(): string | null {
+		return this.connId;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -266,8 +280,18 @@ export class NoteChannel {
 			`openSocket — token.length=${token.length} source=${source} userId=${this.userId} vaultId=${this.vaultId ?? "null"}`,
 		);
 
+		this.connId = crypto.randomUUID();
+		rlog().setConnId(this.connId);
+
 		const wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss");
-		const url = `${wsBase}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`;
+		const params = new URLSearchParams({
+			token,
+			vsn: "2.0.0",
+			conn_id: this.connId,
+		});
+		if (this.deviceId) params.set("device_id", this.deviceId);
+		if (this.vaultId) params.set("vault_id", this.vaultId);
+		const url = `${wsBase}/socket/websocket?${params.toString()}`;
 
 		const openedAt = Date.now();
 		let opened = false;
