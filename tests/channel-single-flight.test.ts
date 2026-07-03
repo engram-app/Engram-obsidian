@@ -9,7 +9,7 @@
  * state, leaving the client believing it is connected while the server
  * holds no subscription.
  */
-import { beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
 import { NoteChannel } from "../src/channel";
 
@@ -38,6 +38,10 @@ class MockWebSocket {
 /** Captured window.setTimeout callbacks so tests can fire timers manually. */
 let capturedTimeouts: Array<() => void> = [];
 
+// Bun runs test files in a shared process: the fake window MUST be restored
+// or downstream files' real timers (SyncEngine debounce tests) never fire.
+const originalWindow = (globalThis as any).window;
+
 function installFakeWindow(): void {
 	(globalThis as any).window = {
 		setTimeout: (cb: () => void, _ms: number): number => {
@@ -49,6 +53,10 @@ function installFakeWindow(): void {
 		clearInterval: (_id: number): void => {},
 	};
 }
+
+afterAll(() => {
+	(globalThis as any).window = originalWindow;
+});
 
 function simulateSyncJoinAck(ws: MockWebSocket, topic: string): void {
 	ws.onmessage?.({
