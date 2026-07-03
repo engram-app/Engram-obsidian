@@ -825,6 +825,10 @@ var RemoteLogger = class {
     this.pluginVersion = "";
     this.platform = "";
     this.flushing = !1;
+    this.connId = null;
+    this.deviceId = null;
+    this.vaultId = null;
+    this.seq = 0;
   }
   configure(pushFn, pluginVersion, platform) {
     this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
@@ -840,6 +844,17 @@ var RemoteLogger = class {
   }
   info(category, message) {
     this.addEntry("info", category, message);
+  }
+  setConnId(id2) {
+    this.connId = id2;
+  }
+  setClientContext(deviceId, vaultId) {
+    this.deviceId = deviceId, this.vaultId = vaultId;
+  }
+  /** Diagnostic-flagged info entry (verbose firehose). The backend ships
+   *  diagnostic entries to Loki even at info level. */
+  diag(category, message) {
+    this.addEntry("info", category, message, void 0, !0);
   }
   async flush() {
     if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
@@ -857,7 +872,7 @@ var RemoteLogger = class {
   async destroy() {
     this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
   }
-  addEntry(level, category, message, stack) {
+  addEntry(level, category, message, stack, diagnostic) {
     if (!this.enabled || !this.pushFn) return;
     let entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
@@ -865,9 +880,10 @@ var RemoteLogger = class {
       category,
       message,
       plugin_version: this.pluginVersion,
-      platform: this.platform
+      platform: this.platform,
+      seq: this.seq++
     };
-    stack && (entry.stack = stack), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
+    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
   }
   startTimer() {
     this.stopTimer(), this.flushTimer = window.setInterval(() => {
@@ -883,6 +899,12 @@ var RemoteLogger = class {
   warn() {
   },
   info() {
+  },
+  diag() {
+  },
+  setConnId() {
+  },
+  setClientContext() {
   },
   async flush() {
   },
@@ -1320,7 +1342,7 @@ function fullJitterDelay(windowMs, rng = Math.random) {
   return rng() * windowMs;
 }
 var NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1) {
+  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
     this.ws = null;
     this.ref = 0;
     this.joinRef = "1";
@@ -1348,6 +1370,8 @@ var NoteChannel = class {
      * Reset to null on every joinChannel() call (each (re)connect issues a new join).
      */
     this.crdtJoinMsgRef = null;
+    /** Current connection id, minted fresh per physical socket. */
+    this.connId = null;
     this.authProvider = null;
     this.onEvent = null;
     this.onStatusChange = null;
@@ -1378,7 +1402,7 @@ var NoteChannel = class {
      *  transient error after a previously successful join) degrades to the legacy
      *  pushNote path rather than silently dropping edits into a dead transport. */
     this.onCrdtJoinError = null;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, rlog().info(
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1389,8 +1413,8 @@ var NoteChannel = class {
   async getAuthToken() {
     return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
   }
-  updateConfig(baseUrl, apiKey, userId, vaultId = null) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.reconnectJitterMaxMs = null;
+  updateConfig(baseUrl, apiKey, userId, vaultId = null, deviceId = this.deviceId) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
   }
   get topic() {
     return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
@@ -1411,7 +1435,7 @@ var NoteChannel = class {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
   }
   isConnected() {
     return this.connected;
@@ -1426,6 +1450,10 @@ var NoteChannel = class {
    *  sync join reply has been received. Exposed for tests. */
   getReconnectJitterMaxMs() {
     return this.reconnectJitterMaxMs;
+  }
+  /** Current connection id (fresh per physical socket). Exposed for tests. */
+  getConnId() {
+    return this.connId;
   }
   // ---------------------------------------------------------------------------
   // Private
@@ -1453,8 +1481,14 @@ var NoteChannel = class {
     rlog().info(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
-    );
-    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`, openedAt = Date.now(), opened = !1;
+    ), this.connId = crypto.randomUUID(), rlog().setConnId(this.connId);
+    let wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss"), params2 = new URLSearchParams({
+      token,
+      vsn: "2.0.0",
+      conn_id: this.connId
+    });
+    this.deviceId && params2.set("device_id", this.deviceId), this.vaultId && params2.set("vault_id", this.vaultId);
+    let url = `${wsBase}/socket/websocket?${params2.toString()}`, openedAt = Date.now(), opened = !1;
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
@@ -20370,7 +20404,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
       import_obsidian24.Platform.isMobile ? "mobile" : "desktop"
-    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), rlog().info(
+    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian24.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
@@ -20851,7 +20885,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         this.settings.apiKey,
         user.id,
         this.settings.vaultId,
-        this.settings.enableCrdt
+        this.settings.enableCrdt,
+        this.deviceId
       );
       if (channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);

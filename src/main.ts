@@ -220,6 +220,7 @@ export default class EngramSyncPlugin extends Plugin {
 			Platform.isMobile ? "mobile" : "desktop",
 		);
 		remoteLogger.setEnabled(this.settings.remoteLoggingEnabled);
+		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
 			"lifecycle",
 			`Plugin loading | v${this.manifest.version} | ${Platform.isMobile ? "mobile" : "desktop"}`,
@@ -1188,6 +1189,7 @@ export default class EngramSyncPlugin extends Plugin {
 					user.id,
 					this.settings.vaultId,
 					this.settings.enableCrdt,
+					this.deviceId,
 				);
 
 				channel.onEvent = (event) => {
