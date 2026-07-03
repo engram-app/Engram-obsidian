@@ -1341,7 +1341,7 @@ function clampReconnectJitter(raw) {
 function fullJitterDelay(windowMs, rng = Math.random) {
   return rng() * windowMs;
 }
-var NoteChannel = class {
+var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
     this.ws = null;
     this.ref = 0;
@@ -1501,23 +1501,26 @@ var NoteChannel = class {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
-    }, this.ws.onclose = () => {
-      var _a2, _b2;
+    }, this.ws.onclose = (evt) => {
+      var _a2, _b2, _c2, _d2, _e2;
       this.clearTimers(), this.ws = null, this.setConnected(!1);
-      let sinceOpen = Date.now() - openedAt;
-      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
+      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt;
+      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_d2 = this.authProvider) != null && _d2.invalidateAccessToken) && (rlog().warn(
         "channel",
-        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating`
+        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating - ${closeInfo}`
       ), this.authProvider.invalidateAccessToken()), opened) {
-        let jitterWindow = (_b2 = this.reconnectJitterMaxMs) != null ? _b2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        let jitterWindow = (_e2 = this.reconnectJitterMaxMs) != null ? _e2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
-          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`
+          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
         ), this.reconnectTimer = window.setTimeout(() => {
           this.openSocket();
         }, delay);
       } else
-        rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
+        rlog().info(
+          "channel",
+          `Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`
+        ), this.scheduleReconnect();
     };
   }
   joinChannel() {
@@ -1642,7 +1645,17 @@ var NoteChannel = class {
   }
   send(msg) {
     var _a;
-    ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN && this.ws.send(JSON.stringify(msg));
+    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+      let frame = JSON.stringify(msg);
+      if (frame.length > LARGE_FRAME_WARN_BYTES) {
+        let eventType = typeof msg[3] == "string" ? msg[3] : "unknown";
+        rlog().warn(
+          "channel",
+          `Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`
+        );
+      }
+      this.ws.send(frame);
+    }
   }
   setConnected(value) {
     var _a;

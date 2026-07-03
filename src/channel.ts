@@ -38,6 +38,14 @@ export function fullJitterDelay(windowMs: number, rng: () => number = Math.rando
 	return rng() * windowMs;
 }
 
+/** Warn threshold for an outbound frame's serialized size, in bytes (JSON string
+ *  length is used as a fine proxy for actual byte size). Bandit's default
+ *  transport `max_frame_size` is ~8 MB - a frame anywhere near that limit gets
+ *  the WHOLE socket 1009-killed by the server, not just the oversize message
+ *  rejected (see docs/context/ws-zombie-channel-diagnosis.md). 1 MB gives
+ *  plenty of runway to catch a growing note/attachment before it gets close. */
+const LARGE_FRAME_WARN_BYTES = 1_000_000;
+
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -323,10 +331,18 @@ export class NoteChannel {
 			rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
 		};
 
-		this.ws.onclose = () => {
+		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
 			this.setConnected(false);
+
+			// Real browsers always pass a CloseEvent here; some lightweight test
+			// doubles call onclose with no argument. Fall back to "unknown" rather
+			// than crash so this stays observability-only. `code=1009` is the
+			// signal that matters: Bandit's transport killed the whole socket
+			// because a frame exceeded max_frame_size (see LARGE_FRAME_WARN_BYTES
+			// above and docs/context/ws-zombie-channel-diagnosis.md).
+			const closeInfo = `code=${evt?.code ?? "unknown"} reason="${evt?.reason ?? ""}" wasClean=${evt?.wasClean ?? "unknown"}`;
 
 			// Phoenix UserSocket rejects expired/invalid JWTs at the WS upgrade,
 			// which the browser surfaces as an immediate close without ever
@@ -343,7 +359,7 @@ export class NoteChannel {
 			) {
 				rlog().warn(
 					"channel",
-					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating`,
+					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating - ${closeInfo}`,
 				);
 				this.authProvider.invalidateAccessToken();
 			}
@@ -360,11 +376,14 @@ export class NoteChannel {
 				const delay = fullJitterDelay(jitterWindow);
 				rlog().info(
 					"channel",
-					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`,
+					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`,
 				);
 				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
 			} else {
-				rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`);
+				rlog().info(
+					"channel",
+					`Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`,
+				);
 				this.scheduleReconnect();
 			}
 		};
@@ -584,7 +603,19 @@ export class NoteChannel {
 
 	private send(msg: unknown[]): void {
 		if (this.ws?.readyState === WebSocket.OPEN) {
-			this.ws.send(JSON.stringify(msg));
+			const frame = JSON.stringify(msg);
+			// Observability only - never skip or alter the send itself. Only warn
+			// above the threshold so heartbeats and small CRDT deltas don't flood
+			// the log; this is meant to catch the rare oversize frame before the
+			// transport kills the whole socket with a 1009 close.
+			if (frame.length > LARGE_FRAME_WARN_BYTES) {
+				const eventType = typeof msg[3] === "string" ? msg[3] : "unknown";
+				rlog().warn(
+					"channel",
+					`Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`,
+				);
+			}
+			this.ws.send(frame);
 		}
 	}
 
