@@ -177,14 +177,11 @@ export class CrdtManager {
 	 * Both code paths run with the default (`undefined`) origin so the resulting
 	 * update IS forwarded to the server via `onUpdate`.
 	 *
-	 * **Returns** `true` when the content was consumed by the CRDT layer (seeded
-	 * or diffed), `false` when it was declined. Declining happens when the Y.Text
-	 * is empty AND no LCA is established AND the path has not yet received its
-	 * first server sync frame (`markSynced` not yet called). In that case the
-	 * caller must fall back to the legacy push path, which the backend (PR #846)
-	 * merges convergently into the server CRDT doc; the resulting lineage arrives
-	 * via the eventual STEP2. Declining is SIDE-EFFECT-FREE — no frontmatter
-	 * write and no Y.Doc update are emitted, so the legacy path owns the write.
+	 * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
+	 * diffed, or adopted). The one non-writing path is the adopt-first gate
+	 * below, which still returns `true` ("handled, nothing to push") so the
+	 * caller never mass-re-pushes known-synced files via the legacy path on a
+	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
 	 */
 	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
 		const e = await this.entry(path);
@@ -198,23 +195,8 @@ export class CrdtManager {
 		// lineage; later real edits diff in on that shared history. Returns
 		// `true` ("handled, nothing to push") — a legacy fallback here would
 		// mass re-push every known-synced file on a fresh-IDB cold start.
-		// MUST run before the handshake gate below, which would otherwise
-		// route these same files (empty doc, no LCA, no frame yet) to legacy.
 		if (!lca && this.opts.isUnchangedSynced?.(path, diskContent)) {
 			return true;
-		}
-
-		// Handshake gate (audit P0-1): if the doc is still empty AND no LCA is
-		// established AND the server STEP2 has not yet been applied this session,
-		// decline without touching the doc. A fresh-IDB device must not seed a
-		// second local lineage before the server's history arrives — the two
-		// full-text insertions would merge into duplicated body text vault-wide.
-		// Once `markSynced` fires (first inbound sync frame), an empty doc is a
-		// genuine server-empty note and seeding is safe. Reached only when the
-		// disk content actually differs from the last-synced state (or was never
-		// synced) — i.e. genuinely NEW content the legacy path must deliver.
-		if (e.text.length === 0 && !lca && !this.isSynced(path)) {
-			return false;
 		}
 
 		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);

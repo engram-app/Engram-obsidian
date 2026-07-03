@@ -1,11 +1,14 @@
 /**
- * Tests: handshake-gated seeding (audit P0-1 — double-seed body duplication).
+ * Tests: seed lifecycle + markSynced bookkeeping.
  *
- * Verifies that applyLocalEdit DECLINES to seed an empty doc until markSynced
- * has been called for the path (i.e. the server's STEP2 has been applied).
- * This prevents fresh-IndexedDB devices from minting a second local lineage
- * before the server's lineage arrives, which would merge into duplicated body
- * text vault-wide.
+ * NOTE: the original "handshake gate" (applyLocalEdit declining to seed an empty
+ * doc until markSynced) was REMOVED. It was redundant with the adopt-first seed
+ * gate (#161, isUnchangedSynced), which prevents lineage doubling (#846) by
+ * ADOPTING the server's existing lineage rather than refusing to seed. The
+ * handshake gate additionally dropped the legitimate base when offline-capture
+ * (0f9155e) retired the legacy markdown path, so it was a live-sync regression.
+ * These tests now assert the surviving behaviour: seeding an empty doc proceeds,
+ * populated docs diff, and the markSynced/isSynced lifecycle round-trips.
  */
 import { describe, expect, it } from "bun:test";
 import "fake-indexeddb/auto";
@@ -48,16 +51,16 @@ function makeManagerSameStore(m: CrdtManager) {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe("handshake-gated seeding", () => {
-	it("declines to seed an empty doc before markSynced", async () => {
+describe("seed lifecycle", () => {
+	it("seeds an empty doc on first local edit", async () => {
 		const m = makeManager();
 		const consumed = await m.applyLocalEdit("a.md", "hello world");
-		expect(consumed).toBe(false);
-		expect(await m.getText("a.md")).toBe(""); // nothing seeded
+		expect(consumed).toBe(true);
+		expect(await m.getText("a.md")).toBe("hello world");
 		await m.destroy();
 	});
 
-	it("seeds after markSynced when the doc is still empty", async () => {
+	it("seeds an empty doc even after markSynced", async () => {
 		const m = makeManager();
 		m.markSynced("a.md");
 		const consumed = await m.applyLocalEdit("a.md", "hello world");
@@ -66,7 +69,7 @@ describe("handshake-gated seeding", () => {
 		await m.destroy();
 	});
 
-	it("diffs into a populated doc even without markSynced (remote lineage established)", async () => {
+	it("diffs into a populated doc (remote lineage established)", async () => {
 		const m = makeManager();
 		m.markSynced("a.md");
 		await m.applyLocalEdit("a.md", "hello world");
@@ -74,7 +77,7 @@ describe("handshake-gated seeding", () => {
 
 		// New manager session for the same store simulates restart: doc has history.
 		const m2 = makeManagerSameStore(m);
-		// No markSynced — but the doc is non-empty, so the gate must let the diff through.
+		// No markSynced — the doc is non-empty, so the diff must land on it.
 		const consumed = await m2.applyLocalEdit("a.md", "hello brave world");
 		expect(consumed).toBe(true);
 		expect(await m2.getText("a.md")).toBe("hello brave world");
@@ -108,30 +111,12 @@ describe("handshake-gated seeding", () => {
 		expect(m.isSynced("e.md")).toBe(false);
 	});
 
-	it("hasLca=true bypasses the seed gate", async () => {
+	it("hasLca=true seeds via the diff path", async () => {
 		// hasLca=true means "another device established the base", so seedOnce skips
-		// and the gate check (`e.text.length === 0 && !lca && !this.isSynced(path)`)
-		// is not triggered. The diff path runs unconditionally — consumed === true.
+		// and the diff path runs unconditionally — consumed === true.
 		const m = makeManager();
-		// No markSynced; hasLca=true means the caller knows history exists elsewhere.
 		const consumed = await m.applyLocalEdit("f.md", "some content", true);
-		// hasLca=true → gate not triggered → diff path runs → consumed
 		expect(consumed).toBe(true);
-		await m.destroy();
-	});
-
-	it("declining is side-effect-free: no frontmatter write, no update emitted", async () => {
-		const updates: Uint8Array[] = [];
-		const m = new CrdtManager({
-			dbPrefix: `sfx-${Math.random().toString(36).slice(2)}`,
-			onUpdate: (_id, u) => updates.push(u),
-			onFlushToDisk: async () => {},
-		});
-		// No markSynced — should decline without emitting any updates.
-		const consumed = await m.applyLocalEdit("g.md", "---\ntitle: T\n---\nbody");
-		expect(consumed).toBe(false);
-		expect(updates).toHaveLength(0); // no onUpdate calls
-		expect(await m.getText("g.md")).toBe(""); // Y.Text still empty
 		await m.destroy();
 	});
 });

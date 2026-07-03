@@ -18940,22 +18940,17 @@ var _CrdtManager = class _CrdtManager {
    * Both code paths run with the default (`undefined`) origin so the resulting
    * update IS forwarded to the server via `onUpdate`.
    *
-   * **Returns** `true` when the content was consumed by the CRDT layer (seeded
-   * or diffed), `false` when it was declined. Declining happens when the Y.Text
-   * is empty AND no LCA is established AND the path has not yet received its
-   * first server sync frame (`markSynced` not yet called). In that case the
-   * caller must fall back to the legacy push path, which the backend (PR #846)
-   * merges convergently into the server CRDT doc; the resulting lineage arrives
-   * via the eventual STEP2. Declining is SIDE-EFFECT-FREE — no frontmatter
-   * write and no Y.Doc update are emitted, so the legacy path owns the write.
+   * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
+   * diffed, or adopted). The one non-writing path is the adopt-first gate
+   * below, which still returns `true` ("handled, nothing to push") so the
+   * caller never mass-re-pushes known-synced files via the legacy path on a
+   * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
    */
   async applyLocalEdit(path, diskContent, hasLca) {
     var _a, _b;
     let e = await this.entry(path), lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
     if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, path, diskContent)))
       return !0;
-    if (e.text.length === 0 && !lca && !this.isSynced(path))
-      return !1;
     let { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
     return this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body), !0;
   }
