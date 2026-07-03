@@ -4843,7 +4843,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, CRDT_EMPTY_DISCOVERY_SETTLE_MS = 1500, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -5073,21 +5073,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
     }
   }
-  /** Materialize an EMPTY note discovered via `crdt_doc_ready`.
+  /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
-   *  A non-empty note discovered on this device materializes through the normal
-   *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
-   *  applying it fires a doc-update event, and that writes the file. An EMPTY
-   *  note has no such body — an empty-vs-empty handshake delivers a STEP2 that
-   *  integrates zero ops into the doc, so no doc-update event fires and no flush
-   *  creates the file. The `crdt_doc_ready` announce is then the only evidence
-   *  the note exists.
+   *  A non-empty note materializes through the normal update→`flushFromCrdt`
+   *  path: our discovery STEP1 elicits a STEP2 carrying the body, applying it
+   *  fires a doc-update event, and that writes the file. An EMPTY note has no
+   *  body — its STEP2 integrates zero ops, so no doc-update event fires and no
+   *  flush creates the file.
    *
-   *  So after a discovery announce for a note we don't have on disk, wait out the
-   *  handshake window: if a STEP2 had carried content it would have created the
-   *  file by now (the existence check short-circuits). If the file is still
-   *  absent, the note is genuinely empty — create it from the doc's current text
-   *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
+   *  This is called from `CrdtChannel.onEmptyStep2`, i.e. only after an inbound
+   *  STEP2 has left the doc empty — the authoritative "genuinely empty" signal.
+   *  So there is no timer and no guessing: create the file from the doc's
+   *  current text (empty) if it is still absent. Keying off the STEP2 (not a
+   *  wall-clock window) is what closes the #547 race where a slow content STEP2
+   *  let a premature empty file land on disk under load. Gated to `.md`
+   *  (mirrors the CRDT-markdown-only rule). */
   async materializeEmptyDiscovered(path) {
     if (this.syncBlocked) {
       devLog().log(
@@ -5098,9 +5098,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!path.endsWith(".md")) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
-    if (this.app.vault.getAbstractFileByPath(normalized) || (await new Promise(
-      (resolve) => window.setTimeout(resolve, CRDT_EMPTY_DISCOVERY_SETTLE_MS)
-    ), this.app.vault.getAbstractFileByPath(normalized))) return;
+    if (this.app.vault.getAbstractFileByPath(normalized)) return;
     let text2 = this.crdt ? await this.crdt.projectedText(path) : "";
     await this.flushFromCrdt(path, text2);
   }
@@ -19154,7 +19152,7 @@ var CrdtChannel = class {
      * reconnect via `resetSync` to allow a fresh handshake.
      */
     this.initiated = /* @__PURE__ */ new Set();
-    this.mgr = opts.manager, this.transport = opts.send;
+    this.mgr = opts.manager, this.transport = opts.send, this.onEmptyStep2 = opts.onEmptyStep2;
   }
   /**
    * Begin the handshake for `path`: advertise our state via a `messageSync`
@@ -19219,10 +19217,13 @@ var CrdtChannel = class {
    * and leaves text.length === 0, so the non-empty guard correctly declines to mark.
    */
   async handleFrame(path, b64) {
+    var _a;
     let doc2 = await this.mgr.getDoc(path), decoder = createDecoder(fromB64(b64));
     if (readVarUint(decoder) !== MESSAGE_SYNC) return;
     let replyEncoder = createEncoder();
-    writeVarUint(replyEncoder, MESSAGE_SYNC), readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN), (await this.mgr.getText(path)).length > 0 && this.mgr.markSynced(path), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
+    writeVarUint(replyEncoder, MESSAGE_SYNC);
+    let syncType = readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN);
+    (await this.mgr.getText(path)).length > 0 ? this.mgr.markSynced(path) : syncType === messageYjsSyncStep2 && ((_a = this.onEmptyStep2) == null || _a.call(this, path)), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
   }
 };
 
@@ -20913,7 +20914,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           }
         }), this.crdtChannel = new CrdtChannel({
           manager: this.crdtManager,
-          send: (docId, frame) => channel.sendCrdt(docId, frame)
+          send: (docId, frame) => channel.sendCrdt(docId, frame),
+          // An inbound STEP2 that leaves the doc empty is the server's
+          // authoritative "genuinely empty note" signal — materialize the
+          // file off the handshake (not a timer) so a slow content STEP2 can
+          // never race a premature empty file onto disk (#547).
+          onEmptyStep2: (path) => {
+            this.syncEngine.materializeEmptyDiscovered(path);
+          }
         }), this.crdtEnrollment = new CrdtEnrollment({
           startSync: (path) => {
             var _a2, _b2;
@@ -20948,7 +20956,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           var _a2;
           if (this.syncEngine.isSyncBlocked()) return;
           let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path), this.syncEngine.materializeEmptyDiscovered(path);
+          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path);
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",

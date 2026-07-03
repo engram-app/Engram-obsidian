@@ -1332,6 +1332,13 @@ export default class EngramSyncPlugin extends Plugin {
 					this.crdtChannel = new CrdtChannel({
 						manager: this.crdtManager,
 						send: (docId, frame) => channel.sendCrdt(docId, frame),
+						// An inbound STEP2 that leaves the doc empty is the server's
+						// authoritative "genuinely empty note" signal — materialize the
+						// file off the handshake (not a timer) so a slow content STEP2 can
+						// never race a premature empty file onto disk (#547).
+						onEmptyStep2: (path) => {
+							void this.syncEngine.materializeEmptyDiscovered(path);
+						},
 					});
 					// Enrollment tracker: calls startSync(path) exactly once per note
 					// per channel session so the state-vector handshake fires and the
@@ -1394,11 +1401,13 @@ export default class EngramSyncPlugin extends Plugin {
 						if (this.syncEngine.isSyncBlocked()) return;
 						const prefix = `${dbPrefix}/`;
 						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
+						// Enroll → send our discovery STEP1. The server answers with a
+						// STEP2: a content STEP2 flushes the body via the update path; an
+						// EMPTY STEP2 (genuinely-empty note) is materialized off the
+						// handshake in CrdtChannel.onEmptyStep2. This replaces the former
+						// wall-clock materialize timer, which raced a slow content STEP2
+						// and wrote a premature empty file under load (#547).
 						this.crdtEnrollment?.enroll(path);
-						// An EMPTY note discovered here produces no STEP2 (empty-vs-empty
-						// handshake is suppressed by the server), so the update→flush path
-						// never creates the file. Materialize it explicitly if it stays absent.
-						void this.syncEngine.materializeEmptyDiscovered(path);
 					};
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT

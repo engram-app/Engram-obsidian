@@ -1,7 +1,33 @@
 import { expect, test } from "bun:test";
 import "fake-indexeddb/auto";
+import * as encoding from "lib0/encoding";
+import * as syncProtocol from "y-protocols/sync";
+import * as Y from "yjs";
 import { CrdtChannel } from "../../src/crdt/channel";
 import { CrdtManager } from "../../src/crdt/manager";
+
+/** Encode a raw `messageSync` frame (outer tag 0) wrapping `write(encoder)`.
+ *  Used to feed handleFrame the exact STEP1/STEP2 frames the SERVER emits —
+ *  the paired-channel harness can't, because its `length > 1` reply gate drops
+ *  an empty STEP2 that the real y_ex SharedDoc sends un-gated (see #547). */
+function syncFrame(write: (enc: encoding.Encoder) => void): string {
+	const enc = encoding.createEncoder();
+	encoding.writeVarUint(enc, 0); // MESSAGE_SYNC
+	write(enc);
+	const bytes = encoding.toUint8Array(enc);
+	return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
+}
+
+function soloChannel(dbPrefix: string): { chan: CrdtChannel; mgr: CrdtManager; empties: string[] } {
+	const mgr = new CrdtManager({ dbPrefix, onUpdate: () => {}, onFlushToDisk: async () => {} });
+	const empties: string[] = [];
+	const chan = new CrdtChannel({
+		manager: mgr,
+		send: () => {},
+		onEmptyStep2: (p) => empties.push(p),
+	});
+	return { chan, mgr, empties };
+}
 
 let _pairSeq = 0;
 
@@ -154,4 +180,48 @@ test("concurrent edits on both peers converge", async () => {
 	expect(a).toContain("B");
 	await mgrA.destroy();
 	await mgrB.destroy();
+});
+
+// ---------------------------------------------------------------------------
+// #547 — down-sync empty-note materialization driven by the STEP2 handshake,
+// NOT a wall-clock timer. An inbound STEP2 that leaves the doc empty is the
+// server's authoritative "this note is genuinely empty" signal → materialize.
+// A content STEP2 (or a STEP1 frame) must never trigger it, so a slow content
+// STEP2 can no longer race a premature empty file onto disk.
+// ---------------------------------------------------------------------------
+
+test("handleFrame: empty STEP2 from server signals onEmptyStep2", async () => {
+	const { chan, mgr, empties } = soloChannel("empty-step2");
+	// The server's reply to a fresh peer's STEP1 for a truly-empty note.
+	await chan.handleFrame(
+		"empty.md",
+		syncFrame((e) => syncProtocol.writeSyncStep2(e, new Y.Doc())),
+	);
+	expect(empties).toEqual(["empty.md"]);
+	await mgr.destroy();
+});
+
+test("handleFrame: content STEP2 does NOT signal onEmptyStep2", async () => {
+	const { chan, mgr, empties } = soloChannel("content-step2");
+	const src = new Y.Doc();
+	src.getText("content").insert(0, "hello world");
+	await chan.handleFrame(
+		"content.md",
+		syncFrame((e) => syncProtocol.writeSyncStep2(e, src)),
+	);
+	expect(await mgr.getText("content.md")).toBe("hello world");
+	expect(empties).toEqual([]);
+	await mgr.destroy();
+});
+
+test("handleFrame: inbound STEP1 (empty) never signals onEmptyStep2", async () => {
+	// Only a STEP2 is authoritative. A server STEP1 (which asks us for OUR state)
+	// leaves the doc empty but must not be mistaken for an empty-note confirmation.
+	const { chan, mgr, empties } = soloChannel("step1-noempty");
+	await chan.handleFrame(
+		"s1.md",
+		syncFrame((e) => syncProtocol.writeSyncStep1(e, new Y.Doc())),
+	);
+	expect(empties).toEqual([]);
+	await mgr.destroy();
 });

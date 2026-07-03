@@ -10,6 +10,14 @@ export interface CrdtChannelOptions {
 	manager: CrdtManager;
 	/** Transport: send a base64-encoded y-protocols frame for `docId`. */
 	send: (docId: string, frame: string) => void;
+	/**
+	 * Called when an inbound STEP2 leaves the doc EMPTY — the server's
+	 * authoritative signal that the note is genuinely empty (an empty note has no
+	 * content-bearing update, so nothing else creates its file on disk). Wired to
+	 * `SyncEngine.materializeEmptyDiscovered` so the empty file is written off the
+	 * handshake rather than a wall-clock timer (the #547 down-sync race).
+	 */
+	onEmptyStep2?: (path: string) => void;
 }
 
 function toB64(bytes: Uint8Array): string {
@@ -24,6 +32,7 @@ function fromB64(b64: string): Uint8Array {
 export class CrdtChannel {
 	private readonly mgr: CrdtManager;
 	private readonly transport: (docId: string, frame: string) => void;
+	private readonly onEmptyStep2?: (path: string) => void;
 	/**
 	 * Per-doc guard: each doc advertises STEP1 at most once per session, so two
 	 * empty peers cannot ping-pong STEP1 forever. Mirrors the y-websocket/Relay
@@ -35,6 +44,7 @@ export class CrdtChannel {
 	constructor(opts: CrdtChannelOptions) {
 		this.mgr = opts.manager;
 		this.transport = opts.send;
+		this.onEmptyStep2 = opts.onEmptyStep2;
 	}
 
 	/**
@@ -115,12 +125,28 @@ export class CrdtChannel {
 
 		const replyEncoder = encoding.createEncoder();
 		encoding.writeVarUint(replyEncoder, MESSAGE_SYNC);
-		syncProtocol.readSyncMessage(decoder, replyEncoder, doc, REMOTE_ORIGIN);
+		const syncType = syncProtocol.readSyncMessage(decoder, replyEncoder, doc, REMOTE_ORIGIN);
+
+		const textLen = (await this.mgr.getText(path)).length;
 
 		// Mark synced only when the doc has content after applying the frame.
 		// An empty STEP2 integrates no ops and must not mark — see JSDoc above.
-		if ((await this.mgr.getText(path)).length > 0) {
+		if (textLen > 0) {
 			this.mgr.markSynced(path);
+		} else if (syncType === syncProtocol.messageYjsSyncStep2) {
+			// A STEP2 that leaves the doc empty is the server's authoritative
+			// "this note is genuinely empty" reply to our discovery STEP1: an empty
+			// note produces no content-bearing update, so the update→flush path
+			// never creates the file. Materialize it here, off the handshake.
+			//
+			// This replaces the former wall-clock timer (#547): the timer guessed
+			// emptiness from absence-of-frame, and under load a merely-slow content
+			// STEP2 let a premature EMPTY file race onto disk before the real body
+			// arrived. Keying off the STEP2 message type removes the race — a
+			// non-empty note's first STEP2 always carries its full content
+			// (textLen > 0, handled above), and a STEP1 frame is not a STEP2, so
+			// neither can reach this branch.
+			this.onEmptyStep2?.(path);
 		}
 
 		if (encoding.length(replyEncoder) > 1) {

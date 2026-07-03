@@ -14,6 +14,7 @@
  *   - Call `reset(path)` from the channel `onStatusChange` reconnect path so a
  *     fresh handshake fires after a disconnect (mirrors `CrdtChannel.resetSync`).
  */
+
 export class CrdtEnrollment {
 	/** Paths that have already received a `startSync` call this session. */
 	private readonly enrolled = new Set<string>();

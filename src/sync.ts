@@ -159,12 +159,6 @@ function countFolders(paths: Iterable<string>): number {
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
-/** How long (ms) to wait after a `crdt_doc_ready` discovery announce for a note
- *  absent on disk before treating it as empty and materializing an empty file.
- *  A content-bearing STEP2 round-trips well under this on any real connection, so
- *  the window only ever elapses for a genuinely empty note. */
-const CRDT_EMPTY_DISCOVERY_SETTLE_MS = 1500;
-
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -400,21 +394,21 @@ export class SyncEngine {
 		}
 	}
 
-	/** Materialize an EMPTY note discovered via `crdt_doc_ready`.
+	/** Materialize an EMPTY note whose emptiness the server has just confirmed.
 	 *
-	 *  A non-empty note discovered on this device materializes through the normal
-	 *  update→`flushFromCrdt` path: our STEP1 elicits a STEP2 carrying the body,
-	 *  applying it fires a doc-update event, and that writes the file. An EMPTY
-	 *  note has no such body — an empty-vs-empty handshake delivers a STEP2 that
-	 *  integrates zero ops into the doc, so no doc-update event fires and no flush
-	 *  creates the file. The `crdt_doc_ready` announce is then the only evidence
-	 *  the note exists.
+	 *  A non-empty note materializes through the normal update→`flushFromCrdt`
+	 *  path: our discovery STEP1 elicits a STEP2 carrying the body, applying it
+	 *  fires a doc-update event, and that writes the file. An EMPTY note has no
+	 *  body — its STEP2 integrates zero ops, so no doc-update event fires and no
+	 *  flush creates the file.
 	 *
-	 *  So after a discovery announce for a note we don't have on disk, wait out the
-	 *  handshake window: if a STEP2 had carried content it would have created the
-	 *  file by now (the existence check short-circuits). If the file is still
-	 *  absent, the note is genuinely empty — create it from the doc's current text
-	 *  (empty). Gated to `.md` (mirrors the CRDT-markdown-only rule). */
+	 *  This is called from `CrdtChannel.onEmptyStep2`, i.e. only after an inbound
+	 *  STEP2 has left the doc empty — the authoritative "genuinely empty" signal.
+	 *  So there is no timer and no guessing: create the file from the doc's
+	 *  current text (empty) if it is still absent. Keying off the STEP2 (not a
+	 *  wall-clock window) is what closes the #547 race where a slow content STEP2
+	 *  let a premature empty file land on disk under load. Gated to `.md`
+	 *  (mirrors the CRDT-markdown-only rule). */
 	async materializeEmptyDiscovered(path: string): Promise<void> {
 		if (this.syncBlocked) {
 			devLog().log(
@@ -425,13 +419,7 @@ export class SyncEngine {
 		}
 		if (!path.endsWith(".md")) return;
 		const normalized = normalizePath(path);
-		if (this.app.vault.getAbstractFileByPath(normalized)) return;
-
-		await new Promise<void>((resolve) =>
-			window.setTimeout(resolve, CRDT_EMPTY_DISCOVERY_SETTLE_MS),
-		);
-
-		// A content-bearing STEP2 raced in and created the file — nothing to do.
+		// Already on disk — a content STEP2 created it, or the user already has it.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
 
 		const text = this.crdt ? await this.crdt.projectedText(path) : "";
