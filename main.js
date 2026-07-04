@@ -20209,6 +20209,10 @@ async function resilientReadJson(adapter, path) {
 }
 
 // src/sync-fingerprint.ts
+function channelConnectionKey(settings) {
+  let authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "";
+  return `${settings.apiUrl || ""}|${authPart}|${settings.vaultId || ""}`;
+}
 async function computeSyncFingerprint(settings) {
   let authPart = settings.refreshToken ? settings.userEmail || "" : settings.apiKey || "", vaultPart = settings.vaultId || "", input = `${authPart}|${vaultPart}`;
   if (input === "|") return "";
@@ -20326,6 +20330,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
     // getting `unauthorized` join refusals and churning the socket — dropping
     // live broadcasts that land in the reconnect gaps (#646).
     this.channelEpoch = 0;
+    /** channelConnectionKey() of the currently-live note stream, or null when no
+     *  stream is up. setupNoteStream() short-circuits when a live stream already
+     *  matches this key, so an unrelated saveSettings() (search-mode toggle, UI
+     *  pref, refresh-token rotation) no longer tears down a healthy socket + CRDT
+     *  stack. That churn was starving CRDT delivery (empty-flush clobber under a
+     *  reconnect that raced note reconciliation). */
+    this.liveChannelKey = null;
     /** Fires whenever the status bar text/state changes — used by the settings
      *  panel to keep its top status row in sync with sync engine + WebSocket
      *  connection state without requiring tab navigation. Single-slot. */
@@ -20812,7 +20823,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
   }
   setupNoteStream() {
     var _a, _b, _c, _d;
-    (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++;
+    let connectionKey = channelConnectionKey(this.settings);
+    if (this.noteStream && connectionKey === this.liveChannelKey)
+      return;
+    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++;
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());

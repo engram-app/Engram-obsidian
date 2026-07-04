@@ -1,11 +1,59 @@
 import { describe, expect, test } from "bun:test";
-import { computeSyncFingerprint } from "../src/sync-fingerprint";
+import { channelConnectionKey, computeSyncFingerprint } from "../src/sync-fingerprint";
 import type { EngramSyncSettings } from "../src/types";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 function makeSettings(overrides: Partial<EngramSyncSettings> = {}): EngramSyncSettings {
 	return { ...DEFAULT_SETTINGS, ...overrides };
 }
+
+describe("channelConnectionKey", () => {
+	const base = makeSettings({
+		apiUrl: "http://localhost:8100",
+		apiKey: "key-a",
+		vaultId: "v1",
+	});
+
+	test("same connection settings → same key", () => {
+		expect(channelConnectionKey(base)).toBe(channelConnectionKey(makeSettings(base)));
+	});
+
+	test("apiUrl change → different key (backend switch must rebuild)", () => {
+		expect(channelConnectionKey(base)).not.toBe(
+			channelConnectionKey(makeSettings({ ...base, apiUrl: "http://other:8100" })),
+		);
+	});
+
+	test("apiKey change (self-host) → different key", () => {
+		expect(channelConnectionKey(base)).not.toBe(
+			channelConnectionKey(makeSettings({ ...base, apiKey: "key-b" })),
+		);
+	});
+
+	test("vaultId change → different key", () => {
+		expect(channelConnectionKey(base)).not.toBe(
+			channelConnectionKey(makeSettings({ ...base, vaultId: "v2" })),
+		);
+	});
+
+	test("OAuth account change (userEmail) → different key", () => {
+		const a = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "a@x.com", vaultId: "v1" });
+		const b = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "b@x.com", vaultId: "v1" });
+		expect(channelConnectionKey(a)).not.toBe(channelConnectionKey(b));
+	});
+
+	test("refreshToken rotation (same account) → SAME key — token refresh must NOT rebuild", () => {
+		const a = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "a@x.com", vaultId: "v1" });
+		const b = makeSettings({ apiUrl: "u", refreshToken: "r2", userEmail: "a@x.com", vaultId: "v1" });
+		expect(channelConnectionKey(a)).toBe(channelConnectionKey(b));
+	});
+
+	test("unrelated setting change → SAME key (no needless rebuild)", () => {
+		expect(channelConnectionKey(base)).toBe(
+			channelConnectionKey(makeSettings({ ...base, searchDefaultMode: "semantic" })),
+		);
+	});
+});
 
 describe("computeSyncFingerprint", () => {
 	test("returns empty string when neither auth nor vault is set", async () => {
