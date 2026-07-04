@@ -40,6 +40,9 @@ class MockWebSocket {
 		this.onclose = null;
 	}
 }
+// Bun shares one process across test files: capture the real WebSocket so
+// afterAll can restore it (same leak class as the window swap below).
+const originalWebSocket = (globalThis as any).WebSocket;
 (globalThis as any).WebSocket = MockWebSocket;
 
 /** Captured window.setTimeout callbacks so tests can fire timers manually. */
@@ -63,6 +66,7 @@ function installFakeWindow(): void {
 
 afterAll(() => {
 	(globalThis as any).window = originalWindow;
+	(globalThis as any).WebSocket = originalWebSocket;
 });
 
 function simulateSyncJoinAck(ws: MockWebSocket, topic: string): void {
