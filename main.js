@@ -4804,13 +4804,18 @@ function threeWayMerge(base, local, remote) {
 
 // src/sync.ts
 var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+function exceedsCrdtNoteLimit(content, maxBytes) {
+  return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
+}
 async function routeModify(file, crdt, maxBytes) {
   if (!file.isMarkdown) return !1;
   let content = await file.readContent();
-  return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes ? !1 : await crdt.applyLocalEdit(file.path, content);
+  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.path, content);
 }
-async function reconcileColdStart(file, crdt, onCorruption) {
+async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_NOTE_BYTES) {
   var _a;
+  if (exceedsCrdtNoteLimit(file.diskContent, maxBytes))
+    return;
   let current;
   try {
     current = await crdt.projectedText(file.path);

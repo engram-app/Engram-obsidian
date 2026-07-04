@@ -407,6 +407,26 @@ describe("reconcileColdStart", () => {
 		expect(corrupted).toBe(false);
 	});
 
+	test("oversized note is NOT seeded or enrolled on cold start (would crash the WS frame)", async () => {
+		// The cold-start reconcile path (#162) must apply the SAME size cap as
+		// routeModify: an oversized note seeded here produces a base64 crdt_msg
+		// past Bandit's 8 MB frame limit → 1009 → and because reconcile re-runs
+		// on every reconnect, a permanent crash loop that kills all sync.
+		const applyLocalEdit = mock(async () => {});
+		const getText = mock(async () => "small");
+		const projectedText = mock(async () => "small");
+		const enroll = mock(() => {});
+		const huge = "x".repeat(5 * 1024 * 1024); // 5 MB > 4 MB cap
+		await reconcileColdStart(
+			{ path: "big.md", diskContent: huge },
+			{ applyLocalEdit, getText, projectedText, enroll } as any,
+			() => {},
+			4 * 1024 * 1024,
+		);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
 	test("disk matches Y.Doc: applyLocalEdit NOT called (already in sync)", async () => {
 		const applyLocalEdit = mock(async () => {});
 		const getText = mock(async () => "same content");
