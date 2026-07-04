@@ -463,6 +463,32 @@ describe("SyncEngine.pull", () => {
 		// the old path — resurrecting it forever (e2e test_34 / test_78 churn).
 		expect(engine.isUnchangedSynced(path, content)).toBe(true);
 	});
+
+	test("a CRDT-delivered note is trashed (not resurrected) when the server tombstones it", async () => {
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-0");
+		const path = "E2E/RenamedFolder/Old.md";
+		const content = "# Old\nCRDT-delivered body\n";
+
+		// CRDT delivers the note (this records the baseline via the fix).
+		await engine.flushFromCrdt(path, content);
+
+		// The server later deletes the old path (folder-rename cleanup). The
+		// local file still holds exactly the CRDT-delivered content — the user
+		// never edited it — so the tombstone must be honored, not resurrected.
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue(content);
+
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([syncNoteEntry({ id: "old", seq: 9, path, deleted: true, version: 2 })]),
+		);
+
+		await engine.pull();
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
 });
 
 describe("SyncEngine.handleStreamEvent", () => {
