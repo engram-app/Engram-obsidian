@@ -6292,7 +6292,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (this.crdt && normalized.endsWith(".md"))
-      return this.app.vault.getFileByPath(normalized) ? ((_e = this.crdtEnrollment) == null || _e.enroll(normalized), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), content === "" && await this.flushFromCrdt(normalized, "")), !1;
+      return this.app.vault.getFileByPath(normalized) ? ((_e = this.crdtEnrollment) == null || _e.enroll(normalized), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content)), !1;
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;

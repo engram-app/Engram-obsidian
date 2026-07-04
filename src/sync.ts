@@ -2508,17 +2508,20 @@ export class SyncEngine {
 			if (!this.app.vault.getFileByPath(normalized)) {
 				this.crdtEnrollment?.enroll(normalized);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
-				// The /changes payload already carries the body, so we know here whether
-				// the note is empty — no need to wait for a STEP2. An EMPTY note produces
-				// no STEP2 (the empty-vs-empty handshake is suppressed by the server), so
-				// the update→flush path would never create the file. Materialize it now,
-				// awaited within this pull, so a caller that pulls-then-checks (e.g.
-				// triggerFullSync) sees the file immediately. A non-empty note is left to
-				// the handshake's flushFromCrdt — avoids a transient empty file and keeps
-				// CRDT the single writer of the body.
-				if (content === "") {
-					await this.flushFromCrdt(normalized, "");
-				}
+				// The /changes payload already carries the authoritative body, so
+				// materialize it now — awaited within this pull, so a caller that
+				// pulls-then-checks (e.g. triggerFullSync) sees the file immediately.
+				//
+				// Previously only EMPTY notes were written here and non-empty ones were
+				// deferred to the CRDT seed-from-REST handshake. But that handshake can
+				// silently never complete under load (a lost STEP1/STEP2, or a room the
+				// server never seeded), stranding the note invisible forever — the
+				// renamed-note-at-a-new-path case (e2e test_10/test_34) is exactly a
+				// discovery, and deferring left the new path missing on B. We already
+				// hold the body here, so write it. CRDT stays the single writer for LIVE
+				// edits; its later STEP2 (identical content) is a harmless idempotent
+				// re-flush suppressed by markRecentlyFlushed.
+				await this.flushFromCrdt(normalized, content);
 			} else {
 				// The note already exists locally and CRDT owns its body, so we never
 				// legacy-write it here.
