@@ -863,7 +863,12 @@ function newTraceContext() {
 }
 
 // src/remote-log.ts
-var RemoteLogger = class {
+var LEVEL_SEVERITY = {
+  debug: 0,
+  info: 1,
+  warn: 2,
+  error: 3
+}, MAX_BUFFER = 200, FLUSH_INTERVAL_MS = 3e4, FLUSH_THRESHOLD = 20, RemoteLogger = class {
   constructor() {
     this.buffer = [];
     this.flushTimer = null;
@@ -876,6 +881,7 @@ var RemoteLogger = class {
     this.deviceId = null;
     this.vaultId = null;
     this.seq = 0;
+    this.levelThreshold = "info";
   }
   configure(pushFn, pluginVersion, platform) {
     this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
@@ -895,6 +901,12 @@ var RemoteLogger = class {
   setConnId(id2) {
     this.connId = id2;
   }
+  /** Set the minimum severity that ships. Entries below this level are
+   *  dropped before buffering (they never count toward the ring buffer or
+   *  flush threshold). Default "info" preserves today's behavior. */
+  setLevelThreshold(level) {
+    this.levelThreshold = level;
+  }
   setClientContext(deviceId, vaultId) {
     this.deviceId = deviceId, this.vaultId = vaultId;
   }
@@ -910,7 +922,7 @@ var RemoteLogger = class {
     try {
       await this.pushFn(batch);
     } catch (e) {
-      let space = 200 - this.buffer.length;
+      let space = MAX_BUFFER - this.buffer.length;
       space > 0 && this.buffer.unshift(...batch.slice(0, space));
     } finally {
       this.flushing = !1;
@@ -920,7 +932,7 @@ var RemoteLogger = class {
     this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
   }
   addEntry(level, category, message, stack, diagnostic) {
-    if (!this.enabled || !this.pushFn) return;
+    if (!this.enabled || !this.pushFn || LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
     let entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
       level,
@@ -930,12 +942,12 @@ var RemoteLogger = class {
       platform: this.platform,
       seq: this.seq++
     };
-    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
+    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > MAX_BUFFER && this.buffer.splice(0, this.buffer.length - MAX_BUFFER), this.buffer.length >= FLUSH_THRESHOLD && this.flush();
   }
   startTimer() {
     this.stopTimer(), this.flushTimer = window.setInterval(() => {
       this.flush();
-    }, 3e4);
+    }, FLUSH_INTERVAL_MS);
   }
   stopTimer() {
     this.flushTimer && (window.clearInterval(this.flushTimer), this.flushTimer = null);
@@ -952,6 +964,8 @@ var RemoteLogger = class {
   setConnId() {
   },
   setClientContext() {
+  },
+  setLevelThreshold() {
   },
   async flush() {
   },
@@ -3244,6 +3258,7 @@ var DEFAULT_SETTINGS = {
   ignorePatterns: "",
   debounceMs: 2e3,
   diagnosticsEnabled: !1,
+  remoteLogLevel: "info",
   vaultId: null,
   clientId: "",
   planState: null,
@@ -4856,6 +4871,17 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
   ).addToggle(
     (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
       plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian18.Setting(containerEl).setName("Diagnostics detail").setDesc(
+    "Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info."
+  ).addDropdown(
+    (dropdown) => dropdown.addOptions({
+      error: "Errors only",
+      warn: "Warnings and errors",
+      info: "Info (default)",
+      debug: "Debug (verbose)"
+    }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
+      plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
     })
   ), new import_obsidian18.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
@@ -22330,7 +22356,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
       import_obsidian26.Platform.isMobile ? "mobile" : "desktop"
-    ), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
+    ), remoteLogger.setLevelThreshold(this.settings.remoteLogLevel), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
@@ -22679,7 +22705,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     });
   }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setLevelThreshold(this.settings.remoteLogLevel), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
       if (!registered) {
         await this.applySyncGate();
         return;

@@ -16,6 +16,13 @@ export interface EngramSyncSettings {
 	 *  Collapses the former remoteLoggingEnabled / diagnosticMode / tracingEnabled
 	 *  trio (migrated in settings-migrate.ts). */
 	diagnosticsEnabled: boolean;
+	/** Minimum severity that ships while `diagnosticsEnabled` is on. Entries
+	 *  below this threshold are dropped before buffering, so they never occupy
+	 *  the ring buffer or count toward the flush threshold. This is a VOLUME
+	 *  dial, orthogonal to the on/off switch above. Default "info" preserves
+	 *  today's behavior — no emitting call site logs below info. "debug" is
+	 *  reserved for future verbose logging behind the dial. */
+	remoteLogLevel: "error" | "warn" | "info" | "debug";
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -74,6 +81,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	ignorePatterns: "",
 	debounceMs: 2000,
 	diagnosticsEnabled: false,
+	remoteLogLevel: "info",
 	vaultId: null,
 	clientId: "",
 	planState: null,
