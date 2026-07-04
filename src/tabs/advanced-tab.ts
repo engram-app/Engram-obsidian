@@ -92,6 +92,18 @@ export function renderAdvancedTab(ctx: TabContext): void {
 			}),
 		);
 
+	new Setting(containerEl)
+		.setName("Diagnostic mode (verbose)")
+		.setDesc(
+			"Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use.",
+		)
+		.addToggle((toggle) =>
+			toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
+				plugin.settings.diagnosticMode = value;
+				await plugin.saveSettings();
+			}),
+		);
+
 	// ── About ──
 	new Setting(containerEl).setName("About").setHeading();
 

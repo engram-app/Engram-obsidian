@@ -731,7 +731,7 @@ __export(main_exports, {
   default: () => EngramSyncPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian24 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
@@ -825,6 +825,10 @@ var RemoteLogger = class {
     this.pluginVersion = "";
     this.platform = "";
     this.flushing = !1;
+    this.connId = null;
+    this.deviceId = null;
+    this.vaultId = null;
+    this.seq = 0;
   }
   configure(pushFn, pluginVersion, platform) {
     this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
@@ -840,6 +844,17 @@ var RemoteLogger = class {
   }
   info(category, message) {
     this.addEntry("info", category, message);
+  }
+  setConnId(id2) {
+    this.connId = id2;
+  }
+  setClientContext(deviceId, vaultId) {
+    this.deviceId = deviceId, this.vaultId = vaultId;
+  }
+  /** Diagnostic-flagged info entry (verbose firehose). The backend ships
+   *  diagnostic entries to Loki even at info level. */
+  diag(category, message) {
+    this.addEntry("info", category, message, void 0, !0);
   }
   async flush() {
     if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
@@ -857,7 +872,7 @@ var RemoteLogger = class {
   async destroy() {
     this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
   }
-  addEntry(level, category, message, stack) {
+  addEntry(level, category, message, stack, diagnostic) {
     if (!this.enabled || !this.pushFn) return;
     let entry = {
       ts: (/* @__PURE__ */ new Date()).toISOString(),
@@ -865,9 +880,10 @@ var RemoteLogger = class {
       category,
       message,
       plugin_version: this.pluginVersion,
-      platform: this.platform
+      platform: this.platform,
+      seq: this.seq++
     };
-    stack && (entry.stack = stack), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
+    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
   }
   startTimer() {
     this.stopTimer(), this.flushTimer = window.setInterval(() => {
@@ -883,6 +899,12 @@ var RemoteLogger = class {
   warn() {
   },
   info() {
+  },
+  diag() {
+  },
+  setConnId() {
+  },
+  setClientContext() {
   },
   async flush() {
   },
@@ -1319,8 +1341,8 @@ function clampReconnectJitter(raw) {
 function fullJitterDelay(windowMs, rng = Math.random) {
   return rng() * windowMs;
 }
-var NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1) {
+var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
+  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
     this.ws = null;
     this.ref = 0;
     this.joinRef = "1";
@@ -1348,6 +1370,8 @@ var NoteChannel = class {
      * Reset to null on every joinChannel() call (each (re)connect issues a new join).
      */
     this.crdtJoinMsgRef = null;
+    /** Current connection id, minted fresh per physical socket. */
+    this.connId = null;
     this.authProvider = null;
     this.onEvent = null;
     this.onStatusChange = null;
@@ -1378,7 +1402,7 @@ var NoteChannel = class {
      *  transient error after a previously successful join) degrades to the legacy
      *  pushNote path rather than silently dropping edits into a dead transport. */
     this.onCrdtJoinError = null;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, rlog().info(
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1389,8 +1413,8 @@ var NoteChannel = class {
   async getAuthToken() {
     return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
   }
-  updateConfig(baseUrl, apiKey, userId, vaultId = null) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.reconnectJitterMaxMs = null;
+  updateConfig(baseUrl, apiKey, userId, vaultId = null, deviceId = this.deviceId) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
   }
   get topic() {
     return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
@@ -1411,7 +1435,7 @@ var NoteChannel = class {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
   }
   isConnected() {
     return this.connected;
@@ -1426,6 +1450,10 @@ var NoteChannel = class {
    *  sync join reply has been received. Exposed for tests. */
   getReconnectJitterMaxMs() {
     return this.reconnectJitterMaxMs;
+  }
+  /** Current connection id (fresh per physical socket). Exposed for tests. */
+  getConnId() {
+    return this.connId;
   }
   // ---------------------------------------------------------------------------
   // Private
@@ -1453,8 +1481,14 @@ var NoteChannel = class {
     rlog().info(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
-    );
-    let url = `${this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss")}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`, openedAt = Date.now(), opened = !1;
+    ), this.connId = crypto.randomUUID(), rlog().setConnId(this.connId);
+    let wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss"), params2 = new URLSearchParams({
+      token,
+      vsn: "2.0.0",
+      conn_id: this.connId
+    });
+    this.deviceId && params2.set("device_id", this.deviceId), this.vaultId && params2.set("vault_id", this.vaultId);
+    let url = `${wsBase}/socket/websocket?${params2.toString()}`, openedAt = Date.now(), opened = !1;
     try {
       this.ws = new WebSocket(url);
     } catch (e) {
@@ -1467,23 +1501,26 @@ var NoteChannel = class {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
-    }, this.ws.onclose = () => {
-      var _a2, _b2;
+    }, this.ws.onclose = (evt) => {
+      var _a2, _b2, _c2, _d2, _e2;
       this.clearTimers(), this.ws = null, this.setConnected(!1);
-      let sinceOpen = Date.now() - openedAt;
-      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_a2 = this.authProvider) != null && _a2.invalidateAccessToken) && (rlog().warn(
+      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt;
+      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_d2 = this.authProvider) != null && _d2.invalidateAccessToken) && (rlog().warn(
         "channel",
-        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating`
+        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating - ${closeInfo}`
       ), this.authProvider.invalidateAccessToken()), opened) {
-        let jitterWindow = (_b2 = this.reconnectJitterMaxMs) != null ? _b2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        let jitterWindow = (_e2 = this.reconnectJitterMaxMs) != null ? _e2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
-          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`
+          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
         ), this.reconnectTimer = window.setTimeout(() => {
           this.openSocket();
         }, delay);
       } else
-        rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`), this.scheduleReconnect();
+        rlog().info(
+          "channel",
+          `Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`
+        ), this.scheduleReconnect();
     };
   }
   joinChannel() {
@@ -1608,7 +1645,17 @@ var NoteChannel = class {
   }
   send(msg) {
     var _a;
-    ((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN && this.ws.send(JSON.stringify(msg));
+    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+      let frame = JSON.stringify(msg);
+      if (frame.length > LARGE_FRAME_WARN_BYTES) {
+        let eventType = typeof msg[3] == "string" ? msg[3] : "unknown";
+        rlog().warn(
+          "channel",
+          `Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`
+        );
+      }
+      this.ws.send(frame);
+    }
   }
   setConnected(value) {
     var _a;
@@ -2899,6 +2946,7 @@ var DEFAULT_SETTINGS = {
   debounceMs: 2e3,
   conflictViewMode: "unified",
   remoteLoggingEnabled: !1,
+  diagnosticMode: !1,
   conflictResolution: "auto",
   enableCrdt: !0,
   vaultId: null,
@@ -4461,6 +4509,12 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
   }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Remote logging").setDesc("Send sync events to the server for remote debugging.").addToggle(
     (toggle) => toggle.setValue(plugin.settings.remoteLoggingEnabled).onChange(async (value) => {
       plugin.settings.remoteLoggingEnabled = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Diagnostic mode (verbose)").setDesc(
+    "Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
+      plugin.settings.diagnosticMode = value, await plugin.saveSettings();
     })
   ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
@@ -20129,6 +20183,46 @@ async function ensureDocSchema(vaultId, storage, dbs) {
   return storage.setItem(markerKey, "2"), !0;
 }
 
+// src/diagnostics.ts
+var import_obsidian23 = require("obsidian");
+function formatVaultEvent(kind, path, extra) {
+  let parts = [`${kind}`, `path=${path}`];
+  if (extra)
+    for (let [k, v] of Object.entries(extra)) parts.push(`${k}=${v}`);
+  return parts.join(" ");
+}
+function registerDiagnostics(plugin) {
+  let on = () => plugin.settings.diagnosticMode, emit = (kind, path, extra) => {
+    on() && rlog().diag("vault", formatVaultEvent(kind, path, extra));
+  };
+  plugin.registerEvent(
+    plugin.app.vault.on("modify", (file) => {
+      file instanceof import_obsidian23.TFile && emit("modify", file.path, { bytes: file.stat.size });
+    })
+  ), plugin.registerEvent(
+    plugin.app.vault.on("create", (file) => {
+      file instanceof import_obsidian23.TFile && emit("create", file.path, { bytes: file.stat.size });
+    })
+  ), plugin.registerEvent(
+    plugin.app.vault.on("delete", (file) => {
+      emit("delete", file.path, { kind: file instanceof import_obsidian23.TFolder ? "folder" : "file" });
+    })
+  ), plugin.registerEvent(
+    plugin.app.vault.on("rename", (file, oldPath) => {
+      emit("rename", file.path, { from: oldPath });
+    })
+  ), plugin.registerEvent(
+    plugin.app.workspace.on("file-open", (file) => {
+      file instanceof import_obsidian23.TFile && emit("file-open", file.path);
+    })
+  ), plugin.registerEvent(
+    plugin.app.workspace.on("active-leaf-change", () => {
+      let file = plugin.app.workspace.getActiveFile();
+      file instanceof import_obsidian23.TFile && emit("leaf-change", file.path);
+    })
+  );
+}
+
 // src/explicit-folders.ts
 var ExplicitFolders = class {
   constructor(adapter, path) {
@@ -20266,14 +20360,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian23 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian24 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian23.Modal {
+}, SyncLogModal = class extends import_obsidian24.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -20310,10 +20404,10 @@ var import_obsidian23 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian24.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian25.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -20399,10 +20493,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian24.Platform.isMobile ? "mobile" : "desktop"
-    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), rlog().info(
+      import_obsidian25.Platform.isMobile ? "mobile" : "desktop"
+    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian24.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian25.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog;
@@ -20428,68 +20522,68 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         var _a2;
         if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian24.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
+        file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
         var _a2, _b;
-        this.syncEngine.handleRename(file, oldPath), file instanceof import_obsidian24.TFile && file.extension === "md" && ((_a2 = this.crdtManager) == null || _a2.renameDoc(oldPath, file.path)), (_b = this.crdtLiveViews) == null || _b.refresh();
+        this.syncEngine.handleRename(file, oldPath), file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtManager) == null || _a2.renameDoc(oldPath, file.path)), (_b = this.crdtLiveViews) == null || _b.refresh();
       })
-    ), this.registerDomEvent(activeDocument, "visibilitychange", () => {
+    ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
       var _a2;
       activeDocument.visibilityState === "hidden" && (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save());
     }), this.addCommand({
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian24.Notice("Engram sync: syncing...");
+        new import_obsidian25.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "disconnect",
       name: "Disconnect (clear login)",
       callback: async () => {
-        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian24.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian25.Notice("Engram: disconnected. Open Engram settings to reconnect.");
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian24.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian25.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian24.Notice("Engram sync: checking...");
+        new import_obsidian25.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian24.Notice(
+          new import_obsidian25.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian24.Notice("Engram sync: everything in sync");
+          new import_obsidian25.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian24.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian25.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian24.Notice("Engram sync: pulling all from server...");
+        new import_obsidian25.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian24.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian25.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -20548,8 +20642,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian24.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian25.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -20562,7 +20656,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian24.Notice("Engram sync: sync failed");
+          ), new import_obsidian25.Notice("Engram sync: sync failed");
         });
       }
     }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", () => {
@@ -20582,7 +20676,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
       var _a2, _b;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian24.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b = this.explicitFolders) == null ? void 0 : _b.load());
       let registered = !1, gateOpen = !1;
@@ -20632,7 +20726,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();
-            (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+            (pulled > 0 || pushed > 0) && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -20670,7 +20764,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -20710,7 +20804,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
   /** Absolute (vault-relative) path of the plugin's data.json. Matches the
    *  path Obsidian's own loadData()/saveData() use. */
   pluginDataPath() {
-    return (0, import_obsidian24.normalizePath)(`${this.manifest.dir}/data.json`);
+    return (0, import_obsidian25.normalizePath)(`${this.manifest.dir}/data.json`);
   }
   /** Resilient replacement for this.loadData(). Reads data.json, falling back
    *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
@@ -20737,13 +20831,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
             `Failed to heal data.json after recovery: ${errMsg(e)}`
           );
         }
-      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian24.Notice(
+      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
         "Engram: recovered plugin settings from a backup after a corrupted save."
       ));
     } else source === "corrupt" && (rlog().error(
       "lifecycle",
       "data.json and its backups were all unreadable; falling back to defaults"
-    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian24.Notice(
+    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
       "Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings."
     )));
     return data;
@@ -20783,7 +20877,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian24.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian25.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -20798,7 +20892,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian24.requestUrl)({
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian25.requestUrl)({
           url: `${apiUrl}/auth/token/refresh`,
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -20840,7 +20934,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
     let connectionKey = channelConnectionKey(this.settings);
     if (this.noteStream && connectionKey === this.liveChannelKey)
       return;
-    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++;
+    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -20863,9 +20957,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (!(view instanceof import_obsidian24.MarkdownView)) continue;
+      if (!(view instanceof import_obsidian25.MarkdownView)) continue;
       let file = view.file;
-      !(file instanceof import_obsidian24.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
+      !(file instanceof import_obsidian25.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
     }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -20884,7 +20978,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         this.settings.apiKey,
         user.id,
         this.settings.vaultId,
-        this.settings.enableCrdt
+        this.settings.enableCrdt,
+        this.deviceId
       );
       if (channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
@@ -20904,7 +20999,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
         )), (_b2 = this.crdtManager) == null || _b2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian24.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
@@ -21000,7 +21095,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian24.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian25.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(
@@ -21036,27 +21131,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian24.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
-        return new import_obsidian24.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
-        return new import_obsidian24.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -21154,7 +21249,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian24.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync preview failed", e), new import_obsidian24.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian25.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }
     });
   }
@@ -21190,7 +21285,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.pull();
-          pulled > 0 && new import_obsidian24.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic pull failed", e);
         }

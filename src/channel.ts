@@ -38,6 +38,14 @@ export function fullJitterDelay(windowMs: number, rng: () => number = Math.rando
 	return rng() * windowMs;
 }
 
+/** Warn threshold for an outbound frame's serialized size, in bytes (JSON string
+ *  length is used as a fine proxy for actual byte size). Bandit's default
+ *  transport `max_frame_size` is ~8 MB - a frame anywhere near that limit gets
+ *  the WHOLE socket 1009-killed by the server, not just the oversize message
+ *  rejected (see docs/context/ws-zombie-channel-diagnosis.md). 1 MB gives
+ *  plenty of runway to catch a growing note/attachment before it gets close. */
+const LARGE_FRAME_WARN_BYTES = 1_000_000;
+
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -80,6 +88,9 @@ export class NoteChannel {
 	private apiKey: string;
 	private userId: string;
 	private vaultId: string | null;
+	private deviceId: string | null;
+	/** Current connection id, minted fresh per physical socket. */
+	private connId: string | null = null;
 	/** Opt-in gate for the `crdt:` topic. When false the channel never joins the
 	 *  CRDT topic and behaves exactly like a non-CRDT build (legacy path only). */
 	private readonly enableCrdt: boolean;
@@ -121,12 +132,14 @@ export class NoteChannel {
 		userId: string,
 		vaultId: string | null = null,
 		enableCrdt = false,
+		deviceId: string | null = null,
 	) {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
 		this.enableCrdt = enableCrdt;
+		this.deviceId = deviceId;
 		rlog().info(
 			"channel",
 			`NoteChannel ctor — userId=${userId} vaultId=${vaultId ?? "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`,
@@ -151,11 +164,13 @@ export class NoteChannel {
 		apiKey: string,
 		userId: string,
 		vaultId: string | null = null,
+		deviceId: string | null = this.deviceId,
 	): void {
 		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
+		this.deviceId = deviceId;
 		// A backend/vault switch invalidates the window the old server advertised;
 		// the next sync join reply re-populates it (or the default floor applies).
 		this.reconnectJitterMaxMs = null;
@@ -206,6 +221,8 @@ export class NoteChannel {
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
 		this.setConnected(false);
+		this.connId = null;
+		rlog().setConnId(null);
 		// Drop the cached server window so a later connect to a different backend
 		// that advertises none falls back to the default floor, not a stale value.
 		this.reconnectJitterMaxMs = null;
@@ -227,6 +244,11 @@ export class NoteChannel {
 	 *  sync join reply has been received. Exposed for tests. */
 	getReconnectJitterMaxMs(): number | null {
 		return this.reconnectJitterMaxMs;
+	}
+
+	/** Current connection id (fresh per physical socket). Exposed for tests. */
+	getConnId(): string | null {
+		return this.connId;
 	}
 
 	// ---------------------------------------------------------------------------
@@ -266,8 +288,18 @@ export class NoteChannel {
 			`openSocket — token.length=${token.length} source=${source} userId=${this.userId} vaultId=${this.vaultId ?? "null"}`,
 		);
 
+		this.connId = crypto.randomUUID();
+		rlog().setConnId(this.connId);
+
 		const wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss");
-		const url = `${wsBase}/socket/websocket?token=${encodeURIComponent(token)}&vsn=2.0.0`;
+		const params = new URLSearchParams({
+			token,
+			vsn: "2.0.0",
+			conn_id: this.connId,
+		});
+		if (this.deviceId) params.set("device_id", this.deviceId);
+		if (this.vaultId) params.set("vault_id", this.vaultId);
+		const url = `${wsBase}/socket/websocket?${params.toString()}`;
 
 		const openedAt = Date.now();
 		let opened = false;
@@ -299,10 +331,18 @@ export class NoteChannel {
 			rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
 		};
 
-		this.ws.onclose = () => {
+		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
 			this.setConnected(false);
+
+			// Real browsers always pass a CloseEvent here; some lightweight test
+			// doubles call onclose with no argument. Fall back to "unknown" rather
+			// than crash so this stays observability-only. `code=1009` is the
+			// signal that matters: Bandit's transport killed the whole socket
+			// because a frame exceeded max_frame_size (see LARGE_FRAME_WARN_BYTES
+			// above and docs/context/ws-zombie-channel-diagnosis.md).
+			const closeInfo = `code=${evt?.code ?? "unknown"} reason="${evt?.reason ?? ""}" wasClean=${evt?.wasClean ?? "unknown"}`;
 
 			// Phoenix UserSocket rejects expired/invalid JWTs at the WS upgrade,
 			// which the browser surfaces as an immediate close without ever
@@ -319,7 +359,7 @@ export class NoteChannel {
 			) {
 				rlog().warn(
 					"channel",
-					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating`,
+					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating - ${closeInfo}`,
 				);
 				this.authProvider.invalidateAccessToken();
 			}
@@ -336,11 +376,14 @@ export class NoteChannel {
 				const delay = fullJitterDelay(jitterWindow);
 				rlog().info(
 					"channel",
-					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms)`,
+					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`,
 				);
 				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
 			} else {
-				rlog().info("channel", `Channel closed, reconnecting in ${this.reconnectMs}ms`);
+				rlog().info(
+					"channel",
+					`Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`,
+				);
 				this.scheduleReconnect();
 			}
 		};
@@ -560,7 +603,19 @@ export class NoteChannel {
 
 	private send(msg: unknown[]): void {
 		if (this.ws?.readyState === WebSocket.OPEN) {
-			this.ws.send(JSON.stringify(msg));
+			const frame = JSON.stringify(msg);
+			// Observability only - never skip or alter the send itself. Only warn
+			// above the threshold so heartbeats and small CRDT deltas don't flood
+			// the log; this is meant to catch the rare oversize frame before the
+			// transport kills the whole socket with a 1009 close.
+			if (frame.length > LARGE_FRAME_WARN_BYTES) {
+				const eventType = typeof msg[3] === "string" ? msg[3] : "unknown";
+				rlog().warn(
+					"channel",
+					`Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`,
+				);
+			}
+			this.ws.send(frame);
 		}
 	}
 

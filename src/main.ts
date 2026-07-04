@@ -55,6 +55,7 @@ import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtManager } from "./crdt/manager";
 import { ensureDocSchema } from "./crdt/schema";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
@@ -228,6 +229,7 @@ export default class EngramSyncPlugin extends Plugin {
 			Platform.isMobile ? "mobile" : "desktop",
 		);
 		remoteLogger.setEnabled(this.settings.remoteLoggingEnabled);
+		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
 			"lifecycle",
 			`Plugin loading | v${this.manifest.version} | ${Platform.isMobile ? "mobile" : "desktop"}`,
@@ -378,6 +380,8 @@ export default class EngramSyncPlugin extends Plugin {
 				this.crdtLiveViews?.refresh();
 			}),
 		);
+
+		registerDiagnostics(this);
 
 		// Flush remote logs when app goes to background (mobile)
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
@@ -1148,6 +1152,11 @@ export default class EngramSyncPlugin extends Plugin {
 		this.noteStream = null;
 		this.channelEpoch++;
 
+		// Keep the remote logger's client context current. vaultId can change on a
+		// vault switch or first-run registration after onload, so refresh it here;
+		// setupNoteStream fires on every settings save, reconnect, or vault switch.
+		rlog().setClientContext(this.deviceId, this.settings.vaultId);
+
 		const hasAuth = this.settings.apiKey || this.settings.refreshToken;
 		if (!this.settings.apiUrl || !hasAuth) {
 			this.liveConnected = false;
@@ -1208,6 +1217,7 @@ export default class EngramSyncPlugin extends Plugin {
 					user.id,
 					this.settings.vaultId,
 					this.settings.enableCrdt,
+					this.deviceId,
 				);
 
 				channel.onEvent = (event) => {
