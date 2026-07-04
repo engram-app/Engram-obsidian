@@ -1,13 +1,20 @@
 /**
  * Tests for channel.ts socket single-flight discipline.
  *
- * Root cause of the e2e-clerk zombie-channel flake family (backend #875/#879):
- * openSocket() could run re-entrantly — a connect() call racing the async
- * auth-token fetch, or a stale reconnect timer firing after an external
- * connect() — creating two live WebSockets whose handlers fight over
- * this.ws/connected. The orphan's onclose clobbers the current socket's
- * state, leaving the client believing it is connected while the server
- * holds no subscription.
+ * Defensive fix for a latent re-entrancy race in openSocket(): it could run
+ * re-entrantly — a connect() racing the async auth-token fetch, or a stale
+ * reconnect timer firing after an external connect() — creating two live
+ * WebSockets whose handlers fight over this.ws/connected. The orphan's
+ * onclose clobbers the current socket's state, leaving the client believing
+ * it is connected while the server holds no subscription.
+ *
+ * NOTE on provenance: this was originally filed as the root cause of the
+ * e2e-clerk delivery-flake family, but later investigation (backend #908)
+ * found that family was largely TEST rerun-safety (session-scoped fixtures +
+ * the deliberate hash-equal broadcast-skip), not this race, and this fix did
+ * not change those flakes. The race is still a real hazard; with suite-wide
+ * client logging now on (backend #909) the "openSocket skipped" breadcrumb
+ * makes it observable in CI if it ever actually fires.
  */
 import { afterAll, beforeEach, describe, expect, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
