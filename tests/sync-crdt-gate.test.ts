@@ -669,6 +669,32 @@ function getRecentlyFlushed(engine: SyncEngine): Map<string, number> {
 	return (engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed;
 }
 
+describe("flushFromCrdt — idempotent: skips rewrite when disk already matches", () => {
+	test("does NOT call vault.modify when on-disk content already equals the flush content", async () => {
+		const engine = createEngine();
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+		// Disk already holds exactly what we're about to flush (identical re-push).
+		(mockApp.vault.cachedRead as any).mockResolvedValue("# Same\n\nbody");
+
+		await engine.flushFromCrdt("Notes/target.md", "# Same\n\nbody");
+
+		// No redundant write → no mtime bump, no modify echo (e2e test_78).
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("DOES call vault.modify when on-disk content differs", async () => {
+		const engine = createEngine();
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+		(mockApp.vault.cachedRead as any).mockResolvedValue("# Old\n\nbody");
+
+		await engine.flushFromCrdt("Notes/target.md", "# New\n\nbody");
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(existingFile, "# New\n\nbody");
+	});
+});
+
 describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
 	test("flushFromCrdt does NOT call vault.modify when syncBlocked", async () => {
 		const engine = createEngine();

@@ -5071,11 +5071,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    this.markRecentlyFlushed(normalized);
-    try {
-      file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content);
-    } catch (e) {
-      rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+    if (!(file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)) {
+      this.markRecentlyFlushed(normalized);
+      try {
+        file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content);
+      } catch (e) {
+        rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+      }
     }
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.

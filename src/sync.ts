@@ -397,6 +397,14 @@ export class SyncEngine {
 		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
+		// Idempotency: skip the write when the file already holds exactly this
+		// content. An identical re-push re-flushes the same CRDT body; rewriting it
+		// needlessly bumps mtime and emits a modify echo, which reads as a spurious
+		// local change (e2e test_78 hash-only). No write → nothing to echo-suppress,
+		// so we also skip markRecentlyFlushed.
+		if (file instanceof TFile && (await this.app.vault.cachedRead(file)) === content) {
+			return;
+		}
 		this.markRecentlyFlushed(normalized);
 		try {
 			if (file instanceof TFile) {
