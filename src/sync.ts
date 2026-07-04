@@ -441,6 +441,31 @@ export class SyncEngine {
 		// Already on disk — a content STEP2 created it, or the user already has it.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
 
+		// An empty STEP2 is USUALLY the server's authoritative "genuinely empty"
+		// reply. Under load it can instead mean "content is in REST/DB but the
+		// note's CRDT room hasn't been seeded yet" — the author pushed via REST
+		// before its Y.Doc update reached the server. Materializing empty then
+		// races the real body and strands a permanently-empty file on this device
+		// (e2e test_38/test_43). Disambiguate against REST: if the server note has
+		// content, this empty STEP2 is stale — write the REST body, not an empty
+		// file. Proper fix is server-side (seed the Y.Doc from REST on first room
+		// open); this is the client-side race-closer.
+		try {
+			const note = await this.api.getNote(path);
+			if (note.content && note.content.length > 0) {
+				await this.flushFromCrdt(path, note.content);
+				return;
+			}
+		} catch (e) {
+			// REST unreachable, or a genuine 404 for a note not on the server yet.
+			// Fall through to the empty-materialize below — a genuinely empty note
+			// must still appear on disk even when this cross-check can't run.
+			rlog().warn(
+				"crdt",
+				`materializeEmptyDiscovered: getNote failed for ${path}, materializing empty: ${errMsg(e)}`,
+			);
+		}
+
 		const text = this.crdt ? await this.crdt.projectedText(path) : "";
 		await this.flushFromCrdt(path, text);
 	}

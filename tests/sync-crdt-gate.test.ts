@@ -763,10 +763,56 @@ describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
 		// No CRDT manager → projectedText falls back to ""
 		engine.setCrdtManager(null as any);
+		// Server also has no content → genuinely empty.
+		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/empty.md", content: "" });
 
 		await engine.materializeEmptyDiscovered("Notes/empty.md");
 
 		// Should create the file (empty content)
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+});
+
+describe("materializeEmptyDiscovered — transient-empty STEP2 race guard", () => {
+	test("writes the REST body (NOT empty) when the server note has content", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any); // CRDT doc empty → projectedText ""
+		// Server DID receive A's REST push — the empty STEP2 is stale, not authoritative.
+		(mockApi.getNote as any).mockResolvedValueOnce({
+			path: "Notes/race.md",
+			content: "server body v1",
+		});
+
+		await engine.materializeEmptyDiscovered("Notes/race.md");
+
+		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/race.md");
+		const createArgs = (mockApp.vault.create as any).mock.calls[0];
+		expect(createArgs).toBeDefined();
+		expect(createArgs[1]).toContain("server body v1");
+	});
+
+	test("writes empty when the server confirms the note is genuinely empty", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any);
+		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/blank.md", content: "" });
+
+		await engine.materializeEmptyDiscovered("Notes/blank.md");
+
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect((mockApp.vault.create as any).mock.calls[0][1]).toBe("");
+	});
+
+	test("falls back to empty-materialize when getNote fails (offline / 404)", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any);
+		(mockApi.getNote as any).mockRejectedValueOnce(new Error("404"));
+
+		await engine.materializeEmptyDiscovered("Notes/gone.md");
+
+		// A genuinely-empty note must still materialize even if REST is unreachable.
 		expect(mockApp.vault.create).toHaveBeenCalled();
 	});
 });

@@ -5104,6 +5104,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!path.endsWith(".md")) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
+    try {
+      let note = await this.api.getNote(path);
+      if (note.content && note.content.length > 0) {
+        await this.flushFromCrdt(path, note.content);
+        return;
+      }
+    } catch (e) {
+      rlog().warn(
+        "crdt",
+        `materializeEmptyDiscovered: getNote failed for ${path}, materializing empty: ${errMsg(e)}`
+      );
+    }
     let text2 = this.crdt ? await this.crdt.projectedText(path) : "";
     await this.flushFromCrdt(path, text2);
   }
