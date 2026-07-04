@@ -60,7 +60,7 @@ import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
-import { computeSyncFingerprint } from "./sync-fingerprint";
+import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
 import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
@@ -141,6 +141,14 @@ export default class EngramSyncPlugin extends Plugin {
 	// getting `unauthorized` join refusals and churning the socket — dropping
 	// live broadcasts that land in the reconnect gaps (#646).
 	private channelEpoch = 0;
+
+	/** channelConnectionKey() of the currently-live note stream, or null when no
+	 *  stream is up. setupNoteStream() short-circuits when a live stream already
+	 *  matches this key, so an unrelated saveSettings() (search-mode toggle, UI
+	 *  pref, refresh-token rotation) no longer tears down a healthy socket + CRDT
+	 *  stack. That churn was starving CRDT delivery (empty-flush clobber under a
+	 *  reconnect that raced note reconciliation). */
+	private liveChannelKey: string | null = null;
 
 	/** Fires whenever the status bar text/state changes — used by the settings
 	 *  panel to keep its top status row in sync with sync engine + WebSocket
@@ -1101,6 +1109,18 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	setupNoteStream(): void {
+		// Short-circuit when a live stream already matches the current connection
+		// identity (backend + account + vault). saveSettings() calls this on EVERY
+		// settings write — a search-mode toggle or an OAuth refresh-token rotation
+		// would otherwise tear down and rebuild a healthy socket + CRDT stack. That
+		// reconnect churn raced note reconciliation and clobbered live docs (empty
+		// flush on a transient disconnect). Only rebuild when the identity changes.
+		const connectionKey = channelConnectionKey(this.settings);
+		if (this.noteStream && connectionKey === this.liveChannelKey) {
+			return;
+		}
+		this.liveChannelKey = connectionKey;
+
 		// Tear down any existing CRDT instances before disconnecting the channel.
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
 		// IndexeddbPersistence listeners — each overwrites the references but the

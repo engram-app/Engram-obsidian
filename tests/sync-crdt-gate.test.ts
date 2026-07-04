@@ -300,9 +300,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 });
 
 describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
-	test("applyChange returns false and skips disk write for markdown when CRDT active", async () => {
+	test("applyChange skips legacy disk write for an ALREADY-LOCAL markdown note (CRDT owns live edits)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		engine.setCrdtEnrollment({ enroll: mock((_p: string) => {}) } as any);
+		// Note already exists on disk → CRDT owns its body; the pull must not
+		// legacy-write it (only discovery materializes; live edits flow via CRDT).
+		(mockApp.vault.getFileByPath as any).mockReturnValue({ path: "Notes/test.md" });
 
 		const result = await engine.applyChange({
 			path: "Notes/test.md",
@@ -321,13 +325,16 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
-	test("applyChange enrolls a not-yet-local markdown note into CRDT (discovery)", async () => {
+	test("applyChange materializes a not-yet-local markdown note AND enrolls it (discovery)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
 		// getFileByPath returns null by default → the note does not exist locally,
-		// so this pull is a discovery: enroll it so the CRDT handshake pulls the body.
+		// so this pull is a discovery. The /changes payload already carries the body,
+		// so materialize it directly instead of deferring to the CRDT seed-from-REST
+		// handshake (which can silently never complete under load — stranding the
+		// note invisible; e2e test_10/test_34 rename discovery).
 
 		const result = await engine.applyChange({
 			path: "Notes/discovered.md",
@@ -341,11 +348,11 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// Still no legacy disk write — CRDT owns the body — but it IS enrolled.
+		// Materialized from the payload we already hold, AND enrolled for live edits.
 		expect(result).toBe(false);
 		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");
 	});
 
 	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
@@ -662,6 +669,32 @@ function getRecentlyFlushed(engine: SyncEngine): Map<string, number> {
 	return (engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed;
 }
 
+describe("flushFromCrdt — idempotent: skips rewrite when disk already matches", () => {
+	test("does NOT call vault.modify when on-disk content already equals the flush content", async () => {
+		const engine = createEngine();
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+		// Disk already holds exactly what we're about to flush (identical re-push).
+		(mockApp.vault.cachedRead as any).mockResolvedValue("# Same\n\nbody");
+
+		await engine.flushFromCrdt("Notes/target.md", "# Same\n\nbody");
+
+		// No redundant write → no mtime bump, no modify echo (e2e test_78).
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("DOES call vault.modify when on-disk content differs", async () => {
+		const engine = createEngine();
+		const existingFile = new TFile("Notes/target.md");
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(existingFile);
+		(mockApp.vault.cachedRead as any).mockResolvedValue("# Old\n\nbody");
+
+		await engine.flushFromCrdt("Notes/target.md", "# New\n\nbody");
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(existingFile, "# New\n\nbody");
+	});
+});
+
 describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
 	test("flushFromCrdt does NOT call vault.modify when syncBlocked", async () => {
 		const engine = createEngine();
@@ -763,10 +796,56 @@ describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
 		// No CRDT manager → projectedText falls back to ""
 		engine.setCrdtManager(null as any);
+		// Server also has no content → genuinely empty.
+		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/empty.md", content: "" });
 
 		await engine.materializeEmptyDiscovered("Notes/empty.md");
 
 		// Should create the file (empty content)
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+});
+
+describe("materializeEmptyDiscovered — transient-empty STEP2 race guard", () => {
+	test("writes the REST body (NOT empty) when the server note has content", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any); // CRDT doc empty → projectedText ""
+		// Server DID receive A's REST push — the empty STEP2 is stale, not authoritative.
+		(mockApi.getNote as any).mockResolvedValueOnce({
+			path: "Notes/race.md",
+			content: "server body v1",
+		});
+
+		await engine.materializeEmptyDiscovered("Notes/race.md");
+
+		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/race.md");
+		const createArgs = (mockApp.vault.create as any).mock.calls[0];
+		expect(createArgs).toBeDefined();
+		expect(createArgs[1]).toContain("server body v1");
+	});
+
+	test("writes empty when the server confirms the note is genuinely empty", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any);
+		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/blank.md", content: "" });
+
+		await engine.materializeEmptyDiscovered("Notes/blank.md");
+
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect((mockApp.vault.create as any).mock.calls[0][1]).toBe("");
+	});
+
+	test("falls back to empty-materialize when getNote fails (offline / 404)", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		engine.setCrdtManager(null as any);
+		(mockApi.getNote as any).mockRejectedValueOnce(new Error("404"));
+
+		await engine.materializeEmptyDiscovered("Notes/gone.md");
+
+		// A genuinely-empty note must still materialize even if REST is unreachable.
 		expect(mockApp.vault.create).toHaveBeenCalled();
 	});
 });
