@@ -1402,6 +1402,11 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  transient error after a previously successful join) degrades to the legacy
      *  pushNote path rather than silently dropping edits into a dead transport. */
     this.onCrdtJoinError = null;
+    // ---------------------------------------------------------------------------
+    // Private
+    // ---------------------------------------------------------------------------
+    /** Guards openSocket against re-entry across its async token fetch. */
+    this.opening = !1;
     this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
@@ -1455,10 +1460,19 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   getConnId() {
     return this.connId;
   }
-  // ---------------------------------------------------------------------------
-  // Private
-  // ---------------------------------------------------------------------------
   async openSocket() {
+    if (this.ws || this.opening) {
+      rlog().info("channel", "openSocket skipped \u2014 socket already present or opening");
+      return;
+    }
+    this.opening = !0;
+    try {
+      await this.openSocketInner();
+    } finally {
+      this.opening = !1;
+    }
+  }
+  async openSocketInner() {
     var _a, _b, _c, _d, _e;
     let token, source;
     try {
@@ -1665,6 +1679,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null), this.pendingHeartbeatRef = null;
   }
   scheduleReconnect(overrideMs) {
+    this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null);
     let base = overrideMs != null ? overrideMs : this.reconnectMs, jitter = Math.random() * base * 0.5;
     this.reconnectTimer = window.setTimeout(() => {
       overrideMs === void 0 && (this.reconnectMs = Math.min(this.reconnectMs * 2, this.maxReconnectMs)), this.openSocket();
