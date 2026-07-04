@@ -403,6 +403,10 @@ export class SyncEngine {
 		// local change (e2e test_78 hash-only). No write → nothing to echo-suppress,
 		// so we also skip markRecentlyFlushed.
 		if (file instanceof TFile && (await this.app.vault.cachedRead(file)) === content) {
+			// Disk already holds this content, but the baseline may still be
+			// missing (an earlier flush created the file before this fix). Record
+			// it so a later server tombstone isn't misread as a resurrection.
+			this.recordCrdtBaseline(normalized, content);
 			return;
 		}
 		this.markRecentlyFlushed(normalized);
@@ -416,9 +420,23 @@ export class SyncEngine {
 				// on this device even though its content was in the local CRDT doc.
 				await this.createFileWithFolders(normalized, content);
 			}
+			// CRDT delivery IS a sync: record the last-synced baseline so the REST
+			// reconcile path treats this note as server-known. Without it a
+			// CRDT-delivered note has syncedHash=none, and a legitimate server
+			// delete (folder-rename cleanup) trips the resurrection guard, which
+			// re-pushes the old path and resurrects it forever (e2e test_34/78).
+			this.recordCrdtBaseline(normalized, content);
 		} catch (e) {
 			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
 		}
+	}
+
+	/** Seed the last-synced baseline from freshly-delivered CRDT content. Merges
+	 *  onto any existing entry so a prior REST sync's version/serverHash survive;
+	 *  only the content hash is refreshed to what we just wrote to disk. */
+	private recordCrdtBaseline(normalized: string, content: string): void {
+		const prev = this.syncState.get(normalized);
+		this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
 	}
 
 	/** Materialize an EMPTY note whose emptiness the server has just confirmed.

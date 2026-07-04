@@ -448,6 +448,21 @@ describe("SyncEngine.pull", () => {
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
+
+	test("flushFromCrdt records a sync baseline so a later server tombstone is honored, not resurrected", async () => {
+		const engine = createEngine();
+		const path = "E2E/RenamedFolder/Old.md";
+		const content = "# Old\nCRDT-delivered body\n";
+
+		// CRDT delivers a note to disk with no prior REST syncState entry.
+		await engine.flushFromCrdt(path, content);
+
+		// The delivery must leave a matching baseline. Without it a later server
+		// delete (folder-rename cleanup) arrives with syncedHash=none, the
+		// resurrection guard misreads it as an offline re-create and re-pushes
+		// the old path — resurrecting it forever (e2e test_34 / test_78 churn).
+		expect(engine.isUnchangedSynced(path, content)).toBe(true);
+	});
 });
 
 describe("SyncEngine.handleStreamEvent", () => {
