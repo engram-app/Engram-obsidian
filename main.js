@@ -5125,14 +5125,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (!(file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)) {
-      this.markRecentlyFlushed(normalized);
-      try {
-        file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content);
-      } catch (e) {
-        rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
-      }
+    if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content) {
+      this.recordCrdtBaseline(normalized, content);
+      return;
     }
+    this.markRecentlyFlushed(normalized);
+    try {
+      file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content);
+    } catch (e) {
+      rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+    }
+  }
+  /** Seed the last-synced baseline from freshly-delivered CRDT content. Merges
+   *  onto any existing entry so a prior REST sync's version/serverHash survive;
+   *  only the content hash is refreshed to what we just wrote to disk. */
+  recordCrdtBaseline(normalized, content) {
+    let prev = this.syncState.get(normalized);
+    this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
