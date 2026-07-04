@@ -37,14 +37,34 @@ describe("channelConnectionKey", () => {
 	});
 
 	test("OAuth account change (userEmail) → different key", () => {
-		const a = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "a@x.com", vaultId: "v1" });
-		const b = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "b@x.com", vaultId: "v1" });
+		const a = makeSettings({
+			apiUrl: "u",
+			refreshToken: "r1",
+			userEmail: "a@x.com",
+			vaultId: "v1",
+		});
+		const b = makeSettings({
+			apiUrl: "u",
+			refreshToken: "r1",
+			userEmail: "b@x.com",
+			vaultId: "v1",
+		});
 		expect(channelConnectionKey(a)).not.toBe(channelConnectionKey(b));
 	});
 
 	test("refreshToken rotation (same account) → SAME key — token refresh must NOT rebuild", () => {
-		const a = makeSettings({ apiUrl: "u", refreshToken: "r1", userEmail: "a@x.com", vaultId: "v1" });
-		const b = makeSettings({ apiUrl: "u", refreshToken: "r2", userEmail: "a@x.com", vaultId: "v1" });
+		const a = makeSettings({
+			apiUrl: "u",
+			refreshToken: "r1",
+			userEmail: "a@x.com",
+			vaultId: "v1",
+		});
+		const b = makeSettings({
+			apiUrl: "u",
+			refreshToken: "r2",
+			userEmail: "a@x.com",
+			vaultId: "v1",
+		});
 		expect(channelConnectionKey(a)).toBe(channelConnectionKey(b));
 	});
 
