@@ -168,9 +168,11 @@ export class EngramApi {
 	): Promise<RequestUrlResponse> {
 		const token = await this.getAuthToken();
 		this.lastToken = token;
-		// Gate BEFORE any tracing work: disabled = one boolean, nothing else.
+		// Scope tracing to mutations only: GET requests are zero-cost (no tracing).
+		// Gate BEFORE any tracing work: disabled or GET = one boolean check, nothing else.
 		// No id generation, no header, no timing capture, no network.
-		const trace = this.tracingEnabled ? newTraceContext() : null;
+		const traced = this.tracingEnabled && method.toUpperCase() !== "GET";
+		const trace = traced ? newTraceContext() : null;
 		const startUs = trace ? Date.now() * 1000 : 0;
 		const headers: Record<string, string> = {
 			Authorization: `Bearer ${token}`,
@@ -211,7 +213,10 @@ export class EngramApi {
 					name: "obsidian.push",
 					start_us: startUs,
 					end_us: Date.now() * 1000,
-					attributes: { "engram.surface": "obsidian" },
+					attributes: {
+						"engram.surface": "obsidian",
+						"engram.event_type": method.toLowerCase(),
+					},
 				});
 			}
 		}

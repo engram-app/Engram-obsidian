@@ -1061,7 +1061,7 @@ var EngramApi = class _EngramApi {
   async sendRequest(method, path, body, extraHeaders) {
     let token = await this.getAuthToken();
     this.lastToken = token;
-    let trace = this.tracingEnabled ? newTraceContext() : null, startUs = trace ? Date.now() * 1e3 : 0, headers = {
+    let trace = this.tracingEnabled && method.toUpperCase() !== "GET" ? newTraceContext() : null, startUs = trace ? Date.now() * 1e3 : 0, headers = {
       Authorization: `Bearer ${token}`,
       ...trace ? { traceparent: trace.traceparent } : {},
       ...extraHeaders
@@ -1081,7 +1081,10 @@ var EngramApi = class _EngramApi {
         name: "obsidian.push",
         start_us: startUs,
         end_us: Date.now() * 1e3,
-        attributes: { "engram.surface": "obsidian" }
+        attributes: {
+          "engram.surface": "obsidian",
+          "engram.event_type": method.toLowerCase()
+        }
       });
     }
   }

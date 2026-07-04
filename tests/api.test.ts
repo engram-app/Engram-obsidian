@@ -249,6 +249,86 @@ describe("EngramApi", () => {
 
 			expect(enqueueSpy).toHaveBeenCalledTimes(1);
 		});
+
+		test("enabled with GET: sendRequest adds NO traceparent header and enqueues NOTHING", async () => {
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
+			} as any);
+
+			await api.getChanges("2026-01-01T00:00:00Z");
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toBeUndefined();
+			expect(enqueueSpy).not.toHaveBeenCalled();
+		});
+
+		test("enabled with mutation (POST): beacon includes engram.event_type attribute set to lowercased method", async () => {
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "Notes/Test.md", status: "created" },
+			} as any);
+
+			await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+			expect(enqueueSpy).toHaveBeenCalledTimes(1);
+			const span = enqueueSpy.mock.calls[0]?.[0] as {
+				name: string;
+				trace_id: string;
+				parent_span_id: string;
+				attributes: Record<string, string>;
+			};
+			expect(span.attributes["engram.event_type"]).toBe("post");
+		});
+
+		test("enabled with DELETE mutation: beacon includes engram.event_type attribute set to 'delete'", async () => {
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { status: "deleted" },
+			} as any);
+
+			await api.deleteNote("Notes/Test.md");
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+			expect(enqueueSpy).toHaveBeenCalledTimes(1);
+			const span = enqueueSpy.mock.calls[0]?.[0] as {
+				attributes: Record<string, string>;
+			};
+			expect(span.attributes["engram.event_type"]).toBe("delete");
+		});
+
+		test("enabled with GET case-insensitive: still no tracing", async () => {
+			// Verify that method case-sensitivity is handled (e.g. "get", "Get", "GET")
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { user: { id: "user-1", email: "test@example.com" } },
+			} as any);
+
+			await api.getMe();
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toBeUndefined();
+			expect(enqueueSpy).not.toHaveBeenCalled();
+		});
 	});
 
 	describe("getChanges", () => {
