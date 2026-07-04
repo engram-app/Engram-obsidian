@@ -61,6 +61,11 @@ export interface EngramSyncSettings {
 	/** True once the first-run waitlist popup has been shown (submitted OR
 	 *  dismissed). Set once, never re-shown. */
 	waitlistPromptSeen?: boolean;
+	/** Dark-launch gate for distributed tracing: inject a `traceparent` header
+	 *  on backend requests and emit a coalesced `obsidian.push` beacon. Default
+	 *  OFF: when false, sendRequest does no id generation, no timing capture,
+	 *  no header, and enqueues nothing (single boolean check). */
+	tracingEnabled: boolean;
 }
 
 /** Which search backend the panel uses. */
@@ -102,6 +107,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	planState: null,
 	searchDefaultMode: "hybrid",
 	waitlistPromptSeen: false,
+	tracingEnabled: false,
 };
 
 /** A note as returned by POST /notes */

@@ -190,6 +190,67 @@ describe("EngramApi", () => {
 		});
 	});
 
+	// -------------------------------------------------------------------------
+	// Distributed tracing: performance contract (see plan Global Constraints).
+	// Disabled must be a single boolean check: no id generation, no header, no
+	// timing capture, no network. Enabled must inject the header and enqueue
+	// exactly one obsidian.push span on the beacon buffer, off the critical path.
+	// -------------------------------------------------------------------------
+	describe("tracing", () => {
+		test("disabled (default): sendRequest adds no traceparent header and enqueues nothing", async () => {
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "Notes/Test.md", status: "created" },
+			} as any);
+
+			await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toBeUndefined();
+			expect(enqueueSpy).not.toHaveBeenCalled();
+		});
+
+		test("enabled: sendRequest adds a traceparent header and enqueues exactly one obsidian.push span", async () => {
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "Notes/Test.md", status: "created" },
+			} as any);
+
+			await api.pushNote("Notes/Test.md", "# Hello", 1234567890);
+
+			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
+			expect(opts.headers?.traceparent).toMatch(/^00-[0-9a-f]{32}-[0-9a-f]{16}-01$/);
+			expect(enqueueSpy).toHaveBeenCalledTimes(1);
+			const span = enqueueSpy.mock.calls[0]?.[0] as {
+				name: string;
+				trace_id: string;
+				parent_span_id: string;
+			};
+			expect(span.name).toBe("obsidian.push");
+			expect(span.trace_id).toHaveLength(32);
+			expect(span.parent_span_id).toHaveLength(16);
+		});
+
+		test("enabled but request fails: beacon still fires (never blocks/fails the push)", async () => {
+			api.setTracingEnabled(true);
+			const enqueueSpy = mock(() => {});
+			(api as unknown as { beacon: { enqueue: typeof enqueueSpy } }).beacon.enqueue =
+				enqueueSpy;
+			mockRequestUrl.mockRejectedValueOnce({ status: 500 });
+
+			await expect(api.pushNote("test.md", "content", 100)).rejects.toEqual({ status: 500 });
+
+			expect(enqueueSpy).toHaveBeenCalledTimes(1);
+		});
+	});
+
 	describe("getChanges", () => {
 		test("URL-encodes the since parameter", async () => {
 			mockRequestUrl.mockResolvedValueOnce({

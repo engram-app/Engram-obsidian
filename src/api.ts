@@ -7,6 +7,8 @@ import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { type PreflightResult, interpretHealthProbe } from "./auth-state";
 import { LimitExceededError } from "./limit-error";
+import { BeaconBuffer } from "./observability/beacon";
+import { newTraceContext } from "./observability/traceGen";
 import { rlog } from "./remote-log";
 import type {
 	AttachmentChangesResponse,
@@ -29,12 +31,38 @@ export class EngramApi {
 	private vaultId: string | null = null;
 	private deviceId: string | null = null;
 	private authProvider: AuthProvider | null = null;
+	// Dark-launch gate for distributed tracing. Disabled cost must stay a
+	// single boolean check, see sendRequest.
+	private tracingEnabled = false;
+	// Cached from the most recent sendRequest call so the beacon transport
+	// thunk (invoked later, on the buffer's own flush timer) can post with a
+	// still-valid token without re-awaiting the auth provider.
+	private lastToken = "";
+	/** Coalescing beacon buffer for `obsidian.push` spans. Transport thunk
+	 *  returns null (drop, no network) whenever tracing is disabled. */
+	readonly beacon: BeaconBuffer;
 
 	constructor(
 		private baseUrl: string,
 		private apiKey: string,
 	) {
 		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
+		this.beacon = new BeaconBuffer(() => {
+			if (!this.tracingEnabled) return null;
+			return {
+				baseUrl: this.baseUrl,
+				token: this.lastToken,
+				vaultId: this.getActiveVaultId() ?? "",
+				deviceId: this.deviceId ?? "",
+			};
+		});
+	}
+
+	/** Enable/disable trace header injection + the obsidian.push beacon. When
+	 *  false, sendRequest does no id generation, no timing capture, no header,
+	 *  and enqueues nothing: cost is exactly one boolean check. */
+	setTracingEnabled(enabled: boolean): void {
+		this.tracingEnabled = enabled;
 	}
 
 	setVaultId(id: string | null): void {
@@ -139,8 +167,14 @@ export class EngramApi {
 		extraHeaders?: Record<string, string>,
 	): Promise<RequestUrlResponse> {
 		const token = await this.getAuthToken();
+		this.lastToken = token;
+		// Gate BEFORE any tracing work: disabled = one boolean, nothing else.
+		// No id generation, no header, no timing capture, no network.
+		const trace = this.tracingEnabled ? newTraceContext() : null;
+		const startUs = trace ? Date.now() * 1000 : 0;
 		const headers: Record<string, string> = {
 			Authorization: `Bearer ${token}`,
+			...(trace ? { traceparent: trace.traceparent } : {}),
 			...extraHeaders,
 		};
 		// Use the *active* vault (OAuth provider's bound vault, or the raw field
@@ -158,12 +192,29 @@ export class EngramApi {
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
 		}
-		return requestUrl({
-			url: `${this.baseUrl}${path}`,
-			method,
-			headers,
-			body: body !== undefined ? JSON.stringify(body) : undefined,
-		});
+		try {
+			return await requestUrl({
+				url: `${this.baseUrl}${path}`,
+				method,
+				headers,
+				body: body !== undefined ? JSON.stringify(body) : undefined,
+			});
+		} finally {
+			// Fire-and-forget: enqueue is O(1), touches no network on this path
+			// (the buffer batches/flushes on its own timer), and never blocks or
+			// fails the request above, including on the error path, so a failed
+			// push still yields a trace.
+			if (trace) {
+				this.beacon.enqueue({
+					trace_id: trace.traceId,
+					parent_span_id: trace.spanId,
+					name: "obsidian.push",
+					start_us: startUs,
+					end_us: Date.now() * 1000,
+					attributes: { "engram.surface": "obsidian" },
+				});
+			}
+		}
 	}
 
 	/** Health check — no auth required. */
