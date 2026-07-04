@@ -55,6 +55,16 @@ import type {
  *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
 export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
+/** True when `content` is too large to enter the Yjs doc: seeding it would
+ *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
+ *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
+ *  path MUST gate on this — a caller that forgets recreates that crash loop.
+ *  Measures UTF-8 bytes (not code units) so multi-byte content can't slip past.
+ *  `maxBytes <= 0` disables the cap. */
+export function exceedsCrdtNoteLimit(content: string, maxBytes: number): boolean {
+	return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
+}
+
 export async function routeModify(
 	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
 	crdt: { applyLocalEdit: (path: string, content: string) => Promise<boolean> },
@@ -67,9 +77,8 @@ export async function routeModify(
 	// WebSocket frame past Bandit's 8 MB fragmented-message limit, which closes
 	// the socket (1009) and — because the bloated doc persists in IndexedDB —
 	// re-crashes on every reconnect, killing all sync for the vault. Fall through
-	// to the legacy push path, which the server gates with a 413. Measure UTF-8
-	// bytes (not code units) so multi-byte content can't slip past the cap.
-	if (maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes) {
+	// to the legacy push path, which the server gates with a 413.
+	if (exceedsCrdtNoteLimit(content, maxBytes)) {
 		return false;
 	}
 	// applyLocalEdit returns false when the handshake gate declines seeding
@@ -103,7 +112,17 @@ export async function reconcileColdStart(
 		enroll?: (path: string) => void;
 	},
 	onCorruption: () => void,
+	maxBytes: number = MAX_CRDT_NOTE_BYTES,
 ): Promise<void> {
+	// Same cap as routeModify: an oversized note must NEVER enter the Yjs doc.
+	// Seeding it here produces a base64 crdt_msg past Bandit's 8 MB frame limit
+	// → 1009 → and because cold-start reconcile re-runs on every reconnect, a
+	// permanent crash loop that kills all sync for the vault. Leave it to the
+	// legacy push path (server-gated at 10 MB / 413). Default-capped so a future
+	// caller cannot reintroduce this by forgetting to pass the limit.
+	if (exceedsCrdtNoteLimit(file.diskContent, maxBytes)) {
+		return;
+	}
 	let current: string;
 	try {
 		current = await crdt.projectedText(file.path);
@@ -421,6 +440,31 @@ export class SyncEngine {
 		const normalized = normalizePath(path);
 		// Already on disk — a content STEP2 created it, or the user already has it.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
+
+		// An empty STEP2 is USUALLY the server's authoritative "genuinely empty"
+		// reply. Under load it can instead mean "content is in REST/DB but the
+		// note's CRDT room hasn't been seeded yet" — the author pushed via REST
+		// before its Y.Doc update reached the server. Materializing empty then
+		// races the real body and strands a permanently-empty file on this device
+		// (e2e test_38/test_43). Disambiguate against REST: if the server note has
+		// content, this empty STEP2 is stale — write the REST body, not an empty
+		// file. Proper fix is server-side (seed the Y.Doc from REST on first room
+		// open); this is the client-side race-closer.
+		try {
+			const note = await this.api.getNote(path);
+			if (note.content && note.content.length > 0) {
+				await this.flushFromCrdt(path, note.content);
+				return;
+			}
+		} catch (e) {
+			// REST unreachable, or a genuine 404 for a note not on the server yet.
+			// Fall through to the empty-materialize below — a genuinely empty note
+			// must still appear on disk even when this cross-check can't run.
+			rlog().warn(
+				"crdt",
+				`materializeEmptyDiscovered: getNote failed for ${path}, materializing empty: ${errMsg(e)}`,
+			);
+		}
 
 		const text = this.crdt ? await this.crdt.projectedText(path) : "";
 		await this.flushFromCrdt(path, text);
