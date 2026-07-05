@@ -1373,6 +1373,9 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     /** Current connection id, minted fresh per physical socket. */
     this.connId = null;
     this.authProvider = null;
+    /** Authenticated probe injected via `setAuthProbe` (e.g. GET /me). Fired on
+     *  a fast pre-open close instead of guessing the token is stale. */
+    this.authProbe = null;
     this.onEvent = null;
     this.onStatusChange = null;
     this.onVaultDeleted = null;
@@ -1414,6 +1417,13 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   }
   setAuthProvider(provider) {
     this.authProvider = provider, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
+  }
+  /** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
+   *  channel fires this instead of guessing the token is stale; the api client
+   *  is the single invalidation authority (a real 401 there invalidates and
+   *  refreshes). */
+  setAuthProbe(probe) {
+    this.authProbe = probe;
   }
   async getAuthToken() {
     return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
@@ -1515,15 +1525,20 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
-    }, this.ws.onclose = (evt) => {
-      var _a2, _b2, _c2, _d2, _e2;
+    }, this.ws.onclose = async (evt) => {
+      var _a2, _b2, _c2, _d2;
       this.clearTimers(), this.ws = null, this.setConnected(!1);
-      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt;
-      if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && ((_d2 = this.authProvider) != null && _d2.invalidateAccessToken) && (rlog().warn(
+      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
+      if (rlog().info(
         "channel",
-        `WS closed before open at ${sinceOpen}ms \u2014 assuming stale access token, invalidating - ${closeInfo}`
-      ), this.authProvider.invalidateAccessToken()), opened) {
-        let jitterWindow = (_e2 = this.reconnectJitterMaxMs) != null ? _e2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
+      ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe)
+        try {
+          await this.authProbe();
+        } catch (e) {
+        }
+      if (opened) {
+        let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
           `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
