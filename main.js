@@ -20963,7 +20963,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && this.noteStream.setAuthProvider(this.authProvider));
+    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe())));
   }
   async clearOAuthTokens() {
     this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
@@ -21020,7 +21020,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         this.settings.enableCrdt,
         this.deviceId
       );
-      if (channel.onEvent = (event) => {
+      if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
         var _a2, _b2;
@@ -21042,7 +21042,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.enableCrdt && this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe())), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),

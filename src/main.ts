@@ -1088,6 +1088,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.api.setAuthProvider(this.authProvider);
 			if (this.noteStream) {
 				this.noteStream.setAuthProvider(this.authProvider);
+				this.noteStream.setAuthProbe(() => this.api.getMe());
 			}
 		}
 	}
@@ -1219,6 +1220,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.enableCrdt,
 					this.deviceId,
 				);
+				channel.setAuthProbe(() => this.api.getMe());
 
 				channel.onEvent = (event) => {
 					void this.syncEngine.handleStreamEvent(event);
@@ -1298,6 +1300,7 @@ export default class EngramSyncPlugin extends Plugin {
 				this.noteStream = channel;
 				if (this.authProvider) {
 					this.noteStream.setAuthProvider(this.authProvider);
+					this.noteStream.setAuthProbe(() => this.api.getMe());
 				}
 
 				// Wire CRDT transport through this channel.
