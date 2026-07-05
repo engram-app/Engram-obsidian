@@ -829,23 +829,24 @@ var BeaconBuffer = class {
   }
   flush() {
     if (this.timer !== null && (window.clearTimeout(this.timer), this.timer = null), this.queue.length === 0) return;
-    let batch = this.queue.splice(0, this.queue.length), t = this.transport();
-    if (t)
-      try {
-        window.fetch(`${t.baseUrl}/api/telemetry/spans`, {
-          method: "POST",
-          keepalive: !0,
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${t.token}`,
-            "X-Vault-ID": t.vaultId,
-            "X-Device-Id": t.deviceId
-          },
-          body: JSON.stringify({ spans: batch })
-        }).catch(() => {
-        });
-      } catch (e) {
-      }
+    let batch = this.queue.splice(0, this.queue.length);
+    try {
+      let t = this.transport();
+      if (!t) return;
+      window.fetch(`${t.baseUrl}/telemetry/spans`, {
+        method: "POST",
+        keepalive: !0,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${t.token}`,
+          "X-Vault-ID": t.vaultId,
+          "X-Device-Id": t.deviceId
+        },
+        body: JSON.stringify({ spans: batch })
+      }).catch(() => {
+      });
+    } catch (e) {
+    }
   }
 };
 

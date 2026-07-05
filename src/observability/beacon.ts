@@ -42,15 +42,21 @@ export class BeaconBuffer {
 		}
 		if (this.queue.length === 0) return;
 		const batch = this.queue.splice(0, this.queue.length);
-		const t = this.transport();
-		if (!t) return; // disabled or not ready: drop, never block
 		try {
+			// transport() resolved inside the try: enqueue() calls flush()
+			// synchronously at the batch cap (inside sendRequest's finally), so a
+			// throwing thunk must never convert a successful note push into an error.
+			const t = this.transport();
+			if (!t) return; // disabled or not ready: drop, never block
+			// baseUrl already ends in `/api` (EngramApi.normalizeBaseUrl), so the
+			// path is bare here exactly like every other client call
+			// (`${baseUrl}${path}`). Appending `/api/...` double-prefixes and 404s.
 			// window.fetch (not requestUrl): this is the one network call in the
 			// plugin that needs `keepalive`, so an in-flight beacon still lands
 			// after plugin unload. requestUrl has no such guarantee. Fire-and-forget:
 			// never awaited, never surfaced to the caller.
 			void window
-				.fetch(`${t.baseUrl}/api/telemetry/spans`, {
+				.fetch(`${t.baseUrl}/telemetry/spans`, {
 					method: "POST",
 					keepalive: true,
 					headers: {

@@ -18,7 +18,7 @@ describe("BeaconBuffer", () => {
 			return Promise.resolve();
 		};
 		const buf = new BeaconBuffer(() => ({
-			baseUrl: "https://api.example",
+			baseUrl: "https://api.example/api",
 			token: "t",
 			vaultId: "v",
 			deviceId: "d",
@@ -47,7 +47,7 @@ describe("BeaconBuffer", () => {
 	test("never throws when fetch rejects", () => {
 		(global as any).fetch = () => Promise.reject(new Error("network"));
 		const buf = new BeaconBuffer(() => ({
-			baseUrl: "https://api.example",
+			baseUrl: "https://api.example/api",
 			token: "t",
 			vaultId: "v",
 			deviceId: "d",
@@ -65,7 +65,7 @@ describe("BeaconBuffer", () => {
 			return Promise.resolve();
 		};
 		const buf = new BeaconBuffer(() => ({
-			baseUrl: "https://api.example",
+			baseUrl: "https://api.example/api",
 			token: "t",
 			vaultId: "v",
 			deviceId: "d",
@@ -81,7 +81,7 @@ describe("BeaconBuffer", () => {
 			return Promise.resolve();
 		};
 		const buf = new BeaconBuffer(() => ({
-			baseUrl: "https://api.example",
+			baseUrl: "https://api.example/api",
 			token: "t",
 			vaultId: "v",
 			deviceId: "d",
