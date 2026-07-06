@@ -9,6 +9,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { MAX_CRDT_NOTE_BYTES, SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -27,13 +28,15 @@ describe("routeModify helper", () => {
 		const applyLocalEdit = mock(async () => true);
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
-			{ isMarkdown: true, path: "n.md", readContent: async () => "body" },
+			{ isMarkdown: true, noteId: "id-n", readContent: async () => "body" },
 			{ applyLocalEdit } as any,
 			BIG,
 		);
 		expect(result).toBe(true);
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("n.md", "body");
+		// routeModify routes by note_id (Task 6), not path — "id-n" here, never
+		// the file's vault path.
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-n", "body");
 		expect(pushNote).not.toHaveBeenCalled();
 	});
 
@@ -41,7 +44,7 @@ describe("routeModify helper", () => {
 		const applyLocalEdit = mock(async () => {});
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
-			{ isMarkdown: false, path: "img.png", readContent: async () => "" },
+			{ isMarkdown: false, noteId: "id-img", readContent: async () => "" },
 			{ applyLocalEdit } as any,
 			BIG,
 		);
@@ -56,7 +59,7 @@ describe("routeModify helper", () => {
 		// killing the socket. Must fall through to the legacy push path instead.
 		const huge = "x".repeat(5 * 1024 * 1024);
 		const result = await routeModify(
-			{ isMarkdown: true, path: "big.md", readContent: async () => huge },
+			{ isMarkdown: true, noteId: "id-big", readContent: async () => huge },
 			{ applyLocalEdit } as any,
 			4 * 1024 * 1024,
 		);
@@ -70,7 +73,7 @@ describe("routeModify helper", () => {
 		// A naive .length check (code units) would wrongly let it through.
 		const emoji = "😀".repeat(2 * 1024 * 1024);
 		const result = await routeModify(
-			{ isMarkdown: true, path: "emoji.md", readContent: async () => emoji },
+			{ isMarkdown: true, noteId: "id-emoji", readContent: async () => emoji },
 			{ applyLocalEdit } as any,
 			6 * 1024 * 1024,
 		);
@@ -148,7 +151,12 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
-function createEngine(): SyncEngine {
+// Task 6 (note_id-keyed CRDT): production always wires a NoteIdMap alongside
+// the CrdtManager (main.ts), so every CRDT-routed test needs one too — the
+// pushFile CRDT gate now requires a resolved note_id, not just a manager.
+// Defaults to a fresh map (mints a fresh UUID per new path); tests asserting
+// exact CRDT call args pass a pre-seeded map for a deterministic id.
+function createEngine(noteIdMap: NoteIdMap = new NoteIdMap()): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
 		mockApi,
@@ -156,6 +164,7 @@ function createEngine(): SyncEngine {
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
+	engine.setNoteIdMap(noteIdMap);
 	return engine;
 }
 
@@ -179,7 +188,11 @@ beforeEach(() => {
 
 describe("SyncEngine handleModify with CrdtManager", () => {
 	test("markdown modify calls applyLocalEdit, NOT pushNote", async () => {
-		const engine = createEngine();
+		// Pre-seed a deterministic note_id so the CRDT call args are assertable —
+		// routeModify (Task 6) keys the frame by note_id, not path.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
 		// applyLocalEdit must return true so pushFile treats the edit as consumed
 		// and does NOT fall through to pushNote (handshake-gate fix: routeModify
 		// now forwards applyLocalEdit's boolean, so a void/falsy mock falls through).
@@ -192,7 +205,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("note.md", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
@@ -233,7 +246,9 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 	});
 
 	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
-		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Canvases/overview.md", "id-overview");
+		const engine = createEngine(noteIdMap);
 		// applyLocalEdit must return true so pushFile treats the edit as consumed
 		// and does not fall through to pushNote (handshake-gate fix).
 		const applyLocalEdit = mock(async () => true);
@@ -244,7 +259,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("Canvases/overview.md", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-overview", "body");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 });
@@ -255,10 +270,12 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 
 describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 	test("declined md fires legacy pushNote AND enroll for a small file", async () => {
-		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
 		// applyLocalEdit returns false → routeModify returns false → declined path.
 		const applyLocalEdit = mock(async () => false);
-		const enroll = mock((_path: string) => {});
+		const enroll = mock((_id: string) => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll } as any);
 
@@ -269,8 +286,9 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 
 		// Legacy push must fire.
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		// Enroll must also fire (kicks off the STEP1 handshake for the declined note).
-		expect(enroll).toHaveBeenCalledWith("note.md");
+		// Enroll must also fire (kicks off the STEP1 handshake for the declined
+		// note), keyed by note_id (Task 6) not path.
+		expect(enroll).toHaveBeenCalledWith("id-note");
 	});
 
 	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {
@@ -397,7 +415,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "line one");
 		let corrupted = false;
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "line one\nline two" },
+			{ path: "n.md", noteId: "n.md", diskContent: "line one\nline two" },
 			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
@@ -418,7 +436,7 @@ describe("reconcileColdStart", () => {
 		const enroll = mock(() => {});
 		const huge = "x".repeat(5 * 1024 * 1024); // 5 MB > 4 MB cap
 		await reconcileColdStart(
-			{ path: "big.md", diskContent: huge },
+			{ path: "big.md", noteId: "big.md", diskContent: huge },
 			{ applyLocalEdit, getText, projectedText, enroll } as any,
 			() => {},
 			4 * 1024 * 1024,
@@ -433,7 +451,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "same content");
 		let corrupted = false;
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "same content" },
+			{ path: "n.md", noteId: "n.md", diskContent: "same content" },
 			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
@@ -453,7 +471,7 @@ describe("reconcileColdStart", () => {
 		});
 		let corrupted = false;
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "some content" },
+			{ path: "n.md", noteId: "n.md", diskContent: "some content" },
 			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				corrupted = true;
@@ -474,7 +492,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "");
 		const enroll = mock(() => {});
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "pulled earlier, doc evicted" },
+			{ path: "n.md", noteId: "n.md", diskContent: "pulled earlier, doc evicted" },
 			{ applyLocalEdit, getText, projectedText, enroll } as any,
 			() => {},
 		);
@@ -487,7 +505,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "same");
 		const enroll = mock(() => {});
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "same" },
+			{ path: "n.md", noteId: "n.md", diskContent: "same" },
 			{ applyLocalEdit, getText, projectedText, enroll } as any,
 			() => {},
 		);
@@ -504,7 +522,7 @@ describe("reconcileColdStart", () => {
 		});
 		const enroll = mock(() => {});
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "x" },
+			{ path: "n.md", noteId: "n.md", diskContent: "x" },
 			{ applyLocalEdit, getText, projectedText, enroll } as any,
 			() => {},
 		);
@@ -519,7 +537,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "old");
 		const enroll = mock(() => {});
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "old plus offline edit" },
+			{ path: "n.md", noteId: "n.md", diskContent: "old plus offline edit" },
 			{ applyLocalEdit, getText, projectedText, enroll } as any,
 			() => {},
 		);
@@ -532,7 +550,7 @@ describe("reconcileColdStart", () => {
 		const projectedText = mock(async () => "old content");
 		let conflictModalShown = false;
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "old content\nnew line" },
+			{ path: "n.md", noteId: "n.md", diskContent: "old content\nnew line" },
 			{ applyLocalEdit, getText, projectedText } as any,
 			() => {
 				conflictModalShown = true;

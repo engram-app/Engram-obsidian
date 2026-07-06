@@ -28,8 +28,14 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 		chB: null as unknown as CrdtChannel,
 	};
 
-	// Use distinct dbPrefixes so the two managers have isolated IndexedDB stores
-	// (same as two physical devices — each has its own IDB origin).
+	// Task 6: `docId` (the wire doc_id + in-memory docs-map key) is now always
+	// the bare note_id, matching the backend's bare-UUID crdt_msg/crdt_doc_ready
+	// — both "devices" reference the SAME note_id here, exactly as two real
+	// devices syncing the same note would. dbPrefix now namespaces ONLY the
+	// physical IndexedDB store (see CrdtManagerOptions.dbPrefix), so mgrA/mgrB
+	// don't cross-contaminate each other's local storage the way two real
+	// devices' separate browser origins never would.
+	const noteId = "integration-n";
 	const mgrA = new CrdtManager({
 		dbPrefix: "device-A",
 		onUpdate: (id, u) => box.chA.sendUpdateRaw(id, u),
@@ -46,14 +52,11 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 	});
 
 	// Relay: forward each frame from one side to the other (the role the backend
-	// SharedDoc plays — fan-out to all other connected peers).
-	// A's docId = "device-A/n.md"; B's docId = "device-B/n.md"; strip the prefix
-	// to get the path ("n.md") for the receiving side's handleFrame.
-	const idToPath = (id: string) => id.replace(/^device-[AB]\//, "");
+	// SharedDoc plays — fan-out to all other connected peers). docId is already
+	// the bare note_id (Task 6), so no path extraction is needed.
 	const relay = (from: "A" | "B", id: string, frame: string) => {
-		const path = idToPath(id);
-		if (from === "A") void box.chB.handleFrame(path, frame);
-		else void box.chA.handleFrame(path, frame);
+		if (from === "A") void box.chB.handleFrame(id, frame);
+		else void box.chA.handleFrame(id, frame);
 	};
 
 	box.chA = new CrdtChannel({
@@ -76,18 +79,18 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 	// markSynced required before seeding (audit P0-1 fix): in a real flow A's
 	// markSynced fires when its STEP2 arrives; in this test A is the originator
 	// so we mark it directly to simulate an already-established lineage on A.
-	mgrA.markSynced("n.md");
-	await mgrA.applyLocalEdit("n.md", "genesis", false);
+	mgrA.markSynced(noteId);
+	await mgrA.applyLocalEdit(noteId, "genesis", false);
 
 	// B starts the handshake. A's STEP2 reply carries the missing state.
-	await box.chB.startSync("n.md");
+	await box.chB.startSync(noteId);
 	await new Promise((r) => setTimeout(r, 20));
 
-	expect(await mgrB.getText("n.md")).toBe("genesis");
+	expect(await mgrB.getText(noteId)).toBe("genesis");
 
 	// ── Assertion 3: flush-to-disk fired on B (remote update triggered it) ──
-	// diskB["n.md"] is written by mgrB's onFlushToDisk when it applies A's STEP2.
-	expect(diskB["n.md"]).toBe("genesis");
+	// diskB[noteId] is written by mgrB's onFlushToDisk when it applies A's STEP2.
+	expect(diskB[noteId]).toBe("genesis");
 
 	// ── Assertion 2: concurrent offline edits converge ────────────────────────
 	// Simulate "offline on both devices simultaneously" by writing directly into
@@ -95,8 +98,8 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 	// deliveries are enqueued as microtasks before either resolves, exactly as in
 	// the channel unit test. This mirrors the real scenario: both devices edit
 	// the same note while disconnected and then reconnect.
-	const docA = await mgrA.getDoc("n.md");
-	const docB = await mgrB.getDoc("n.md");
+	const docA = await mgrA.getDoc(noteId);
+	const docB = await mgrB.getDoc(noteId);
 
 	// Concurrent mutations in the same sync turn — relay delivers cross-wise
 	// as floating microtasks, producing a true concurrent-edit scenario.
@@ -105,8 +108,8 @@ test("two devices via an in-memory relay converge end-to-end", async () => {
 
 	await new Promise((r) => setTimeout(r, 20));
 
-	const a = await mgrA.getText("n.md");
-	const b = await mgrB.getText("n.md");
+	const a = await mgrA.getText(noteId);
+	const b = await mgrB.getText(noteId);
 
 	// Both peers must have converged to the same text.
 	expect(a).toBe(b);

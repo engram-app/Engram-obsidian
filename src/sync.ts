@@ -68,8 +68,8 @@ export function exceedsCrdtNoteLimit(content: string, maxBytes: number): boolean
 }
 
 export async function routeModify(
-	file: { isMarkdown: boolean; path: string; readContent: () => Promise<string> },
-	crdt: { applyLocalEdit: (path: string, content: string) => Promise<boolean> },
+	file: { isMarkdown: boolean; noteId: string; readContent: () => Promise<string> },
+	crdt: { applyLocalEdit: (noteId: string, content: string) => Promise<boolean> },
 	maxBytes: number,
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
@@ -86,7 +86,7 @@ export async function routeModify(
 	// applyLocalEdit returns false when the handshake gate declines seeding
 	// (empty doc, no LCA, STEP2 not yet received). The legacy push path then
 	// owns the write convergently (backend PR #846) until the STEP2 arrives.
-	return await crdt.applyLocalEdit(file.path, content);
+	return await crdt.applyLocalEdit(file.noteId, content);
 }
 
 /** At startup, the on-disk file may have changed while the app was closed
@@ -102,16 +102,18 @@ export async function routeModify(
  *    must not masquerade as CRDT corruption and trigger the conflict modal. The CRDT
  *    handshake will converge the state once connectivity is restored. */
 export async function reconcileColdStart(
-	file: { path: string; diskContent: string },
+	// `path` is retained purely for log messages (a note_id is meaningless to a
+	// human reading the console); every CRDT call below routes on `noteId`.
+	file: { path: string; noteId: string; diskContent: string },
 	crdt: {
 		// Returns boolean (consumed/declined) but the value is intentionally
 		// ignored here — a DECLINED write (handshake gate) is treated identically
 		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
 		// those files until their STEP2 handshake completes.
-		applyLocalEdit: (path: string, content: string) => Promise<boolean | undefined>;
-		getText: (path: string) => Promise<string>;
-		projectedText: (path: string) => Promise<string>;
-		enroll?: (path: string) => void;
+		applyLocalEdit: (noteId: string, content: string) => Promise<boolean | undefined>;
+		getText: (noteId: string) => Promise<string>;
+		projectedText: (noteId: string) => Promise<string>;
+		enroll?: (noteId: string) => void;
 	},
 	onCorruption: () => void,
 	maxBytes: number = MAX_CRDT_NOTE_BYTES,
@@ -127,14 +129,14 @@ export async function reconcileColdStart(
 	}
 	let current: string;
 	try {
-		current = await crdt.projectedText(file.path);
+		current = await crdt.projectedText(file.noteId);
 	} catch {
 		onCorruption(); // surface the existing ConflictModal only on decode failure
 		return;
 	}
 	if (current === file.diskContent) return; // already in sync
 	try {
-		await crdt.applyLocalEdit(file.path, file.diskContent);
+		await crdt.applyLocalEdit(file.noteId, file.diskContent);
 	} catch (e) {
 		// Storage write failure: do not masquerade as corruption. The CRDT
 		// handshake will converge the state once connectivity is restored.
@@ -146,7 +148,7 @@ export async function reconcileColdStart(
 	// ONLY via STEP1/STEP2 — without enrolling here it would silently sit out
 	// live sync until the user opens it. Enrollment is idempotent (once per
 	// session), so seeding paths pay nothing extra.
-	crdt.enroll?.(file.path);
+	crdt.enroll?.(file.noteId);
 }
 
 /** Check if an error is an HTTP response with the given status code.
@@ -869,6 +871,10 @@ export class SyncEngine {
 			this.debounceTimers.delete(file.path);
 		}
 
+		// Resolve the note_id BEFORE clearing the map (removeDoc/reset below need
+		// it to tear down the right CRDT doc, keyed by id not path).
+		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
+
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
 		// so a note later recreated at this path must mint a fresh id rather
 		// than resurrecting the deleted note's (Task 5). Attachments have no
@@ -887,18 +893,19 @@ export class SyncEngine {
 			// Tear down the CRDT doc so a note recreated at the same path starts
 			// fresh — no ghost lineage that would resurrect stale content (P1-3).
 			// Gate on .md (not !isBinary) so .canvas files never hit removeDoc:
-			// canvas files are syncable text but not CRDT-managed.
-			if (file.path.endsWith(".md")) {
-				await this.crdt?.removeDoc(file.path);
-				this.crdtEnrollment?.reset(file.path);
+			// canvas files are syncable text but not CRDT-managed. Also gate on a
+			// known id — nothing to tear down if this note never had a CRDT room.
+			if (file.path.endsWith(".md") && crdtNoteId) {
+				await this.crdt?.removeDoc(crdtNoteId);
+				this.crdtEnrollment?.reset(crdtNoteId);
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
-				if (file.path.endsWith(".md")) {
-					await this.crdt?.removeDoc(file.path);
-					this.crdtEnrollment?.reset(file.path);
+				if (file.path.endsWith(".md") && crdtNoteId) {
+					await this.crdt?.removeDoc(crdtNoteId);
+					this.crdtEnrollment?.reset(crdtNoteId);
 				}
 				return;
 			}
@@ -942,21 +949,17 @@ export class SyncEngine {
 					await this.api.deleteNote(oldPath);
 				}
 				this.goOnline();
-				// Tear down the CRDT doc for the OLD path so the lineage is gone
-				// once the note moves to its new path (P1-3: no ghost on rename).
-				// Gate on .md (not !isBinary) so .canvas renames never hit removeDoc.
-				if (oldPath.endsWith(".md")) {
-					await this.crdt?.removeDoc(oldPath);
-					this.crdtEnrollment?.reset(oldPath);
-				}
+				// Task 6 (note_id-keyed CRDT): a rename must NOT tear down the CRDT
+				// doc. Its key is now the note's stable note_id (unchanged by a
+				// rename — only the path above it moves, via noteIdMap.rename), so
+				// the same doc/IndexedDB entry keeps serving the note at its new
+				// path with its live history intact. Closing it here (the old
+				// path-keyed behavior) would destroy that history on every rename —
+				// the exact bug this rework exists to fix.
 			} catch (e) {
-				// 404 means already deleted — treat as success; still tear down CRDT.
+				// 404 means already deleted — treat as success.
 				if (isHttpStatus(e, 404)) {
 					this.goOnline();
-					if (oldPath.endsWith(".md")) {
-						await this.crdt?.removeDoc(oldPath);
-						this.crdtEnrollment?.reset(oldPath);
-					}
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
@@ -1259,19 +1262,22 @@ export class SyncEngine {
 					this.noteIdMap.set(file.path, noteId);
 				}
 
-				// CRDT path: route markdown saves through CrdtManager when wired
-				// AND the crdt: topic is actually joined. diffIntoYText produces
-				// minimal ops; the Y.Doc update listener forwards the diff to the
-				// server via CrdtChannel. No full-document POST, no version field —
-				// the CRDT update IS the transmission. The crdtLive() level check
-				// guards against a stale manager latch (set, but channel dead-but-set
+				// CRDT path: route markdown saves through CrdtManager when wired,
+				// a note_id is known (#915-style gate: no id, no CRDT room to key
+				// the frame by — REST fallback owns it), AND the crdt: topic is
+				// actually joined. diffIntoYText produces minimal ops; the Y.Doc
+				// update listener forwards the diff to the server via CrdtChannel,
+				// keyed by noteId so the doc_id on the wire matches the backend's
+				// bare note_id. No full-document POST, no version field — the CRDT
+				// update IS the transmission. The crdtLive() level check guards
+				// against a stale manager latch (set, but channel dead-but-set
 				// after an auth swap): if not joined, fall through to the durable REST
 				// path so the write isn't silently dropped (#915). Unset → live.
-				if (this.crdt && (this.crdtLive?.() ?? true)) {
+				if (this.crdt && noteId && (this.crdtLive?.() ?? true)) {
 					const consumed = await routeModify(
 						{
 							isMarkdown: file.extension === "md",
-							path: file.path,
+							noteId,
 							readContent: async () => content,
 						},
 						this.crdt,
@@ -1285,7 +1291,7 @@ export class SyncEngine {
 						// server answers by bootstrapping the note row (CrdtChannel.ensure_room
 						// -> get_or_bootstrap_note). Idempotent per session, so a note already
 						// enrolled via active-leaf-change is unaffected.
-						this.crdtEnrollment?.enroll(file.path);
+						this.crdtEnrollment?.enroll(noteId);
 						success = true;
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
@@ -1295,9 +1301,11 @@ export class SyncEngine {
 					// the doc is empty and the STEP2 has not yet arrived this session.
 					// The legacy push path below owns this write convergently (backend
 					// PR #846 merges legacy REST pushes into the server CRDT doc). We
-					// still enroll the markdown path so the STEP1 handshake kicks off —
+					// still enroll the markdown note so the STEP1 handshake kicks off —
 					// once STEP2 arrives, markSynced fires and future edits route through
-					// CRDT normally. Guard: enroll is md-gated + idempotent per session.
+					// CRDT normally. Guard: enroll is md-gated (checked here, since
+					// CrdtEnrollment itself no longer knows the path) + idempotent per
+					// session.
 					//
 					// Oversized notes must NOT be enrolled: enrolling elicits a STEP2
 					// that encodes the full doc history (~+33% base64), which for a note
@@ -1308,7 +1316,7 @@ export class SyncEngine {
 						file.extension === "md" &&
 						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
 					) {
-						this.crdtEnrollment?.enroll(file.path);
+						this.crdtEnrollment?.enroll(noteId);
 					}
 				}
 
@@ -2280,9 +2288,15 @@ export class SyncEngine {
 			// existed locally. The ghost lineage in IDB/memory must be cleared so a
 			// note recreated at the same path starts fresh (P1-3). Non-md paths are
 			// never CRDT-managed — skip them to avoid spurious removeDoc overhead.
+			// Keyed by note_id now — resolve + clear the mapping before tearing down
+			// (nothing to tear down if this device never learned an id for it).
 			if (normalized.endsWith(".md")) {
-				await this.crdt?.removeDoc(normalized);
-				this.crdtEnrollment?.reset(normalized);
+				const crdtNoteId = this.noteIdMap?.get(normalized) ?? null;
+				this.noteIdMap?.delete(normalized);
+				if (crdtNoteId) {
+					await this.crdt?.removeDoc(crdtNoteId);
+					this.crdtEnrollment?.reset(crdtNoteId);
+				}
 			}
 			return;
 		}
@@ -2311,7 +2325,14 @@ export class SyncEngine {
 					// P2-1: If this device is not currently observing the note's CRDT room
 					// (enrolled elsewhere after last tab-open), enroll now to receive live
 					// updates. enroll() is idempotent — already-enrolled notes are no-ops.
-					this.crdtEnrollment?.enroll(event.path);
+					// NoteStreamEvent (the live WS broadcast) does not carry note_id, so
+					// resolve it via the sidecar; skip gracefully if this device hasn't
+					// learned it yet (the next REST cursor pull's applySyncChange — which
+					// does carry id — will learn it and enroll independently).
+					const noteId = this.noteIdMap?.get(event.path) ?? null;
+					if (noteId) {
+						this.crdtEnrollment?.enroll(noteId);
+					}
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
@@ -2609,6 +2630,12 @@ export class SyncEngine {
 		// file. Deletes (handled above) and attachments (routed via
 		// applyAttachmentChange) are unaffected.
 		if (this.crdt && normalized.endsWith(".md")) {
+			// Enroll by note_id (Task 6). This is populated for the merged-feed
+			// caller (applySyncChange learns `id` right before calling applyChange)
+			// but may be unknown for the legacy /notes/changes path (no `id` field
+			// on NoteChange) — skip enrolling gracefully in that case; the body is
+			// still materialized below directly from the pulled content.
+			const noteId = this.noteIdMap?.get(normalized) ?? null;
 			// Discovery: a CRDT-managed note we don't have on disk yet. Enroll it
 			// (sync-step-1) so the body arrives over the CRDT handshake — the server
 			// seeds the room from notes.content when it has no CRDT state. We never
@@ -2617,7 +2644,7 @@ export class SyncEngine {
 			// and can be missed if we weren't subscribed when the other device opened
 			// the room). An already-local note is left to its existing CRDT routing.
 			if (!this.app.vault.getFileByPath(normalized)) {
-				this.crdtEnrollment?.enroll(normalized);
+				if (noteId) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
@@ -2640,7 +2667,7 @@ export class SyncEngine {
 				// write here. Re-enroll so a post-reconnect resetAll re-fires STEP1 and the
 				// server replies with any update we missed while disconnected (STEP2) ->
 				// flushFromCrdt. Idempotent while the guard is still set.
-				this.crdtEnrollment?.enroll(normalized);
+				if (noteId) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 			}
 			return false;

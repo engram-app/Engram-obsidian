@@ -8,16 +8,18 @@ const MESSAGE_SYNC = 0;
 
 export interface CrdtChannelOptions {
 	manager: CrdtManager;
-	/** Transport: send a base64-encoded y-protocols frame for `docId`. */
+	/** Transport: send a base64-encoded y-protocols frame for `docId` (the bare
+	 *  note_id — see `CrdtManager.docId`). */
 	send: (docId: string, frame: string) => void;
 	/**
 	 * Called when an inbound STEP2 leaves the doc EMPTY — the server's
 	 * authoritative signal that the note is genuinely empty (an empty note has no
 	 * content-bearing update, so nothing else creates its file on disk). Wired to
-	 * `SyncEngine.materializeEmptyDiscovered` so the empty file is written off the
-	 * handshake rather than a wall-clock timer (the #547 down-sync race).
+	 * `SyncEngine.materializeEmptyDiscovered` (via a note_id -> path lookup — see
+	 * main.ts) so the empty file is written off the handshake rather than a
+	 * wall-clock timer (the #547 down-sync race).
 	 */
-	onEmptyStep2?: (path: string) => void;
+	onEmptyStep2?: (noteId: string) => void;
 }
 
 function toB64(bytes: Uint8Array): string {
@@ -32,7 +34,7 @@ function fromB64(b64: string): Uint8Array {
 export class CrdtChannel {
 	private readonly mgr: CrdtManager;
 	private readonly transport: (docId: string, frame: string) => void;
-	private readonly onEmptyStep2?: (path: string) => void;
+	private readonly onEmptyStep2?: (noteId: string) => void;
 	/**
 	 * Per-doc guard: each doc advertises STEP1 at most once per session, so two
 	 * empty peers cannot ping-pong STEP1 forever. Mirrors the y-websocket/Relay
@@ -48,15 +50,15 @@ export class CrdtChannel {
 	}
 
 	/**
-	 * Begin the handshake for `path`: advertise our state via a `messageSync`
+	 * Begin the handshake for `noteId`: advertise our state via a `messageSync`
 	 * `writeSyncStep1` frame. Sent at most once per doc — the receiver replies
 	 * with a STEP2 (not another STEP1), so there is no echo loop.
 	 */
-	async startSync(path: string): Promise<void> {
-		const id = this.mgr.docId(path);
+	async startSync(noteId: string): Promise<void> {
+		const id = this.mgr.docId(noteId);
 		if (this.initiated.has(id)) return;
 		this.initiated.add(id);
-		const doc = await this.mgr.getDoc(path);
+		const doc = await this.mgr.getDoc(noteId);
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, doc);
@@ -67,8 +69,8 @@ export class CrdtChannel {
 	 * Allow a fresh handshake after a WS reconnect — clears the once-per-doc
 	 * guard so `startSync` will send STEP1 again.
 	 */
-	resetSync(path: string): void {
-		this.initiated.delete(this.mgr.docId(path));
+	resetSync(noteId: string): void {
+		this.initiated.delete(this.mgr.docId(noteId));
 	}
 
 	/**
@@ -117,8 +119,8 @@ export class CrdtChannel {
 	 * It integrates zero ops into the doc, produces no doc-update event, no flush,
 	 * and leaves text.length === 0, so the non-empty guard correctly declines to mark.
 	 */
-	async handleFrame(path: string, b64: string): Promise<void> {
-		const doc = await this.mgr.getDoc(path);
+	async handleFrame(noteId: string, b64: string): Promise<void> {
+		const doc = await this.mgr.getDoc(noteId);
 		const decoder = decoding.createDecoder(fromB64(b64));
 		const messageType = decoding.readVarUint(decoder);
 		if (messageType !== MESSAGE_SYNC) return;
@@ -127,12 +129,12 @@ export class CrdtChannel {
 		encoding.writeVarUint(replyEncoder, MESSAGE_SYNC);
 		const syncType = syncProtocol.readSyncMessage(decoder, replyEncoder, doc, REMOTE_ORIGIN);
 
-		const textLen = (await this.mgr.getText(path)).length;
+		const textLen = (await this.mgr.getText(noteId)).length;
 
 		// Mark synced only when the doc has content after applying the frame.
 		// An empty STEP2 integrates no ops and must not mark — see JSDoc above.
 		if (textLen > 0) {
-			this.mgr.markSynced(path);
+			this.mgr.markSynced(noteId);
 		} else if (syncType === syncProtocol.messageYjsSyncStep2) {
 			// A STEP2 that leaves the doc empty is the server's authoritative
 			// "this note is genuinely empty" reply to our discovery STEP1: an empty
@@ -146,11 +148,11 @@ export class CrdtChannel {
 			// non-empty note's first STEP2 always carries its full content
 			// (textLen > 0, handled above), and a STEP1 frame is not a STEP2, so
 			// neither can reach this branch.
-			this.onEmptyStep2?.(path);
+			this.onEmptyStep2?.(noteId);
 		}
 
 		if (encoding.length(replyEncoder) > 1) {
-			this.transport(this.mgr.docId(path), toB64(encoding.toUint8Array(replyEncoder)));
+			this.transport(this.mgr.docId(noteId), toB64(encoding.toUint8Array(replyEncoder)));
 		}
 	}
 }

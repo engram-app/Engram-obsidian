@@ -19,27 +19,14 @@ import { CrdtManager } from "../../src/crdt/manager";
 // manager.test.ts so the helpers are self-contained here.
 // ---------------------------------------------------------------------------
 
-function makeManager() {
-	return new CrdtManager({
-		dbPrefix: `seed-gate-${Math.random().toString(36).slice(2)}`,
-		onUpdate: () => {},
-		onFlushToDisk: async () => {},
-	});
-}
-
-/**
- * Return a second CrdtManager that shares the SAME dbPrefix as `m`, simulating
- * a session restart where IndexedDB already holds history written by `m`.
- *
- * `fake-indexeddb/auto` patches the global IDBFactory; all managers with the
- * same dbPrefix share the same in-memory stores in the test process, so this
- * correctly models cross-session persistence rehydration.
- */
-function makeManagerSameStore(m: CrdtManager) {
-	// Extract the dbPrefix embedded in docId for an arbitrary path.
-	// docId = `${dbPrefix}/a.md`, so strip the trailing "/a.md".
-	const rawId = m.docId("a.md");
-	const dbPrefix = rawId.slice(0, rawId.length - "/a.md".length);
+// Task 6: `docId` (the wire/map key) is always bare — it no longer encodes
+// dbPrefix, so a same-store manager can't be reconstructed by string-slicing
+// docId's return value anymore. Instead each `makeManager()` call takes an
+// explicit dbPrefix (which now only namespaces the physical IndexedDB store,
+// per CrdtManagerOptions.dbPrefix), defaulting to a fresh random one so
+// unrelated tests never share state; callers who WANT to share a store just
+// pass the same dbPrefix to both calls.
+function makeManager(dbPrefix = `seed-gate-${Math.random().toString(36).slice(2)}`) {
 	return new CrdtManager({
 		dbPrefix,
 		onUpdate: () => {},
@@ -70,13 +57,14 @@ describe("seed lifecycle", () => {
 	});
 
 	it("diffs into a populated doc (remote lineage established)", async () => {
-		const m = makeManager();
+		const sharedPrefix = `seed-gate-restart-${Math.random().toString(36).slice(2)}`;
+		const m = makeManager(sharedPrefix);
 		m.markSynced("a.md");
 		await m.applyLocalEdit("a.md", "hello world");
 		await m.destroy();
 
 		// New manager session for the same store simulates restart: doc has history.
-		const m2 = makeManagerSameStore(m);
+		const m2 = makeManager(sharedPrefix);
 		// No markSynced — the doc is non-empty, so the diff must land on it.
 		const consumed = await m2.applyLocalEdit("a.md", "hello brave world");
 		expect(consumed).toBe(true);

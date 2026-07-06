@@ -37,6 +37,18 @@ describe("CrdtEnrollment.enroll", () => {
 		expect(startSyncCalls).toEqual(["note.md"]);
 	});
 
+	test("enrolls a bare note_id with no .md extension (Task 6: keyed by id, not path)", async () => {
+		// The markdown-extension gate moved to call sites (they know the path);
+		// enroll() itself must accept an opaque note_id — a crdt_doc_ready
+		// announce has no path to check at all.
+		const { enrollment, startSyncCalls } = makeEnrollment();
+
+		enrollment.enroll("018f5b3e-0000-7000-8000-000000000001");
+		await new Promise((r) => setTimeout(r, 0));
+
+		expect(startSyncCalls).toEqual(["018f5b3e-0000-7000-8000-000000000001"]);
+	});
+
 	test("different paths each get one startSync", async () => {
 		const { enrollment, startSyncCalls } = makeEnrollment();
 

@@ -380,7 +380,13 @@ export default class EngramSyncPlugin extends Plugin {
 				if (this.syncEngine.isSyncBlocked()) return;
 				const file = this.app.workspace.getActiveFile();
 				if (file instanceof TFile && file.extension === "md") {
-					this.crdtEnrollment?.enroll(file.path);
+					// Resolve-or-mint: opening a brand-new never-synced note has no
+					// note_id yet, and enroll (Task 6) is keyed by id, not path.
+					// Minting here (same NoteIdMap instance pushFile mints into)
+					// keeps behavior identical to the old path-keyed enroll — the
+					// note gets a live handshake immediately on open rather than
+					// waiting for the next tab-switch after its first save.
+					this.crdtEnrollment?.enroll(this.noteIdMap.getOrMint(file.path));
 				}
 			}),
 		);
@@ -396,9 +402,11 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.vault.on("rename", (file, oldPath) => {
 				void this.syncEngine.handleRename(file, oldPath);
-				if (file instanceof TFile && file.extension === "md") {
-					this.crdtManager?.renameDoc(oldPath, file.path);
-				}
+				// Task 6: no CrdtManager.renameDoc call — the CRDT doc is keyed by
+				// the note's stable note_id (SyncEngine.handleRename already moved
+				// that mapping via noteIdMap.rename), so a rename never touches the
+				// doc/IndexedDB entry at all. Closing/reopening it here would
+				// destroy the live history the id-keying was built to preserve.
 				this.crdtLiveViews?.refresh();
 			}),
 		);
@@ -668,12 +676,16 @@ export default class EngramSyncPlugin extends Plugin {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;
+					// Resolve-or-mint the note_id up front — reconcileColdStart (Task 6)
+					// routes every CRDT call by id, not path.
+					const noteId = this.noteIdMap.getOrMint(file.path);
 					this.app.vault
 						.cachedRead(file)
 						.then((diskContent) =>
 							reconcileColdStart(
 								{
 									path: file.path,
+									noteId,
 									diskContent,
 								},
 								{
@@ -682,7 +694,7 @@ export default class EngramSyncPlugin extends Plugin {
 									projectedText: crdt.projectedText.bind(crdt),
 									// Guarantee the STEP1/STEP2 adoption for drifted notes even
 									// when the adopt-first seed gate skips the local write.
-									enroll: (path) => this.crdtEnrollment?.enroll(path),
+									enroll: (id) => this.crdtEnrollment?.enroll(id),
 								},
 								() => {
 									rlog().warn(
@@ -1212,8 +1224,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (!(file instanceof TFile) || file.extension !== "md") continue;
 			if (seen.has(file.path)) continue;
 			seen.add(file.path);
-			enrollment.reset(file.path);
-			enrollment.enroll(file.path);
+			const noteId = this.noteIdMap.getOrMint(file.path);
+			enrollment.reset(noteId);
+			enrollment.enroll(noteId);
 		}
 	}
 
@@ -1369,18 +1382,43 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						return;
 					}
+					// Task 6 (note_id-keyed CRDT): CrdtManager/CrdtChannel/CrdtEnrollment
+					// are all keyed by the note's stable note_id now, matching the
+					// backend's bare-UUID `doc_id` on `crdt_msg`/`crdt_doc_ready`. Disk
+					// I/O is still path-keyed (files live on disk paths, not ids), so
+					// every callback below that used to receive `path` now receives
+					// `noteId` and resolves the path itself via `this.noteIdMap`.
 					this.crdtManager = new CrdtManager({
-						dbPrefix,
 						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
-						onFlushToDisk: (path, content) =>
-							this.crdtLiveViews?.isBound(path)
+						onFlushToDisk: (noteId, content) => {
+							const path = this.noteIdMap.pathForId(noteId);
+							if (!path) {
+								// Unknown id: a crdt_msg/STEP2 arrived for a note this device
+								// hasn't learned a path for yet (e.g. a brand-new note created
+								// on another device, discovered via crdt_doc_ready before this
+								// device's next REST pull). The content is safely retained in
+								// the Y.Doc/IndexedDB — nothing is lost. The next regular sync
+								// pull (applySyncChange) independently materializes the file
+								// from its own REST-fetched body once it learns the id->path
+								// mapping, so no explicit retry is needed here.
+								rlog().warn(
+									"crdt",
+									`onFlushToDisk: no known path for note_id=${noteId} — content retained in Y.Doc, awaiting a sync pull to learn the path`,
+								);
+								return Promise.resolve();
+							}
+							return this.crdtLiveViews?.isBound(path)
 								? Promise.resolve()
-								: this.syncEngine.flushFromCrdt(path, content),
+								: this.syncEngine.flushFromCrdt(path, content);
+						},
 						// Adopt-first seed gate: never re-encode content the server
 						// already holds (see CrdtManagerOptions.isUnchangedSynced).
-						isUnchangedSynced: (path, content) =>
-							this.syncEngine.isUnchangedSynced(path, content),
-						onPersistError: (path, err) => {
+						isUnchangedSynced: (noteId, content) => {
+							const path = this.noteIdMap.pathForId(noteId);
+							return path ? this.syncEngine.isUnchangedSynced(path, content) : false;
+						},
+						onPersistError: (noteId, err) => {
+							const path = this.noteIdMap.pathForId(noteId) ?? noteId;
 							rlog().warn(
 								"crdt",
 								`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
@@ -1394,22 +1432,31 @@ export default class EngramSyncPlugin extends Plugin {
 						// authoritative "genuinely empty note" signal — materialize the
 						// file off the handshake (not a timer) so a slow content STEP2 can
 						// never race a premature empty file onto disk (#547).
-						onEmptyStep2: (path) => {
+						onEmptyStep2: (noteId) => {
+							const path = this.noteIdMap.pathForId(noteId);
+							if (!path) {
+								rlog().warn(
+									"crdt",
+									`onEmptyStep2: no known path for note_id=${noteId} — skipping materialize`,
+								);
+								return;
+							}
 							void this.syncEngine.materializeEmptyDiscovered(path);
 						},
 					});
-					// Enrollment tracker: calls startSync(path) exactly once per note
+					// Enrollment tracker: calls startSync(noteId) exactly once per note
 					// per channel session so the state-vector handshake fires and the
 					// note pulls remote CRDT state (the down-sync gap). Reset on
 					// reconnect so a fresh handshake fires with updated server state.
 					this.crdtEnrollment = new CrdtEnrollment({
-						startSync: (path) => this.crdtChannel?.startSync(path) ?? Promise.resolve(),
-						resetSync: (path) => this.crdtChannel?.resetSync(path),
+						startSync: (noteId) =>
+							this.crdtChannel?.startSync(noteId) ?? Promise.resolve(),
+						resetSync: (noteId) => this.crdtChannel?.resetSync(noteId),
 						// After the handshake fires, compact any bloated docs. This is a
 						// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
 						// so it is safe to run on every note open.
-						onAfterEnroll: async (path) => {
-							await this.crdtManager?.flattenIfBloated(path);
+						onAfterEnroll: async (noteId) => {
+							await this.crdtManager?.flattenIfBloated(noteId);
 						},
 					});
 					// Level-triggered discovery: a pull that surfaces a CRDT-managed
@@ -1422,6 +1469,11 @@ export default class EngramSyncPlugin extends Plugin {
 						app: this.app,
 						manager: this.crdtManager,
 						enrollment: this.crdtEnrollment,
+						// Resolve-or-mint: the editor binding needs a note_id immediately
+						// on open, even for a brand-new note that has never been pushed
+						// (pushFile would otherwise be the only minter, deferring the live
+						// binding until after the first save).
+						resolveId: (path) => this.noteIdMap.getOrMint(path),
 						flushToDisk: (path, content) =>
 							this.syncEngine.flushFromCrdt(path, content),
 					});
@@ -1436,10 +1488,10 @@ export default class EngramSyncPlugin extends Plugin {
 					// so repeated setupNoteStream() calls don't stack them. Trigger an
 					// initial refresh here so the new manager sees currently-open leaves.
 					this.crdtLiveViews.refresh();
+					// docId is now the bare note_id (no vault prefix to strip — Task 6),
+					// so it's forwarded to handleFrame directly.
 					channel.onCrdtMessage = (docId, b64) => {
-						const prefix = `${dbPrefix}/`;
-						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-						void this.crdtChannel?.handleFrame(path, b64);
+						void this.crdtChannel?.handleFrame(docId, b64);
 					};
 					// Discovery: when another device opens a room (server announces
 					// `crdt_doc_ready`), enroll the note here so a sync-step-1 fires and
@@ -1457,15 +1509,15 @@ export default class EngramSyncPlugin extends Plugin {
 						// here keeps gated-period state out of the doc entirely; the
 						// announce re-fires via pull discovery once the gate opens.
 						if (this.syncEngine.isSyncBlocked()) return;
-						const prefix = `${dbPrefix}/`;
-						const path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
 						// Enroll → send our discovery STEP1. The server answers with a
 						// STEP2: a content STEP2 flushes the body via the update path; an
 						// EMPTY STEP2 (genuinely-empty note) is materialized off the
 						// handshake in CrdtChannel.onEmptyStep2. This replaces the former
 						// wall-clock materialize timer, which raced a slow content STEP2
-						// and wrote a premature empty file under load (#547).
-						this.crdtEnrollment?.enroll(path);
+						// and wrote a premature empty file under load (#547). No path is
+						// needed here at all (Task 6) — docId IS the note_id, and enroll()
+						// no longer requires a path to start the handshake.
+						this.crdtEnrollment?.enroll(docId);
 					};
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT

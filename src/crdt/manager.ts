@@ -31,8 +31,20 @@ export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<str
 }
 
 export interface CrdtManagerOptions {
-	/** Namespaces IndexedDB store names and doc ids per vault. */
-	dbPrefix: string;
+	/**
+	 * Optional IndexedDB store namespace. Task 6 (note_id-keyed CRDT rework)
+	 * changed `docId` to return the bare note_id, unprefixed, so the WIRE
+	 * `doc_id` matches the backend's bare-UUID `crdt_msg`/`crdt_doc_ready`
+	 * exactly — note_ids are globally unique, so no per-caller namespace is
+	 * needed there. `dbPrefix`, if given, is used ONLY for the IndexedDB store
+	 * name (never for `docId`/the wire), so two `CrdtManager` instances that
+	 * happen to reference the same note_id (e.g. two "devices" in a test, both
+	 * running against the one shared `fake-indexeddb` process) don't
+	 * cross-contaminate each other's local storage. Real devices don't need
+	 * this — each has its own physical browser storage origin regardless of
+	 * naming — so production callers can omit it.
+	 */
+	dbPrefix?: string;
 	/**
 	 * Emitted on every local Y.Doc update (origin !== REMOTE_ORIGIN). The
 	 * channel layer (Task 4) forwards these as Yjs `update` messages to the
@@ -83,7 +95,14 @@ interface Entry {
 
 export class CrdtManager {
 	private readonly opts: CrdtManagerOptions;
-	/** Keyed by docId (= `dbPrefix/path`). */
+	/** Keyed by docId (= the bare note_id — see `docId`). Every public method
+	 *  below that takes a `path`-shaped string parameter is actually keyed by
+	 *  whatever opaque string the caller passes; since Task 6, callers pass the
+	 *  note's stable note_id (resolved via `NoteIdMap`), not its vault path, so
+	 *  a rename (which changes the path but not the id) never disturbs the
+	 *  entry here. Parameter names below still say "path" in a few older
+	 *  comments/tests where the distinction doesn't matter — the manager itself
+	 *  never interprets the string, it only forwards it to callbacks. */
 	private readonly docs = new Map<string, Entry>();
 	/**
 	 * Per-session set of doc IDs for which at least one inbound server sync
@@ -144,10 +163,27 @@ export class CrdtManager {
 	// Public API
 	// ---------------------------------------------------------------------------
 
-	/** Stable, vault-scoped doc id — used for the IndexedDB store name AND the
-	 *  channel topic key so the two subsystems resolve to the same note. */
-	docId(path: string): string {
-		return `${this.opts.dbPrefix}/${path}`;
+	/** The doc id used to key the in-memory `docs` map AND the wire `doc_id`
+	 *  sent to the backend. Task 6: returns the given key bare/unprefixed —
+	 *  callers are expected to pass the note's stable note_id (a UUID), which
+	 *  the backend's `crdt_msg`/`crdt_doc_ready` frames also carry bare, with no
+	 *  vault or path embedded. Renaming a note never changes its note_id, so
+	 *  this key (and the doc entry filed under it) is untouched by renames.
+	 *  NOT necessarily the physical IndexedDB store name — see `storeName`. */
+	docId(noteId: string): string {
+		return noteId;
+	}
+
+	/** Physical IndexedDB store name for `noteId` — bare (same as `docId`)
+	 *  unless `dbPrefix` is set, in which case it's namespaced. This is a
+	 *  strictly local-storage concern, decoupled from `docId`/the wire: two
+	 *  managers can legitimately reference the same note_id (two real devices
+	 *  syncing the same note) while needing separate physical storage — real
+	 *  devices get that for free (separate browser origins); `dbPrefix` exists
+	 *  so a test simulating multiple "devices" against one shared
+	 *  `fake-indexeddb` process can get the same isolation. */
+	private storeName(noteId: string): string {
+		return this.opts.dbPrefix ? `${this.opts.dbPrefix}/${noteId}` : noteId;
 	}
 
 	/** Returns (or opens + rehydrates from IndexedDB) the Y.Doc for `path`. */
@@ -276,12 +312,12 @@ export class CrdtManager {
 	 *   → docs.delete() → synced.delete()
 	 *
 	 * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
-	 * the path, `indexedDB.deleteDatabase(docId)` clears the IDB store directly.
-	 * This covers the case where another session wrote to IDB but the current
-	 * session never opened the doc. The database name matches the docId
-	 * (`${dbPrefix}/${path}`) — the same naming convention `entry()` uses when
-	 * constructing IndexeddbPersistence (y-indexeddb uses the docId as the
-	 * database name). Resolves without throwing regardless of whether the DB
+	 * the path, `indexedDB.deleteDatabase(storeName)` clears the IDB store
+	 * directly. This covers the case where another session wrote to IDB but the
+	 * current session never opened the doc. The database name matches what
+	 * `entry()` uses when constructing IndexeddbPersistence (y-indexeddb uses
+	 * that name as the database name) — bare `path` unless dbPrefix is set (see
+	 * `storeName`). Resolves without throwing regardless of whether the DB
 	 * existed.
 	 */
 	async removeDoc(path: string): Promise<void> {
@@ -295,11 +331,11 @@ export class CrdtManager {
 			this.docs.delete(id);
 		} else {
 			// No in-memory entry — the doc may still exist in IDB from a previous
-			// session. Delete the database directly by name (= docId) to prevent
-			// ghost resurrection on the next open. This is the same pattern that
+			// session. Delete the database directly by name to prevent ghost
+			// resurrection on the next open. This is the same pattern that
 			// ensureDocSchema uses for the one-time schema wipe (schema.ts).
 			await new Promise<void>((resolve) => {
-				const req = indexedDB.deleteDatabase(id);
+				const req = indexedDB.deleteDatabase(this.storeName(path));
 				req.onsuccess = () => resolve();
 				req.onerror = () => resolve(); // non-fatal — DB may not exist
 				req.onblocked = () => resolve(); // resolve even if another tab has it open
@@ -308,17 +344,6 @@ export class CrdtManager {
 		// Clear the synced mark regardless of which branch ran. A recreated note
 		// at the same path must go through the full STEP2 handshake before seeding.
 		this.synced.delete(id);
-	}
-
-	/**
-	 * On note rename, drop the old-path doc entry (close + clear) so the new
-	 * path opens a fresh doc that re-syncs from the server via enrollment.
-	 * Keeping the old entry would leave it accumulating edits under a path the
-	 * server no longer maps, and orphan its IndexedDB store.
-	 */
-	renameDoc(oldPath: string, newPath: string): void {
-		if (oldPath === newPath) return;
-		this.closeDoc(oldPath);
 	}
 
 	/** Tear down all open docs. Call on plugin unload. */
@@ -460,7 +485,10 @@ export class CrdtManager {
 		}
 
 		const doc = new Y.Doc();
-		const persistence = new IndexeddbPersistence(id, doc);
+		// The physical IndexedDB store name may be namespaced by dbPrefix (see
+		// CrdtManagerOptions.dbPrefix) — but `id` (bare, no prefix) is still what
+		// goes on the wire and keys the in-memory `docs` map.
+		const persistence = new IndexeddbPersistence(this.storeName(path), doc);
 		const text = doc.getText(CONTENT_KEY);
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of

@@ -23,6 +23,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -126,6 +127,9 @@ function resetMocks(): void {
 	(mockApp.fileManager.trashFile as any).mockReset().mockResolvedValue(undefined);
 }
 
+// Task 6 (note_id-keyed CRDT): production always wires a NoteIdMap alongside
+// the CrdtManager, so the pushFile CRDT gate (which now requires a resolved
+// note_id, not just a manager) needs one here too.
 function createEngine(): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
@@ -134,6 +138,7 @@ function createEngine(): SyncEngine {
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
+	engine.setNoteIdMap(new NoteIdMap());
 	return engine;
 }
 
@@ -175,6 +180,11 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
+		// NoteStreamEvent carries no note_id (Task 6) — the enroll call resolves
+		// it via the sidecar, so seed a mapping for this test's path.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/test.md", "Notes/test.md");
+		engine.setNoteIdMap(noteIdMap);
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
@@ -330,6 +340,12 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
+		// applyChange (Task 6) resolves the note_id via the sidecar before
+		// enrolling — seed a mapping for this test's path (the merged /sync/changes
+		// feed normally learns this before applyChange runs).
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/discovered.md", "Notes/discovered.md");
+		engine.setNoteIdMap(noteIdMap);
 		// getFileByPath returns null by default → the note does not exist locally,
 		// so this pull is a discovery. The /changes payload already carries the body,
 		// so materialize it directly instead of deferring to the CRDT seed-from-REST
@@ -360,6 +376,9 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/have.md", "Notes/have.md");
+		engine.setNoteIdMap(noteIdMap);
 		// The note already exists locally → CRDT owns its body (no legacy write),
 		// but we still re-enroll so a post-reconnect resetAll re-fires the STEP1
 		// handshake and pulls any update made while disconnected (idempotent
