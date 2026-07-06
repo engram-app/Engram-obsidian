@@ -1054,12 +1054,13 @@ var EngramApi = class _EngramApi {
    *  When version is provided, the server uses optimistic concurrency control:
    *  returns 409 with the current server state if the version doesn't match.
    *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
-   *  isn't yet known server-side — the server adopts it on first create
-   *  (note_id-keyed CRDT rework, Task 5). Harmless to send for an existing
-   *  note: the server already has an id and ignores it. */
+   *  isn't yet known server-side — sent as the body `id` field, which the
+   *  server adopts as the note's primary key on first create (note_id-keyed
+   *  CRDT rework, Task 5). Harmless to send for an existing note: the server
+   *  already has an id and ignores it. */
   async pushNote(path, content, mtime, version, clientId) {
     let body = { path, content, mtime };
-    version !== void 0 && (body.version = version), clientId !== void 0 && (body.client_id = clientId);
+    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId);
     try {
       return (await this.request("POST", "/notes", body)).json;
     } catch (e) {
