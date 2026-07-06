@@ -254,6 +254,15 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncLog = new SyncLog();
 		this.syncEngine.syncLog = this.syncLog;
 
+		// Level-triggered CRDT-liveness check for the push path. setCrdtManager is
+		// edge-triggered (set on crdt: join, cleared on disconnect) and can go stale
+		// — set, but the channel dead-but-set after an auth swap. Reading the live
+		// join state at push time lets pushFile fall back to REST instead of
+		// dropping the update into a channel the server no longer routes (#915).
+		// Reads this.noteStream at call time, so it always reflects the current
+		// channel; null stream → not live → REST.
+		this.syncEngine.setCrdtLiveCheck(() => this.noteStream?.isCrdtConnected() ?? false);
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);

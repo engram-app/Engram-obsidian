@@ -360,6 +360,20 @@ export class SyncEngine {
 		this.crdtEnrollment = enrollment;
 	}
 
+	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
+	 *  The `crdt` manager latch above is edge-triggered (set on join via
+	 *  onCrdtJoined, cleared on disconnect), so it can go STALE — set, but the
+	 *  channel dead-but-set after an auth swap. pushFile consults this before
+	 *  claiming a CRDT push succeeded, so a stale latch falls back to the durable
+	 *  REST path instead of dropping the Y.Doc update into a channel the server no
+	 *  longer routes by join_ref (#915). Unset → treated as live (backward
+	 *  compatible with callers/tests that never wire it). */
+	private crdtLive: (() => boolean) | null = null;
+
+	setCrdtLiveCheck(fn: (() => boolean) | null): void {
+		this.crdtLive = fn;
+	}
+
 	/** True when a path currently has a live editor binding (an open, bound
 	 *  CodeMirror editor). While that holds, the editor binding is the sole CRDT
 	 *  writer for the note (Relay's "editor owns the file while open"): the disk
@@ -1204,11 +1218,15 @@ export class SyncEngine {
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 
-				// CRDT path: route markdown saves through CrdtManager when wired.
-				// diffIntoYText produces minimal ops; the Y.Doc update listener
-				// forwards the diff to the server via CrdtChannel. No full-document
-				// POST, no version field — the CRDT update IS the transmission.
-				if (this.crdt) {
+				// CRDT path: route markdown saves through CrdtManager when wired
+				// AND the crdt: topic is actually joined. diffIntoYText produces
+				// minimal ops; the Y.Doc update listener forwards the diff to the
+				// server via CrdtChannel. No full-document POST, no version field —
+				// the CRDT update IS the transmission. The crdtLive() level check
+				// guards against a stale manager latch (set, but channel dead-but-set
+				// after an auth swap): if not joined, fall through to the durable REST
+				// path so the write isn't silently dropped (#915). Unset → live.
+				if (this.crdt && (this.crdtLive?.() ?? true)) {
 					const consumed = await routeModify(
 						{
 							isMarkdown: file.extension === "md",
