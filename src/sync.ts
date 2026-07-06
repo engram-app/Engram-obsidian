@@ -393,6 +393,21 @@ export class SyncEngine {
 		if (noteId) this.confirmedNoteIds.delete(noteId);
 	}
 
+	/** Forget all confirmed-note-id status. Called on a WebSocket (re)connect:
+	 *  a reconnect is a point where server-known state may have diverged from
+	 *  this in-memory cache (another device deleted/renamed a note, or the
+	 *  backing store was reset out from under us — the e2e harness resets the
+	 *  DB between reruns while the plugin instance lives on). A STALE confirmed
+	 *  entry is the dangerous direction: it routes a note's first write to CRDT,
+	 *  which the server silently DROPS for a note it has no row for (no path on
+	 *  the wire to bootstrap from), losing the write. Clearing biases every
+	 *  note's next write back to the durable REST path, which re-creates the row
+	 *  and re-confirms the id; the catch-up pull re-confirms whatever actually
+	 *  changed. Cost is at most one extra REST push per note after a reconnect. */
+	clearConfirmedNoteIds(): void {
+		this.confirmedNoteIds.clear();
+	}
+
 	/** Optional CRDT enrollment tracker. When set, a pull that surfaces a
 	 *  CRDT-managed markdown note we don't have locally enrolls it (sends a
 	 *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -1305,6 +1320,18 @@ export class SyncEngine {
 				if (!noteId && this.noteIdMap) {
 					noteId = uuid7();
 					this.noteIdMap.set(file.path, noteId);
+				}
+
+				// Routing observability: which inputs decide CRDT-vs-REST for this
+				// markdown save. A brand-new note MUST be REST (confirmed=false); a
+				// stale confirmed=true here routes a never-server-known note to CRDT,
+				// which the backend silently drops. Surfaced so the delivery oracle
+				// can attribute a "not on server" failure to the routing decision.
+				if (file.extension === "md") {
+					rlog().info(
+						"push",
+						`route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
+					);
 				}
 
 				// CRDT path: route markdown saves through CrdtManager when wired,

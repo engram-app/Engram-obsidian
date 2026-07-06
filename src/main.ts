@@ -1268,6 +1268,14 @@ export default class EngramSyncPlugin extends Plugin {
 					this.updateStatusBar(this.syncEngine.getStatus());
 					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {
+						// Forget confirmed-note-id status: across a (re)connect the
+						// server's view may have diverged (another device deleted/renamed
+						// a note, or the backing store was reset). A stale "confirmed"
+						// entry routes a note's first write to CRDT, which the server
+						// silently drops for a note it has no row for. Clearing biases the
+						// next write back to durable REST; the catch-up pull below re-
+						// confirms whatever changed.
+						this.syncEngine.clearConfirmedNoteIds();
 						// Reset all CRDT enrollments so a fresh startSync STEP1
 						// handshake fires for each open note after reconnect.
 						this.crdtEnrollment?.resetAll();

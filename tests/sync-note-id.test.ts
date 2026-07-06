@@ -447,3 +447,48 @@ describe("handleRename re-keys the map, id unchanged", () => {
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
 });
+
+describe("clearConfirmedNoteIds biases the next write back to REST", () => {
+	test("a previously-confirmed note routes REST after clear (reconnect invalidation)", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		// Confirm id-conf for known.md via a pull.
+		await engine.applySyncChange({
+			id: "id-conf",
+			path: "known.md",
+			title: "k",
+			content: "# K\nbody",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+
+		// Control: while confirmed + CRDT live, an edit routes through CRDT.
+		applyLocalEdit.mockClear();
+		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
+		engine.handleModify(new TFile("known.md"));
+		await flush();
+		expect(applyLocalEdit).toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+
+		// Clear confirmations (as on a WS reconnect) — the next write must go REST,
+		// which re-creates/re-verifies the row server-side rather than routing to a
+		// CRDT room the server may no longer have (silent-drop → data loss).
+		engine.clearConfirmedNoteIds();
+		applyLocalEdit.mockClear();
+		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
+		engine.handleModify(new TFile("known.md"));
+		await flush();
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+});
