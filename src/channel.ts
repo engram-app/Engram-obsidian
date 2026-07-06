@@ -366,7 +366,7 @@ export class NoteChannel {
 			rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
 		};
 
-		this.ws.onclose = async (evt?: CloseEvent) => {
+		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
 			this.setConnected(false);
@@ -392,13 +392,13 @@ export class NoteChannel {
 			// and let api.ts decide (its real-401 handler invalidates and refreshes;
 			// a 2xx proves the token is fine).
 			if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe) {
-				try {
-					await this.authProbe();
-				} catch {
-					// A 401 is handled inside the api client; a network error just
-					// means we are offline. Either way the reconnect below refreshes
-					// the token if needed.
-				}
+				// Fire-and-forget: we want only the probe's side effect (a real 401 is
+				// handled by the api client's invalidation path). Do NOT await: awaiting
+				// here would defer scheduleReconnect past a suspension point and let a
+				// concurrent disconnect() fail to cancel the reconnect (zombie socket).
+				// A network error just means we are offline; either way the reconnect
+				// below refreshes the token if needed.
+				void this.authProbe().catch(() => {});
 			}
 
 			if (opened) {

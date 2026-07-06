@@ -1525,19 +1525,15 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
-    }, this.ws.onclose = async (evt) => {
+    }, this.ws.onclose = (evt) => {
       var _a2, _b2, _c2, _d2;
       this.clearTimers(), this.ws = null, this.setConnected(!1);
       let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
       if (rlog().info(
         "channel",
         `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
-      ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe)
-        try {
-          await this.authProbe();
-        } catch (e) {
-        }
-      if (opened) {
+      ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe && this.authProbe().catch(() => {
+      }), opened) {
         let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
@@ -21042,7 +21038,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe())), this.settings.enableCrdt && this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),

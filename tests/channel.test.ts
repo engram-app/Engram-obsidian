@@ -429,6 +429,35 @@ describe("NoteChannel.setAuthProvider", () => {
 		channel.disconnect();
 	});
 
+	test("a rejecting probe never blocks reconnect (onclose stays synchronous)", async () => {
+		// Pins the fix: onclose must schedule reconnect in the SAME synchronous
+		// tick, before the fire-and-forget probe promise has settled. If onclose
+		// ever went back to `await`ing the probe, reconnectTimer would still be
+		// null right after fireClose() returns.
+		(globalThis as any).navigator = { onLine: true };
+		const probe = mock(() => Promise.reject(new Error("401")));
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider({
+			getToken: mock(() => Promise.resolve("token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+		});
+		channel.setAuthProbe(probe);
+		await channel.connect();
+
+		fireClose(lastWsInstance);
+
+		// Reconnect must already be armed, synchronously, before the rejecting
+		// probe promise gets a chance to settle.
+		expect((channel as any).reconnectTimer).not.toBeNull();
+
+		await Promise.resolve();
+		expect(probe).toHaveBeenCalledTimes(1);
+
+		channel.disconnect();
+	});
+
 	test("does NOT fire the auth probe when WS closes AFTER a successful open (normal disconnect)", async () => {
 		(globalThis as any).navigator = { onLine: true };
 		const probe = mock(() => Promise.resolve({}));

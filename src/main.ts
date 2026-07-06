@@ -1299,8 +1299,9 @@ export default class EngramSyncPlugin extends Plugin {
 
 				this.noteStream = channel;
 				if (this.authProvider) {
+					// setAuthProbe already wired above at construction (same channel
+					// object, same closure), so re-wiring it here would be a no-op.
 					this.noteStream.setAuthProvider(this.authProvider);
-					this.noteStream.setAuthProbe(() => this.api.getMe());
 				}
 
 				// Wire CRDT transport through this channel.
