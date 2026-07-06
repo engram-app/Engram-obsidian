@@ -35,6 +35,14 @@ function seedSyncState(engine: SyncEngine, path: string, content: string, versio
 	state.set(path, { hash: fnv1a(content), ...(version !== undefined ? { version } : {}) });
 }
 
+/** Mark a note_id as server-confirmed (rest-first fix): pushFile only routes
+ *  a note through CRDT once the server is known to have a row for it. Tests
+ *  that exercise CRDT routing itself (not the new-note gate) must seed this,
+ *  same pattern as seedSyncState above for private test setup. */
+function markConfirmed(engine: SyncEngine, noteId: string): void {
+	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+}
+
 // ---------------------------------------------------------------------------
 // Shared mock infrastructure
 // ---------------------------------------------------------------------------
@@ -487,6 +495,13 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		// Wire new manager into the engine — should use new CRDT path
 		const engine = createEngine();
 		engine.setCrdtManager(newManager as any);
+		// rest-first fix: CRDT routing requires the note to already be
+		// server-confirmed. This test is about the manager-swap/destroy
+		// behavior, not the new-note gate, so seed a deterministic id + confirm it.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		engine.setNoteIdMap(noteIdMap);
+		markConfirmed(engine, "id-note");
 
 		const file = new TFile("note.md");
 		engine.handleModify(file);
@@ -559,6 +574,11 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 		// and does not fall through to pushNote (handshake-gate fix).
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
+		// rest-first fix: only a server-confirmed note routes through CRDT.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		engine.setNoteIdMap(noteIdMap);
+		markConfirmed(engine, "id-note");
 
 		const file = new TFile("note.md");
 		engine.handleModify(file);
@@ -626,6 +646,11 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 
 		// onCrdtJoined fires (crdt: topic join succeeded)
 		engine.setCrdtManager(manager);
+		// rest-first fix: only a server-confirmed note routes through CRDT.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		engine.setNoteIdMap(noteIdMap);
+		markConfirmed(engine, "id-note");
 
 		const file = new TFile("note.md");
 		engine.handleModify(file);

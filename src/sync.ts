@@ -359,6 +359,28 @@ export class SyncEngine {
 		this.noteIdMap = map;
 	}
 
+	/** note_ids the SERVER is known to already have a note row for — learned
+	 *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
+	 *  successful REST push response. The backend's CRDT channel now requires
+	 *  the note to pre-exist (note_in_vault?) and silently drops a crdt_msg for
+	 *  an unknown note_id — it can no longer bootstrap a note row from a bare
+	 *  wire doc_id (no path on the frame). So a note's FIRST push must go via
+	 *  REST (which creates the row and adopts the client-minted id); only once
+	 *  confirmed here may subsequent edits route through CRDT. Keyed by note_id
+	 *  (not path) so a delete+recreate at the same path — which mints a fresh
+	 *  id — starts unconfirmed again rather than inheriting the old note's
+	 *  confirmed status. Never pruned on delete (bounded by live note count;
+	 *  a stray id is a few bytes, not worth the bookkeeping). */
+	private confirmedNoteIds: Set<string> = new Set();
+
+	private isNoteConfirmed(noteId: string | null): boolean {
+		return noteId !== null && this.confirmedNoteIds.has(noteId);
+	}
+
+	private confirmNoteId(noteId: string | null | undefined): void {
+		if (noteId) this.confirmedNoteIds.add(noteId);
+	}
+
 	/** Optional CRDT enrollment tracker. When set, a pull that surfaces a
 	 *  CRDT-managed markdown note we don't have locally enrolls it (sends a
 	 *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -1269,16 +1291,29 @@ export class SyncEngine {
 
 				// CRDT path: route markdown saves through CrdtManager when wired,
 				// a note_id is known (#915-style gate: no id, no CRDT room to key
-				// the frame by — REST fallback owns it), AND the crdt: topic is
-				// actually joined. diffIntoYText produces minimal ops; the Y.Doc
-				// update listener forwards the diff to the server via CrdtChannel,
-				// keyed by noteId so the doc_id on the wire matches the backend's
-				// bare note_id. No full-document POST, no version field — the CRDT
-				// update IS the transmission. The crdtLive() level check guards
-				// against a stale manager latch (set, but channel dead-but-set
-				// after an auth swap): if not joined, fall through to the durable REST
-				// path so the write isn't silently dropped (#915). Unset → live.
-				if (this.crdt && noteId && (this.crdtLive?.() ?? true)) {
+				// the frame by — REST fallback owns it), the note is CONFIRMED
+				// server-known, AND the crdt: topic is actually joined. The confirmed
+				// check exists because the backend's CRDT channel requires the note
+				// row to already exist (note_in_vault?) and silently DROPS a crdt_msg
+				// for an unknown note_id — it can no longer bootstrap a note from a
+				// bare wire doc_id (no path on the frame). A brand-new / never-synced
+				// note must therefore take the REST path below first (which creates
+				// the row and adopts the client-minted id, confirming it on success);
+				// only then do its edits route through CRDT. diffIntoYText produces
+				// minimal ops; the Y.Doc update listener forwards the diff to the
+				// server via CrdtChannel, keyed by noteId so the doc_id on the wire
+				// matches the backend's bare note_id. No full-document POST, no
+				// version field — the CRDT update IS the transmission. The crdtLive()
+				// level check guards against a stale manager latch (set, but channel
+				// dead-but-set after an auth swap): if not joined, fall through to the
+				// durable REST path so the write isn't silently dropped (#915). Unset
+				// → live.
+				if (
+					this.crdt &&
+					noteId &&
+					this.isNoteConfirmed(noteId) &&
+					(this.crdtLive?.() ?? true)
+				) {
 					const consumed = await routeModify(
 						{
 							isMarkdown: file.extension === "md",
@@ -1292,10 +1327,9 @@ export class SyncEngine {
 						// Register the doc with the server even when applyLocalEdit produced
 						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
 						// is a no-op, so nothing is transmitted and the note would never reach
-						// the server. enroll() fires startSync's STEP1 handshake, which the
-						// server answers by bootstrapping the note row (CrdtChannel.ensure_room
-						// -> get_or_bootstrap_note). Idempotent per session, so a note already
-						// enrolled via active-leaf-change is unaffected.
+						// the server. enroll() fires startSync's STEP1 handshake so the client
+						// re-syncs any Yjs history it's missing. Idempotent per session, so a
+						// note already enrolled via active-leaf-change is unaffected.
 						this.crdtEnrollment?.enroll(noteId);
 						success = true;
 						devLog().log("push", `crdt ok: ${file.path}`);
@@ -1379,6 +1413,7 @@ export class SyncEngine {
 									this.baseStore?.set(np, merge.merged, mergeResp.note.version);
 								}
 								this.noteIdMap?.set(np, mergeResp.note.id);
+								this.confirmNoteId(mergeResp.note.id);
 							}
 							rlog().info(
 								"conflict",
@@ -1421,6 +1456,7 @@ export class SyncEngine {
 								this.baseStore?.set(np, content, forceResp.note.version);
 							}
 							this.noteIdMap?.set(np, forceResp.note.id);
+							this.confirmNoteId(forceResp.note.id);
 						}
 					} else if (resolution.choice === "keep-remote") {
 						const localFile = this.app.vault.getFileByPath(file.path);
@@ -1434,6 +1470,7 @@ export class SyncEngine {
 							});
 							this.baseStore?.set(np, serverNote.content, serverNote.version);
 							this.noteIdMap?.set(np, serverNote.id);
+							this.confirmNoteId(serverNote.id);
 						}
 					} else if (resolution.choice === "merge" && resolution.mergedContent != null) {
 						const mergeResp = await this.api.pushNote(
@@ -1460,6 +1497,7 @@ export class SyncEngine {
 								);
 							}
 							this.noteIdMap?.set(np, mergeResp.note.id);
+							this.confirmNoteId(mergeResp.note.id);
 						}
 					}
 					// skip and keep-both handled by returning false / not pushing
@@ -1500,6 +1538,7 @@ export class SyncEngine {
 					// is authoritative even when client_id was sent.
 					this.noteIdMap?.delete(normalizePath(file.path));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
+					this.confirmNoteId(resp.note.id);
 				} else {
 					this.syncState.set(normalizePath(file.path), {
 						hash,
@@ -1510,6 +1549,7 @@ export class SyncEngine {
 						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
 					}
 					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
+					this.confirmNoteId(resp.note.id);
 				}
 			}
 			success = true;
@@ -2405,6 +2445,12 @@ export class SyncEngine {
 			this.noteIdMap?.delete(c.path);
 		} else {
 			this.noteIdMap?.set(c.path, c.id);
+			// Learned from the server's own feed — it unquestionably has a note
+			// row for this id, so future edits may route through CRDT (see
+			// confirmedNoteIds doc comment). A tombstone deliberately does NOT
+			// un-confirm: the id itself is retired (a recreate mints a fresh one),
+			// so there's nothing to revoke.
+			this.confirmNoteId(c.id);
 		}
 		const nc: NoteChange = {
 			path: c.path,

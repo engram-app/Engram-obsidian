@@ -5086,6 +5086,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  callers that never wire it — id-minting and pull-learning are then
      *  simply skipped (pre-existing legacy path-keyed behavior). */
     this.noteIdMap = null;
+    /** note_ids the SERVER is known to already have a note row for — learned
+     *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
+     *  successful REST push response. The backend's CRDT channel now requires
+     *  the note to pre-exist (note_in_vault?) and silently drops a crdt_msg for
+     *  an unknown note_id — it can no longer bootstrap a note row from a bare
+     *  wire doc_id (no path on the frame). So a note's FIRST push must go via
+     *  REST (which creates the row and adopts the client-minted id); only once
+     *  confirmed here may subsequent edits route through CRDT. Keyed by note_id
+     *  (not path) so a delete+recreate at the same path — which mints a fresh
+     *  id — starts unconfirmed again rather than inheriting the old note's
+     *  confirmed status. Never pruned on delete (bounded by live note count;
+     *  a stray id is a few bytes, not worth the bookkeeping). */
+    this.confirmedNoteIds = /* @__PURE__ */ new Set();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -5162,6 +5175,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
+  }
+  isNoteConfirmed(noteId) {
+    return noteId !== null && this.confirmedNoteIds.has(noteId);
+  }
+  confirmNoteId(noteId) {
+    noteId && this.confirmedNoteIds.add(noteId);
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
@@ -5631,7 +5650,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash });
       } else {
         let content = await this.app.vault.cachedRead(file), noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-        if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), this.crdt && noteId && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) == null || _e)) {
+        if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), this.crdt && noteId && this.isNoteConfirmed(noteId) && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) == null || _e)) {
           if (await routeModify(
             {
               isMarkdown: file.extension === "md",
@@ -5672,7 +5691,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge2.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_i = this.baseStore) == null || _i.set(np, merge2.merged, mergeResp.note.version)), (_j = this.noteIdMap) == null || _j.set(np, mergeResp.note.id);
+                }), mergeResp.note.version != null && ((_i = this.baseStore) == null || _i.set(np, merge2.merged, mergeResp.note.version)), (_j = this.noteIdMap) == null || _j.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id);
               }
               return rlog().info(
                 "conflict",
@@ -5701,7 +5720,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_k = this.baseStore) == null || _k.set(np, content, forceResp.note.version)), (_l = this.noteIdMap) == null || _l.set(np, forceResp.note.id);
+              }), forceResp.note.version != null && ((_k = this.baseStore) == null || _k.set(np, content, forceResp.note.version)), (_l = this.noteIdMap) == null || _l.set(np, forceResp.note.id), this.confirmNoteId(forceResp.note.id);
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5712,7 +5731,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_m = this.baseStore) == null || _m.set(np, serverNote.content, serverNote.version), (_n = this.noteIdMap) == null || _n.set(np, serverNote.id);
+              }), (_m = this.baseStore) == null || _m.set(np, serverNote.content, serverNote.version), (_n = this.noteIdMap) == null || _n.set(np, serverNote.id), this.confirmNoteId(serverNote.id);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5730,7 +5749,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
-              )), (_p = this.noteIdMap) == null || _p.set(np, mergeResp.note.id);
+              )), (_p = this.noteIdMap) == null || _p.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id);
             }
           }
           return !1;
@@ -5750,13 +5769,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_q = this.baseStore) == null || _q.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_r = this.baseStore) == null || _r.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_s = this.noteIdMap) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
+          }), (_q = this.baseStore) == null || _q.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_r = this.baseStore) == null || _r.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_s = this.noteIdMap) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.confirmNoteId(resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_u = this.baseStore) == null || _u.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
+          }), serverVersion != null && ((_u = this.baseStore) == null || _u.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.confirmNoteId(resp.note.id);
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -6310,7 +6329,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
-    c.deleted ? (_a = this.noteIdMap) == null || _a.delete(c.path) : (_b = this.noteIdMap) == null || _b.set(c.path, c.id);
+    c.deleted ? (_a = this.noteIdMap) == null || _a.delete(c.path) : ((_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id));
     let nc = {
       path: c.path,
       title: c.title,
