@@ -2361,23 +2361,30 @@ export class SyncEngine {
 						},
 						attachment.content_base64,
 					);
-				} else if (this.crdt && event.path.endsWith(".md")) {
+				} else if (
+					this.crdt &&
+					event.path.endsWith(".md") &&
+					(event.id ?? this.noteIdMap?.get(event.path))
+				) {
 					// C1: CRDT owns markdown content for this session — the crdt: topic
 					// delivers updates via CrdtChannel/flushFromCrdt. The legacy
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
 					// (disk write re-enters handleModify → applyLocalEdit).
-					// P2-1: If this device is not currently observing the note's CRDT room
-					// (enrolled elsewhere after last tab-open), enroll now to receive live
-					// updates. enroll() is idempotent — already-enrolled notes are no-ops.
-					// NoteStreamEvent (the live WS broadcast) does not carry note_id, so
-					// resolve it via the sidecar; skip gracefully if this device hasn't
-					// learned it yet (the next REST cursor pull's applySyncChange — which
-					// does carry id — will learn it and enroll independently).
-					const noteId = this.noteIdMap?.get(event.path) ?? null;
-					if (noteId) {
-						this.crdtEnrollment?.enroll(noteId);
-					}
+					// P2-1: enroll in the note's CRDT room so this device receives live
+					// updates (enroll() is idempotent — already-enrolled notes no-op).
+					// Rooms are keyed by note_id, so resolve it: prefer the id the
+					// server's broadcast now carries (a device that has NEVER seen this
+					// note learns it here), else the locally-known sidecar mapping. Learn
+					// + confirm it so subsequent local edits route through CRDT. If
+					// NEITHER source yields an id we don't reach this branch — control
+					// falls through to the legacy apply below, which materializes the
+					// note directly (pre-id-keying behavior; without this fallback a
+					// never-seen note is received but silently never written to disk).
+					const noteId = (event.id ?? this.noteIdMap?.get(event.path)) as string;
+					this.noteIdMap?.set(event.path, noteId);
+					this.confirmNoteId(noteId);
+					this.crdtEnrollment?.enroll(noteId);
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP

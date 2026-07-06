@@ -166,6 +166,9 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			event_type: "upsert",
 			path: "Notes/test.md",
 			timestamp: Date.now(),
+			// The broadcast carries the note_id (server sends it) — with an id the
+			// note is CRDT-participatable, so the C1 skip owns its body.
+			id: "id-inline-1",
 			content: "# From server",
 			title: "test",
 			folder: "Notes",
@@ -214,6 +217,66 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
 	});
 
+	test("brand-new markdown upsert enrolls via the broadcast's note_id (never-seen, no local mapping)", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/brand-new.md",
+			timestamp: Date.now(),
+			// The server's note_changed broadcast carries the note_id; this device
+			// has never seen the note, so the id can ONLY come from the broadcast.
+			id: "id-brand-new",
+			content: "# hi",
+			title: "brand-new",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// CRDT owns the body → no legacy disk-write; the id is learned from the
+		// broadcast and enrolled by so the crdt: room delivers the body.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("id-brand-new");
+		expect(noteIdMap.get("Notes/brand-new.md")).toBe("id-brand-new");
+	});
+
+	test("markdown upsert with NO resolvable note_id materializes via legacy apply (not silently dropped)", async () => {
+		// Regression for the received-but-not-materialized bug: with CRDT active, a
+		// never-seen note whose broadcast carried no id (and no local mapping) hit
+		// the C1 skip and was enroll-only — but an id-keyed room cannot be joined
+		// without an id, so the note was received and silently never written. It
+		// MUST fall through to applyChange, which materializes the carried body.
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setNoteIdMap(new NoteIdMap());
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/no-id.md",
+			timestamp: Date.now(),
+			// no id field, no local mapping → cannot participate in a CRDT room
+			content: "# body that must land on disk",
+			title: "no-id",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 1,
+		});
+
+		// Materialized: applyChange's discovery path wrote the carried body to disk.
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+
 	test("upsert for non-markdown or attachments CRDT-gated does NOT call enroll", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
@@ -246,6 +309,8 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			event_type: "upsert",
 			path: "Notes/test.md",
 			timestamp: Date.now(),
+			// id present → CRDT-participatable, C1 skip owns the body (no fetch)
+			id: "id-hash-1",
 			content_hash: "abc123",
 		});
 

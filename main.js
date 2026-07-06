@@ -1641,6 +1641,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         path: p.path,
         timestamp: Date.now(),
         kind: (_h = p.kind) != null ? _h : "note",
+        id: p.id,
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -1661,6 +1662,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           path: n.path,
           timestamp: Date.now(),
           kind: "note",
+          id: n.id,
           content_hash: n.content_hash,
           title: n.title,
           folder: n.folder,
@@ -6230,7 +6232,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -6278,19 +6280,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md")) {
-          let noteId = (_j = (_i = this.noteIdMap) == null ? void 0 : _i.get(event.path)) != null ? _j : null;
-          noteId && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+        } else if (this.crdt && event.path.endsWith(".md") && ((_j = event.id) != null ? _j : (_i = this.noteIdMap) != null && _i.get(event.path))) {
+          let noteId = (_l = event.id) != null ? _l : (_k = this.noteIdMap) == null ? void 0 : _k.get(event.path);
+          (_m = this.noteIdMap) == null || _m.set(event.path, noteId), this.confirmNoteId(noteId), (_n = this.crdtEnrollment) == null || _n.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_l = event.title) != null ? _l : "",
+            title: (_o = event.title) != null ? _o : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_m = event.folder) != null ? _m : "",
-            tags: (_n = event.tags) != null ? _n : [],
-            mtime: (_o = event.mtime) != null ? _o : Date.now(),
-            updated_at: (_p = event.updated_at) != null ? _p : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_p = event.folder) != null ? _p : "",
+            tags: (_q = event.tags) != null ? _q : [],
+            mtime: (_r = event.mtime) != null ? _r : Date.now(),
+            updated_at: (_s = event.updated_at) != null ? _s : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6300,13 +6302,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_q = note.content_hash) != null ? _q : event.content_hash,
+            content_hash: (_t2 = note.content_hash) != null ? _t2 : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_r = note.version) != null ? _r : event.version
+            version: (_u = note.version) != null ? _u : event.version
           });
         }
       } catch (e) {
