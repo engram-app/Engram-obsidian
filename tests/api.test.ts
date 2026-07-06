@@ -188,6 +188,18 @@ describe("EngramApi", () => {
 			mockRequestUrl.mockRejectedValueOnce({ status: 500 });
 			await expect(api.pushNote("test.md", "content", 100)).rejects.toEqual({ status: 500 });
 		});
+
+		test("sends a client-minted note id under the body key `id`, not `client_id`", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { path: "new.md", status: "created" },
+			} as any);
+			await api.pushNote("new.md", "body", 100, undefined, "0199f0-uuid7");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			const body = JSON.parse(opts.body);
+			expect(body.id).toBe("0199f0-uuid7");
+			expect(body.client_id).toBeUndefined();
+		});
 	});
 
 	describe("getChanges", () => {

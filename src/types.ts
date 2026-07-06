@@ -205,6 +205,13 @@ export interface NoteStreamEvent {
 	path: string;
 	timestamp: number;
 	kind?: "note" | "attachment";
+	/** The note's stable note_id, carried by the server's `note_changed` /
+	 *  `notes.batch` upsert broadcasts. Since CRDT rooms are keyed by note_id
+	 *  (not path), a device that has never seen this note needs the id from the
+	 *  broadcast itself to enroll in its room — without it, it can neither join
+	 *  the room nor (under the C1 skip) apply the body, and the change is
+	 *  received but never materialized. */
+	id?: string;
 	/** Inline note data — present when the server includes content in the broadcast.
 	 *  Dual-field transition: protocol-rev backends send BOTH content and
 	 *  content_hash for one release, then drop content. */

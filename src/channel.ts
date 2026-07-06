@@ -108,7 +108,7 @@ export class NoteChannel {
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
 	onPlanState: ((plan: unknown) => void) | null = null;
-	/** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
+	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 	/** A room became active on the server for `docId` (announced via
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
@@ -599,6 +599,7 @@ export class NoteChannel {
 				path: p.path as string,
 				timestamp: Date.now(),
 				kind: (p.kind as "note" | "attachment") ?? "note",
+				id: p.id as string | undefined,
 				content: p.content as string | undefined,
 				content_hash: p.content_hash as string | undefined,
 				title: p.title as string | undefined,
@@ -625,6 +626,7 @@ export class NoteChannel {
 					path: n.path as string,
 					timestamp: Date.now(),
 					kind: "note",
+					id: n.id as string | undefined,
 					content_hash: n.content_hash as string | undefined,
 					title: n.title as string | undefined,
 					folder: n.folder as string | undefined,

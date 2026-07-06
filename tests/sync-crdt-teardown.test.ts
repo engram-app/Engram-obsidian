@@ -13,6 +13,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -98,7 +99,11 @@ function httpError(status: number): Error & { status: number } {
 	return e;
 }
 
-function createEngine(): SyncEngine {
+// Task 6 (note_id-keyed CRDT): removeDoc/reset are now called with the note's
+// note_id, resolved via NoteIdMap — not the path. Defaults to an identity
+// mapping (path -> path) so pre-existing assertions that check the exact
+// teardown key stay meaningful without every test needing its own map.
+function createEngine(noteIdMap: NoteIdMap = new NoteIdMap()): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
 		mockApi,
@@ -106,7 +111,16 @@ function createEngine(): SyncEngine {
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
+	engine.setNoteIdMap(noteIdMap);
 	return engine;
+}
+
+/** Identity-mapped NoteIdMap: id === path, for tests that assert teardown was
+ *  called with a specific known key without caring about id/path distinction. */
+function identityNoteIdMap(...paths: string[]): NoteIdMap {
+	const m = new NoteIdMap();
+	for (const p of paths) m.set(p, p);
+	return m;
 }
 
 /** Wire a fake CRDT manager that exposes removeDoc + applyLocalEdit spies. */
@@ -133,7 +147,7 @@ beforeEach(resetMocks);
 
 describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => {
 	test("successful delete calls removeDoc and enrollment.reset for .md", async () => {
-		const engine = createEngine();
+		const engine = createEngine(identityNoteIdMap("Notes/deleted.md"));
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
 		engine.setCrdtManager(crdt as any);
@@ -149,7 +163,7 @@ describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => 
 	});
 
 	test("404 (already-deleted) delete also calls removeDoc and enrollment.reset for .md", async () => {
-		const engine = createEngine();
+		const engine = createEngine(identityNoteIdMap("Notes/already-gone.md"));
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
 		engine.setCrdtManager(crdt as any);
@@ -230,8 +244,15 @@ describe("handleDelete — md branch calls removeDoc + enrollment.reset", () => 
 // handleRename — old-path md branch
 // ---------------------------------------------------------------------------
 
-describe("handleRename — old-path md branch calls removeDoc + enrollment.reset", () => {
-	test("successful rename calls removeDoc(oldPath) + enrollment.reset(oldPath) for .md", async () => {
+describe("handleRename — old-path md branch does NOT tear down the CRDT doc (Task 6)", () => {
+	// Pre-Task-6 behavior closed the old-path doc on every rename (removeDoc +
+	// enrollment.reset), because the doc was keyed by path — a rename looked
+	// exactly like a delete+create. Task 6 keys the doc by the note's stable
+	// note_id instead (SyncEngine.handleRename moves that mapping via
+	// noteIdMap.rename, tested in sync-note-id.test.ts), so the doc/IndexedDB
+	// entry is untouched by a rename: same id, same entry, live history intact.
+	// These tests now pin the opposite of what they used to assert.
+	test("successful rename does NOT call removeDoc/enrollment.reset for .md", async () => {
 		const engine = createEngine();
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
@@ -241,13 +262,11 @@ describe("handleRename — old-path md branch calls removeDoc + enrollment.reset
 		const file = new TFile("Notes/NewName.md");
 		await engine.handleRename(file, "Notes/OldName.md");
 
-		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/OldName.md");
-		expect(enrollment.reset).toHaveBeenCalledTimes(1);
-		expect(enrollment.reset).toHaveBeenCalledWith("Notes/OldName.md");
+		expect(crdt.removeDoc).not.toHaveBeenCalled();
+		expect(enrollment.reset).not.toHaveBeenCalled();
 	});
 
-	test("404 on old-path delete still calls removeDoc(oldPath) + enrollment.reset(oldPath)", async () => {
+	test("404 on old-path delete still does NOT call removeDoc/enrollment.reset", async () => {
 		const engine = createEngine();
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
@@ -261,10 +280,8 @@ describe("handleRename — old-path md branch calls removeDoc + enrollment.reset
 		const file = new TFile("Notes/NewName.md");
 		await engine.handleRename(file, "Notes/OldName.md");
 
-		expect(crdt.removeDoc).toHaveBeenCalledTimes(1);
-		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/OldName.md");
-		expect(enrollment.reset).toHaveBeenCalledTimes(1);
-		expect(enrollment.reset).toHaveBeenCalledWith("Notes/OldName.md");
+		expect(crdt.removeDoc).not.toHaveBeenCalled();
+		expect(enrollment.reset).not.toHaveBeenCalled();
 	});
 
 	test("binary rename does NOT call removeDoc for old path", async () => {
@@ -305,7 +322,7 @@ describe("handleRename — old-path md branch calls removeDoc + enrollment.reset
 
 describe("handleStreamEvent remote-delete — md branch calls removeDoc + enrollment.reset", () => {
 	test("remote delete of a .md note calls removeDoc + enrollment.reset", async () => {
-		const engine = createEngine();
+		const engine = createEngine(identityNoteIdMap("Notes/remote-del.md"));
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
 		engine.setCrdtManager(crdt as any);
@@ -350,7 +367,7 @@ describe("handleStreamEvent remote-delete — md branch calls removeDoc + enroll
 
 	test("remote delete of a .md note with no local file still calls removeDoc", async () => {
 		// Even when the file isn't locally present, the IDB/memory ghost must be cleared.
-		const engine = createEngine();
+		const engine = createEngine(identityNoteIdMap("Notes/ghost.md"));
 		const crdt = fakeCrdt();
 		const enrollment = fakeEnrollment();
 		engine.setCrdtManager(crdt as any);
