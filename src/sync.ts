@@ -2513,7 +2513,11 @@ export class SyncEngine {
 		// echo-suppressed and no diverged base survives the move.
 		this.syncState.delete(normalizePath(priorPath));
 		this.baseStore?.delete(normalizePath(priorPath));
-		const oldFile = this.app.vault.getFileByPath(priorPath);
+		// normalizePath for the vault lookup (map keys arrive normalized from the
+		// server feed, but a non-normalized key would silently miss the trash and
+		// leave the duplicate this fix exists to remove). rename() above keeps the
+		// RAW priorPath — it must match the byPath key exactly to re-key the id.
+		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
 		if (oldFile) {
 			await this.app.fileManager.trashFile(oldFile);
 			rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);

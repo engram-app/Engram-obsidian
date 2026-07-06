@@ -6363,7 +6363,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
     if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
     (_c = this.noteIdMap) == null || _c.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_d = this.baseStore) == null || _d.delete((0, import_obsidian21.normalizePath)(priorPath));
-    let oldFile = this.app.vault.getFileByPath(priorPath);
+    let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
     oldFile && (await this.app.fileManager.trashFile(oldFile), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`));
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
