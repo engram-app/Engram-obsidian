@@ -1,6 +1,13 @@
-import { beforeEach, describe, expect, spyOn, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { NoteChannel } from "../src/channel";
 import { rlog } from "../src/remote-log";
+
+// Bun shares one process across test files: restore the real navigator so the
+// online/offline probe test below can't leak into downstream files.
+const originalNavigator = (globalThis as any).navigator;
+afterAll(() => {
+	(globalThis as any).navigator = originalNavigator;
+});
 
 // Mirrors the MockWebSocket pattern used in tests/channel-jitter.test.ts:
 // readyState is OPEN from construction (unlike a real WebSocket, which starts
@@ -122,38 +129,45 @@ describe("onclose surfaces close code/reason/wasClean", () => {
 		channel.disconnect();
 	});
 
-	test("a close before open within the auth-fail window logs the close code on the invalidate-token warn", async () => {
+	test("a close before open within the auth-fail window while online fires the auth probe and logs the close code", async () => {
+		// The channel no longer guesses a stale token on a bare pre-open close
+		// (that heuristic misfired on plain network blips). Within the fail
+		// window and while online it fires the injected probe instead; the api
+		// client is the sole invalidation authority.
+		(globalThis as any).navigator = { onLine: true };
 		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1");
-		let invalidated = false;
+		let probed = false;
 		channel.setAuthProvider({
 			getToken: async () => "tok",
 			getVaultId: () => "vault-1",
 			isAuthenticated: () => true,
 			signOut: () => {},
-			invalidateAccessToken: () => {
-				invalidated = true;
-			},
+		});
+		channel.setAuthProbe(async () => {
+			probed = true;
+			return {};
 		});
 		await channel.connect();
-		// No onopen call, and this fires well within AUTH_FAIL_WINDOW_MS, so this
-		// takes the "assume stale access token" warn branch.
+		// No onopen call: onclose sees `opened = false`, well within
+		// AUTH_FAIL_WINDOW_MS, taking the probe branch.
 
 		const logger = rlog();
-		const warnSpy = spyOn(logger, "warn");
+		const infoSpy = spyOn(logger, "info");
 
 		lastWsInstance.onclose?.(
 			new CloseEvent("close", { code: 1006, reason: "", wasClean: false }),
 		);
+		await Promise.resolve();
 
-		expect(invalidated).toBe(true);
-		const match = warnSpy.mock.calls.find(
+		expect(probed).toBe(true);
+		const match = infoSpy.mock.calls.find(
 			(call) => typeof call[1] === "string" && call[1].includes("code=1006"),
 		);
 		expect(match).toBeDefined();
 		const message = match?.[1] as string;
 		expect(message).toContain("wasClean=false");
 
-		warnSpy.mockRestore();
+		infoSpy.mockRestore();
 		channel.disconnect();
 	});
 });

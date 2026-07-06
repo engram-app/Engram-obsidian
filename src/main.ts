@@ -1088,6 +1088,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.api.setAuthProvider(this.authProvider);
 			if (this.noteStream) {
 				this.noteStream.setAuthProvider(this.authProvider);
+				this.noteStream.setAuthProbe(() => this.api.getMe());
 			}
 		}
 	}
@@ -1219,6 +1220,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.enableCrdt,
 					this.deviceId,
 				);
+				channel.setAuthProbe(() => this.api.getMe());
 
 				channel.onEvent = (event) => {
 					void this.syncEngine.handleStreamEvent(event);
@@ -1297,6 +1299,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 				this.noteStream = channel;
 				if (this.authProvider) {
+					// setAuthProbe already wired above at construction (same channel
+					// object, same closure), so re-wiring it here would be a no-op.
 					this.noteStream.setAuthProvider(this.authProvider);
 				}
 
