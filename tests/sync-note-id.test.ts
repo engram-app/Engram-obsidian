@@ -9,6 +9,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { BaseStore } from "../src/base-store";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -100,6 +101,19 @@ function createEngine(): SyncEngine {
 		mockApp,
 		mockApi,
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+		mock().mockResolvedValue(undefined),
+	);
+	engine.setReady();
+	return engine;
+}
+
+// "modal" (not "auto") conflictResolution so resolveConflict() defers to the
+// onConflict callback instead of short-circuiting to the auto keep-local path.
+function createModalEngine(): SyncEngine {
+	const engine = new SyncEngine(
+		mockApp,
+		mockApi,
+		{ ...DEFAULT_SETTINGS, debounceMs: 1, conflictResolution: "modal" },
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
@@ -221,6 +235,160 @@ describe("409 conflict resolution writes back the authoritative server id", () =
 		expect(mintedId).toMatch(UUID_RE);
 		expect(noteIdMap.get("conflicted.md")).toBe("server-real-id");
 		expect(noteIdMap.get("conflicted.md")).not.toBe(mintedId);
+	});
+
+	test("keep-remote (modal resolution) learns the server note id", async () => {
+		const engine = createModalEngine();
+		engine.onConflict = mock().mockResolvedValue({ choice: "keep-remote" });
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+
+		// keep-remote's noteIdMap.set is gated on the local file still existing
+		// (see sync.ts's `if (localFile) { ...; this.noteIdMap?.set(...) }`).
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+			.mockReset()
+			.mockReturnValue(new TFile("keep-remote.md"));
+
+		(mockApi.pushNote as ReturnType<typeof mock>).mockReset().mockImplementationOnce(() =>
+			Promise.resolve({
+				conflict: true,
+				server_note: {
+					id: "keep-remote-server-id",
+					path: "keep-remote.md",
+					title: "keep-remote",
+					content: "remote body",
+					folder: "",
+					tags: [],
+					mtime: 2,
+					created_at: "2026-01-01T00:00:00Z",
+					updated_at: "2026-01-01T00:00:00Z",
+					version: 2,
+				},
+			}),
+		);
+
+		const file = new TFile("keep-remote.md");
+		engine.handleModify(file);
+		await flush();
+
+		const firstCall = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		const mintedId = firstCall[firstCall.length - 1];
+		expect(mintedId).toMatch(UUID_RE);
+		expect(noteIdMap.get("keep-remote.md")).toBe("keep-remote-server-id");
+		expect(noteIdMap.get("keep-remote.md")).not.toBe(mintedId);
+	});
+
+	test("manual merge (modal resolution) learns the merge push response id", async () => {
+		const engine = createModalEngine();
+		engine.onConflict = mock().mockResolvedValue({
+			choice: "merge",
+			mergedContent: "manually merged body",
+		});
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+
+		// manual-merge's noteIdMap.set is likewise gated on the local file
+		// still existing when writing the merged content back to disk.
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+			.mockReset()
+			.mockReturnValue(new TFile("manual-merge.md"));
+
+		(mockApi.pushNote as ReturnType<typeof mock>)
+			.mockReset()
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					conflict: true,
+					server_note: {
+						id: "manual-merge-conflict-id",
+						path: "manual-merge.md",
+						title: "manual-merge",
+						content: "remote body",
+						folder: "",
+						tags: [],
+						mtime: 2,
+						created_at: "2026-01-01T00:00:00Z",
+						updated_at: "2026-01-01T00:00:00Z",
+						version: 2,
+					},
+				}),
+			)
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					note: { id: "manual-merge-server-id", version: 3, content_hash: "h" },
+					chunks_indexed: 1,
+				}),
+			);
+
+		const file = new TFile("manual-merge.md");
+		engine.handleModify(file);
+		await flush();
+
+		const firstCall = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		const mintedId = firstCall[firstCall.length - 1];
+		expect(mintedId).toMatch(UUID_RE);
+		expect(noteIdMap.get("manual-merge.md")).toBe("manual-merge-server-id");
+		expect(noteIdMap.get("manual-merge.md")).not.toBe(mintedId);
+	});
+
+	test("auto-merge (clean 3-way merge, distinct from keep-local) learns the merge push response id", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+
+		const path = "auto-merge.md";
+		const base = "line1\nline2\nline3\n";
+		const local = "line1-local\nline2\nline3\n";
+		const remote = "line1\nline2\nline3-remote\n";
+
+		// A real BaseStore (not a mock) seeded with the common ancestor — this is
+		// what makes sync.ts attempt the auto-merge branch BEFORE ever calling
+		// resolveConflict, so this path is reached even though the engine's
+		// conflictResolution is still the default "auto".
+		const baseStore = new BaseStore({ read: mock(), write: mock() } as any, "sync-bases.json");
+		baseStore.set(path, base, 1);
+		engine.baseStore = baseStore;
+
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue(local);
+
+		(mockApi.pushNote as ReturnType<typeof mock>)
+			.mockReset()
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					conflict: true,
+					server_note: {
+						id: "auto-merge-conflict-id",
+						path,
+						title: "auto-merge",
+						content: remote,
+						folder: "",
+						tags: [],
+						mtime: 2,
+						created_at: "2026-01-01T00:00:00Z",
+						updated_at: "2026-01-01T00:00:00Z",
+						version: 2,
+					},
+				}),
+			)
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					note: { id: "auto-merge-server-id", version: 3, content_hash: "h" },
+					chunks_indexed: 1,
+				}),
+			);
+
+		const file = new TFile(path);
+		engine.handleModify(file);
+		await flush();
+
+		const firstCall = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		const mintedId = firstCall[firstCall.length - 1];
+		expect(mintedId).toMatch(UUID_RE);
+		// Confirms the merge was clean (auto-merge branch actually taken, not a
+		// fall-through to keep-local): pushNote called exactly twice — the
+		// initial 409 and the merge re-push — with no interactive resolution.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
+		expect(noteIdMap.get(path)).toBe("auto-merge-server-id");
+		expect(noteIdMap.get(path)).not.toBe(mintedId);
 	});
 });
 
