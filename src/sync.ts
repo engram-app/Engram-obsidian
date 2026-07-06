@@ -1365,6 +1365,7 @@ export class SyncEngine {
 								if (mergeResp.note.version != null) {
 									this.baseStore?.set(np, merge.merged, mergeResp.note.version);
 								}
+								this.noteIdMap?.set(np, mergeResp.note.id);
 							}
 							rlog().info(
 								"conflict",
@@ -1406,6 +1407,7 @@ export class SyncEngine {
 							if (forceResp.note.version != null) {
 								this.baseStore?.set(np, content, forceResp.note.version);
 							}
+							this.noteIdMap?.set(np, forceResp.note.id);
 						}
 					} else if (resolution.choice === "keep-remote") {
 						const localFile = this.app.vault.getFileByPath(file.path);
@@ -1418,6 +1420,7 @@ export class SyncEngine {
 								serverHash: serverNote.content_hash,
 							});
 							this.baseStore?.set(np, serverNote.content, serverNote.version);
+							this.noteIdMap?.set(np, serverNote.id);
 						}
 					} else if (resolution.choice === "merge" && resolution.mergedContent != null) {
 						const mergeResp = await this.api.pushNote(
@@ -1443,6 +1446,7 @@ export class SyncEngine {
 									mergeResp.note.version,
 								);
 							}
+							this.noteIdMap?.set(np, mergeResp.note.id);
 						}
 					}
 					// skip and keep-both handled by returning false / not pushing

@@ -177,6 +177,53 @@ describe("pull/changes apply path learns note_id into the map", () => {
 	});
 });
 
+describe("409 conflict resolution writes back the authoritative server id", () => {
+	test("keep-local (auto conflict-copy) force-push learns the server id, not the locally-minted one", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+
+		(mockApi.pushNote as ReturnType<typeof mock>)
+			.mockReset()
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					conflict: true,
+					server_note: {
+						id: "server-real-id",
+						path: "conflicted.md",
+						title: "conflicted",
+						content: "remote body",
+						folder: "",
+						tags: [],
+						mtime: 2,
+						created_at: "2026-01-01T00:00:00Z",
+						updated_at: "2026-01-01T00:00:00Z",
+						version: 2,
+					},
+				}),
+			)
+			.mockImplementationOnce(() =>
+				Promise.resolve({
+					note: { id: "server-real-id", version: 3, content_hash: "h" },
+					chunks_indexed: 1,
+				}),
+			);
+
+		const file = new TFile("conflicted.md");
+		engine.handleModify(file);
+		await flush();
+
+		// The locally-minted client_id (sent as clientId on the first pushNote
+		// call) must NOT survive in the map — the force-push response's id
+		// (the server's real persisted id) must win.
+		const firstCall = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
+		const mintedId = firstCall[firstCall.length - 1];
+		expect(mintedId).toMatch(UUID_RE);
+		expect(noteIdMap.get("conflicted.md")).toBe("server-real-id");
+		expect(noteIdMap.get("conflicted.md")).not.toBe(mintedId);
+	});
+});
+
 describe("handleRename re-keys the map, id unchanged", () => {
 	test("moves the id from oldPath to the new path", async () => {
 		const engine = createEngine();
