@@ -5477,7 +5477,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
+    isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path));
     try {
       isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
     } catch (e) {
@@ -5515,7 +5515,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and

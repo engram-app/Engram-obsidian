@@ -937,6 +937,12 @@ export class SyncEngine {
 			this.noteIdMap?.delete(file.path);
 		}
 
+		// Drop the deleted path's sync-state entry (notes AND attachments): its
+		// recorded content hash is now stale, and left behind it echo-suppresses
+		// a later create at the same path whose content hashes the same, so the
+		// recreated file's push is skipped and it never reaches the server.
+		this.syncState.delete(normalizePath(file.path));
+
 		try {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path);
@@ -1032,6 +1038,13 @@ export class SyncEngine {
 		// Move base content entry to new path before pushing
 		if (!isBinary) {
 			this.baseStore?.rename(normalizePath(oldPath), normalizePath(file.path));
+			// Drop the OLD path's sync-state entry: no note lives there anymore, so
+			// its recorded content hash is stale. Left behind, it echo-suppresses a
+			// later create at the old path whose content happens to hash the same
+			// (rename a note away, then make a new note with identical content at
+			// the old path — the new note's push is skipped and it never syncs).
+			// The new-path push below re-establishes sync-state under file.path.
+			this.syncState.delete(normalizePath(oldPath));
 			// deleteNote above tombstoned the old path's row, so the note_id is no
 			// longer server-live. Un-confirm it so the pushFile below takes the
 			// REST-first path (which moves/resurrects the row at the new path,
