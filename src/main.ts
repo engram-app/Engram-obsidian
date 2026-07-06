@@ -53,6 +53,7 @@ import { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { CrdtManager } from "./crdt/manager";
+import { NoteIdMap } from "./crdt/note-id-map";
 import { ensureDocSchema } from "./crdt/schema";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { registerDiagnostics } from "./diagnostics";
@@ -109,6 +110,8 @@ interface PluginData {
 	 *  has confirmed via SyncPreviewModal. When `null` or out-of-date,
 	 *  the plugin closes the sync gate and shows the modal. */
 	syncGateAcceptedFor?: string | null;
+	/** Path -> note_id sidecar (NoteIdMap.toJSON()). See src/crdt/note-id-map.ts. */
+	noteIds?: Record<string, string>;
 }
 
 export default class EngramSyncPlugin extends Plugin {
@@ -122,6 +125,10 @@ export default class EngramSyncPlugin extends Plugin {
 	};
 	authProvider: AuthProvider | null = null;
 	syncEngine: SyncEngine = null!;
+	/** Path -> note_id sidecar, hydrated from data.json on load. Used by later
+	 *  tasks to mint ids for new notes, learn ids from pull responses, and key
+	 *  the CRDT manager by note_id instead of path. */
+	noteIdMap: NoteIdMap = new NoteIdMap();
 	syncLog: SyncLog = new SyncLog();
 	/** Per-install device id sent as X-Device-Id so the backend attributes its
 	 *  sync watermark per device. Random UUID minted on first load, persisted
@@ -752,6 +759,7 @@ export default class EngramSyncPlugin extends Plugin {
 		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
+		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
 		// which 405s API POSTs post-cutover) onto the canonical REST host. Same
 		// backend + credentials — only the edge hostname moved, so auth is kept.
@@ -962,6 +970,7 @@ export default class EngramSyncPlugin extends Plugin {
 			syncIssues: this.syncEngine.issues.serialize(),
 			ignoredFiles: this.syncEngine.ignoredFiles.serialize(),
 			syncGateAcceptedFor: this.syncGateAcceptedFor,
+			noteIds: this.noteIdMap.toJSON(),
 		});
 	}
 
