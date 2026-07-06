@@ -492,3 +492,35 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
 });
+
+describe("rename/delete drop stale sync-state (echo-suppression on recreate)", () => {
+	test("handleRename removes the old path's sync-state entry", async () => {
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+
+		// Push a.md so it gets a sync-state entry (recorded content hash).
+		engine.handleModify(new TFile("a.md"));
+		await flush();
+		expect(engine.exportSyncState()["a.md"]).toBeDefined();
+
+		// Rename a.md -> b.md. The old path no longer holds a note, so its stale
+		// sync-state must be dropped (else a later create at a.md with the same
+		// content echo-suppresses and never syncs).
+		await engine.handleRename(new TFile("b.md"), "a.md");
+
+		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
+	});
+
+	test("handleDelete removes the deleted path's sync-state entry", async () => {
+		const engine = createEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+
+		engine.handleModify(new TFile("a.md"));
+		await flush();
+		expect(engine.exportSyncState()["a.md"]).toBeDefined();
+
+		await engine.handleDelete(new TFile("a.md"));
+
+		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
+	});
+});
