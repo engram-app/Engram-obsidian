@@ -339,7 +339,8 @@ export class SyncEngine {
 
 	/** Optional CRDT manager — when set, markdown saves route through it instead
 	 *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
-	 *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
+	 *  for IndexedDB namespacing; the CRDT doc itself is keyed by the note's bare
+	 *  note_id, matching the backend's note_id lookup. */
 	private crdt: CrdtManager | null = null;
 
 	setCrdtManager(mgr: CrdtManager | null): void {
@@ -483,8 +484,12 @@ export class SyncEngine {
 	 *  current text (empty) if it is still absent. Keying off the STEP2 (not a
 	 *  wall-clock window) is what closes the #547 race where a slow content STEP2
 	 *  let a premature empty file land on disk under load. Gated to `.md`
-	 *  (mirrors the CRDT-markdown-only rule). */
-	async materializeEmptyDiscovered(path: string): Promise<void> {
+	 *  (mirrors the CRDT-markdown-only rule).
+	 *
+	 *  `noteId` reads the CRDT doc (id-keyed); `path` is used only for disk
+	 *  I/O and log messages — passing `path` to `crdt.projectedText` would open
+	 *  a stray path-keyed doc/IndexedDB store instead of the real note. */
+	async materializeEmptyDiscovered(path: string, noteId: string): Promise<void> {
 		if (this.syncBlocked) {
 			devLog().log(
 				"sync-blocked",
@@ -522,7 +527,7 @@ export class SyncEngine {
 			);
 		}
 
-		const text = this.crdt ? await this.crdt.projectedText(path) : "";
+		const text = this.crdt ? await this.crdt.projectedText(noteId) : "";
 		await this.flushFromCrdt(path, text);
 	}
 

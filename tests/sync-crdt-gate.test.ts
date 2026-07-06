@@ -869,6 +869,21 @@ describe("materializeEmptyDiscovered — transient-empty STEP2 race guard", () =
 	});
 });
 
+describe("materializeEmptyDiscovered — reads the CRDT doc via note_id, not path", () => {
+	test("projectedText is called with the note_id, never the path (no path-keyed ghost doc)", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
+		const projectedText = mock(async () => "");
+		engine.setCrdtManager({ projectedText } as any);
+		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/idkeyed.md", content: "" });
+
+		await engine.materializeEmptyDiscovered("Notes/idkeyed.md", "note-abc-123");
+
+		expect(projectedText).toHaveBeenCalledWith("note-abc-123");
+		expect(projectedText).not.toHaveBeenCalledWith("Notes/idkeyed.md");
+	});
+});
+
 // ---------------------------------------------------------------------------
 // C1 — onCrdtDocReady gate: isSyncBlocked() must suppress enrollment
 // The actual guard is in main.ts (channel.onCrdtDocReady lambda). These tests

@@ -1343,8 +1343,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by
-				// vaultId and the doc_id = "{vaultId}/{path}" must match the
-				// backend's path_hmac resolution. Without a vaultId the crdt:
+				// vaultId, and doc_id is the note's bare note_id, matching the
+				// backend's note_id resolution. Without a vaultId the crdt:
 				// topic join is silently a no-op, CRDT updates go nowhere, AND
 				// the legacy pushNote path is suppressed — so this.crdt must stay
 				// null to let the legacy path continue working.
@@ -1441,7 +1441,7 @@ export default class EngramSyncPlugin extends Plugin {
 								);
 								return;
 							}
-							void this.syncEngine.materializeEmptyDiscovered(path);
+							void this.syncEngine.materializeEmptyDiscovered(path, noteId);
 						},
 					});
 					// Enrollment tracker: calls startSync(noteId) exactly once per note

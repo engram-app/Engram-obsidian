@@ -1388,7 +1388,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
      *  broadcasts). Never gates the plugin's connected state. */
     this.onPlanState = null;
-    /** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
+    /** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
     this.onCrdtMessage = null;
     /** A room became active on the server for `docId` (announced via
      *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
@@ -5076,7 +5076,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.syncLog = null;
     /** Optional CRDT manager — when set, markdown saves route through it instead
      *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
-     *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
+     *  for IndexedDB namespacing; the CRDT doc itself is keyed by the note's bare
+     *  note_id, matching the backend's note_id lookup. */
     this.crdt = null;
     /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
      *  main.ts (persisted in data.json); wired here so pushFile can mint/send
@@ -5225,8 +5226,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  current text (empty) if it is still absent. Keying off the STEP2 (not a
    *  wall-clock window) is what closes the #547 race where a slow content STEP2
    *  let a premature empty file land on disk under load. Gated to `.md`
-   *  (mirrors the CRDT-markdown-only rule). */
-  async materializeEmptyDiscovered(path) {
+   *  (mirrors the CRDT-markdown-only rule).
+   *
+   *  `noteId` reads the CRDT doc (id-keyed); `path` is used only for disk
+   *  I/O and log messages — passing `path` to `crdt.projectedText` would open
+   *  a stray path-keyed doc/IndexedDB store instead of the real note. */
+  async materializeEmptyDiscovered(path, noteId) {
     if (this.syncBlocked) {
       devLog().log(
         "sync-blocked",
@@ -5249,7 +5254,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         `materializeEmptyDiscovered: getNote failed for ${path}, materializing empty: ${errMsg(e)}`
       );
     }
-    let text2 = this.crdt ? await this.crdt.projectedText(path) : "";
+    let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
     await this.flushFromCrdt(path, text2);
   }
   updateSettings(settings) {
@@ -21240,7 +21245,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
               );
               return;
             }
-            this.syncEngine.materializeEmptyDiscovered(path);
+            this.syncEngine.materializeEmptyDiscovered(path, noteId);
           }
         }), this.crdtEnrollment = new CrdtEnrollment({
           startSync: (noteId) => {

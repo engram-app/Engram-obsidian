@@ -374,7 +374,7 @@ describe("reconcileColdStart catch-split", () => {
 
 		// Should not reject AND should not call onCorruption
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "new content" },
+			{ path: "n.md", noteId: "note-1", diskContent: "new content" },
 			{ projectedText, getText, applyLocalEdit },
 			() => {
 				corrupted = true;
@@ -395,7 +395,7 @@ describe("reconcileColdStart catch-split", () => {
 		const applyLocalEdit = async () => true;
 
 		await reconcileColdStart(
-			{ path: "n.md", diskContent: "some content" },
+			{ path: "n.md", noteId: "note-2", diskContent: "some content" },
 			{ projectedText, getText, applyLocalEdit },
 			() => {
 				corrupted = true;
@@ -417,7 +417,7 @@ describe("reconcileColdStart catch-split", () => {
 		};
 
 		await reconcileColdStart(
-			{ path: "fail.md", diskContent: "new content" },
+			{ path: "fail.md", noteId: "note-3", diskContent: "new content" },
 			{ projectedText, getText, applyLocalEdit },
 			() => {},
 		);
@@ -512,7 +512,11 @@ test("reconcileColdStart returns early when projectedText matches disk (no apply
 		},
 	};
 
-	await reconcileColdStart({ path: "n.md", diskContent: fullFile }, crdt, () => {});
+	await reconcileColdStart(
+		{ path: "n.md", noteId: "note-4", diskContent: fullFile },
+		crdt,
+		() => {},
+	);
 	// projectedText matches diskContent, so applyLocalEdit must NOT be called.
 	expect(applyCallCount).toBe(0);
 });
