@@ -69,6 +69,13 @@ export class NoteIdMap {
 	rename(oldPath: string, newPath: string): void {
 		const id = this.byPath.get(oldPath);
 		if (id === undefined) return;
+		// Mirror set()'s cleanup: if newPath already pointed at a DIFFERENT id,
+		// that id's reverse entry must go, or pathForId(displacedId) would keep
+		// resolving to newPath after it's been overwritten here.
+		const displacedId = this.byPath.get(newPath);
+		if (displacedId !== undefined && displacedId !== id) {
+			this.byId.delete(displacedId);
+		}
 		this.byPath.delete(oldPath);
 		this.byPath.set(newPath, id);
 		this.byId.set(id, newPath);

@@ -20318,7 +20318,9 @@ var NoteIdMap = class _NoteIdMap {
   }
   rename(oldPath, newPath) {
     let id2 = this.byPath.get(oldPath);
-    id2 !== void 0 && (this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath));
+    if (id2 === void 0) return;
+    let displacedId = this.byPath.get(newPath);
+    displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
   }
   toJSON() {
     return Object.fromEntries(this.byPath);
