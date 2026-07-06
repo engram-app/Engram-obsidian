@@ -104,6 +104,18 @@ export function renderAdvancedTab(ctx: TabContext): void {
 			}),
 		);
 
+	new Setting(containerEl)
+		.setName("Distributed tracing")
+		.setDesc(
+			"Attach a trace ID to sync requests and report timing to the server for cross-system debugging. No note content is sent.",
+		)
+		.addToggle((toggle) =>
+			toggle.setValue(plugin.settings.tracingEnabled).onChange(async (value) => {
+				plugin.settings.tracingEnabled = value;
+				await plugin.saveSettings();
+			}),
+		);
+
 	// ── About ──
 	new Setting(containerEl).setName("About").setHeading();
 

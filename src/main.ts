@@ -222,6 +222,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Wire the per-install device id (minted in loadSettings) onto the real
 		// api instance before any sync runs, so cursor pulls carry X-Device-Id.
 		this.api.setDeviceId(this.deviceId);
+		this.api.setTracingEnabled(this.settings.tracingEnabled);
 
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
@@ -745,6 +746,9 @@ export default class EngramSyncPlugin extends Plugin {
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
 		activeDocument.body.classList.remove("engram-vault-sync-active");
+		// Flush any buffered obsidian.push spans before teardown. The buffer's
+		// own 2s timer would otherwise never fire post-unload.
+		this.api.beacon.flush();
 		// Best-effort save before teardown — hashes must be exported before destroy
 		void this.savePluginData(this.syncEngine.getLastSync());
 		this.baseStore?.prune();
@@ -817,6 +821,7 @@ export default class EngramSyncPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
+		this.api.setTracingEnabled(this.settings.tracingEnabled);
 		this.syncEngine.updateSettings(this.settings);
 		rlog().setEnabled(this.settings.remoteLoggingEnabled);
 		this.startSyncInterval();
