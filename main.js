@@ -6293,7 +6293,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       return;
     }
-    if (event.event_type === "upsert")
+    if (event.event_type === "upsert") {
+      !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path);
       try {
         if (isAttachment) {
           let attachment = await this.api.getAttachment(event.path);
@@ -6342,6 +6343,28 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
+    }
+  }
+  /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
+   *  `newPath`, the server moved one row (a rename resurrects the same note_id
+   *  at a new path). Neither delivery channel is guaranteed to carry a delete
+   *  for the old path — the seq-ordered pull feed collapses the move into a
+   *  single upsert, and a realtime delete broadcast can be missed/reordered —
+   *  so relocate the old file ourselves or it lingers as a duplicate.
+   *
+   *  Re-keys the map (id stable, path moves) BEFORE trashing the old file, so
+   *  the vault delete event handleDelete fires resolves get(priorPath) to null:
+   *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
+   *  intact — only the path moved, not the id/room (mirrors handleRename's
+   *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
+   *  or already at newPath, so callers can invoke it unconditionally. */
+  async moveIfIdRelocated(id2, newPath) {
+    var _a, _b, _c, _d;
+    let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
+    if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
+    (_c = this.noteIdMap) == null || _c.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_d = this.baseStore) == null || _d.delete((0, import_obsidian21.normalizePath)(priorPath));
+    let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
+    oldFile && (await this.app.fileManager.trashFile(oldFile), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`));
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
    *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
@@ -6359,7 +6382,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
-    c.deleted ? (_a = this.noteIdMap) == null || _a.delete(c.path) : ((_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id));
+    c.deleted ? (_a = this.noteIdMap) == null || _a.delete(c.path) : (await this.moveIfIdRelocated(c.id, c.path), (_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id));
     let nc = {
       path: c.path,
       title: c.title,

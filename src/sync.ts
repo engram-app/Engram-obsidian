@@ -2405,6 +2405,14 @@ export class SyncEngine {
 		}
 
 		if (event.event_type === "upsert") {
+			// Belt-and-suspenders id-keyed move: a rename normally also emits a
+			// separate delete broadcast for the old path, but if that is missed or
+			// reordered the upsert alone would orphan the old file. Same handling as
+			// the pull feed (moveIfIdRelocated); no-ops unless the id already maps to
+			// a different local path. Gated on a known id (attachments aren't keyed).
+			if (!isAttachment && event.id) {
+				await this.moveIfIdRelocated(event.id, event.path);
+			}
 			try {
 				if (isAttachment) {
 					const attachment = await this.api.getAttachment(event.path);
@@ -2484,6 +2492,38 @@ export class SyncEngine {
 		}
 	}
 
+	/** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
+	 *  `newPath`, the server moved one row (a rename resurrects the same note_id
+	 *  at a new path). Neither delivery channel is guaranteed to carry a delete
+	 *  for the old path — the seq-ordered pull feed collapses the move into a
+	 *  single upsert, and a realtime delete broadcast can be missed/reordered —
+	 *  so relocate the old file ourselves or it lingers as a duplicate.
+	 *
+	 *  Re-keys the map (id stable, path moves) BEFORE trashing the old file, so
+	 *  the vault delete event handleDelete fires resolves get(priorPath) to null:
+	 *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
+	 *  intact — only the path moved, not the id/room (mirrors handleRename's
+	 *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
+	 *  or already at newPath, so callers can invoke it unconditionally. */
+	private async moveIfIdRelocated(id: string, newPath: string): Promise<void> {
+		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
+		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		this.noteIdMap?.rename(priorPath, newPath);
+		// Drop the old path's stale caches so a later create there isn't
+		// echo-suppressed and no diverged base survives the move.
+		this.syncState.delete(normalizePath(priorPath));
+		this.baseStore?.delete(normalizePath(priorPath));
+		// normalizePath for the vault lookup (map keys arrive normalized from the
+		// server feed, but a non-normalized key would silently miss the trash and
+		// leave the duplicate this fix exists to remove). rename() above keeps the
+		// RAW priorPath — it must match the byPath key exactly to re-key the id.
+		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
+		if (oldFile) {
+			await this.app.fileManager.trashFile(oldFile);
+			rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+		}
+	}
+
 	/** Apply one merged cursor-feed entry by dispatching to the existing note /
 	 *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
 	 *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
@@ -2509,6 +2549,13 @@ export class SyncEngine {
 		if (c.deleted) {
 			this.noteIdMap?.delete(c.path);
 		} else {
+			// Id-keyed move: the server sends a note's stable id at a NEW path, but
+			// this device still holds that id at a DIFFERENT local path. A rename
+			// moves one row server-side (delete old + resurrect at new, same id), so
+			// the seq-ordered /sync/changes feed carries only the upsert at the new
+			// path — never a separate delete for the old one. Relocate the old file
+			// so it isn't orphaned as a duplicate (e2e test_10). See moveIfIdRelocated.
+			await this.moveIfIdRelocated(c.id, c.path);
 			this.noteIdMap?.set(c.path, c.id);
 			// Learned from the server's own feed — it unquestionably has a note
 			// row for this id, so future edits may route through CRDT (see
