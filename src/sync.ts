@@ -5,6 +5,8 @@ import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } f
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
 import type { CrdtManager } from "./crdt/manager";
+import type { NoteIdMap } from "./crdt/note-id-map";
+import { uuid7 } from "./crdt/uuid7";
 import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
@@ -340,6 +342,18 @@ export class SyncEngine {
 
 	setCrdtManager(mgr: CrdtManager | null): void {
 		this.crdt = mgr;
+	}
+
+	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
+	 *  main.ts (persisted in data.json); wired here so pushFile can mint/send
+	 *  client_id for new notes, the pull path can learn ids, and handleRename
+	 *  can keep the mapping stable across a move (Task 5). Null in tests/older
+	 *  callers that never wire it — id-minting and pull-learning are then
+	 *  simply skipped (pre-existing legacy path-keyed behavior). */
+	private noteIdMap: NoteIdMap | null = null;
+
+	setNoteIdMap(map: NoteIdMap | null): void {
+		this.noteIdMap = map;
 	}
 
 	/** Optional CRDT enrollment tracker. When set, a pull that surfaces a
@@ -855,6 +869,14 @@ export class SyncEngine {
 			this.debounceTimers.delete(file.path);
 		}
 
+		// Clear the file's note_id mapping — the vault file is genuinely gone,
+		// so a note later recreated at this path must mint a fresh id rather
+		// than resurrecting the deleted note's (Task 5). Attachments have no
+		// entries in this map (path -> note_id only), so gated on !isBinary.
+		if (!isBinary) {
+			this.noteIdMap?.delete(file.path);
+		}
+
 		try {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path);
@@ -903,6 +925,13 @@ export class SyncEngine {
 		if (!this.isSyncable(file)) return;
 
 		const isBinary = this.isBinaryFile(file);
+
+		// Keep the note_id mapping stable across the rename (Task 5) — the id
+		// itself never changes on a rename, only the path key it's filed under.
+		// A no-op if oldPath has no entry (attachments, or a note never pushed).
+		if (!isBinary) {
+			this.noteIdMap?.rename(oldPath, file.path);
+		}
 
 		// Delete old path if it wasn't ignored
 		if (!this.shouldIgnore(oldPath)) {
@@ -1218,6 +1247,18 @@ export class SyncEngine {
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 
+				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
+				// stable id BEFORE routing, so both the CRDT path (Task 6) and the
+				// REST fallback below can key/send by it. A brand-new note has no
+				// entry yet — mint a UUIDv7 and remember it immediately so a retry
+				// or a concurrent push for the same path reuses the same id rather
+				// than minting a second one.
+				let noteId = this.noteIdMap?.get(file.path) ?? null;
+				if (!noteId && this.noteIdMap) {
+					noteId = uuid7();
+					this.noteIdMap.set(file.path, noteId);
+				}
+
 				// CRDT path: route markdown saves through CrdtManager when wired
 				// AND the crdt: topic is actually joined. diffIntoYText produces
 				// minimal ops; the Y.Doc update listener forwards the diff to the
@@ -1281,7 +1322,12 @@ export class SyncEngine {
 					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
 					return false;
 				}
-				const resp = await this.api.pushNote(file.path, content, mtime, existing?.version);
+				// Only pass a 5th positional arg when an id is actually known — an
+				// explicit trailing `undefined` still changes Function.arguments.length,
+				// which several existing tests pin exactly via toHaveBeenCalledWith.
+				const resp = noteId
+					? await this.api.pushNote(file.path, content, mtime, existing?.version, noteId)
+					: await this.api.pushNote(file.path, content, mtime, existing?.version);
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
@@ -1433,6 +1479,10 @@ export class SyncEngine {
 					if (serverVersion != null) {
 						this.baseStore?.set(normalizePath(serverPath), content, serverVersion);
 					}
+					// Learn/confirm the id at its final (sanitized) path — the server
+					// is authoritative even when client_id was sent.
+					this.noteIdMap?.delete(normalizePath(file.path));
+					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
 				} else {
 					this.syncState.set(normalizePath(file.path), {
 						hash,
@@ -1442,6 +1492,7 @@ export class SyncEngine {
 					if (serverVersion != null) {
 						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
 					}
+					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
 				}
 			}
 			success = true;
@@ -2312,6 +2363,18 @@ export class SyncEngine {
 				deleted: c.deleted,
 			};
 			return this.applyAttachmentChange(ac);
+		}
+		// note_id-keyed CRDT rework (Task 5): learn this note's stable id from the
+		// merged feed (the only pull path whose entries carry `id` — the legacy
+		// GET /notes/changes NoteChange shape does not). A tombstone clears the
+		// mapping instead of recording it: a note later recreated at the same
+		// path is a NEW note server-side and must mint a fresh id, not resurrect
+		// the deleted one's — mirrors the CRDT doc teardown-on-delete rationale
+		// elsewhere in this file (no ghost lineage across a delete).
+		if (c.deleted) {
+			this.noteIdMap?.delete(c.path);
+		} else {
+			this.noteIdMap?.set(c.path, c.id);
 		}
 		const nc: NoteChange = {
 			path: c.path,

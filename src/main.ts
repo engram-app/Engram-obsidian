@@ -270,6 +270,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// channel; null stream → not live → REST.
 		this.syncEngine.setCrdtLiveCheck(() => this.noteStream?.isCrdtConnected() ?? false);
 
+		// Path -> note_id sidecar (Task 4/5 of the note_id-keyed CRDT rework).
+		// this.noteIdMap is already loaded from data.json by loadSettings() above
+		// (called before onload reaches this point), so this wiring sees the
+		// persisted map, not an empty one.
+		this.syncEngine.setNoteIdMap(this.noteIdMap);
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
