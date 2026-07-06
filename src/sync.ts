@@ -2348,15 +2348,22 @@ export class SyncEngine {
 		devLog().log("ws", `${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 		rlog().info("ws", `Event: ${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 
-		// Echo suppression — skip events for notes we're currently pushing
-		// or have recently finished pushing (WebSocket events arrive after push completes)
-		if (this.pushing.has(event.path)) {
-			rlog().info("ws", `Echo skip (pushing): ${event.path}`);
-			return;
-		}
-		if (this.recentlyPushed.has(event.path)) {
-			rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
-			return;
+		// Echo suppression — skip UPSERT events for notes we're currently pushing
+		// or have recently finished pushing (the server broadcasts our own push
+		// back to us). DELETE is exempt: a delete is never an echo of a content
+		// push, and suppressing it lets a renamed-away old path linger forever
+		// when the receiver resurrected it into the push set (id-keyed rename —
+		// its CRDT room is still bound to the old path, so channel traffic
+		// re-pushes it). A redundant delete just no-ops in the delete branch below.
+		if (event.event_type !== "delete") {
+			if (this.pushing.has(event.path)) {
+				rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+				return;
+			}
+			if (this.recentlyPushed.has(event.path)) {
+				rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+				return;
+			}
 		}
 
 		const isAttachment = event.kind === "attachment";

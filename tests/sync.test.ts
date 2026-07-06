@@ -585,6 +585,28 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
+	test("delete event is honored even when the path was recently pushed", async () => {
+		// An id-keyed rename resurrects the old path on the receiver (its CRDT
+		// room is still bound there, so incoming channel traffic re-pushes it).
+		// That push lands the old path in the echo-suppression set. The server's
+		// authoritative delete for the old path then arrives — echo suppression
+		// must NOT swallow it, or the renamed-away file lingers forever (e2e
+		// test_10). A delete is never an echo of the client's own content push.
+		const engine = createEngine();
+		const path = "E2E/RenameOld.md";
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+		(engine as unknown as { markRecentlyPushed(p: string): void }).markRecentlyPushed(path);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path,
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+	});
+
 	test("ignores events for ignored paths", async () => {
 		const engine = createEngine();
 

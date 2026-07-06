@@ -6266,13 +6266,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (this.shouldIgnore(event.path)) return;
-    if (devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`), this.pushing.has(event.path)) {
-      rlog().info("ws", `Echo skip (pushing): ${event.path}`);
-      return;
-    }
-    if (this.recentlyPushed.has(event.path)) {
-      rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
-      return;
+    if (devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`), event.event_type !== "delete") {
+      if (this.pushing.has(event.path)) {
+        rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+        return;
+      }
+      if (this.recentlyPushed.has(event.path)) {
+        rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+        return;
+      }
     }
     let isAttachment = event.kind === "attachment";
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
