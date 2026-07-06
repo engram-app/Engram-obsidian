@@ -1,7 +1,7 @@
 /**
  * Tests for channel.ts — Phoenix channel with vault-scoped topics.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
 import { NoteChannel } from "../src/channel";
 
@@ -9,11 +9,13 @@ import { NoteChannel } from "../src/channel";
 let lastWsUrl: string | null = null;
 let lastWsInstance: any = null;
 
+type CloseEventLike = { code: number; reason: string; wasClean: boolean };
+
 class MockWebSocket {
 	static OPEN = 1;
 	readyState = MockWebSocket.OPEN;
 	onopen: (() => void) | null = null;
-	onclose: (() => void) | null = null;
+	onclose: ((evt: CloseEventLike) => void) | null = null;
 	onmessage: ((evt: { data: string }) => void) | null = null;
 	onerror: ((e: any) => void) | null = null;
 	sent: string[] = [];
@@ -35,8 +37,22 @@ class MockWebSocket {
 // Install mock
 (globalThis as any).WebSocket = MockWebSocket;
 
+// Bun shares one process across test files: restore the real navigator so a
+// test setting globalThis.navigator (online/offline probe tests below) can't
+// leak into downstream files.
+const originalNavigator = (globalThis as any).navigator;
+afterAll(() => {
+	(globalThis as any).navigator = originalNavigator;
+});
+
 function simulateOpen(ws: any): void {
 	ws.onopen?.();
+}
+
+/** Fires the mock WebSocket's close handler with a CloseEvent-like payload.
+ *  Real browsers always pass one; this keeps tests aligned with that shape. */
+function fireClose(ws: any, code = 1006): void {
+	ws.onclose?.({ code, reason: "", wasClean: false });
 }
 
 /** The sync-topic `phx_join` is always the first frame sent on open. */
@@ -340,10 +356,12 @@ describe("NoteChannel.setAuthProvider", () => {
 		channel.disconnect();
 	});
 
-	test("invalidates the cached access token when WS closes before open (stale token)", async () => {
+	test("fast pre-open close while online fires the auth probe, does NOT invalidate directly", async () => {
+		(globalThis as any).navigator = { onLine: true };
+		const probe = mock(() => Promise.resolve({ id: "u1", email: "e" }));
 		const invalidate = mock(() => {});
 		const provider: AuthProvider = {
-			getToken: mock(() => Promise.resolve("stale-token")),
+			getToken: mock(() => Promise.resolve("maybe-stale-token")),
 			getVaultId: mock(() => "7"),
 			isAuthenticated: mock(() => true),
 			signOut: mock(() => {}),
@@ -351,68 +369,126 @@ describe("NoteChannel.setAuthProvider", () => {
 		};
 		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
 		channel.setAuthProvider(provider);
+		channel.setAuthProbe(probe);
 		await channel.connect();
 
-		// Simulate Phoenix UserSocket rejecting the upgrade — onclose fires
-		// without an intervening onopen, surfacing as the browser's
-		// "WebSocket connection failed" with no HTTP status.
-		lastWsInstance.onclose?.();
+		// Simulate Phoenix UserSocket rejecting the upgrade (or a network blip,
+		// both produce the same bare pre-open close). onclose fires without an
+		// intervening onopen.
+		fireClose(lastWsInstance);
+		await Promise.resolve();
 
-		expect(invalidate).toHaveBeenCalledTimes(1);
-
-		channel.disconnect();
-	});
-
-	test("does NOT invalidate when WS closes AFTER a successful open (normal disconnect)", async () => {
-		const invalidate = mock(() => {});
-		const provider: AuthProvider = {
-			getToken: mock(() => Promise.resolve("good-token")),
-			getVaultId: mock(() => "7"),
-			isAuthenticated: mock(() => true),
-			signOut: mock(() => {}),
-			invalidateAccessToken: invalidate,
-		};
-		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
-		channel.setAuthProvider(provider);
-		await channel.connect();
-
-		simulateOpen(lastWsInstance);
-		lastWsInstance.onclose?.();
-
+		expect(probe).toHaveBeenCalledTimes(1);
+		// The channel no longer guesses and invalidates directly. The api
+		// client (via the probe's real 401 handling) is the sole authority.
 		expect(invalidate).not.toHaveBeenCalled();
 
 		channel.disconnect();
 	});
 
-	test("close-before-open with no auth provider is a no-op (ApiKey fallback path)", async () => {
-		// Channel without setAuthProvider — only the api-key fallback string
-		// drives the WS URL. The onclose handler must NOT crash on the
-		// optional-method access (`this.authProvider?.invalidateAccessToken`).
-		const channel = new NoteChannel("http://localhost:4000", "my-api-key", "42", "7");
+	test("fast pre-open close while OFFLINE does not probe and preserves the token", async () => {
+		(globalThis as any).navigator = { onLine: false };
+		const probe = mock(() => Promise.resolve({}));
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider({
+			getToken: mock(() => Promise.resolve("good-token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+			invalidateAccessToken: mock(() => {}),
+		});
+		channel.setAuthProbe(probe);
 		await channel.connect();
 
-		// Should not throw.
-		expect(() => lastWsInstance.onclose?.()).not.toThrow();
+		fireClose(lastWsInstance);
+		await Promise.resolve();
+
+		expect(probe).not.toHaveBeenCalled();
 
 		channel.disconnect();
 	});
 
-	test("ApiKey-shaped provider without invalidateAccessToken doesn't crash on close-before-open", async () => {
-		// Some providers (e.g. ApiKeyAuth) don't implement the optional
-		// invalidateAccessToken method. The guard in channel.ts must skip
-		// invalidation gracefully rather than calling undefined.
-		const provider: AuthProvider = {
-			getToken: mock(() => Promise.resolve("api-key-as-token")),
+	test("a rejecting probe does not throw out of onclose and still schedules reconnect", async () => {
+		(globalThis as any).navigator = { onLine: true };
+		const probe = mock(() => Promise.reject(new Error("401")));
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider({
+			getToken: mock(() => Promise.resolve("token")),
 			getVaultId: mock(() => "7"),
 			isAuthenticated: mock(() => true),
 			signOut: mock(() => {}),
-			// invalidateAccessToken intentionally omitted
-		};
-		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
-		channel.setAuthProvider(provider);
+		});
+		channel.setAuthProbe(probe);
 		await channel.connect();
 
-		expect(() => lastWsInstance.onclose?.()).not.toThrow();
+		expect(() => fireClose(lastWsInstance)).not.toThrow();
+		await Promise.resolve();
+
+		expect(probe).toHaveBeenCalledTimes(1);
+
+		channel.disconnect();
+	});
+
+	test("a rejecting probe never blocks reconnect (onclose stays synchronous)", async () => {
+		// Pins the fix: onclose must schedule reconnect in the SAME synchronous
+		// tick, before the fire-and-forget probe promise has settled. If onclose
+		// ever went back to `await`ing the probe, reconnectTimer would still be
+		// null right after fireClose() returns.
+		(globalThis as any).navigator = { onLine: true };
+		const probe = mock(() => Promise.reject(new Error("401")));
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider({
+			getToken: mock(() => Promise.resolve("token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+		});
+		channel.setAuthProbe(probe);
+		await channel.connect();
+
+		fireClose(lastWsInstance);
+
+		// Reconnect must already be armed, synchronously, before the rejecting
+		// probe promise gets a chance to settle.
+		expect((channel as any).reconnectTimer).not.toBeNull();
+
+		await Promise.resolve();
+		expect(probe).toHaveBeenCalledTimes(1);
+
+		channel.disconnect();
+	});
+
+	test("does NOT fire the auth probe when WS closes AFTER a successful open (normal disconnect)", async () => {
+		(globalThis as any).navigator = { onLine: true };
+		const probe = mock(() => Promise.resolve({}));
+		const channel = new NoteChannel("http://localhost:4000", "fallback", "42", "7");
+		channel.setAuthProvider({
+			getToken: mock(() => Promise.resolve("good-token")),
+			getVaultId: mock(() => "7"),
+			isAuthenticated: mock(() => true),
+			signOut: mock(() => {}),
+		});
+		channel.setAuthProbe(probe);
+		await channel.connect();
+
+		simulateOpen(lastWsInstance);
+		fireClose(lastWsInstance);
+		await Promise.resolve();
+
+		expect(probe).not.toHaveBeenCalled();
+
+		channel.disconnect();
+	});
+
+	test("fast pre-open close with no authProbe set does not throw (no-op)", async () => {
+		// Channel without setAuthProbe (and without setAuthProvider): only the
+		// api-key fallback string drives the WS URL. The onclose handler must
+		// NOT crash on the optional `this.authProbe` guard.
+		(globalThis as any).navigator = { onLine: true };
+		const channel = new NoteChannel("http://localhost:4000", "my-api-key", "42", "7");
+		await channel.connect();
+
+		expect(() => fireClose(lastWsInstance)).not.toThrow();
 
 		channel.disconnect();
 	});

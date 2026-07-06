@@ -8,12 +8,14 @@ import { rlog } from "./remote-log";
  *  within a reasonable user-perceived window. */
 const NO_AUTH_RECONNECT_MS = 30_000;
 
-/** If a WS close lands within this window after open, treat it as a probable
- *  auth-failure handshake reject (Phoenix's UserSocket returns 403 at upgrade
- *  for expired/invalid JWTs, manifesting client-side as an immediate close
- *  rather than an HTTP status). We invalidate the cached access token so the
- *  next reconnect forces a refresh. Wider than any legitimate network blip,
- *  narrower than a real session.
+/** If a WS close lands within this window after open, the close is AMBIGUOUS:
+ *  Phoenix's UserSocket returns 403 at upgrade for expired/invalid JWTs
+ *  (manifesting client-side as an immediate close with no HTTP status), but a
+ *  plain network/DNS blip produces the identical bare close before onopen.
+ *  We no longer guess which one happened. Instead, within this window and
+ *  while online, we fire an authenticated probe (see `setAuthProbe`) and let
+ *  the api client be the sole invalidation authority. Wider than any
+ *  legitimate network blip, narrower than a real session.
  */
 const AUTH_FAIL_WINDOW_MS = 5_000;
 
@@ -95,6 +97,9 @@ export class NoteChannel {
 	 *  CRDT topic and behaves exactly like a non-CRDT build (legacy path only). */
 	private readonly enableCrdt: boolean;
 	private authProvider: AuthProvider | null = null;
+	/** Authenticated probe injected via `setAuthProbe` (e.g. GET /me). Fired on
+	 *  a fast pre-open close instead of guessing the token is stale. */
+	private authProbe: (() => Promise<unknown>) | null = null;
 
 	onEvent: ((event: NoteStreamEvent) => void) | null = null;
 	onStatusChange: ((connected: boolean) => void) | null = null;
@@ -103,7 +108,7 @@ export class NoteChannel {
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
 	onPlanState: ((plan: unknown) => void) | null = null;
-	/** Inbound CRDT frames from the server. `docId` is the full vault-scoped id. */
+	/** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
 	onCrdtMessage: ((docId: string, b64: string) => void) | null = null;
 	/** A room became active on the server for `docId` (announced via
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
@@ -149,6 +154,14 @@ export class NoteChannel {
 	setAuthProvider(provider: AuthProvider): void {
 		this.authProvider = provider;
 		rlog().info("channel", `setAuthProvider — type=${provider.constructor.name}`);
+	}
+
+	/** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
+	 *  channel fires this instead of guessing the token is stale; the api client
+	 *  is the single invalidation authority (a real 401 there invalidates and
+	 *  refreshes). */
+	setAuthProbe(probe: () => Promise<unknown>): void {
+		this.authProbe = probe;
 	}
 
 	private async getAuthToken(): Promise<{ token: string; source: string }> {
@@ -365,25 +378,27 @@ export class NoteChannel {
 			// because a frame exceeded max_frame_size (see LARGE_FRAME_WARN_BYTES
 			// above and docs/context/ws-zombie-channel-diagnosis.md).
 			const closeInfo = `code=${evt?.code ?? "unknown"} reason="${evt?.reason ?? ""}" wasClean=${evt?.wasClean ?? "unknown"}`;
-
-			// Phoenix UserSocket rejects expired/invalid JWTs at the WS upgrade,
-			// which the browser surfaces as an immediate close without ever
-			// firing `onopen`. Treat any close that lands inside the fail window
-			// without a successful open as an auth handshake reject and force
-			// the next reconnect to mint a fresh access token. (A real network
-			// blip won't fire onclose without an onopen — the WebSocket would
-			// stay in CONNECTING and eventually error out instead.)
 			const sinceOpen = Date.now() - openedAt;
-			if (
-				!opened &&
-				sinceOpen < AUTH_FAIL_WINDOW_MS &&
-				this.authProvider?.invalidateAccessToken
-			) {
-				rlog().warn(
-					"channel",
-					`WS closed before open at ${sinceOpen}ms — assuming stale access token, invalidating - ${closeInfo}`,
-				);
-				this.authProvider.invalidateAccessToken();
+			const online = typeof navigator !== "undefined" ? navigator.onLine : true;
+			rlog().info(
+				"channel",
+				`WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`,
+			);
+
+			// A fast pre-open close is AMBIGUOUS: a server auth-reject and a network
+			// drop both surface as a bare close before onopen. Do NOT guess it is a
+			// stale token. If we are plainly offline, it is a network drop: keep the
+			// token, back off. If online, ask the server via an authenticated probe
+			// and let api.ts decide (its real-401 handler invalidates and refreshes;
+			// a 2xx proves the token is fine).
+			if (!opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe) {
+				// Fire-and-forget: we want only the probe's side effect (a real 401 is
+				// handled by the api client's invalidation path). Do NOT await: awaiting
+				// here would defer scheduleReconnect past a suspension point and let a
+				// concurrent disconnect() fail to cancel the reconnect (zombie socket).
+				// A network error just means we are offline; either way the reconnect
+				// below refreshes the token if needed.
+				void this.authProbe().catch(() => {});
 			}
 
 			if (opened) {
@@ -584,6 +599,7 @@ export class NoteChannel {
 				path: p.path as string,
 				timestamp: Date.now(),
 				kind: (p.kind as "note" | "attachment") ?? "note",
+				id: p.id as string | undefined,
 				content: p.content as string | undefined,
 				content_hash: p.content_hash as string | undefined,
 				title: p.title as string | undefined,
@@ -610,6 +626,7 @@ export class NoteChannel {
 					path: n.path as string,
 					timestamp: Date.now(),
 					kind: "note",
+					id: n.id as string | undefined,
 					content_hash: n.content_hash as string | undefined,
 					title: n.title as string | undefined,
 					folder: n.folder as string | undefined,

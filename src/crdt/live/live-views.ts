@@ -58,6 +58,15 @@ export interface CrdtLiveViewsDeps {
 	app: App;
 	manager: CrdtManager;
 	enrollment: CrdtEnrollment;
+	/**
+	 * Task 6 (note_id-keyed CRDT): resolve (minting if this path has never been
+	 * seen before) the note_id that keys the CRDT manager and channel for
+	 * `path`. Every manager/enrollment call in this file is keyed by the
+	 * result, not by `path` directly — the editor binding must share the exact
+	 * same doc the wire syncs, so it cannot key by path once the manager keys
+	 * by id.
+	 */
+	resolveId(path: string): string;
 	/** The existing disk flush (SyncEngine.flushFromCrdt). Called on last release. */
 	flushToDisk(path: string, content: string): Promise<void>;
 }
@@ -78,7 +87,8 @@ export class CrdtLiveViews {
 		this.deps = deps;
 		this.refcount = new ViewerRefcount((path) => {
 			// Last viewer left: persist the current Y.Text to disk now.
-			void this.deps.manager.getText(path).then((t) => this.deps.flushToDisk(path, t));
+			const noteId = this.deps.resolveId(path);
+			void this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
 		});
 		this.frontmatter = new CrdtFrontmatterHook({
 			getPath: (v) => getMarkdownFilePath(v),
@@ -94,9 +104,11 @@ export class CrdtLiveViews {
 		return this.refcount.isBound(path);
 	}
 
-	/** Open (or get cached) the path's Y.Text from the CRDT manager. */
+	/** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
+	 *  (minting if needed) the note_id that actually keys the doc (Task 6). */
 	async getYText(path: string): Promise<Y.Text> {
-		return (await this.deps.manager.getDoc(path)).getText("content");
+		const noteId = this.deps.resolveId(path);
+		return (await this.deps.manager.getDoc(noteId)).getText("content");
 	}
 
 	/** Re-evaluate open markdown leaves: bind each editor's controller to its
@@ -130,7 +142,10 @@ export class CrdtLiveViews {
 				this.frontmatter.detach(view);
 				this.reading.detach(view);
 			}
-			this.deps.enrollment.enroll(path);
+			// The `.md` gate above (line ~112) is the extension check that used to
+			// live inside CrdtEnrollment.enroll — it now belongs here, at the one
+			// call site in this file that actually knows the path (Task 6).
+			this.deps.enrollment.enroll(this.deps.resolveId(path));
 			void ctrl.bindTo(cm, path);
 			this.frontmatter.attach(view);
 			void this.reading.attach(view, path);
@@ -161,8 +176,9 @@ export class CrdtLiveViews {
 		// stays only in Y.Text and is never written to disk before the manager tears
 		// down.
 		for (const path of this.refcount.boundPaths()) {
+			const noteId = this.deps.resolveId(path);
 			void this.deps.manager
-				.getText(path)
+				.getText(noteId)
 				.then((content) => this.deps.flushToDisk(path, content));
 		}
 	}
