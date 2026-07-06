@@ -2348,6 +2348,18 @@ export class SyncEngine {
 		devLog().log("ws", `${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 		rlog().info("ws", `Event: ${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 
+		const isAttachment = event.kind === "attachment";
+
+		// Id-keyed relocation must run BEFORE echo suppression: an echo-skipped
+		// upsert at the NEW path would otherwise leave this device's CRDT room
+		// bound to the OLD path, which then perpetually resurrects it (e2e
+		// test_10). moveIfIdRelocated is idempotent — it no-ops unless the id
+		// already maps to a different local path. Gated on a known id
+		// (attachments aren't keyed).
+		if (event.event_type === "upsert" && !isAttachment && event.id) {
+			await this.moveIfIdRelocated(event.id, event.path);
+		}
+
 		// Echo suppression — skip UPSERT events for notes we're currently pushing
 		// or have recently finished pushing (the server broadcasts our own push
 		// back to us). DELETE is exempt: a delete is never an echo of a content
@@ -2365,8 +2377,6 @@ export class SyncEngine {
 				return;
 			}
 		}
-
-		const isAttachment = event.kind === "attachment";
 
 		// Protocol rev — hash-compare dedupe: if the event's content_hash
 		// matches the server hash we already hold for this path, the local
@@ -2412,14 +2422,8 @@ export class SyncEngine {
 		}
 
 		if (event.event_type === "upsert") {
-			// Belt-and-suspenders id-keyed move: a rename normally also emits a
-			// separate delete broadcast for the old path, but if that is missed or
-			// reordered the upsert alone would orphan the old file. Same handling as
-			// the pull feed (moveIfIdRelocated); no-ops unless the id already maps to
-			// a different local path. Gated on a known id (attachments aren't keyed).
-			if (!isAttachment && event.id) {
-				await this.moveIfIdRelocated(event.id, event.path);
-			}
+			// Id-keyed relocation already ran above (hoisted before echo
+			// suppression so an echo-skipped rename still relocates the room).
 			try {
 				if (isAttachment) {
 					const attachment = await this.api.getAttachment(event.path);

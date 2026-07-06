@@ -593,4 +593,41 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		expect(noteIdMap.pathForId("id-ws-move")).toBe("New.md");
 		expect(noteIdMap.get("Old.md")).toBeNull();
 	});
+
+	test("relocation runs even when the new path was echo-suppressed", async () => {
+		// The receiver's CRDT room is bound to the old path; incoming channel
+		// traffic re-materializes + re-pushes the new path, so it lands in the
+		// echo-suppression set. If the realtime upsert at the new path is
+		// echo-skipped BEFORE relocation, the room stays bound to the old path
+		// and perpetually resurrects it (e2e test_10). Relocation must run first.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-echo-move");
+		engine.setNoteIdMap(noteIdMap);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+		// This device just pushed the new path -> echo-suppressed.
+		(engine as unknown as { markRecentlyPushed(p: string): void }).markRecentlyPushed("New.md");
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-echo-move",
+			path: "New.md",
+			timestamp: 2,
+			content: "body",
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(noteIdMap.pathForId("id-echo-move")).toBe("New.md");
+	});
 });

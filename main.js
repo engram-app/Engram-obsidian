@@ -6266,7 +6266,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (this.shouldIgnore(event.path)) return;
-    if (devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`), event.event_type !== "delete") {
+    devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
+    let isAttachment = event.kind === "attachment";
+    if (event.event_type === "upsert" && !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path), event.event_type !== "delete") {
       if (this.pushing.has(event.path)) {
         rlog().info("ws", `Echo skip (pushing): ${event.path}`);
         return;
@@ -6276,7 +6278,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return;
       }
     }
-    let isAttachment = event.kind === "attachment";
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
       let stored = this.syncState.get((0, import_obsidian21.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
@@ -6295,8 +6296,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       return;
     }
-    if (event.event_type === "upsert") {
-      !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path);
+    if (event.event_type === "upsert")
       try {
         if (isAttachment) {
           let attachment = await this.api.getAttachment(event.path);
@@ -6345,7 +6345,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
-    }
   }
   /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
    *  `newPath`, the server moved one row (a rename resurrects the same note_id
