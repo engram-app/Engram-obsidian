@@ -5098,8 +5098,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  confirmed here may subsequent edits route through CRDT. Keyed by note_id
      *  (not path) so a delete+recreate at the same path — which mints a fresh
      *  id — starts unconfirmed again rather than inheriting the old note's
-     *  confirmed status. Never pruned on delete (bounded by live note count;
-     *  a stray id is a few bytes, not worth the bookkeeping). */
+     *  confirmed status. Pruned when the note's server row is deleted
+     *  (handleRename tombstones the old path): the invariant is "the server has
+     *  a LIVE row for this id", and a tombstoned id no longer does — so the
+     *  next push (the rename's new-path push, same id) must go REST-first to
+     *  move/resurrect the row, not CRDT (which the channel drops for a note the
+     *  server sees as absent). Routing it CRDT would silently strand the rename. */
     this.confirmedNoteIds = /* @__PURE__ */ new Set();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
@@ -5183,6 +5187,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
+  }
+  /** Drop a note_id's confirmed status when its server row is deleted, so a
+   *  subsequent push of the same id (a rename's new-path push) takes the
+   *  REST-first path that recreates/moves the row rather than routing to a
+   *  CRDT room the server no longer has. */
+  unconfirmNoteId(noteId) {
+    noteId && this.confirmedNoteIds.delete(noteId);
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
@@ -5471,7 +5482,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -5490,7 +5501,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || (_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and

@@ -405,4 +405,45 @@ describe("handleRename re-keys the map, id unchanged", () => {
 		expect(noteIdMap.get("a.md")).toBeNull();
 		expect(noteIdMap.get("b.md")).toBe("id-1");
 	});
+
+	test("un-confirms the id so the new-path push takes REST (row move), not CRDT", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		// Confirm id-1 for a.md via a pull (applySyncChange learns + confirms the
+		// id). With id-1 confirmed + CRDT live, a normal edit to a.md would route
+		// through CRDT.
+		await engine.applySyncChange({
+			id: "id-1",
+			path: "a.md",
+			title: "a",
+			content: "# A\nbody",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+
+		applyLocalEdit.mockClear();
+		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
+
+		// Rename a.md -> b.md. handleRename tombstones the old row then pushes the
+		// new path. The delete un-confirms id-1, so the new-path push MUST go REST
+		// (which moves/resurrects the row server-side), not CRDT — the server
+		// drops crdt frames for a note it sees as deleted, silently losing the
+		// rename. Without the un-confirm, id-1 stays confirmed and the push routes
+		// CRDT (applyLocalEdit), which this asserts against.
+		await engine.handleRename(new TFile("b.md"), "a.md");
+
+		expect(noteIdMap.get("b.md")).toBe("id-1");
+		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
 });

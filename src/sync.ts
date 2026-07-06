@@ -369,8 +369,12 @@ export class SyncEngine {
 	 *  confirmed here may subsequent edits route through CRDT. Keyed by note_id
 	 *  (not path) so a delete+recreate at the same path — which mints a fresh
 	 *  id — starts unconfirmed again rather than inheriting the old note's
-	 *  confirmed status. Never pruned on delete (bounded by live note count;
-	 *  a stray id is a few bytes, not worth the bookkeeping). */
+	 *  confirmed status. Pruned when the note's server row is deleted
+	 *  (handleRename tombstones the old path): the invariant is "the server has
+	 *  a LIVE row for this id", and a tombstoned id no longer does — so the
+	 *  next push (the rename's new-path push, same id) must go REST-first to
+	 *  move/resurrect the row, not CRDT (which the channel drops for a note the
+	 *  server sees as absent). Routing it CRDT would silently strand the rename. */
 	private confirmedNoteIds: Set<string> = new Set();
 
 	private isNoteConfirmed(noteId: string | null): boolean {
@@ -379,6 +383,14 @@ export class SyncEngine {
 
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
+	}
+
+	/** Drop a note_id's confirmed status when its server row is deleted, so a
+	 *  subsequent push of the same id (a rename's new-path push) takes the
+	 *  REST-first path that recreates/moves the row rather than routing to a
+	 *  CRDT room the server no longer has. */
+	private unconfirmNoteId(noteId: string | null | undefined): void {
+		if (noteId) this.confirmedNoteIds.delete(noteId);
 	}
 
 	/** Optional CRDT enrollment tracker. When set, a pull that surfaces a
@@ -1005,6 +1017,12 @@ export class SyncEngine {
 		// Move base content entry to new path before pushing
 		if (!isBinary) {
 			this.baseStore?.rename(normalizePath(oldPath), normalizePath(file.path));
+			// deleteNote above tombstoned the old path's row, so the note_id is no
+			// longer server-live. Un-confirm it so the pushFile below takes the
+			// REST-first path (which moves/resurrects the row at the new path,
+			// keyed by the stable id) instead of the CRDT path — the server drops
+			// crdt frames for a note it sees as absent, silently losing the rename.
+			this.unconfirmNoteId(this.noteIdMap?.get(file.path) ?? null);
 		}
 
 		// Push new path if it isn't ignored
