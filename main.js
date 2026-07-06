@@ -1052,10 +1052,14 @@ var EngramApi = class _EngramApi {
   }
   /** Push a note to Engram.
    *  When version is provided, the server uses optimistic concurrency control:
-   *  returns 409 with the current server state if the version doesn't match. */
-  async pushNote(path, content, mtime, version) {
+   *  returns 409 with the current server state if the version doesn't match.
+   *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
+   *  isn't yet known server-side — the server adopts it on first create
+   *  (note_id-keyed CRDT rework, Task 5). Harmless to send for an existing
+   *  note: the server already has an id and ignores it. */
+  async pushNote(path, content, mtime, version, clientId) {
     let body = { path, content, mtime };
-    version !== void 0 && (body.version = version);
+    version !== void 0 && (body.version = version), clientId !== void 0 && (body.client_id = clientId);
     try {
       return (await this.request("POST", "/notes", body)).json;
     } catch (e) {
@@ -4705,6 +4709,21 @@ function createSingleFlight() {
 // src/sync.ts
 var import_obsidian21 = require("obsidian");
 
+// src/crdt/uuid7.ts
+function uuid7() {
+  var _a, _b;
+  let tsHex = Date.now().toString(16).padStart(12, "0").slice(-12), rand = new Uint8Array(10);
+  crypto.getRandomValues(rand), rand[0] = ((_a = rand[0]) != null ? _a : 0) & 15 | 112, rand[2] = ((_b = rand[2]) != null ? _b : 0) & 63 | 128;
+  let hex = (arr) => Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+  return [
+    tsHex.slice(0, 8),
+    tsHex.slice(8, 12),
+    hex(rand.subarray(0, 2)),
+    hex(rand.subarray(2, 4)),
+    hex(rand.subarray(4, 10))
+  ].join("-");
+}
+
 // src/cursor.ts
 var MAX_CURSOR_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
 function encodeCursor(seq3, id2) {
@@ -4890,7 +4909,7 @@ function exceedsCrdtNoteLimit(content, maxBytes) {
 async function routeModify(file, crdt, maxBytes) {
   if (!file.isMarkdown) return !1;
   let content = await file.readContent();
-  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.path, content);
+  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.noteId, content);
 }
 async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_NOTE_BYTES) {
   var _a;
@@ -4898,18 +4917,18 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
     return;
   let current;
   try {
-    current = await crdt.projectedText(file.path);
+    current = await crdt.projectedText(file.noteId);
   } catch (e) {
     onCorruption();
     return;
   }
   if (current !== file.diskContent) {
     try {
-      await crdt.applyLocalEdit(file.path, file.diskContent);
+      await crdt.applyLocalEdit(file.noteId, file.diskContent);
     } catch (e) {
       rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
     }
-    (_a = crdt.enroll) == null || _a.call(crdt, file.path);
+    (_a = crdt.enroll) == null || _a.call(crdt, file.noteId);
   }
 }
 function isHttpStatus(e, status) {
@@ -5058,6 +5077,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
      *  so doc_id = "{vaultId}/{path}" aligns with the backend's path_hmac lookup. */
     this.crdt = null;
+    /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
+     *  main.ts (persisted in data.json); wired here so pushFile can mint/send
+     *  client_id for new notes, the pull path can learn ids, and handleRename
+     *  can keep the mapping stable across a move (Task 5). Null in tests/older
+     *  callers that never wire it — id-minting and pull-learning are then
+     *  simply skipped (pre-existing legacy path-keyed behavior). */
+    this.noteIdMap = null;
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -5131,6 +5157,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtManager(mgr) {
     this.crdt = mgr;
+  }
+  setNoteIdMap(map3) {
+    this.noteIdMap = map3;
   }
   setCrdtEnrollment(enrollment) {
     this.crdtEnrollment = enrollment;
@@ -5387,7 +5416,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleDelete short-circuited \u2014 gate closed");
       return;
@@ -5395,11 +5424,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.ready || this.suppressDeletes || !this.isSyncable(file) || this.shouldIgnore(file.path)) return;
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
+    let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
+    isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path);
     try {
-      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(file.path)), (_b = this.crdtEnrollment) == null || _b.reset(file.path));
+      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), file.path.endsWith(".md") && (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(file.path)), (_d = this.crdtEnrollment) == null || _d.reset(file.path));
+        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(crdtNoteId)), (_g = this.crdtEnrollment) == null || _g.reset(crdtNoteId));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -5407,32 +5438,32 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         action: "delete",
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
-        vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
+        vaultId: (_h = this.settings.vaultId) != null ? _h : void 0
       }), this.maybeGoOffline(e);
     }
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
     }
     if (!this.ready || !this.isSyncable(file)) return;
     let isBinary = this.isBinaryFile(file);
-    if (!this.shouldIgnore(oldPath))
+    if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
-        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline(), oldPath.endsWith(".md") && (await ((_a = this.crdt) == null ? void 0 : _a.removeDoc(oldPath)), (_b = this.crdtEnrollment) == null || _b.reset(oldPath));
+        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline();
       } catch (e) {
-        isHttpStatus(e, 404) ? (this.goOnline(), oldPath.endsWith(".md") && (await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(oldPath)), (_d = this.crdtEnrollment) == null || _d.reset(oldPath))) : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
+          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || (_f = this.baseStore) == null || _f.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || (_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -5553,7 +5584,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -5593,24 +5624,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file);
-        if (this.crdt && ((_c = (_b = this.crdtLive) == null ? void 0 : _b.call(this)) == null || _c)) {
+        let content = await this.app.vault.cachedRead(file), noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+        if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), this.crdt && noteId && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) == null || _e)) {
           if (await routeModify(
             {
               isMarkdown: file.extension === "md",
-              path: file.path,
+              noteId,
               readContent: async () => content
             },
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           ))
-            return (_d = this.crdtEnrollment) == null || _d.enroll(file.path), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
-          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_e = this.crdtEnrollment) == null || _e.enroll(file.path));
+            return (_f = this.crdtEnrollment) == null || _f.enroll(noteId), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
+          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
         }
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
-        let resp = await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
+        let resp = noteId ? await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version, noteId) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
           let serverNote = resp.server_note;
           devLog().log(
@@ -5620,7 +5651,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             "conflict",
             `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
           );
-          let pushBase = (_f = this.baseStore) == null ? void 0 : _f.get((0, import_obsidian21.normalizePath)(file.path));
+          let pushBase = (_h = this.baseStore) == null ? void 0 : _h.get((0, import_obsidian21.normalizePath)(file.path));
           if (pushBase) {
             let merge2 = threeWayMerge(pushBase.content, content, serverNote.content);
             if (merge2.clean) {
@@ -5635,7 +5666,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   hash: fnv1a(merge2.merged),
                   version: mergeResp.note.version,
                   serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_g = this.baseStore) == null || _g.set(np, merge2.merged, mergeResp.note.version));
+                }), mergeResp.note.version != null && ((_i = this.baseStore) == null || _i.set(np, merge2.merged, mergeResp.note.version)), (_j = this.noteIdMap) == null || _j.set(np, mergeResp.note.id);
               }
               return rlog().info(
                 "conflict",
@@ -5664,7 +5695,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_h = this.baseStore) == null || _h.set(np, content, forceResp.note.version));
+              }), forceResp.note.version != null && ((_k = this.baseStore) == null || _k.set(np, content, forceResp.note.version)), (_l = this.noteIdMap) == null || _l.set(np, forceResp.note.id);
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -5675,7 +5706,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_i = this.baseStore) == null || _i.set(np, serverNote.content, serverNote.version);
+              }), (_m = this.baseStore) == null || _m.set(np, serverNote.content, serverNote.version), (_n = this.noteIdMap) == null || _n.set(np, serverNote.id);
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -5689,11 +5720,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_j = this.baseStore) == null || _j.set(
+              }), mergeResp.note.version != null && ((_o = this.baseStore) == null || _o.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
-              ));
+              )), (_p = this.noteIdMap) == null || _p.set(np, mergeResp.note.id);
             }
           }
           return !1;
@@ -5713,13 +5744,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_k = this.baseStore) == null || _k.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_l = this.baseStore) == null || _l.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion));
+          }), (_q = this.baseStore) == null || _q.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_r = this.baseStore) == null || _r.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_s = this.noteIdMap) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_m = this.baseStore) == null || _m.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion));
+          }), serverVersion != null && ((_u = this.baseStore) == null || _u.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -5740,8 +5771,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_o = (_n = this.issues.get(file.path)) == null ? void 0 : _n.attempts) != null ? _o : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_p = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_x = (_w = this.issues.get(file.path)) == null ? void 0 : _w.attempts) != null ? _x : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_y = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -5751,7 +5782,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_q = this.settings.vaultId) != null ? _q : void 0
+        vaultId: (_z = this.settings.vaultId) != null ? _z : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), this.markRecentlyPushed(file.path), this.emitStatus();
@@ -6174,7 +6205,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -6201,7 +6232,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian21.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
-      existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized)), normalized.endsWith(".md") && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(normalized)), (_e = this.crdtEnrollment) == null || _e.reset(normalized));
+      if (existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized)), normalized.endsWith(".md")) {
+        let crdtNoteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+        (_f = this.noteIdMap) == null || _f.delete(normalized), crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
+      }
       return;
     }
     if (event.event_type === "upsert")
@@ -6219,18 +6253,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md"))
-          (_f = this.crdtEnrollment) == null || _f.enroll(event.path), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
-        else if (event.content !== void 0)
+        } else if (this.crdt && event.path.endsWith(".md")) {
+          let noteId = (_j = (_i = this.noteIdMap) == null ? void 0 : _i.get(event.path)) != null ? _j : null;
+          noteId && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+        } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_g = event.title) != null ? _g : "",
+            title: (_l = event.title) != null ? _l : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_h = event.folder) != null ? _h : "",
-            tags: (_i = event.tags) != null ? _i : [],
-            mtime: (_j = event.mtime) != null ? _j : Date.now(),
-            updated_at: (_k = event.updated_at) != null ? _k : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_m = event.folder) != null ? _m : "",
+            tags: (_n = event.tags) != null ? _n : [],
+            mtime: (_o = event.mtime) != null ? _o : Date.now(),
+            updated_at: (_p = event.updated_at) != null ? _p : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6240,13 +6275,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_l = note.content_hash) != null ? _l : event.content_hash,
+            content_hash: (_q = note.content_hash) != null ? _q : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_m = note.version) != null ? _m : event.version
+            version: (_r = note.version) != null ? _r : event.version
           });
         }
       } catch (e) {
@@ -6257,6 +6292,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
    *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
   async applySyncChange(c) {
+    var _a, _b;
     if (c.type === "attachment") {
       let ac = {
         path: c.path,
@@ -6268,6 +6304,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
+    c.deleted ? (_a = this.noteIdMap) == null || _a.delete(c.path) : (_b = this.noteIdMap) == null || _b.set(c.path, c.id);
     let nc = {
       path: c.path,
       title: c.title,
@@ -6360,7 +6397,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -6394,8 +6431,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
-    if (this.crdt && normalized.endsWith(".md"))
-      return this.app.vault.getFileByPath(normalized) ? ((_e = this.crdtEnrollment) == null || _e.enroll(normalized), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : ((_d = this.crdtEnrollment) == null || _d.enroll(normalized), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content)), !1;
+    if (this.crdt && normalized.endsWith(".md")) {
+      let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+      return this.app.vault.getFileByPath(normalized) ? (noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : (noteId && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content)), !1;
+    }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
@@ -6416,14 +6455,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_f = this.baseStore) == null ? void 0 : _f.get(normalized);
+        let pullBase = (_h = this.baseStore) == null ? void 0 : _h.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_g = this.baseStore) == null || _g.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_i = this.baseStore) == null || _i.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -6474,7 +6513,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_h = this.baseStore) == null || _h.set(
+            }), change.version != null && ((_j = this.baseStore) == null || _j.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -6496,7 +6535,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_i = this.baseStore) == null || _i.set(
+            }), change.version != null && ((_k = this.baseStore) == null || _k.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -6519,12 +6558,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_m = this.baseStore) == null || _m.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -6543,7 +6582,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -18974,7 +19013,14 @@ function frontmatterOf(doc2) {
 }
 var _CrdtManager = class _CrdtManager {
   constructor(opts) {
-    /** Keyed by docId (= `dbPrefix/path`). */
+    /** Keyed by docId (= the bare note_id — see `docId`). Every public method
+     *  below that takes a `path`-shaped string parameter is actually keyed by
+     *  whatever opaque string the caller passes; since Task 6, callers pass the
+     *  note's stable note_id (resolved via `NoteIdMap`), not its vault path, so
+     *  a rename (which changes the path but not the id) never disturbs the
+     *  entry here. Parameter names below still say "path" in a few older
+     *  comments/tests where the distinction doesn't matter — the manager itself
+     *  never interprets the string, it only forwards it to callbacks. */
     this.docs = /* @__PURE__ */ new Map();
     /**
      * Per-session set of doc IDs for which at least one inbound server sync
@@ -19027,10 +19073,26 @@ var _CrdtManager = class _CrdtManager {
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
-  /** Stable, vault-scoped doc id — used for the IndexedDB store name AND the
-   *  channel topic key so the two subsystems resolve to the same note. */
-  docId(path) {
-    return `${this.opts.dbPrefix}/${path}`;
+  /** The doc id used to key the in-memory `docs` map AND the wire `doc_id`
+   *  sent to the backend. Task 6: returns the given key bare/unprefixed —
+   *  callers are expected to pass the note's stable note_id (a UUID), which
+   *  the backend's `crdt_msg`/`crdt_doc_ready` frames also carry bare, with no
+   *  vault or path embedded. Renaming a note never changes its note_id, so
+   *  this key (and the doc entry filed under it) is untouched by renames.
+   *  NOT necessarily the physical IndexedDB store name — see `storeName`. */
+  docId(noteId) {
+    return noteId;
+  }
+  /** Physical IndexedDB store name for `noteId` — bare (same as `docId`)
+   *  unless `dbPrefix` is set, in which case it's namespaced. This is a
+   *  strictly local-storage concern, decoupled from `docId`/the wire: two
+   *  managers can legitimately reference the same note_id (two real devices
+   *  syncing the same note) while needing separate physical storage — real
+   *  devices get that for free (separate browser origins); `dbPrefix` exists
+   *  so a test simulating multiple "devices" against one shared
+   *  `fake-indexeddb` process can get the same isolation. */
+  storeName(noteId) {
+    return this.opts.dbPrefix ? `${this.opts.dbPrefix}/${noteId}` : noteId;
   }
   /** Returns (or opens + rehydrates from IndexedDB) the Y.Doc for `path`. */
   async getDoc(path) {
@@ -19121,29 +19183,20 @@ var _CrdtManager = class _CrdtManager {
    *   → docs.delete() → synced.delete()
    *
    * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
-   * the path, `indexedDB.deleteDatabase(docId)` clears the IDB store directly.
-   * This covers the case where another session wrote to IDB but the current
-   * session never opened the doc. The database name matches the docId
-   * (`${dbPrefix}/${path}`) — the same naming convention `entry()` uses when
-   * constructing IndexeddbPersistence (y-indexeddb uses the docId as the
-   * database name). Resolves without throwing regardless of whether the DB
+   * the path, `indexedDB.deleteDatabase(storeName)` clears the IDB store
+   * directly. This covers the case where another session wrote to IDB but the
+   * current session never opened the doc. The database name matches what
+   * `entry()` uses when constructing IndexeddbPersistence (y-indexeddb uses
+   * that name as the database name) — bare `path` unless dbPrefix is set (see
+   * `storeName`). Resolves without throwing regardless of whether the DB
    * existed.
    */
   async removeDoc(path) {
     let id2 = this.docId(path), e = this.docs.get(id2);
     e ? (e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2)) : await new Promise((resolve) => {
-      let req = indexedDB.deleteDatabase(id2);
+      let req = indexedDB.deleteDatabase(this.storeName(path));
       req.onsuccess = () => resolve(), req.onerror = () => resolve(), req.onblocked = () => resolve();
     }), this.synced.delete(id2);
-  }
-  /**
-   * On note rename, drop the old-path doc entry (close + clear) so the new
-   * path opens a fresh doc that re-syncs from the server via enrollment.
-   * Keeping the old entry would leave it accumulating edits under a path the
-   * server no longer maps, and orphan its IndexedDB store.
-   */
-  renameDoc(oldPath, newPath) {
-    oldPath !== newPath && this.closeDoc(oldPath);
   }
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {
@@ -19223,7 +19276,7 @@ var _CrdtManager = class _CrdtManager {
     let id2 = this.docId(path), cached = this.docs.get(id2);
     if (cached)
       return await cached.ready, cached;
-    let doc2 = new Doc(), persistence = new IndexeddbPersistence(id2, doc2), text2 = doc2.getText(CONTENT_KEY);
+    let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(path), doc2), text2 = doc2.getText(CONTENT_KEY);
     persistence.on("error", (err) => {
       var _a, _b;
       return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, path, err);
@@ -19275,23 +19328,23 @@ var CrdtChannel = class {
     this.mgr = opts.manager, this.transport = opts.send, this.onEmptyStep2 = opts.onEmptyStep2;
   }
   /**
-   * Begin the handshake for `path`: advertise our state via a `messageSync`
+   * Begin the handshake for `noteId`: advertise our state via a `messageSync`
    * `writeSyncStep1` frame. Sent at most once per doc — the receiver replies
    * with a STEP2 (not another STEP1), so there is no echo loop.
    */
-  async startSync(path) {
-    let id2 = this.mgr.docId(path);
+  async startSync(noteId) {
+    let id2 = this.mgr.docId(noteId);
     if (this.initiated.has(id2)) return;
     this.initiated.add(id2);
-    let doc2 = await this.mgr.getDoc(path), encoder = createEncoder();
+    let doc2 = await this.mgr.getDoc(noteId), encoder = createEncoder();
     writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, doc2), this.transport(id2, toB64(toUint8Array(encoder)));
   }
   /**
    * Allow a fresh handshake after a WS reconnect — clears the once-per-doc
    * guard so `startSync` will send STEP1 again.
    */
-  resetSync(path) {
-    this.initiated.delete(this.mgr.docId(path));
+  resetSync(noteId) {
+    this.initiated.delete(this.mgr.docId(noteId));
   }
   /**
    * Forward a local Y.Doc update as a `messageSync` update frame. Called by
@@ -19336,47 +19389,51 @@ var CrdtChannel = class {
    * It integrates zero ops into the doc, produces no doc-update event, no flush,
    * and leaves text.length === 0, so the non-empty guard correctly declines to mark.
    */
-  async handleFrame(path, b64) {
+  async handleFrame(noteId, b64) {
     var _a;
-    let doc2 = await this.mgr.getDoc(path), decoder = createDecoder(fromB64(b64));
+    let doc2 = await this.mgr.getDoc(noteId), decoder = createDecoder(fromB64(b64));
     if (readVarUint(decoder) !== MESSAGE_SYNC) return;
     let replyEncoder = createEncoder();
     writeVarUint(replyEncoder, MESSAGE_SYNC);
     let syncType = readSyncMessage(decoder, replyEncoder, doc2, REMOTE_ORIGIN);
-    (await this.mgr.getText(path)).length > 0 ? this.mgr.markSynced(path) : syncType === messageYjsSyncStep2 && ((_a = this.onEmptyStep2) == null || _a.call(this, path)), length(replyEncoder) > 1 && this.transport(this.mgr.docId(path), toB64(toUint8Array(replyEncoder)));
+    (await this.mgr.getText(noteId)).length > 0 ? this.mgr.markSynced(noteId) : syncType === messageYjsSyncStep2 && ((_a = this.onEmptyStep2) == null || _a.call(this, noteId)), length(replyEncoder) > 1 && this.transport(this.mgr.docId(noteId), toB64(toUint8Array(replyEncoder)));
   }
 };
 
 // src/crdt/enrollment.ts
 var CrdtEnrollment = class {
   constructor(opts) {
-    /** Paths that have already received a `startSync` call this session. */
+    /** note_ids that have already received a `startSync` call this session. */
     this.enrolled = /* @__PURE__ */ new Set();
     this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll;
   }
   /**
-   * Enroll `path` if it hasn't been enrolled this session. Calling multiple
-   * times for the same path is idempotent — `startSync` fires exactly once,
+   * Enroll `noteId` if it hasn't been enrolled this session. Calling multiple
+   * times for the same note_id is idempotent — `startSync` fires exactly once,
    * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
+   *
+   * No markdown/extension gate here (see class doc) — callers that know the
+   * path (routing/open-file sites) must check `.md` themselves before calling;
+   * callers reacting to a bare-id wire announce enroll unconditionally.
    */
-  enroll(path) {
-    path.endsWith(".md") && (this.enrolled.has(path) || (this.enrolled.add(path), this.startSync(path).then(() => {
+  enroll(noteId) {
+    this.enrolled.has(noteId) || (this.enrolled.add(noteId), this.startSync(noteId).then(() => {
       var _a;
-      return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, path);
-    })));
+      return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
+    }));
   }
   /**
-   * Clear the enrollment record for `path` and call `resetSync` on the channel
-   * so the once-per-doc guard is also lifted. Call on channel reconnect so the
-   * state-vector handshake re-fires with fresh server state.
+   * Clear the enrollment record for `noteId` and call `resetSync` on the
+   * channel so the once-per-doc guard is also lifted. Call on channel
+   * reconnect so the state-vector handshake re-fires with fresh server state.
    */
-  reset(path) {
-    this.enrolled.delete(path), this.resetSync(path);
+  reset(noteId) {
+    this.enrolled.delete(noteId), this.resetSync(noteId);
   }
   /** Clear all enrollments (use when the channel is torn down). */
   resetAll() {
-    for (let path of this.enrolled)
-      this.resetSync(path);
+    for (let noteId of this.enrolled)
+      this.resetSync(noteId);
     this.enrolled.clear();
   }
 };
@@ -20166,7 +20223,8 @@ var ViewerRefcount = class {
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
-      this.deps.manager.getText(path).then((t) => this.deps.flushToDisk(path, t));
+      let noteId = this.deps.resolveId(path);
+      this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
     }), this.frontmatter = new CrdtFrontmatterHook({
       getPath: (v) => getMarkdownFilePath(v),
       getYText: (path) => this.getYText(path)
@@ -20178,9 +20236,11 @@ var ViewerRefcount = class {
   isBound(path) {
     return this.refcount.isBound(path);
   }
-  /** Open (or get cached) the path's Y.Text from the CRDT manager. */
+  /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
+   *  (minting if needed) the note_id that actually keys the doc (Task 6). */
   async getYText(path) {
-    return (await this.deps.manager.getDoc(path)).getText("content");
+    let noteId = this.deps.resolveId(path);
+    return (await this.deps.manager.getDoc(noteId)).getText("content");
   }
   /** Re-evaluate open markdown leaves: bind each editor's controller to its
    *  current path; release and drop controllers whose editor is gone.
@@ -20202,7 +20262,7 @@ var ViewerRefcount = class {
         awareness: () => this.localAwareness,
         onBind: (p, id2) => this.refcount.bind(p, id2),
         onRelease: (p, id2) => this.refcount.release(p, id2)
-      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(path), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
     }
     for (let [cm, ctrl] of this.controllers)
       seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
@@ -20211,8 +20271,62 @@ var ViewerRefcount = class {
     for (let [cm, ctrl] of this.controllers)
       ctrl.release(cm);
     this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
-    for (let path of this.refcount.boundPaths())
-      this.deps.manager.getText(path).then((content) => this.deps.flushToDisk(path, content));
+    for (let path of this.refcount.boundPaths()) {
+      let noteId = this.deps.resolveId(path);
+      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
+    }
+  }
+};
+
+// src/crdt/note-id-map.ts
+var NoteIdMap = class _NoteIdMap {
+  constructor() {
+    this.byPath = /* @__PURE__ */ new Map();
+    /** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
+    this.byId = /* @__PURE__ */ new Map();
+  }
+  get(path) {
+    var _a;
+    return (_a = this.byPath.get(path)) != null ? _a : null;
+  }
+  /** Resolve `path`'s id, minting + storing a fresh UUIDv7 if this is the
+   *  first time this path has been seen. Centralizes the mint-or-reuse
+   *  pattern (previously inlined separately in pushFile and duplicated for
+   *  the live-editor binding), so a concurrent "first touch" from either
+   *  seam (first save vs. first open) always converges on one id. */
+  getOrMint(path) {
+    let existing = this.get(path);
+    if (existing) return existing;
+    let id2 = uuid7();
+    return this.set(path, id2), id2;
+  }
+  /** Reverse lookup: the path last known to correspond to `id`, or null if
+   *  this device has never learned/minted a mapping for it (e.g. a
+   *  `crdt_doc_ready` announce for a note created on another device that
+   *  hasn't reached this device via a regular sync pull yet). */
+  pathForId(id2) {
+    var _a;
+    return (_a = this.byId.get(id2)) != null ? _a : null;
+  }
+  set(path, id2) {
+    let oldId = this.byPath.get(path);
+    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId), this.byPath.set(path, id2), this.byId.set(id2, path);
+  }
+  delete(path) {
+    let id2 = this.byPath.get(path);
+    id2 !== void 0 && this.byId.delete(id2), this.byPath.delete(path);
+  }
+  rename(oldPath, newPath) {
+    let id2 = this.byPath.get(oldPath);
+    id2 !== void 0 && (this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath));
+  }
+  toJSON() {
+    return Object.fromEntries(this.byPath);
+  }
+  static fromJSON(o) {
+    let m = new _NoteIdMap();
+    for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
+    return m;
   }
 };
 
@@ -20466,6 +20580,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     };
     this.authProvider = null;
     this.syncEngine = null;
+    /** Path -> note_id sidecar, hydrated from data.json on load. Used by later
+     *  tasks to mint ids for new notes, learn ids from pull responses, and key
+     *  the CRDT manager by note_id instead of path. */
+    this.noteIdMap = new NoteIdMap();
     this.syncLog = new SyncLog();
     /** Per-install device id sent as X-Device-Id so the backend attributes its
      *  sync watermark per device. Random UUID minted on first load, persisted
@@ -20549,7 +20667,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b;
       return (_b = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b : !1;
-    });
+    }), this.syncEngine.setNoteIdMap(this.noteIdMap);
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
@@ -20572,7 +20690,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         var _a2;
         if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(file.path));
+        file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
@@ -20580,8 +20698,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
-        var _a2, _b;
-        this.syncEngine.handleRename(file, oldPath), file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtManager) == null || _a2.renameDoc(oldPath, file.path)), (_b = this.crdtLiveViews) == null || _b.refresh();
+        var _a2;
+        this.syncEngine.handleRename(file, oldPath), (_a2 = this.crdtLiveViews) == null || _a2.refresh();
       })
     ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
       var _a2;
@@ -20740,11 +20858,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         if (gateOpen && this.crdtManager) {
           let markdownFiles = this.app.vault.getMarkdownFiles();
           for (let file of markdownFiles) {
-            let crdt = this.crdtManager;
+            let crdt = this.crdtManager, noteId = this.noteIdMap.getOrMint(file.path);
             this.app.vault.cachedRead(file).then(
               (diskContent) => reconcileColdStart(
                 {
                   path: file.path,
+                  noteId,
                   diskContent
                 },
                 {
@@ -20753,9 +20872,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
                   projectedText: crdt.projectedText.bind(crdt),
                   // Guarantee the STEP1/STEP2 adoption for drifted notes even
                   // when the adopt-first seed gate skips the local write.
-                  enroll: (path) => {
+                  enroll: (id2) => {
                     var _a3;
-                    return (_a3 = this.crdtEnrollment) == null ? void 0 : _a3.enroll(path);
+                    return (_a3 = this.crdtEnrollment) == null ? void 0 : _a3.enroll(id2);
                   }
                 },
                 () => {
@@ -20799,7 +20918,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   async loadSettings() {
     var _a, _b;
     let data = await this.loadPluginData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null;
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -20916,7 +21035,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       syncedHashes: this.syncEngine.exportHashes(),
       syncIssues: this.syncEngine.issues.serialize(),
       ignoredFiles: this.syncEngine.ignoredFiles.serialize(),
-      syncGateAcceptedFor: this.syncGateAcceptedFor
+      syncGateAcceptedFor: this.syncGateAcceptedFor,
+      noteIds: this.noteIdMap.toJSON()
     });
   }
   /**
@@ -21009,7 +21129,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       let view = leaf.view;
       if (!(view instanceof import_obsidian25.MarkdownView)) continue;
       let file = view.file;
-      !(file instanceof import_obsidian25.TFile) || file.extension !== "md" || seen.has(file.path) || (seen.add(file.path), enrollment.reset(file.path), enrollment.enroll(file.path));
+      if (!(file instanceof import_obsidian25.TFile) || file.extension !== "md" || seen.has(file.path)) continue;
+      seen.add(file.path);
+      let noteId = this.noteIdMap.getOrMint(file.path);
+      enrollment.reset(noteId), enrollment.enroll(noteId);
     }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -21072,19 +21195,27 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           return;
         }
         this.crdtManager = new CrdtManager({
-          dbPrefix,
           onUpdate: (docId, update) => {
             var _a2;
             return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
           },
-          onFlushToDisk: (path, content) => {
+          onFlushToDisk: (noteId, content) => {
             var _a2;
-            return (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content);
+            let path = this.noteIdMap.pathForId(noteId);
+            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (rlog().warn(
+              "crdt",
+              `onFlushToDisk: no known path for note_id=${noteId} \u2014 content retained in Y.Doc, awaiting a sync pull to learn the path`
+            ), Promise.resolve());
           },
           // Adopt-first seed gate: never re-encode content the server
           // already holds (see CrdtManagerOptions.isUnchangedSynced).
-          isUnchangedSynced: (path, content) => this.syncEngine.isUnchangedSynced(path, content),
-          onPersistError: (path, err) => {
+          isUnchangedSynced: (noteId, content) => {
+            let path = this.noteIdMap.pathForId(noteId);
+            return path ? this.syncEngine.isUnchangedSynced(path, content) : !1;
+          },
+          onPersistError: (noteId, err) => {
+            var _a2;
+            let path = (_a2 = this.noteIdMap.pathForId(noteId)) != null ? _a2 : noteId;
             rlog().warn(
               "crdt",
               `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
@@ -21097,29 +21228,42 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           // authoritative "genuinely empty note" signal — materialize the
           // file off the handshake (not a timer) so a slow content STEP2 can
           // never race a premature empty file onto disk (#547).
-          onEmptyStep2: (path) => {
+          onEmptyStep2: (noteId) => {
+            let path = this.noteIdMap.pathForId(noteId);
+            if (!path) {
+              rlog().warn(
+                "crdt",
+                `onEmptyStep2: no known path for note_id=${noteId} \u2014 skipping materialize`
+              );
+              return;
+            }
             this.syncEngine.materializeEmptyDiscovered(path);
           }
         }), this.crdtEnrollment = new CrdtEnrollment({
-          startSync: (path) => {
+          startSync: (noteId) => {
             var _a2, _b2;
-            return (_b2 = (_a2 = this.crdtChannel) == null ? void 0 : _a2.startSync(path)) != null ? _b2 : Promise.resolve();
+            return (_b2 = (_a2 = this.crdtChannel) == null ? void 0 : _a2.startSync(noteId)) != null ? _b2 : Promise.resolve();
           },
-          resetSync: (path) => {
+          resetSync: (noteId) => {
             var _a2;
-            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.resetSync(path);
+            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.resetSync(noteId);
           },
           // After the handshake fires, compact any bloated docs. This is a
           // no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
           // so it is safe to run on every note open.
-          onAfterEnroll: async (path) => {
+          onAfterEnroll: async (noteId) => {
             var _a2;
-            await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(path));
+            await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(noteId));
           }
         }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,
           manager: this.crdtManager,
           enrollment: this.crdtEnrollment,
+          // Resolve-or-mint: the editor binding needs a note_id immediately
+          // on open, even for a brand-new note that has never been pushed
+          // (pushFile would otherwise be the only minter, deferring the live
+          // binding until after the first save).
+          resolveId: (path) => this.noteIdMap.getOrMint(path),
           flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
         }), this.syncEngine.setLiveBoundCheck(
           (path) => {
@@ -21128,13 +21272,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           }
         ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
-          let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-          (_a2 = this.crdtChannel) == null || _a2.handleFrame(path, b64);
+          (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
-          if (this.syncEngine.isSyncBlocked()) return;
-          let prefix = `${dbPrefix}/`, path = docId.startsWith(prefix) ? docId.slice(prefix.length) : docId;
-          (_a2 = this.crdtEnrollment) == null || _a2.enroll(path);
+          this.syncEngine.isSyncBlocked() || (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId);
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",
