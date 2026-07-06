@@ -903,3 +903,36 @@ describe("C1 — onCrdtDocReady: isSyncBlocked suppresses enrollment and materia
 		expect(enrollment.enroll).toHaveBeenCalledWith("Notes/discovered.md");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Push join-gate — the CRDT manager latch (setCrdtManager) is edge-triggered on
+// the crdt: topic join/disconnect, so it can go STALE: set, but the channel is
+// no longer joined (e.g. after an auth swap leaves a dead-but-set channel).
+// pushFile previously routed to CRDT on `this.crdt` ALONE, so the Y.Doc update
+// was produced but silently dropped by the server (stale join_ref) while
+// pushFile reported "CRDT push ok". A level-triggered isCrdtConnected() check at
+// push time closes that gap: not joined → fall through to the durable REST path
+// (the backend's crdt_deliver bridges the REST write back into the CRDT room, so
+// there is no divergence). See engram #915.
+// ---------------------------------------------------------------------------
+
+describe("push join-gate — stale CRDT latch falls back to REST", () => {
+	test("markdown edit falls back to pushNote when the channel is NOT joined", async () => {
+		const engine = createEngine();
+		const applyLocalEdit = mock(async () => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		// Authoritative level check: channel reports not-joined (dead-but-set latch).
+		engine.setCrdtLiveCheck(() => false);
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 50));
+
+		// Must NOT silently drop into a dead channel — REST is the durable path.
+		// (The joined→CRDT and unwired→CRDT paths are already covered by the
+		// "channel join gate" describe above; this test adds only the NEW
+		// not-joined→REST behavior.)
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
+});
