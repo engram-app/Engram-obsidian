@@ -524,3 +524,73 @@ describe("rename/delete drop stale sync-state (echo-suppression on recreate)", (
 		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
 	});
 });
+
+describe("id-keyed move: pull upsert at a new path for a known id trashes the old file", () => {
+	test("applySyncChange moves the note instead of leaving a duplicate", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-move");
+		engine.setNoteIdMap(noteIdMap);
+
+		// The old path exists on disk; the new path does not yet.
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		// The server MOVED the row (same id, new path). The pull feed carries only
+		// the upsert at the new path — no separate delete for the old path.
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-move",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "body",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		} as any);
+
+		// Old file trashed, id re-keyed to the new path, no lingering old mapping.
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(noteIdMap.pathForId("id-move")).toBe("New.md");
+		expect(noteIdMap.get("Old.md")).toBeNull();
+	});
+
+	test("handleStreamEvent moves on a realtime upsert for a known id (belt-and-suspenders)", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-ws-move");
+		engine.setNoteIdMap(noteIdMap);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		// A realtime upsert arrives at the new path with the stable id — no
+		// preceding delete broadcast (missed/reordered).
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-ws-move",
+			path: "New.md",
+			timestamp: 2,
+			content: "body",
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(noteIdMap.pathForId("id-ws-move")).toBe("New.md");
+		expect(noteIdMap.get("Old.md")).toBeNull();
+	});
+});
