@@ -33,6 +33,7 @@ import type {
 	ConflictResolution,
 	EngramSyncSettings,
 	FileSyncState,
+	ManifestResponse,
 	NoteChange,
 	NoteStreamEvent,
 	QueueEntry,
@@ -372,27 +373,116 @@ export class SyncEngine {
 	 *
 	 *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
 	 *  path (the manifest is the source of truth). Returns mappings applied. */
+	/** Server-authoritative path -> owning note_id snapshot, refreshed by
+	 *  reconcileNoteIdMapFromManifest or (re)fetched on demand by
+	 *  manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
+	 *  (moveIfIdRelocated's trash) — the local map itself can be cross-wired,
+	 *  so it cannot vouch for itself. */
+	private manifestPathOwners: Map<string, string> | null = null;
+
+	/** Epoch ms of the last manifest fetch ATTEMPT (success or failure). A
+	 *  destructive verdict is only trusted from a snapshot younger than the
+	 *  TTL: a stale snapshot returns a false "absent" for any note created
+	 *  after it was taken, which would green-light trashing that note. The
+	 *  attempt stamp also negative-caches failures so a manifest-less backend
+	 *  doesn't get a fetch per relocation event. */
+	private manifestOwnersFetchedAt = 0;
+	private static readonly MANIFEST_OWNERS_TTL_MS = 30_000;
+
+	/** Paths whose id-keyed-move trash was REFUSED (ownership unknowable or
+	 *  cross-wired). If such a path is genuinely a renamed-away old copy, the
+	 *  refusal leaves a duplicate file no id references — nothing else would
+	 *  ever clean it. Swept by the next reconcile against a fresh manifest:
+	 *  absent from the manifest + unclaimed by the local map -> trash then. */
+	private pendingOrphanSweep = new Set<string>();
+
+	/** Who does the server say owns `path` (normalized)? Returns the owning id,
+	 *  null when a FRESH manifest confirms the path is absent, or undefined
+	 *  when ownership is unknowable (no manifest endpoint / fetch failed) —
+	 *  callers must treat undefined as "not safe to destroy". Refreshes the
+	 *  snapshot when older than the TTL; trash decisions are rare (renames),
+	 *  so the refresh cost lands only on that cold path. */
+	private async manifestOwnerOf(path: string): Promise<string | null | undefined> {
+		const age = Date.now() - this.manifestOwnersFetchedAt;
+		const fresh = this.manifestOwnersFetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
+		if (!fresh) {
+			this.manifestOwnersFetchedAt = Date.now();
+			// A failed/absent refresh leaves NO trustworthy snapshot: keeping a
+			// stale one would let its false "absent" answers authorize a wrong
+			// trash. Refusing (undefined) is always recoverable; a trash is not.
+			this.manifestPathOwners = null;
+			try {
+				const manifest = await this.api.getManifest();
+				if (manifest) this.cacheManifestOwners(manifest);
+			} catch {
+				// negative-cached by the attempt stamp above
+			}
+		}
+		if (!this.manifestPathOwners) return undefined;
+		return this.manifestPathOwners.get(path) ?? null;
+	}
+
+	private cacheManifestOwners(manifest: ManifestResponse): void {
+		this.manifestPathOwners = new Map(
+			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
+		);
+		this.manifestOwnersFetchedAt = Date.now();
+	}
+
+	/** Trash files whose refused id-keyed-move turned out to be a genuine
+	 *  rename after all: the path is absent from the (fresh) manifest and no
+	 *  local id claims it — a duplicate old copy nothing else will clean. */
+	private async sweepPendingOrphans(): Promise<void> {
+		for (const p of [...this.pendingOrphanSweep]) {
+			this.pendingOrphanSweep.delete(p);
+			if (this.manifestPathOwners?.has(p)) continue; // live server-side note
+			if (this.noteIdMap?.get(p)) continue; // locally claimed again
+			const file = this.app.vault.getFileByPath(p);
+			if (!file) continue;
+			this.syncState.delete(p);
+			this.baseStore?.delete(p);
+			await this.app.fileManager.trashFile(file);
+			rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`);
+		}
+	}
+
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
 		if (!this.noteIdMap) return 0;
 		const manifest = await this.api.getManifest();
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
+		// Every path the server currently holds a note at. Lets us tell a
+		// CROSS-WIRE from an IN-FLIGHT RENAME below.
+		const manifestPaths = new Set(manifest.notes.map((n) => n.path));
 		for (const note of manifest.notes) {
 			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
-			// Fill only ids we don't already know. This repairs a drifted/empty map
-			// (server id absent locally, e.g. a wrong id minted by getOrMint, or no
-			// entry at all) because a wrong/absent id fails this guard and gets set.
-			// But it must NOT overwrite an id we ALREADY map: the manifest is a
-			// snapshot that can be stale during an in-flight rename, and re-setting
-			// the old path would clobber the reverse index (byId) and resurrect the
-			// old path on disk/server (the test_10 rename-propagation regression).
-			if (this.noteIdMap.pathForId(note.id)) continue;
+			const localPath = this.noteIdMap.pathForId(note.id);
+			if (localPath === note.path) continue; // already correct — nothing to do
+			if (localPath !== null && !manifestPaths.has(localPath)) {
+				// The id maps to a path the server does NOT list. That's an
+				// in-flight rename (or a local-only note) whose new path this
+				// manifest snapshot hasn't caught up to — the local mapping is
+				// newer. Re-setting the stale manifest path would clobber the
+				// reverse index and resurrect the old path (test_10 regression).
+				continue;
+			}
+			// Otherwise the manifest wins. Either the id is unknown locally
+			// (drifted/empty map, or a wrong id minted by getOrMint), OR it is
+			// cross-wired onto another note's real path (localPath is itself a
+			// manifest path, owned by a different id). Both are data-loss vectors:
+			// a stale/cross-wired pathForId sends inbound CRDT content to the wrong
+			// file. Rebind to the authoritative path (set() evicts the stale
+			// forward + reverse entries so the map stays a clean bijection).
 			this.noteIdMap.set(note.path, note.id);
 			applied++;
 		}
 		if (applied > 0) {
 			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 		}
+		// The manifest in hand is as fresh as it gets — resolve any trashes the
+		// destructive-op guard deferred while ownership was unknowable.
+		await this.sweepPendingOrphans();
 		return applied;
 	}
 
@@ -2519,6 +2609,34 @@ export class SyncEngine {
 	private async moveIfIdRelocated(id: string, newPath: string): Promise<void> {
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		// DESTRUCTIVE-OP GUARD (2026-07-07 cross-file data-loss incident): the
+		// local map can be CROSS-WIRED — `id` pointing at a path that really
+		// belongs to a DIFFERENT live note. Trusting it here trashed an unrelated
+		// file. Verify against the server manifest before anything irreversible:
+		//  - priorPath owned by ANOTHER id  -> cross-wire. Rebind `id` to its real
+		//    path and leave the stranger's file/caches alone.
+		//  - ownership unknowable (no manifest / fetch failed) -> rebind the map
+		//    but SKIP the trash: a lingering duplicate is recoverable, a wrong
+		//    trash is not. The next reconcile/pull converges it.
+		//  - priorPath absent, or owned by this same id (stale snapshot mid-
+		//    rename) -> genuine relocation, proceed as before.
+		const owner = await this.manifestOwnerOf(normalizePath(priorPath));
+		if (owner !== null && owner !== id) {
+			rlog().warn(
+				"pull",
+				`Id-keyed move REFUSED (${owner === undefined ? "ownership unknown" : "cross-wire"}): ` +
+					`${priorPath} not confirmed as ${id}'s old path — rebinding to ${newPath}, no trash`,
+			);
+			// set() keeps the map a bijection: it evicts priorPath->id without
+			// touching priorPath's file, syncState, or baseStore (they belong to
+			// whatever note actually lives there).
+			this.noteIdMap?.set(newPath, id);
+			// If this refusal was wrong (it WAS a genuine rename), the old file
+			// is now a duplicate no id references — queue it for the orphan
+			// sweep, which re-judges against a fresh manifest on reconcile.
+			this.pendingOrphanSweep.add(normalizePath(priorPath));
+			return;
+		}
 		this.noteIdMap?.rename(priorPath, newPath);
 		// Drop the old path's stale caches so a later create there isn't
 		// echo-suppressed and no diverged base survives the move.

@@ -124,7 +124,23 @@ function flush(ms = 50): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
+/** Declare the server's authoritative {id, path} state for the destructive-op
+ *  guard: moveIfIdRelocated refuses to trash a path unless the manifest either
+ *  omits it (genuinely renamed away) or lists it under the SAME id. A legit
+ *  server rename therefore needs the manifest to reflect the note at its NEW
+ *  path — which is what a real fresh manifest says. */
+function manifestWith(notes: Array<{ id: string; path: string }>) {
+	(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
+		notes: notes.map((n) => ({ ...n, content_hash: "h" })),
+		attachments: [],
+		total_notes: notes.length,
+		total_attachments: 0,
+		change_seq: 1,
+	});
+}
+
 beforeEach(() => {
+	(mockApi.getManifest as ReturnType<typeof mock>).mockReset().mockResolvedValue(null);
 	(mockApi.pushNote as ReturnType<typeof mock>).mockReset().mockImplementation(pushNoteResponse);
 	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue("body");
 	(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
@@ -531,6 +547,7 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-move");
 		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-move", path: "New.md" }]);
 
 		// The old path exists on disk; the new path does not yet.
 		const oldFile = new TFile("Old.md");
@@ -566,6 +583,7 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-ws-move");
 		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-ws-move", path: "New.md" }]);
 
 		const oldFile = new TFile("Old.md");
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
@@ -604,6 +622,7 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-echo-move");
 		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-echo-move", path: "New.md" }]);
 
 		const oldFile = new TFile("Old.md");
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>

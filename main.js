@@ -5088,7 +5088,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   webm: "video/webm",
   zip: "application/zip",
   canvas: "application/json"
-}, SyncEngine = class {
+}, _SyncEngine = class _SyncEngine {
   constructor(app, api, settings, saveData) {
     this.app = app;
     this.api = api;
@@ -5179,6 +5179,40 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  callers that never wire it — id-minting and pull-learning are then
      *  simply skipped (pre-existing legacy path-keyed behavior). */
     this.noteIdMap = null;
+    /** Populate `noteIdMap` authoritatively from the server manifest's
+     *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
+     *  id+path+hash only, ~µs/row server-side).
+     *
+     *  This is the fix for inbound CRDT updates stranding with "no known path"
+     *  after the id-keying cutover: live pull of an existing note is CRDT-only
+     *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
+     *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
+     *  whose sync cursor is already set (every normal reconnect) never repaired
+     *  a stale map — `pathForId` returned null and every inbound frame was
+     *  dropped until a manual full sync. Reconciling from the manifest on connect
+     *  keeps the map authoritative so live pull just works.
+     *
+     *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
+     *  path (the manifest is the source of truth). Returns mappings applied. */
+    /** Server-authoritative path -> owning note_id snapshot, refreshed by
+     *  reconcileNoteIdMapFromManifest or (re)fetched on demand by
+     *  manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
+     *  (moveIfIdRelocated's trash) — the local map itself can be cross-wired,
+     *  so it cannot vouch for itself. */
+    this.manifestPathOwners = null;
+    /** Epoch ms of the last manifest fetch ATTEMPT (success or failure). A
+     *  destructive verdict is only trusted from a snapshot younger than the
+     *  TTL: a stale snapshot returns a false "absent" for any note created
+     *  after it was taken, which would green-light trashing that note. The
+     *  attempt stamp also negative-caches failures so a manifest-less backend
+     *  doesn't get a fetch per relocation event. */
+    this.manifestOwnersFetchedAt = 0;
+    /** Paths whose id-keyed-move trash was REFUSED (ownership unknowable or
+     *  cross-wired). If such a path is genuinely a renamed-away old copy, the
+     *  refusal leaves a duplicate file no id references — nothing else would
+     *  ever clean it. Swept by the next reconcile against a fresh manifest:
+     *  absent from the manifest + unclaimed by the local map -> trash then. */
+    this.pendingOrphanSweep = /* @__PURE__ */ new Set();
     /** note_ids the SERVER is known to already have a note row for — learned
      *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
      *  successful REST push response. The backend's CRDT channel now requires
@@ -5273,29 +5307,54 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
   }
-  /** Populate `noteIdMap` authoritatively from the server manifest's
-   *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
-   *  id+path+hash only, ~µs/row server-side).
-   *
-   *  This is the fix for inbound CRDT updates stranding with "no known path"
-   *  after the id-keying cutover: live pull of an existing note is CRDT-only
-   *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
-   *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
-   *  whose sync cursor is already set (every normal reconnect) never repaired
-   *  a stale map — `pathForId` returned null and every inbound frame was
-   *  dropped until a manual full sync. Reconciling from the manifest on connect
-   *  keeps the map authoritative so live pull just works.
-   *
-   *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
-   *  path (the manifest is the source of truth). Returns mappings applied. */
+  /** Who does the server say owns `path` (normalized)? Returns the owning id,
+   *  null when a FRESH manifest confirms the path is absent, or undefined
+   *  when ownership is unknowable (no manifest endpoint / fetch failed) —
+   *  callers must treat undefined as "not safe to destroy". Refreshes the
+   *  snapshot when older than the TTL; trash decisions are rare (renames),
+   *  so the refresh cost lands only on that cold path. */
+  async manifestOwnerOf(path) {
+    var _a;
+    let age = Date.now() - this.manifestOwnersFetchedAt;
+    if (!(this.manifestOwnersFetchedAt > 0 && age <= _SyncEngine.MANIFEST_OWNERS_TTL_MS)) {
+      this.manifestOwnersFetchedAt = Date.now(), this.manifestPathOwners = null;
+      try {
+        let manifest = await this.api.getManifest();
+        manifest && this.cacheManifestOwners(manifest);
+      } catch (e) {
+      }
+    }
+    if (this.manifestPathOwners)
+      return (_a = this.manifestPathOwners.get(path)) != null ? _a : null;
+  }
+  cacheManifestOwners(manifest) {
+    this.manifestPathOwners = new Map(
+      manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.id])
+    ), this.manifestOwnersFetchedAt = Date.now();
+  }
+  /** Trash files whose refused id-keyed-move turned out to be a genuine
+   *  rename after all: the path is absent from the (fresh) manifest and no
+   *  local id claims it — a duplicate old copy nothing else will clean. */
+  async sweepPendingOrphans() {
+    var _a, _b, _c;
+    for (let p of [...this.pendingOrphanSweep]) {
+      if (this.pendingOrphanSweep.delete(p), (_a = this.manifestPathOwners) != null && _a.has(p) || (_b = this.noteIdMap) != null && _b.get(p)) continue;
+      let file = this.app.vault.getFileByPath(p);
+      file && (this.syncState.delete(p), (_c = this.baseStore) == null || _c.delete(p), await this.app.fileManager.trashFile(file), rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`));
+    }
+  }
   async reconcileNoteIdMapFromManifest() {
     if (!this.noteIdMap) return 0;
     let manifest = await this.api.getManifest();
     if (!manifest) return 0;
-    let applied = 0;
-    for (let note of manifest.notes)
-      note.id && (this.noteIdMap.pathForId(note.id) || (this.noteIdMap.set(note.path, note.id), applied++));
-    return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), applied;
+    this.cacheManifestOwners(manifest);
+    let applied = 0, manifestPaths = new Set(manifest.notes.map((n) => n.path));
+    for (let note of manifest.notes) {
+      if (!note.id) continue;
+      let localPath = this.noteIdMap.pathForId(note.id);
+      localPath !== note.path && (localPath !== null && !manifestPaths.has(localPath) || (this.noteIdMap.set(note.path, note.id), applied++));
+    }
+    return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), await this.sweepPendingOrphans(), applied;
   }
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
@@ -6449,10 +6508,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
    *  or already at newPath, so callers can invoke it unconditionally. */
   async moveIfIdRelocated(id2, newPath) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
     if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
-    (_c = this.noteIdMap) == null || _c.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_d = this.baseStore) == null || _d.delete((0, import_obsidian21.normalizePath)(priorPath));
+    let owner = await this.manifestOwnerOf((0, import_obsidian21.normalizePath)(priorPath));
+    if (owner !== null && owner !== id2) {
+      rlog().warn(
+        "pull",
+        `Id-keyed move REFUSED (${owner === void 0 ? "ownership unknown" : "cross-wire"}): ${priorPath} not confirmed as ${id2}'s old path \u2014 rebinding to ${newPath}, no trash`
+      ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian21.normalizePath)(priorPath));
+      return;
+    }
+    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian21.normalizePath)(priorPath));
     let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
     oldFile && (await this.app.fileManager.trashFile(oldFile), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`));
   }
@@ -7550,6 +7617,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.recentlyFlushed.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
+_SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
+var SyncEngine = _SyncEngine;
 
 // src/base-store.ts
 var BaseStore = class {
@@ -20450,6 +20519,9 @@ var ViewerRefcount = class {
 };
 
 // src/crdt/note-id-map.ts
+function isValidPath(path) {
+  return !!path && path !== "null" && path !== "undefined";
+}
 var NoteIdMap = class _NoteIdMap {
   constructor() {
     this.byPath = /* @__PURE__ */ new Map();
@@ -20466,6 +20538,8 @@ var NoteIdMap = class _NoteIdMap {
    *  the live-editor binding), so a concurrent "first touch" from either
    *  seam (first save vs. first open) always converges on one id. */
   getOrMint(path) {
+    if (!isValidPath(path))
+      throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
     let existing = this.get(path);
     if (existing) return existing;
     let id2 = uuid7();
@@ -20480,8 +20554,11 @@ var NoteIdMap = class _NoteIdMap {
     return (_a = this.byId.get(id2)) != null ? _a : null;
   }
   set(path, id2) {
+    if (!isValidPath(path) || !id2) return;
     let oldId = this.byPath.get(path);
-    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId), this.byPath.set(path, id2), this.byId.set(id2, path);
+    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId);
+    let oldPath = this.byId.get(id2);
+    oldPath !== void 0 && oldPath !== path && this.byPath.delete(oldPath), this.byPath.set(path, id2), this.byId.set(id2, path);
   }
   delete(path) {
     let id2 = this.byPath.get(path);
@@ -21036,6 +21113,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           console.error("Engram Sync: startup setup failed", e), rlog().error("lifecycle", `Startup setup failed: ${errMsg(e)}`);
         }
       if (this.syncEngine.setReady(), !!registered) {
+        if (gateOpen)
+          try {
+            await this.syncEngine.reconcileNoteIdMapFromManifest();
+          } catch (e) {
+            rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
+          }
         if (gateOpen && this.crdtManager) {
           let markdownFiles = this.app.vault.getMarkdownFiles();
           for (let file of markdownFiles) {
