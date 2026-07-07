@@ -815,6 +815,51 @@ var LimitExceededError = class extends Error {
   }
 };
 
+// src/observability/beacon.ts
+var BeaconBuffer = class {
+  constructor(transport) {
+    this.transport = transport;
+    this.queue = [];
+    // window.setTimeout/clearTimeout (not the bare globals) for popout-window
+    // compatibility, per obsidianmd/prefer-window-timers.
+    this.timer = null;
+  }
+  enqueue(entry) {
+    this.queue.push(entry), this.queue.length >= 20 ? this.flush() : this.timer === null && (this.timer = window.setTimeout(() => this.flush(), 2e3));
+  }
+  flush() {
+    if (this.timer !== null && (window.clearTimeout(this.timer), this.timer = null), this.queue.length === 0) return;
+    let batch = this.queue.splice(0, this.queue.length);
+    try {
+      let t = this.transport();
+      if (!t) return;
+      window.fetch(`${t.baseUrl}/telemetry/spans`, {
+        method: "POST",
+        keepalive: !0,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${t.token}`,
+          "X-Vault-ID": t.vaultId,
+          "X-Device-Id": t.deviceId
+        },
+        body: JSON.stringify({ spans: batch })
+      }).catch(() => {
+      });
+    } catch (e) {
+    }
+  }
+};
+
+// src/observability/traceGen.ts
+function hex(bytes) {
+  let buf = new Uint8Array(bytes);
+  return crypto.getRandomValues(buf), Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function newTraceContext() {
+  let traceId = hex(16), spanId = hex(8);
+  return { traceparent: `00-${traceId}-${spanId}-01`, traceId, spanId };
+}
+
 // src/remote-log.ts
 var RemoteLogger = class {
   constructor() {
@@ -933,7 +978,28 @@ var EngramApi = class _EngramApi {
     this.vaultId = null;
     this.deviceId = null;
     this.authProvider = null;
-    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl);
+    // Dark-launch gate for distributed tracing. Disabled cost must stay a
+    // single boolean check, see sendRequest.
+    this.tracingEnabled = !1;
+    // Cached from the most recent sendRequest call so the beacon transport
+    // thunk (invoked later, on the buffer's own flush timer) can post with a
+    // still-valid token without re-awaiting the auth provider.
+    this.lastToken = "";
+    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.beacon = new BeaconBuffer(() => {
+      var _a, _b;
+      return this.tracingEnabled ? {
+        baseUrl: this.baseUrl,
+        token: this.lastToken,
+        vaultId: (_a = this.getActiveVaultId()) != null ? _a : "",
+        deviceId: (_b = this.deviceId) != null ? _b : ""
+      } : null;
+    });
+  }
+  /** Enable/disable trace header injection + the obsidian.push beacon. When
+   *  false, sendRequest does no id generation, no timing capture, no header,
+   *  and enqueues nothing: cost is exactly one boolean check. */
+  setTracingEnabled(enabled) {
+    this.tracingEnabled = enabled;
   }
   setVaultId(id2) {
     this.vaultId = id2;
@@ -994,16 +1060,34 @@ var EngramApi = class _EngramApi {
     }
   }
   async sendRequest(method, path, body, extraHeaders) {
-    let headers = {
-      Authorization: `Bearer ${await this.getAuthToken()}`,
+    let token = await this.getAuthToken();
+    this.lastToken = token;
+    let trace = this.tracingEnabled && method.toUpperCase() !== "GET" ? newTraceContext() : null, startUs = trace ? Date.now() * 1e3 : 0, headers = {
+      Authorization: `Bearer ${token}`,
+      ...trace ? { traceparent: trace.traceparent } : {},
       ...extraHeaders
     }, activeVaultId = this.getActiveVaultId();
-    return activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json"), (0, import_obsidian.requestUrl)({
-      url: `${this.baseUrl}${path}`,
-      method,
-      headers,
-      body: body !== void 0 ? JSON.stringify(body) : void 0
-    });
+    activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
+    try {
+      return await (0, import_obsidian.requestUrl)({
+        url: `${this.baseUrl}${path}`,
+        method,
+        headers,
+        body: body !== void 0 ? JSON.stringify(body) : void 0
+      });
+    } finally {
+      trace && this.beacon.enqueue({
+        trace_id: trace.traceId,
+        parent_span_id: trace.spanId,
+        name: "obsidian.push",
+        start_us: startUs,
+        end_us: Date.now() * 1e3,
+        attributes: {
+          "engram.surface": "obsidian",
+          "engram.event_type": method.toLowerCase()
+        }
+      });
+    }
   }
   /** Health check — no auth required. */
   async health() {
@@ -2986,7 +3070,8 @@ var DEFAULT_SETTINGS = {
   clientId: "",
   planState: null,
   searchDefaultMode: "hybrid",
-  waitlistPromptSeen: !1
+  waitlistPromptSeen: !1,
+  tracingEnabled: !1
 }, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
   "pull-all-delete-local",
   "push-all-delete-remote"
@@ -4549,6 +4634,12 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     (toggle) => toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
       plugin.settings.diagnosticMode = value, await plugin.saveSettings();
     })
+  ), new import_obsidian19.Setting(containerEl).setName("Distributed tracing").setDesc(
+    "Attach a trace ID to sync requests and report timing to the server for cross-system debugging. No note content is sent."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.tracingEnabled).onChange(async (value) => {
+      plugin.settings.tracingEnabled = value, await plugin.saveSettings();
+    })
   ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
@@ -4717,13 +4808,13 @@ function uuid7() {
   var _a, _b;
   let tsHex = Date.now().toString(16).padStart(12, "0").slice(-12), rand = new Uint8Array(10);
   crypto.getRandomValues(rand), rand[0] = ((_a = rand[0]) != null ? _a : 0) & 15 | 112, rand[2] = ((_b = rand[2]) != null ? _b : 0) & 63 | 128;
-  let hex = (arr) => Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+  let hex2 = (arr) => Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
   return [
     tsHex.slice(0, 8),
     tsHex.slice(8, 12),
-    hex(rand.subarray(0, 2)),
-    hex(rand.subarray(2, 4)),
-    hex(rand.subarray(4, 10))
+    hex2(rand.subarray(0, 2)),
+    hex2(rand.subarray(2, 4)),
+    hex2(rand.subarray(4, 10))
   ].join("-");
 }
 
@@ -20742,7 +20833,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       new EmailCaptureModal(this.app, () => {
         this.settings.waitlistPromptSeen = !0, this.saveSettings();
       }).open();
-    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
+    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
     let remoteLogger = initRemoteLog();
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
@@ -21002,7 +21093,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f;
-    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -21016,7 +21107,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     });
   }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
       if (!registered) return;
       if (!await this.applySyncGate())
         return this.doSyncWithFirstSyncCheck();
