@@ -2399,6 +2399,24 @@ export class SyncEngine {
 			const normalized = normalizePath(event.path);
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
+				// A WS delete is unordered and can be a STALE echo — e.g. of our own
+				// delete→recreate at the same path (the recreate re-established a live
+				// note here). If this path canonically holds a CONFIRMED note we own,
+				// trashing now could destroy the recreated file, and the delete is
+				// ambiguous (stale echo vs. a real remote delete). Defer to the
+				// seq-ordered pull, which reconciles delete-vs-recreate correctly.
+				// A renamed-away old path is NOT canonical for its id (it now resolves
+				// to the new path), so it falls through and is trashed here (test_10).
+				const ownedId = this.noteIdMap?.get(normalized) ?? null;
+				if (
+					ownedId &&
+					this.isNoteConfirmed(ownedId) &&
+					this.noteIdMap?.pathForId(ownedId) === normalized
+				) {
+					rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`);
+					void this.pull();
+					return;
+				}
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);

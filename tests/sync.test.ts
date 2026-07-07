@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:t
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { encodeCursor } from "../src/cursor";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -605,6 +606,36 @@ describe("SyncEngine.handleStreamEvent", () => {
 		});
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+	});
+
+	test("delete for a live confirmed note defers to pull instead of trashing it", async () => {
+		// A WS delete is unordered and can be a STALE echo — e.g. of our own
+		// delete→recreate at the same path. Trashing the live recreated file
+		// would lose the user's content. When the path canonically holds a
+		// confirmed note we own, the delete is ambiguous (stale echo vs. a real
+		// remote delete), so defer to the seq-ordered pull, which reconciles
+		// correctly. (A renamed-away old path is NOT canonical for its id, so it
+		// is trashed by the branch — see the id-keyed move tests.)
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-1"); // pull() → pullViaCursor → getSyncChanges
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/Live.md", "id-live");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
+
+		const liveFile = new TFile("E2E/Live.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+		(mockApi.getSyncChanges as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/Live.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
 	});
 
 	test("ignores events for ignored paths", async () => {
