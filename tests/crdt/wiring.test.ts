@@ -15,8 +15,11 @@
  *
  * Covers the three regressions the wiring is where they lived:
  *   1. genesis appears exactly once on the receiver (append-doubling);
- *   2. a rename leaves the receiver with exactly ONE file at the new path
- *      (receiver-move-dup, plugin #182);
+ *   2. after a rename is applied to the receiver's map+disk (done here by hand,
+ *      NOT via SyncEngine's relocate logic), a later flush resolves the note_id
+ *      through the CURRENT path, not a stale one — the flush-time freshness half
+ *      of receiver-move-dup (plugin #182). Full rename propagation through
+ *      SyncEngine is pinned separately by e2e test_10, not here;
  *   3. an inbound frame for an id the receiver's map doesn't know strands, then
  *      heals via reconcile + retry (the #187 on-strand self-heal).
  */
@@ -151,8 +154,10 @@ test("rename on A leaves B with exactly one file at the new path", async () => {
 	b.disk.delete("B/original.md");
 
 	// A edits again AFTER the rename → inbound frame relays to B, whose wiring must
-	// resolve the note_id to the CURRENT (new) path only. A stale/duplicate path
-	// resolution here is the receiver-move-dup bug (plugin #182).
+	// resolve the note_id to the CURRENT (new) path only. This pins the flush-time
+	// pathForId-freshness half of receiver-move-dup (plugin #182); the rename above
+	// is applied directly to B's map+disk, so SyncEngine's relocate logic is NOT
+	// exercised here — full rename propagation is covered by e2e test_10.
 	await a.wiring.manager.applyLocalEdit(noteId, "body v1 + edit", false);
 	await waitFor(
 		() => b.disk.get("B/renamed.md") === "body v1 + edit",
