@@ -33,6 +33,7 @@ import type {
 	ConflictResolution,
 	EngramSyncSettings,
 	FileSyncState,
+	ManifestResponse,
 	NoteChange,
 	NoteStreamEvent,
 	QueueEntry,
@@ -372,10 +373,43 @@ export class SyncEngine {
 	 *
 	 *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
 	 *  path (the manifest is the source of truth). Returns mappings applied. */
+	/** Server-authoritative path -> owning note_id snapshot, refreshed by
+	 *  reconcileNoteIdMapFromManifest (once per connect) or fetched on demand
+	 *  by manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
+	 *  (moveIfIdRelocated's trash) — the local map itself can be cross-wired,
+	 *  so it cannot vouch for itself. */
+	private manifestPathOwners: Map<string, string> | null = null;
+
+	/** Who does the server say owns `path` (normalized)? Returns the owning id,
+	 *  null when the manifest confirms the path is absent, or undefined when
+	 *  ownership is unknowable (no manifest endpoint / fetch failed) — callers
+	 *  must treat undefined as "not safe to destroy". Uses the last snapshot;
+	 *  fetches one if none exists yet (rare: a WS relocation arriving before
+	 *  the first reconcile of the session). */
+	private async manifestOwnerOf(path: string): Promise<string | null | undefined> {
+		if (!this.manifestPathOwners) {
+			try {
+				const manifest = await this.api.getManifest();
+				if (!manifest) return undefined;
+				this.cacheManifestOwners(manifest);
+			} catch {
+				return undefined;
+			}
+		}
+		return this.manifestPathOwners?.get(path) ?? null;
+	}
+
+	private cacheManifestOwners(manifest: ManifestResponse): void {
+		this.manifestPathOwners = new Map(
+			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
+		);
+	}
+
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
 		if (!this.noteIdMap) return 0;
 		const manifest = await this.api.getManifest();
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		this.cacheManifestOwners(manifest); // keep the destructive-op guard's snapshot fresh
 		let applied = 0;
 		// Every path the server currently holds a note at. Lets us tell a
 		// CROSS-WIRE from an IN-FLIGHT RENAME below.
@@ -2531,6 +2565,30 @@ export class SyncEngine {
 	private async moveIfIdRelocated(id: string, newPath: string): Promise<void> {
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		// DESTRUCTIVE-OP GUARD (2026-07-07 cross-file data-loss incident): the
+		// local map can be CROSS-WIRED — `id` pointing at a path that really
+		// belongs to a DIFFERENT live note. Trusting it here trashed an unrelated
+		// file. Verify against the server manifest before anything irreversible:
+		//  - priorPath owned by ANOTHER id  -> cross-wire. Rebind `id` to its real
+		//    path and leave the stranger's file/caches alone.
+		//  - ownership unknowable (no manifest / fetch failed) -> rebind the map
+		//    but SKIP the trash: a lingering duplicate is recoverable, a wrong
+		//    trash is not. The next reconcile/pull converges it.
+		//  - priorPath absent, or owned by this same id (stale snapshot mid-
+		//    rename) -> genuine relocation, proceed as before.
+		const owner = await this.manifestOwnerOf(normalizePath(priorPath));
+		if (owner !== null && owner !== id) {
+			rlog().warn(
+				"pull",
+				`Id-keyed move REFUSED (${owner === undefined ? "ownership unknown" : "cross-wire"}): ` +
+					`${priorPath} not confirmed as ${id}'s old path — rebinding to ${newPath}, no trash`,
+			);
+			// set() keeps the map a bijection: it evicts priorPath->id without
+			// touching priorPath's file, syncState, or baseStore (they belong to
+			// whatever note actually lives there).
+			this.noteIdMap?.set(newPath, id);
+			return;
+		}
 		this.noteIdMap?.rename(priorPath, newPath);
 		// Drop the old path's stale caches so a later create there isn't
 		// echo-suppressed and no diverged base survives the move.

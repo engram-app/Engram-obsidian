@@ -18,6 +18,13 @@ import { uuid7 } from "./uuid7";
  * outbound traffic needs path->id. The reverse map is maintained internally
  * by `set`/`delete`/`rename` so the two directions never drift apart.
  */
+/** A vault path that may legitimately key this map. Rejects the garbage a
+ *  nullish caller produces after string coercion — a literal "null" key was
+ *  found minted + CRDT-enrolled in a prod data.json (2026-07-07 incident). */
+function isValidPath(path: string): boolean {
+	return !!path && path !== "null" && path !== "undefined";
+}
+
 export class NoteIdMap {
 	private readonly byPath = new Map<string, string>();
 	/** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
@@ -33,6 +40,11 @@ export class NoteIdMap {
 	 *  the live-editor binding), so a concurrent "first touch" from either
 	 *  seam (first save vs. first open) always converges on one id. */
 	getOrMint(path: string): string {
+		if (!isValidPath(path)) {
+			// Loud on purpose: minting an id for a garbage path binds a real CRDT
+			// doc to a phantom file. The caller has a null-path bug — surface it.
+			throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
+		}
 		const existing = this.get(path);
 		if (existing) return existing;
 		const id = uuid7();
@@ -49,6 +61,9 @@ export class NoteIdMap {
 	}
 
 	set(path: string, id: string): void {
+		// Defense-in-depth vs. getOrMint's throw: set() arrives from more callers
+		// (pull feeds, push responses) — refuse to store garbage, don't crash them.
+		if (!isValidPath(path) || !id) return;
 		// A path can only ever point at one id — if it previously pointed at a
 		// DIFFERENT id, that stale reverse entry must go, or pathForId(oldId)
 		// would keep resolving to this path after it's been reassigned.

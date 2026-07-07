@@ -61,6 +61,29 @@ describe("NoteIdMap", () => {
 		expect(m.get("A.md")).toBeNull();
 	});
 
+	it("rejects garbage paths: getOrMint throws, set no-ops, fromJSON drops junk keys", () => {
+		// A literal "null" key was found in a prod data.json — a caller passed a
+		// nullish path and the map happily minted+stored an id for it, which then
+		// participated in CRDT enrollment. The shared functions must refuse.
+		const m = new NoteIdMap();
+		for (const bad of ["", "null", "undefined"]) {
+			expect(() => m.getOrMint(bad)).toThrow();
+			m.set(bad, "id-x");
+			expect(m.get(bad)).toBeNull();
+		}
+		expect(m.toJSON()).toEqual({});
+
+		// Persisted junk from the buggy era heals on load.
+		const healed = NoteIdMap.fromJSON({
+			null: "id-junk",
+			"": "id-junk2",
+			"real.md": "id-real",
+		});
+		expect(healed.get("real.md")).toBe("id-real");
+		expect(healed.pathForId("id-junk")).toBeNull();
+		expect(Object.keys(healed.toJSON())).toEqual(["real.md"]);
+	});
+
 	it("getOrMint reuses an existing id and mints+persists a new one on miss", () => {
 		const m = new NoteIdMap();
 		m.set("a.md", "id-1");
