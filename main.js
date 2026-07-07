@@ -1521,11 +1521,13 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   get crdtTopic() {
     return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
-  /** Send a CRDT update frame to the server on the crdt topic.
-   *  No-op when vaultId is null (crdt topic not joined). */
+  /** Send a CRDT update frame on the crdt topic.
+   *  Returns false without sending until the crdt: join is server-acked —
+   *  a frame with a stale/absent join_ref is silently dropped server-side
+   *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
   sendCrdt(docId, b64) {
     let t = this.crdtTopic;
-    t && this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+    return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());

@@ -136,14 +136,49 @@ describe("NoteChannel CRDT topic join", () => {
 });
 
 describe("NoteChannel.sendCrdt", () => {
-	test("pushes a crdt_msg event with doc_id and b64 on the crdt topic", async () => {
+	function ackCrdtJoin(): void {
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+	}
+
+	// Was: "pushes a crdt_msg event with doc_id and b64 on the crdt topic" —
+	// that test sent BEFORE any join ack and asserted the frame WAS emitted,
+	// enshrining the plugin #179 failure shape (a frame with a stale/absent
+	// join_ref is silently dropped server-side). Flipped below: pre-join must
+	// drop, not send.
+	test("drops (returns false) before the crdt: join is acked", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
+		// NO join ack delivered for the crdt: topic.
 
 		const beforeCount = lastWsInstance.sent.length;
-		channel.sendCrdt("v1/note.md", "dGVzdA==");
+		const sent = channel.sendCrdt("v1/note.md", "dGVzdA==");
 
+		expect(sent).toBe(false);
+		const newMessages = lastWsInstance.sent
+			.slice(beforeCount)
+			.map((s: string) => JSON.parse(s) as unknown[]);
+		expect(newMessages.some((m: unknown[]) => m[3] === "crdt_msg")).toBe(false);
+
+		channel.disconnect();
+	});
+
+	test("emits (returns true) a crdt_msg event with doc_id and b64 after the crdt: join is acked", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+		ackCrdtJoin();
+
+		const beforeCount = lastWsInstance.sent.length;
+		const sent = channel.sendCrdt("v1/note.md", "dGVzdA==");
+
+		expect(sent).toBe(true);
 		const newMessages = lastWsInstance.sent
 			.slice(beforeCount)
 			.map((s: string) => JSON.parse(s) as unknown[]);
@@ -162,13 +197,14 @@ describe("NoteChannel.sendCrdt", () => {
 		channel.disconnect();
 	});
 
-	test("sendCrdt is a no-op when vaultId is null (no crdt topic)", async () => {
+	test("sendCrdt is a no-op (returns false) when vaultId is null (no crdt topic)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", null);
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
 		const beforeCount = lastWsInstance.sent.length;
-		channel.sendCrdt("v1/note.md", "dGVzdA==");
+		const sent = channel.sendCrdt("v1/note.md", "dGVzdA==");
+		expect(sent).toBe(false);
 		// No new crdt_msg should be sent
 		const newMessages = lastWsInstance.sent
 			.slice(beforeCount)
