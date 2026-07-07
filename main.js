@@ -20885,7 +20885,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     this.baseStore = null;
     this.explicitFolders = null;
     this.crdtManager = null;
-    this.crdtChannel = null;
     this.crdtEnrollment = null;
     /** CRDT data-plane glue (manager/channel/enrollment + id->path callbacks +
      *  strand-heal), extracted from the inline setupNoteStream block. Rebuilt on
@@ -21387,7 +21386,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     let connectionKey = channelConnectionKey(this.settings);
     if (this.noteStream && connectionKey === this.liveChannelKey)
       return;
-    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, this.crdtChannel = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -21504,7 +21503,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
           }
         });
-        this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtChannel = wiring.channel, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+        this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,
           manager: this.crdtManager,
           enrollment: this.crdtEnrollment,
