@@ -1410,6 +1410,11 @@ var ApiKeyAuth = class {
 _OAuthAuth.EXPIRY_BUFFER_MS = 6e4;
 var OAuthAuth = _OAuthAuth;
 
+// src/settings-migrate.ts
+function migrateDiagnosticsEnabled(raw) {
+  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
+}
+
 // src/error-util.ts
 function errMsg(e) {
   var _a;
@@ -3062,16 +3067,14 @@ var DEFAULT_SETTINGS = {
   ignorePatterns: "",
   debounceMs: 2e3,
   conflictViewMode: "unified",
-  remoteLoggingEnabled: !1,
-  diagnosticMode: !1,
+  diagnosticsEnabled: !1,
   conflictResolution: "auto",
   enableCrdt: !0,
   vaultId: null,
   clientId: "",
   planState: null,
   searchDefaultMode: "hybrid",
-  waitlistPromptSeen: !1,
-  tracingEnabled: !1
+  waitlistPromptSeen: !1
 }, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
   "pull-all-delete-local",
   "push-all-delete-remote"
@@ -4624,21 +4627,11 @@ function renderAdvancedTab(ctx) {
 secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
       plugin.settings.ignorePatterns = value, await plugin.saveSettings();
     }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
-  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Remote logging").setDesc("Send sync events to the server for remote debugging.").addToggle(
-    (toggle) => toggle.setValue(plugin.settings.remoteLoggingEnabled).onChange(async (value) => {
-      plugin.settings.remoteLoggingEnabled = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Diagnostic mode (verbose)").setDesc(
-    "Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use."
+  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
+    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
   ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
-      plugin.settings.diagnosticMode = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Distributed tracing").setDesc(
-    "Attach a trace ID to sync requests and report timing to the server for cross-system debugging. No note content is sent."
-  ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.tracingEnabled).onChange(async (value) => {
-      plugin.settings.tracingEnabled = value, await plugin.saveSettings();
+    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
+      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
     })
   ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
@@ -20533,7 +20526,7 @@ function formatVaultEvent(kind, path, extra) {
   return parts.join(" ");
 }
 function registerDiagnostics(plugin) {
-  let on = () => plugin.settings.diagnosticMode, emit = (kind, path, extra) => {
+  let on = () => plugin.settings.diagnosticsEnabled, emit = (kind, path, extra) => {
     on() && rlog().diag("vault", formatVaultEvent(kind, path, extra));
   };
   plugin.registerEvent(
@@ -20833,13 +20826,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       new EmailCaptureModal(this.app, () => {
         this.settings.waitlistPromptSeen = !0, this.saveSettings();
       }).open();
-    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
+    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
     let remoteLogger = initRemoteLog();
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
       import_obsidian25.Platform.isMobile ? "mobile" : "desktop"
-    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
+    ), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian25.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
@@ -21098,7 +21091,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   async loadSettings() {
     var _a, _b;
     let data = await this.loadPluginData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
+    let rawSettings = data == null ? void 0 : data.settings;
+    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
+    for (let legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"])
+      delete this.settings[legacy];
+    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -21107,7 +21105,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     });
   }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
       if (!registered) return;
       if (!await this.applySyncGate())
         return this.doSyncWithFirstSyncCheck();

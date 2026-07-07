@@ -24,6 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
+import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
@@ -222,7 +223,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Wire the per-install device id (minted in loadSettings) onto the real
 		// api instance before any sync runs, so cursor pulls carry X-Device-Id.
 		this.api.setDeviceId(this.deviceId);
-		this.api.setTracingEnabled(this.settings.tracingEnabled);
+		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
 
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
@@ -236,7 +237,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.manifest.version,
 			Platform.isMobile ? "mobile" : "desktop",
 		);
-		remoteLogger.setEnabled(this.settings.remoteLoggingEnabled);
+		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
 		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
 			"lifecycle",
@@ -780,6 +781,14 @@ export default class EngramSyncPlugin extends Plugin {
 	async loadSettings(): Promise<void> {
 		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
+		// Collapse the legacy remoteLoggingEnabled / diagnosticMode / tracingEnabled
+		// toggles into the single diagnosticsEnabled (on if any legacy one was on),
+		// then drop the stale keys so the next save persists only the new shape.
+		const rawSettings = data?.settings as Record<string, unknown> | undefined;
+		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
+		for (const legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"]) {
+			delete (this.settings as unknown as Record<string, unknown>)[legacy];
+		}
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
@@ -821,9 +830,9 @@ export default class EngramSyncPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
-		this.api.setTracingEnabled(this.settings.tracingEnabled);
+		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
 		this.syncEngine.updateSettings(this.settings);
-		rlog().setEnabled(this.settings.remoteLoggingEnabled);
+		rlog().setEnabled(this.settings.diagnosticsEnabled);
 		this.startSyncInterval();
 		this.setupNoteStream();
 		await this.savePluginData(this.syncEngine.getLastSync());
