@@ -264,7 +264,7 @@ export class NoteChannel {
 		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
 			this.heartbeatTick();
 			// Reuses the heartbeat machinery: an unanswered probe closes on this tick.
-			// Not tracked in clearTimers — a stray fire after disconnect is a guarded
+			// Not tracked in clearTimers: a stray fire after disconnect is a guarded
 			// no-op (heartbeatTick bails when the socket is not OPEN).
 			window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
 			return;

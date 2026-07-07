@@ -431,7 +431,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Mobile lifecycle: flush + persist on background, recover the socket on
 		// foreground. Mobile OSes suspend the WebSocket while backgrounded, so on
-		// resume the channel may be silently half-dead — onResume probes it (and
+		// resume the channel may be silently half-dead, so onResume probes it (and
 		// pulls a pending reconnect forward) instead of waiting ~30s for the next
 		// heartbeat tick, which is what made the first post-unlock sync feel laggy.
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {

@@ -2,8 +2,8 @@
  * Settings migrations for persisted plugin data (data.json `settings`).
  */
 
-/** Collapse the three legacy diagnostics toggles — `remoteLoggingEnabled`,
- *  `diagnosticMode`, `tracingEnabled` — into the single `diagnosticsEnabled`.
+/** Collapse the three legacy diagnostics toggles (`remoteLoggingEnabled`,
+ *  `diagnosticMode`, `tracingEnabled`) into the single `diagnosticsEnabled`.
  *
  *  An already-migrated blob (has a boolean `diagnosticsEnabled`) is returned
  *  verbatim so re-running is idempotent. Otherwise diagnostics turns ON if ANY
