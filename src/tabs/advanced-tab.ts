@@ -83,35 +83,13 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	new Setting(containerEl).setName("Diagnostics").setHeading();
 
 	new Setting(containerEl)
-		.setName("Remote logging")
-		.setDesc("Send sync events to the server for remote debugging.")
-		.addToggle((toggle) =>
-			toggle.setValue(plugin.settings.remoteLoggingEnabled).onChange(async (value) => {
-				plugin.settings.remoteLoggingEnabled = value;
-				await plugin.saveSettings();
-			}),
-		);
-
-	new Setting(containerEl)
-		.setName("Diagnostic mode (verbose)")
+		.setName("Diagnostics")
 		.setDesc(
-			"Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use.",
+			"Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use.",
 		)
 		.addToggle((toggle) =>
-			toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
-				plugin.settings.diagnosticMode = value;
-				await plugin.saveSettings();
-			}),
-		);
-
-	new Setting(containerEl)
-		.setName("Distributed tracing")
-		.setDesc(
-			"Attach a trace ID to sync requests and report timing to the server for cross-system debugging. No note content is sent.",
-		)
-		.addToggle((toggle) =>
-			toggle.setValue(plugin.settings.tracingEnabled).onChange(async (value) => {
-				plugin.settings.tracingEnabled = value;
+			toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
+				plugin.settings.diagnosticsEnabled = value;
 				await plugin.saveSettings();
 			}),
 		);
