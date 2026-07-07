@@ -520,6 +520,34 @@ describe("SyncEngine.handleStreamEvent", () => {
 		);
 	});
 
+	test("materializes a never-seen CRDT note from the broadcast, not via the announce", async () => {
+		// With the crdt: topic joined (this.crdt set), an API-created note arrives
+		// as a note_changed broadcast carrying its id. The C1 skip used to suppress
+		// the body write and leave delivery to the racy crdt_doc_ready announce, so
+		// a note this device has never seen could silently never land (e2e test_47).
+		// It must be materialized from the broadcast now (mirrors the pull path).
+		const engine = createEngine();
+		engine.setCrdtManager({} as any); // crdt: topic joined
+		engine.setCrdtEnrollment({ enroll: mock() } as any);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null); // never seen
+		(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.vault.create as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-oauth-new",
+			path: "E2E/OAuthWSCreate.md",
+			content: "# Created via API\nbody",
+			timestamp: 2,
+		} as never);
+
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"E2E/OAuthWSCreate.md",
+			"# Created via API\nbody",
+		);
+	});
+
 	test("upsert with inline content skips GET request", async () => {
 		const engine = createEngine();
 

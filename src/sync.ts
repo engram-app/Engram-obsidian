@@ -2483,7 +2483,27 @@ export class SyncEngine {
 					this.noteIdMap?.set(event.path, noteId);
 					this.confirmNoteId(noteId);
 					this.crdtEnrollment?.enroll(noteId);
-					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+					const normalized = normalizePath(event.path);
+					if (this.app.vault.getFileByPath(normalized)) {
+						// Already local — CRDT owns the body; skip the legacy write to avoid
+						// the double-write feedback loop (disk write → handleModify →
+						// applyLocalEdit).
+						rlog().info(
+							"ws",
+							`CRDT-managed: skipping legacy body apply for ${event.path}`,
+						);
+					} else {
+						// Discovery: a CRDT note this device has never had on disk. The
+						// crdt_doc_ready announce that would deliver its body is edge-triggered
+						// and can be missed (we may not be subscribed to crdt: when it fires),
+						// so materialize it now from the broadcast rather than relying on the
+						// announce (e2e test_47). flushFromCrdt is echo-safe and records the
+						// sync baseline; a later announce re-flush no-ops (idempotent). Mirrors
+						// the pull-path CRDT discovery in applyChange.
+						const body = event.content ?? (await this.api.getNote(event.path)).content;
+						await this.flushFromCrdt(normalized, body);
+						rlog().info("ws", `CRDT discovery: materialized new note ${event.path}`);
+					}
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
