@@ -1221,14 +1221,6 @@ var EngramApi = class _EngramApi {
     let body = { query };
     return limit !== void 0 && (body.limit = limit), tags != null && tags.length && (body.tags = tags), folder && (body.folder = folder), (await this.request("POST", "/search", body)).json;
   }
-  /** Query the server's rate limit. Returns 0 for unlimited. */
-  async getRateLimit() {
-    try {
-      return (await this.request("GET", "/rate-limit")).json.requests_per_minute;
-    } catch (e) {
-      return 0;
-    }
-  }
   /** Fetch sync manifest for reconciliation.
    *  Returns null if the server doesn't support this endpoint (404). */
   async getManifest() {
@@ -5129,9 +5121,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.activePushCount = 0;
     this.maxConcurrentPushes = 5;
     this.pushWaiters = [];
-    this.rateLimitRPM = 0;
-    // 0 = unlimited
-    this.requestTimestamps = [];
     this.queue = new OfflineQueue();
     /** Per-file sync metadata (content hash + server version).
      *  Used to detect whether the user actually modified a file since
@@ -5679,7 +5668,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (0, import_obsidian21.normalizePath)(f.path);
       if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
         try {
-          await this.paceRequest(), await this.api.createFolder(path), await this.explicitFolders.add(path);
+          await this.api.createFolder(path), await this.explicitFolders.add(path);
         } catch (e) {
           devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
         }
@@ -5709,39 +5698,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.activePushCount--;
     let next = this.pushWaiters.shift();
     next && next();
-  }
-  /** Query the server's rate limit and configure the pacer.
-   *  Applies a 10% safety margin (e.g. 100 RPM → 90 effective). */
-  async configureRateLimit() {
-    try {
-      let serverRPM = await this.api.getRateLimit();
-      serverRPM > 0 ? (this.rateLimitRPM = Math.floor(serverRPM * 0.9), devLog().log(
-        "pacer",
-        `server limit=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`
-      ), rlog().info(
-        "pacer",
-        `Rate limit: server=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`
-      )) : (this.rateLimitRPM = 0, devLog().log("pacer", "server reports unlimited \u2014 pacer disabled"), rlog().info("pacer", "Server reports unlimited \u2014 pacer disabled"));
-    } catch (e) {
-      this.rateLimitRPM = 0, devLog().log("pacer", "failed to query rate limit \u2014 assuming unlimited"), rlog().warn("pacer", "Failed to query rate limit \u2014 assuming unlimited");
-    }
-  }
-  /** Wait if needed to stay within the server's rate limit. */
-  async paceRequest() {
-    if (this.rateLimitRPM <= 0) return;
-    let now = Date.now(), windowMs = 6e4, cutoff = now - windowMs;
-    if (this.requestTimestamps = this.requestTimestamps.filter((t) => t > cutoff), this.requestTimestamps.length < this.rateLimitRPM) {
-      this.requestTimestamps.push(now);
-      return;
-    }
-    let waitMs = this.requestTimestamps[0] + windowMs - now + 50;
-    devLog().log(
-      "pacer",
-      `at capacity (${this.requestTimestamps.length}/${this.rateLimitRPM}), waiting ${waitMs}ms`
-    ), rlog().info(
-      "pacer",
-      `Throttled: ${this.requestTimestamps.length}/${this.rateLimitRPM} RPM, waiting ${waitMs}ms`
-    ), await new Promise((resolve) => window.setTimeout(resolve, waitMs)), this.requestTimestamps = this.requestTimestamps.filter((t) => t > Date.now() - windowMs), this.requestTimestamps.push(Date.now());
   }
   /** Push a single file to Engram. Returns true on success.
    *  When force is true, skip echo suppression (used by pushAll).
@@ -5782,7 +5738,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       `Push start: ${file.path} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`
     );
     try {
-      await this.paceRequest();
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
         let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
@@ -6908,7 +6863,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
-    await this.configureRateLimit(), await this.invalidateIfVaultChanged();
+    await this.invalidateIfVaultChanged();
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
@@ -6937,7 +6892,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       chunk = [], chunkBytes = 0;
       for (let e of entries) this.pushing.add(e.file.path);
       try {
-        await this.paceRequest();
         let resp = await this.api.pushNotesBatch(
           entries.map((e) => ({
             path: e.file.path,
@@ -7481,7 +7435,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let flushed = 0;
     for (let entry of entries)
       try {
-        if (await this.paceRequest(), entry.action === "delete")
+        if (entry.action === "delete")
           try {
             entry.kind === "attachment" ? await this.api.deleteAttachment(entry.path) : await this.api.deleteNote(entry.path);
           } catch (e) {

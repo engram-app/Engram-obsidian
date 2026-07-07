@@ -289,8 +289,6 @@ export class SyncEngine {
 	private activePushCount = 0;
 	private maxConcurrentPushes = 5;
 	private pushWaiters: (() => void)[] = [];
-	private rateLimitRPM = 0; // 0 = unlimited
-	private requestTimestamps: number[] = [];
 	readonly queue: OfflineQueue = new OfflineQueue();
 
 	/** Per-file sync metadata (content hash + server version).
@@ -1167,7 +1165,6 @@ export class SyncEngine {
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
 
 			try {
-				await this.paceRequest();
 				await this.api.createFolder(path);
 				await this.explicitFolders.add(path);
 			} catch (e) {
@@ -1210,67 +1207,6 @@ export class SyncEngine {
 		this.activePushCount--;
 		const next = this.pushWaiters.shift();
 		if (next) next();
-	}
-
-	/** Query the server's rate limit and configure the pacer.
-	 *  Applies a 10% safety margin (e.g. 100 RPM → 90 effective). */
-	async configureRateLimit(): Promise<void> {
-		try {
-			const serverRPM = await this.api.getRateLimit();
-			if (serverRPM > 0) {
-				this.rateLimitRPM = Math.floor(serverRPM * 0.9);
-				devLog().log(
-					"pacer",
-					`server limit=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`,
-				);
-				rlog().info(
-					"pacer",
-					`Rate limit: server=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`,
-				);
-			} else {
-				this.rateLimitRPM = 0;
-				devLog().log("pacer", "server reports unlimited — pacer disabled");
-				rlog().info("pacer", "Server reports unlimited — pacer disabled");
-			}
-		} catch {
-			this.rateLimitRPM = 0;
-			devLog().log("pacer", "failed to query rate limit — assuming unlimited");
-			rlog().warn("pacer", "Failed to query rate limit — assuming unlimited");
-		}
-	}
-
-	/** Wait if needed to stay within the server's rate limit. */
-	private async paceRequest(): Promise<void> {
-		if (this.rateLimitRPM <= 0) return;
-
-		const now = Date.now();
-		const windowMs = 60_000;
-		const cutoff = now - windowMs;
-
-		// Prune timestamps outside the window
-		this.requestTimestamps = this.requestTimestamps.filter((t) => t > cutoff);
-
-		if (this.requestTimestamps.length < this.rateLimitRPM) {
-			this.requestTimestamps.push(now);
-			return;
-		}
-
-		// At capacity — wait until the oldest request exits the window
-		const oldest = this.requestTimestamps[0]!;
-		const waitMs = oldest + windowMs - now + 50; // +50ms buffer
-		devLog().log(
-			"pacer",
-			`at capacity (${this.requestTimestamps.length}/${this.rateLimitRPM}), waiting ${waitMs}ms`,
-		);
-		rlog().info(
-			"pacer",
-			`Throttled: ${this.requestTimestamps.length}/${this.rateLimitRPM} RPM, waiting ${waitMs}ms`,
-		);
-		await new Promise<void>((resolve) => window.setTimeout(resolve, waitMs));
-
-		// Prune again and record
-		this.requestTimestamps = this.requestTimestamps.filter((t) => t > Date.now() - windowMs);
-		this.requestTimestamps.push(Date.now());
 	}
 
 	/** Paths modified during a pull that need pushing once pull completes. */
@@ -1346,7 +1282,6 @@ export class SyncEngine {
 		);
 
 		try {
-			await this.paceRequest();
 			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
@@ -3371,9 +3306,6 @@ export class SyncEngine {
 			throw new Error(this.lastError);
 		}
 
-		// Configure request pacer from server-reported rate limit
-		await this.configureRateLimit();
-
 		// Drop stale per-vault bookkeeping if the active vault changed since
 		// syncState was recorded (must run before prePullSync is snapshotted).
 		await this.invalidateIfVaultChanged();
@@ -3463,7 +3395,6 @@ export class SyncEngine {
 
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
-				await this.paceRequest();
 				const resp = await this.api.pushNotesBatch(
 					entries.map((e) => ({
 						path: e.file.path,
@@ -4387,7 +4318,6 @@ export class SyncEngine {
 		let flushed = 0;
 		for (const entry of entries) {
 			try {
-				await this.paceRequest();
 				if (entry.action === "delete") {
 					try {
 						if (entry.kind === "attachment") {
