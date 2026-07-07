@@ -2405,8 +2405,11 @@ export class SyncEngine {
 				// trashing now could destroy the recreated file, and the delete is
 				// ambiguous (stale echo vs. a real remote delete). Defer to the
 				// seq-ordered pull, which reconciles delete-vs-recreate correctly.
-				// A renamed-away old path is NOT canonical for its id (it now resolves
-				// to the new path), so it falls through and is trashed here (test_10).
+				// A renamed-away old path is handled either way (test_10): once
+				// moveIfIdRelocated has run it is non-canonical (its id resolves to the
+				// new path) and is trashed here; if the delete arrives FIRST it is still
+				// canonical and defers, and the pull's moveIfIdRelocated trashes it — no
+				// duplicate leaks in either ordering.
 				const ownedId = this.noteIdMap?.get(normalized) ?? null;
 				if (
 					ownedId &&

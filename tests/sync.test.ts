@@ -638,6 +638,50 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
 	});
 
+	test("delete trashes when the path's id is not confirmed (defer guard falls through)", async () => {
+		// Owned but unconfirmed id → not a note we know the server has under this
+		// id → don't defer; the WS delete is honored (trashed) as before.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/Unconf.md", "id-unconf"); // set but never confirmed
+		engine.setNoteIdMap(noteIdMap);
+		const file = new TFile("E2E/Unconf.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/Unconf.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
+	test("delete trashes a renamed-away old path (id resolves elsewhere, not canonical)", async () => {
+		// The id now lives at the NEW path (pathForId !== oldPath), so the old path
+		// is a duplicate to remove — the defer guard must NOT fire (test_10 invariant).
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		// Set old first, then new: byPath keeps a stale old→id entry while byId
+		// (pathForId) resolves to the new path — the delete-first rename state.
+		noteIdMap.set("E2E/RenameOld.md", "id-moved");
+		noteIdMap.set("E2E/RenameNew.md", "id-moved");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-moved");
+		const oldFile = new TFile("E2E/RenameOld.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(oldFile);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/RenameOld.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+	});
+
 	test("ignores events for ignored paths", async () => {
 		const engine = createEngine();
 
