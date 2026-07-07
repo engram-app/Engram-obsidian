@@ -20838,6 +20838,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
     this.syncGateAcceptedFor = null;
+    /** Whether the noteIdMap has been reconciled from the server manifest this
+     *  session. The reconcile repairs a stale/empty map (drift is a one-time
+     *  startup/migration event), so it runs ONCE on the first successful connect,
+     *  not on every reconnect — re-fetching the manifest on each network blip adds
+     *  load and perturbs in-flight sync timing. Reset on vault change. */
+    this.crdtMapReconciled = !1;
     /** Single-flight guard so a vault switch (or any racing trigger) cannot
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
@@ -21364,18 +21370,19 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         var _a2;
         this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
           var _a3;
-          try {
-            let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
-            n > 0 && rlog().info(
-              "crdt",
-              `noteIdMap reconciled from manifest: ${n} notes`
-            );
-          } catch (e) {
-            rlog().warn(
-              "crdt",
-              `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
-            );
-          }
+          if (!this.crdtMapReconciled)
+            try {
+              let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+              this.crdtMapReconciled = !0, n > 0 && rlog().info(
+                "crdt",
+                `noteIdMap reconciled from manifest: ${n} notes`
+              );
+            } catch (e) {
+              rlog().warn(
+                "crdt",
+                `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
+              );
+            }
           (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
             console.error("Engram Sync: catch-up pull failed", e), rlog().error(
               "channel",
@@ -21645,7 +21652,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.crdtMapReconciled = !1, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {

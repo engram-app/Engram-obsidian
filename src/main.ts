@@ -189,6 +189,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
 
+	/** Whether the noteIdMap has been reconciled from the server manifest this
+	 *  session. The reconcile repairs a stale/empty map (drift is a one-time
+	 *  startup/migration event), so it runs ONCE on the first successful connect,
+	 *  not on every reconnect — re-fetching the manifest on each network blip adds
+	 *  load and perturbs in-flight sync timing. Reset on vault change. */
+	private crdtMapReconciled = false;
+
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
 	 *  open is a silent no-op. See single-flight.ts. */
@@ -1291,19 +1298,26 @@ export default class EngramSyncPlugin extends Plugin {
 						// makes live pull resolve. Await it so the map is ready before the
 						// STEP1/STEP2 handshakes below deliver content.
 						void (async () => {
-							try {
-								const n = await this.syncEngine.reconcileNoteIdMapFromManifest();
-								if (n > 0) {
-									rlog().info(
+							// Once per session (first successful connect): a stale map is a
+							// startup/migration condition, not a per-reconnect one. On failure
+							// (e.g. offline at first connect) leave the flag unset so a later
+							// connect retries.
+							if (!this.crdtMapReconciled) {
+								try {
+									const n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+									this.crdtMapReconciled = true;
+									if (n > 0) {
+										rlog().info(
+											"crdt",
+											`noteIdMap reconciled from manifest: ${n} notes`,
+										);
+									}
+								} catch (e) {
+									rlog().warn(
 										"crdt",
-										`noteIdMap reconciled from manifest: ${n} notes`,
+										`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
 									);
 								}
-							} catch (e) {
-								rlog().warn(
-									"crdt",
-									`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
-								);
 							}
 							// Reset all CRDT enrollments so a fresh startSync STEP1
 							// handshake fires for each open note after reconnect.
@@ -1817,6 +1831,8 @@ export default class EngramSyncPlugin extends Plugin {
 						// even when the new vault is empty.
 						await this.syncEngine.resetForVaultChange();
 						this.syncGateAcceptedFor = null;
+						// New vault = new id/path space; re-reconcile on next connect.
+						this.crdtMapReconciled = false;
 						this.syncEngine.setSyncBlocked(true);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
