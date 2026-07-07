@@ -404,8 +404,7 @@ export class SyncEngine {
 	 *  so the refresh cost lands only on that cold path. */
 	private async manifestOwnerOf(path: string): Promise<string | null | undefined> {
 		const age = Date.now() - this.manifestOwnersFetchedAt;
-		const fresh =
-			this.manifestOwnersFetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
+		const fresh = this.manifestOwnersFetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
 		if (!fresh) {
 			this.manifestOwnersFetchedAt = Date.now();
 			// A failed/absent refresh leaves NO trustworthy snapshot: keeping a
