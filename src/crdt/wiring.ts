@@ -31,6 +31,10 @@ export interface CrdtWiringDeps {
 	isBound: (path: string) => boolean;
 	/** Debounce before a stranded-flush batch reconciles + retries. */
 	strandHealDebounceMs?: number;
+	/** IndexedDB store namespace (CrdtManagerOptions.dbPrefix). Production omits
+	 *  it — each real device has its own browser origin. Set only by tests that
+	 *  run two "devices" against one shared fake-indexeddb process. */
+	dbPrefix?: string;
 }
 
 export interface CrdtWiring {
@@ -118,6 +122,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// note_id-keyed CRDT (Task 6): docId on the wire is the bare note_id. Disk
 	// I/O is still path-keyed, so every callback resolves the path via noteIdMap.
 	const manager = new CrdtManager({
+		dbPrefix: deps.dbPrefix,
 		onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
 		onFlushToDisk: (noteId, content) => {
 			const path = noteIdMap.pathForId(noteId);

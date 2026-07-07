@@ -20546,6 +20546,7 @@ function createCrdtWiring(deps) {
     }, debounceMs));
   }
   let box = { channel: null }, manager = new CrdtManager({
+    dbPrefix: deps.dbPrefix,
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
     onFlushToDisk: (noteId, content) => {
       let path = noteIdMap.pathForId(noteId);
