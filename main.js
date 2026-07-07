@@ -5273,6 +5273,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
   }
+  /** Populate `noteIdMap` authoritatively from the server manifest's
+   *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
+   *  id+path+hash only, ~µs/row server-side).
+   *
+   *  This is the fix for inbound CRDT updates stranding with "no known path"
+   *  after the id-keying cutover: live pull of an existing note is CRDT-only
+   *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
+   *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
+   *  whose sync cursor is already set (every normal reconnect) never repaired
+   *  a stale map — `pathForId` returned null and every inbound frame was
+   *  dropped until a manual full sync. Reconciling from the manifest on connect
+   *  keeps the map authoritative so live pull just works.
+   *
+   *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
+   *  path (the manifest is the source of truth). Returns mappings applied. */
+  async reconcileNoteIdMapFromManifest() {
+    if (!this.noteIdMap) return 0;
+    let manifest = await this.api.getManifest();
+    if (!manifest) return 0;
+    let applied = 0;
+    for (let note of manifest.notes)
+      note.id && (this.noteIdMap.set(note.path, note.id), applied++);
+    return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), applied;
+  }
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
   }
@@ -21337,19 +21361,34 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        var _a2, _b2;
-        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
-          console.error("Engram Sync: catch-up pull failed", e), rlog().error(
-            "channel",
-            `Catch-up pull on reconnect failed: ${errMsg(e)}`
-          );
-        })) : (this.crdtEverJoined ? rlog().info(
+        var _a2;
+        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
+          var _a3;
+          try {
+            let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+            n > 0 && rlog().info(
+              "crdt",
+              `noteIdMap reconciled from manifest: ${n} notes`
+            );
+          } catch (e) {
+            rlog().warn(
+              "crdt",
+              `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
+            );
+          }
+          (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
+            console.error("Engram Sync: catch-up pull failed", e), rlog().error(
+              "channel",
+              `Catch-up pull on reconnect failed: ${errMsg(e)}`
+            );
+          });
+        })()) : (this.crdtEverJoined ? rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
         ) : (this.syncEngine.setCrdtManager(null), rlog().info(
           "crdt",
           "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
-        )), (_b2 = this.crdtManager) == null || _b2.clearSynced());
+        )), (_a2 = this.crdtManager) == null || _a2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
