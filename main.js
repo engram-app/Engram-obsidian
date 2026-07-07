@@ -6896,7 +6896,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  mid-bulk enqueues the remaining files and goes offline, mirroring the
    *  single-push error path. */
   async pushNotesViaBatch(files, force, onProgress) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f;
     if (this.batchPushUnsupported) return null;
     let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
       var _a2, _b2;
@@ -6962,7 +6962,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     };
     for (let i = 0; i < files.length; i++) {
-      let file = files[i];
+      let file = files[i], noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
+      if (this.crdt && noteId && this.isNoteConfirmed(noteId) && ((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) == null || _d) && file.stat.size <= MAX_CRDT_NOTE_BYTES) {
+        done++, this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
+        continue;
+      }
       if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
         oversized.push(file);
         continue;
@@ -6983,7 +6987,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               kind: "note",
               mtime: rest.stat.mtime / 1e3,
               timestamp: Date.now(),
-              vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
+              vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
             });
           return onProgress == null || onProgress(done, failed), { pushed, failed };
         }
@@ -7001,7 +7005,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           kind: "note",
           mtime: rest.stat.mtime / 1e3,
           timestamp: Date.now(),
-          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
+          vaultId: (_f = this.settings.vaultId) != null ? _f : void 0
         });
       return onProgress == null || onProgress(done, failed), { pushed, failed };
     }

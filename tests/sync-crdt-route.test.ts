@@ -783,6 +783,79 @@ describe("REST-first fix: new-note gate confirms via REST before CRDT", () => {
 // needed because both setters are public.
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// Duplication guard (manual sync right after a live CRDT edit):
+// the REST batch push (fullSync → pushModifiedFiles → pushNotesViaBatch) must
+// skip a CRDT-owned note — one the socket already delivers (crdt wired && known
+// note_id && confirmed && live, within the CRDT size cap). Re-POSTing the full
+// body duplicates it: the server re-seeds it into the live CRDT room and the
+// doubled line flushes back. Mirrors pushFile's own CRDT gate. Notes CRDT does
+// NOT own (unconfirmed, or over the size cap) must still reach REST.
+// ---------------------------------------------------------------------------
+
+describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () => {
+	test("a confirmed, live, in-cap note is skipped by pushNotesViaBatch (no duplicate re-send)", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		// rest-first fix: only a server-confirmed note routes through CRDT.
+		markConfirmed(engine, "id-note");
+
+		// Clean batch mock: resolve OK so a stray call registers a call (and does
+		// not flip batchPushUnsupported via the shared 404-reject default).
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
+
+		// Live edit: routed through CRDT, delivered over the socket.
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+
+		// Manual sync's batch push must NOT re-send the note the socket already
+		// delivered.
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(batch).not.toHaveBeenCalled();
+	});
+
+	test("a confirmed note over the CRDT size cap is NOT skipped — CRDT declined it, so REST must still deliver", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("big.md", "id-big");
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-big");
+
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "big.md", status: "ok" }] });
+
+		// Over MAX_CRDT_NOTE_BYTES (4 MB), under the 10 MB batch cap: routeModify
+		// declines it in the live path (WS frame limit), so pushFile falls through
+		// to REST. The batch guard must NOT treat it as CRDT-owned, or manual Sync
+		// silently drops a note the socket never carried.
+		const file = new TFile("big.md");
+		(file as unknown as { stat: unknown }).stat = {
+			mtime: Date.now(),
+			ctime: 0,
+			size: 5 * 1024 * 1024,
+		};
+
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(batch).toHaveBeenCalledTimes(1);
+	});
+});
+
 describe("teardown: setCrdtManager(null) degrades subsequent edits to legacy", () => {
 	test("after teardown clears the crdt manager, handleModify routes to pushNote", async () => {
 		const engine = createEngine();
