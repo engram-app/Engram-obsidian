@@ -377,16 +377,28 @@ export class SyncEngine {
 		const manifest = await this.api.getManifest();
 		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
 		let applied = 0;
+		// Every path the server currently holds a note at. Lets us tell a
+		// CROSS-WIRE from an IN-FLIGHT RENAME below.
+		const manifestPaths = new Set(manifest.notes.map((n) => n.path));
 		for (const note of manifest.notes) {
 			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
-			// Fill only ids we don't already know. This repairs a drifted/empty map
-			// (server id absent locally, e.g. a wrong id minted by getOrMint, or no
-			// entry at all) because a wrong/absent id fails this guard and gets set.
-			// But it must NOT overwrite an id we ALREADY map: the manifest is a
-			// snapshot that can be stale during an in-flight rename, and re-setting
-			// the old path would clobber the reverse index (byId) and resurrect the
-			// old path on disk/server (the test_10 rename-propagation regression).
-			if (this.noteIdMap.pathForId(note.id)) continue;
+			const localPath = this.noteIdMap.pathForId(note.id);
+			if (localPath === note.path) continue; // already correct — nothing to do
+			if (localPath !== null && !manifestPaths.has(localPath)) {
+				// The id maps to a path the server does NOT list. That's an
+				// in-flight rename (or a local-only note) whose new path this
+				// manifest snapshot hasn't caught up to — the local mapping is
+				// newer. Re-setting the stale manifest path would clobber the
+				// reverse index and resurrect the old path (test_10 regression).
+				continue;
+			}
+			// Otherwise the manifest wins. Either the id is unknown locally
+			// (drifted/empty map, or a wrong id minted by getOrMint), OR it is
+			// cross-wired onto another note's real path (localPath is itself a
+			// manifest path, owned by a different id). Both are data-loss vectors:
+			// a stale/cross-wired pathForId sends inbound CRDT content to the wrong
+			// file. Rebind to the authoritative path (set() evicts the stale
+			// forward + reverse entries so the map stays a clean bijection).
 			this.noteIdMap.set(note.path, note.id);
 			applied++;
 		}

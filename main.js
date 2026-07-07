@@ -5292,9 +5292,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.noteIdMap) return 0;
     let manifest = await this.api.getManifest();
     if (!manifest) return 0;
-    let applied = 0;
-    for (let note of manifest.notes)
-      note.id && (this.noteIdMap.pathForId(note.id) || (this.noteIdMap.set(note.path, note.id), applied++));
+    let applied = 0, manifestPaths = new Set(manifest.notes.map((n) => n.path));
+    for (let note of manifest.notes) {
+      if (!note.id) continue;
+      let localPath = this.noteIdMap.pathForId(note.id);
+      localPath !== note.path && (localPath !== null && !manifestPaths.has(localPath) || (this.noteIdMap.set(note.path, note.id), applied++));
+    }
     return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), applied;
   }
   isNoteConfirmed(noteId) {
@@ -20481,7 +20484,9 @@ var NoteIdMap = class _NoteIdMap {
   }
   set(path, id2) {
     let oldId = this.byPath.get(path);
-    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId), this.byPath.set(path, id2), this.byId.set(id2, path);
+    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId);
+    let oldPath = this.byId.get(id2);
+    oldPath !== void 0 && oldPath !== path && this.byPath.delete(oldPath), this.byPath.set(path, id2), this.byId.set(id2, path);
   }
   delete(path) {
     let id2 = this.byPath.get(path);

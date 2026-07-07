@@ -47,6 +47,20 @@ describe("NoteIdMap", () => {
 		expect(m.pathForId("id-a")).toBe("b.md");
 	});
 
+	it("set reassigning an id to a new path evicts the id's stale forward entry (bijection)", () => {
+		// Data-loss root cause: reassigning an id must leave EXACTLY one path
+		// pointing at it. Before the fix, set() cleaned the path's old id but not
+		// the id's old path, so both paths kept resolving to the id and
+		// pathForId(id) flip-flopped — inbound CRDT content for `id` could flush
+		// onto the wrong file.
+		const m = new NoteIdMap();
+		m.set("A.md", "X");
+		m.set("B.md", "X"); // X now lives at B.md; A.md's stale entry must go
+		expect(m.pathForId("X")).toBe("B.md");
+		expect(m.get("B.md")).toBe("X");
+		expect(m.get("A.md")).toBeNull();
+	});
+
 	it("getOrMint reuses an existing id and mints+persists a new one on miss", () => {
 		const m = new NoteIdMap();
 		m.set("a.md", "id-1");

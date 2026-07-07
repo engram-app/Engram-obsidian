@@ -56,6 +56,14 @@ export class NoteIdMap {
 		if (oldId !== undefined && oldId !== id) {
 			this.byId.delete(oldId);
 		}
+		// ...and if `id` previously lived at a DIFFERENT path, evict that stale
+		// forward entry too. Otherwise both paths keep resolving to `id` (two
+		// paths -> one id) and pathForId(id) points at whichever was set last —
+		// letting inbound CRDT content for `id` flush onto the wrong file.
+		const oldPath = this.byId.get(id);
+		if (oldPath !== undefined && oldPath !== path) {
+			this.byPath.delete(oldPath);
+		}
 		this.byPath.set(path, id);
 		this.byId.set(id, path);
 	}
