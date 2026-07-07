@@ -1281,17 +1281,42 @@ export default class EngramSyncPlugin extends Plugin {
 						// next write back to durable REST; the catch-up pull below re-
 						// confirms whatever changed.
 						this.syncEngine.clearConfirmedNoteIds();
-						// Reset all CRDT enrollments so a fresh startSync STEP1
-						// handshake fires for each open note after reconnect.
-						this.crdtEnrollment?.resetAll();
-						this.syncEngine.pull().catch((e) => {
-							// biome-ignore lint/suspicious/noConsole: error boundary
-							console.error("Engram Sync: catch-up pull failed", e);
-							rlog().error(
-								"channel",
-								`Catch-up pull on reconnect failed: ${errMsg(e)}`,
-							);
-						});
+						// Repair a stale noteIdMap from the server manifest BEFORE
+						// re-enrolling. Live pull of an existing note is CRDT-only and
+						// onFlushToDisk resolves the disk path via noteIdMap.pathForId;
+						// after the id-keying cutover a cursor-bearing device never
+						// re-ran bootstrap(), so its map stayed stale and every inbound
+						// frame stranded ("no known path"). The manifest is authoritative
+						// id->path (id+path+hash only, no content), so reconciling it here
+						// makes live pull resolve. Await it so the map is ready before the
+						// STEP1/STEP2 handshakes below deliver content.
+						void (async () => {
+							try {
+								const n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+								if (n > 0) {
+									rlog().info(
+										"crdt",
+										`noteIdMap reconciled from manifest: ${n} notes`,
+									);
+								}
+							} catch (e) {
+								rlog().warn(
+									"crdt",
+									`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
+								);
+							}
+							// Reset all CRDT enrollments so a fresh startSync STEP1
+							// handshake fires for each open note after reconnect.
+							this.crdtEnrollment?.resetAll();
+							this.syncEngine.pull().catch((e) => {
+								// biome-ignore lint/suspicious/noConsole: error boundary
+								console.error("Engram Sync: catch-up pull failed", e);
+								rlog().error(
+									"channel",
+									`Catch-up pull on reconnect failed: ${errMsg(e)}`,
+								);
+							});
+						})();
 					} else {
 						// On disconnect: if onCrdtJoined has already fired for this
 						// channel session (crdtEverJoined), KEEP the CRDT manager wired

@@ -383,6 +383,11 @@ export interface AttachmentChangesResponse {
 
 /** A single entry in the sync manifest (path + content hash). */
 export interface ManifestEntry {
+	/** Stable server note_id (backend render_manifest projects it, T3.6+). The
+	 *  authoritative id->path source the plugin reconciles noteIdMap from so
+	 *  inbound CRDT frames (keyed by note_id) can resolve a disk path. Optional
+	 *  to tolerate a pre-T3.6 self-host backend that omitted it. */
+	id?: string;
 	path: string;
 	content_hash: string;
 	version?: number;

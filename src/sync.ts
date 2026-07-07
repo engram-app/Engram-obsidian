@@ -359,6 +359,37 @@ export class SyncEngine {
 		this.noteIdMap = map;
 	}
 
+	/** Populate `noteIdMap` authoritatively from the server manifest's
+	 *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
+	 *  id+path+hash only, ~µs/row server-side).
+	 *
+	 *  This is the fix for inbound CRDT updates stranding with "no known path"
+	 *  after the id-keying cutover: live pull of an existing note is CRDT-only
+	 *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
+	 *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
+	 *  whose sync cursor is already set (every normal reconnect) never repaired
+	 *  a stale map — `pathForId` returned null and every inbound frame was
+	 *  dropped until a manual full sync. Reconciling from the manifest on connect
+	 *  keeps the map authoritative so live pull just works.
+	 *
+	 *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
+	 *  path (the manifest is the source of truth). Returns mappings applied. */
+	async reconcileNoteIdMapFromManifest(): Promise<number> {
+		if (!this.noteIdMap) return 0;
+		const manifest = await this.api.getManifest();
+		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		let applied = 0;
+		for (const note of manifest.notes) {
+			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
+			this.noteIdMap.set(note.path, note.id);
+			applied++;
+		}
+		if (applied > 0) {
+			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+		}
+		return applied;
+	}
+
 	/** note_ids the SERVER is known to already have a note row for — learned
 	 *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
 	 *  successful REST push response. The backend's CRDT channel now requires
@@ -622,6 +653,11 @@ export class SyncEngine {
 		private saveData: (data: {
 			lastSync?: string;
 			syncCursor?: string | null;
+			// Signals the engine mutated the shared noteIdMap and it should be
+			// persisted. main.ts's savePluginData writes the map instance directly
+			// (same object), so the callback need not read this — it just triggers
+			// the wholesale save.
+			noteIds?: Record<string, string>;
 		}) => Promise<void>,
 	) {
 		this.parseIgnorePatterns();
