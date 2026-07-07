@@ -196,6 +196,13 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  load and perturbs in-flight sync timing. Reset on vault change. */
 	private crdtMapReconciled = false;
 
+	/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
+	 *  here (id -> latest content) and a single manifest reconcile + retry drains
+	 *  them, so a mid-session map drift self-heals without one fetch per frame. */
+	private static readonly STRAND_HEAL_DEBOUNCE_MS = 750;
+	private readonly strandedFlushes = new Map<string, string>();
+	private strandHealTimer: number | null = null;
+
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
 	 *  open is a silent no-op. See single-flight.ts. */
@@ -749,7 +756,44 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 	}
 
+	/** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
+	 *  reconciling the noteIdMap from the server manifest, then retrying the
+	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
+	 *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
+	 *  once-per-connect reconcile cannot catch. */
+	private healUnknownNoteId(noteId: string, content: string): void {
+		this.strandedFlushes.set(noteId, content); // keep the latest content per id
+		if (this.strandHealTimer !== null) return;
+		this.strandHealTimer = window.setTimeout(() => {
+			this.strandHealTimer = null;
+			void this.drainStrandedFlushes();
+		}, EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS);
+	}
+
+	private async drainStrandedFlushes(): Promise<void> {
+		const pending = new Map(this.strandedFlushes);
+		this.strandedFlushes.clear();
+		try {
+			await this.syncEngine.reconcileNoteIdMapFromManifest();
+		} catch (e) {
+			rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
+		}
+		for (const [id, content] of pending) {
+			const path = this.noteIdMap.pathForId(id);
+			if (!path) {
+				rlog().warn(
+					"crdt",
+					`onFlushToDisk: still no path for note_id=${id} after heal — retained in Y.Doc`,
+				);
+				continue;
+			}
+			if (this.crdtLiveViews?.isBound(path)) continue; // live editor owns disk
+			void this.syncEngine.flushFromCrdt(path, content);
+		}
+	}
+
 	onunload(): void {
+		if (this.strandHealTimer !== null) window.clearTimeout(this.strandHealTimer);
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
 		activeDocument.body.classList.remove("engram-vault-sync-active");
@@ -1447,16 +1491,12 @@ export default class EngramSyncPlugin extends Plugin {
 							if (!path) {
 								// Unknown id: a crdt_msg/STEP2 arrived for a note this device
 								// hasn't learned a path for yet (e.g. a brand-new note created
-								// on another device, discovered via crdt_doc_ready before this
-								// device's next REST pull). The content is safely retained in
-								// the Y.Doc/IndexedDB — nothing is lost. The next regular sync
-								// pull (applySyncChange) independently materializes the file
-								// from its own REST-fetched body once it learns the id->path
-								// mapping, so no explicit retry is needed here.
-								rlog().warn(
-									"crdt",
-									`onFlushToDisk: no known path for note_id=${noteId} — content retained in Y.Doc, awaiting a sync pull to learn the path`,
-								);
+								// on another device seen before the next pull, OR a mid-session
+								// drift where the map lost/diverged this id. Content is safe in
+								// the Y.Doc meanwhile; healUnknownNoteId re-resolves the id from
+								// the server manifest and retries the flush so a drift self-heals
+								// instead of stranding forever.
+								this.healUnknownNoteId(noteId, content);
 								return Promise.resolve();
 							}
 							return this.crdtLiveViews?.isBound(path)

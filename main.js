@@ -20844,6 +20844,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
      *  not on every reconnect — re-fetching the manifest on each network blip adds
      *  load and perturbs in-flight sync timing. Reset on vault change. */
     this.crdtMapReconciled = !1;
+    this.strandedFlushes = /* @__PURE__ */ new Map();
+    this.strandHealTimer = null;
     /** Single-flight guard so a vault switch (or any racing trigger) cannot
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
@@ -21121,9 +21123,40 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }
     });
   }
+  /** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
+   *  reconciling the noteIdMap from the server manifest, then retrying the
+   *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
+   *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
+   *  once-per-connect reconcile cannot catch. */
+  healUnknownNoteId(noteId, content) {
+    this.strandedFlushes.set(noteId, content), this.strandHealTimer === null && (this.strandHealTimer = window.setTimeout(() => {
+      this.strandHealTimer = null, this.drainStrandedFlushes();
+    }, _EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS));
+  }
+  async drainStrandedFlushes() {
+    var _a;
+    let pending = new Map(this.strandedFlushes);
+    this.strandedFlushes.clear();
+    try {
+      await this.syncEngine.reconcileNoteIdMapFromManifest();
+    } catch (e) {
+      rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
+    }
+    for (let [id2, content] of pending) {
+      let path = this.noteIdMap.pathForId(id2);
+      if (!path) {
+        rlog().warn(
+          "crdt",
+          `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retained in Y.Doc`
+        );
+        continue;
+      }
+      (_a = this.crdtLiveViews) != null && _a.isBound(path) || this.syncEngine.flushFromCrdt(path, content);
+    }
+  }
   onunload() {
     var _a, _b, _c, _d, _e, _f;
-    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    this.strandHealTimer !== null && window.clearTimeout(this.strandHealTimer), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -21428,10 +21461,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           onFlushToDisk: (noteId, content) => {
             var _a2;
             let path = this.noteIdMap.pathForId(noteId);
-            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (rlog().warn(
-              "crdt",
-              `onFlushToDisk: no known path for note_id=${noteId} \u2014 content retained in Y.Doc, awaiting a sync pull to learn the path`
-            ), Promise.resolve());
+            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (this.healUnknownNoteId(noteId, content), Promise.resolve());
           },
           // Adopt-first seed gate: never re-encode content the server
           // already holds (see CrdtManagerOptions.isUnchangedSynced).
@@ -21710,5 +21740,8 @@ Last sync: ${date.toLocaleString()}`;
     }, _EngramSyncPlugin.FALLBACK_POLL_MS), this.registerInterval(this.syncInterval));
   }
 };
-_EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
+/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
+ *  here (id -> latest content) and a single manifest reconcile + retry drains
+ *  them, so a mid-session map drift self-heals without one fetch per frame. */
+_EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS = 750, _EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
 var EngramSyncPlugin = _EngramSyncPlugin;
