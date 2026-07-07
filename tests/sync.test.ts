@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { encodeCursor } from "../src/cursor";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { encodeCursor } from "../src/cursor";
 import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
