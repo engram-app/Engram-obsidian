@@ -3482,6 +3482,32 @@ export class SyncEngine {
 
 		for (let i = 0; i < files.length; i++) {
 			const file = files[i]!;
+			// CRDT owns the body of a confirmed, live note: the socket delivers its
+			// edits (pushFile routes such notes through CRDT and never REST, even
+			// under force). Re-POSTing the full body here duplicates the content —
+			// the server re-seeds it into the live CRDT room, so the just-typed line
+			// reappears. Mirror pushFile's CRDT gate (and the pull-side C1 guard).
+			// An unconfirmed note (e.g. after a reconnect clears confirmations, or a
+			// never-synced note) still falls through to REST so the row is (re)created
+			// and its id re-verified — the durable fallback stays intact.
+			//
+			// Size gate: CRDT declines notes over MAX_CRDT_NOTE_BYTES (routeModify
+			// returns false → pushFile REST-pushes them), so an oversized note is NOT
+			// CRDT-owned and must reach REST here too — both its recovery push and the
+			// >10 MB → 413 too_large path below. stat.size is the on-disk UTF-8 byte
+			// count, the same measure routeModify caps on.
+			const noteId = this.noteIdMap?.get(file.path) ?? null;
+			if (
+				this.crdt &&
+				noteId &&
+				this.isNoteConfirmed(noteId) &&
+				(this.crdtLive?.() ?? true) &&
+				file.stat.size <= MAX_CRDT_NOTE_BYTES
+			) {
+				done++;
+				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
+				continue;
+			}
 			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
 				oversized.push(file);
 				continue;
