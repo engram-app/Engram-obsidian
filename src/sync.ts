@@ -374,35 +374,77 @@ export class SyncEngine {
 	 *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
 	 *  path (the manifest is the source of truth). Returns mappings applied. */
 	/** Server-authoritative path -> owning note_id snapshot, refreshed by
-	 *  reconcileNoteIdMapFromManifest (once per connect) or fetched on demand
-	 *  by manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
+	 *  reconcileNoteIdMapFromManifest or (re)fetched on demand by
+	 *  manifestOwnerOf. Used to verify the local map before DESTRUCTIVE ops
 	 *  (moveIfIdRelocated's trash) — the local map itself can be cross-wired,
 	 *  so it cannot vouch for itself. */
 	private manifestPathOwners: Map<string, string> | null = null;
 
+	/** Epoch ms of the last manifest fetch ATTEMPT (success or failure). A
+	 *  destructive verdict is only trusted from a snapshot younger than the
+	 *  TTL: a stale snapshot returns a false "absent" for any note created
+	 *  after it was taken, which would green-light trashing that note. The
+	 *  attempt stamp also negative-caches failures so a manifest-less backend
+	 *  doesn't get a fetch per relocation event. */
+	private manifestOwnersFetchedAt = 0;
+	private static readonly MANIFEST_OWNERS_TTL_MS = 30_000;
+
+	/** Paths whose id-keyed-move trash was REFUSED (ownership unknowable or
+	 *  cross-wired). If such a path is genuinely a renamed-away old copy, the
+	 *  refusal leaves a duplicate file no id references — nothing else would
+	 *  ever clean it. Swept by the next reconcile against a fresh manifest:
+	 *  absent from the manifest + unclaimed by the local map -> trash then. */
+	private pendingOrphanSweep = new Set<string>();
+
 	/** Who does the server say owns `path` (normalized)? Returns the owning id,
-	 *  null when the manifest confirms the path is absent, or undefined when
-	 *  ownership is unknowable (no manifest endpoint / fetch failed) — callers
-	 *  must treat undefined as "not safe to destroy". Uses the last snapshot;
-	 *  fetches one if none exists yet (rare: a WS relocation arriving before
-	 *  the first reconcile of the session). */
+	 *  null when a FRESH manifest confirms the path is absent, or undefined
+	 *  when ownership is unknowable (no manifest endpoint / fetch failed) —
+	 *  callers must treat undefined as "not safe to destroy". Refreshes the
+	 *  snapshot when older than the TTL; trash decisions are rare (renames),
+	 *  so the refresh cost lands only on that cold path. */
 	private async manifestOwnerOf(path: string): Promise<string | null | undefined> {
-		if (!this.manifestPathOwners) {
+		const age = Date.now() - this.manifestOwnersFetchedAt;
+		const fresh =
+			this.manifestOwnersFetchedAt > 0 && age <= SyncEngine.MANIFEST_OWNERS_TTL_MS;
+		if (!fresh) {
+			this.manifestOwnersFetchedAt = Date.now();
+			// A failed/absent refresh leaves NO trustworthy snapshot: keeping a
+			// stale one would let its false "absent" answers authorize a wrong
+			// trash. Refusing (undefined) is always recoverable; a trash is not.
+			this.manifestPathOwners = null;
 			try {
 				const manifest = await this.api.getManifest();
-				if (!manifest) return undefined;
-				this.cacheManifestOwners(manifest);
+				if (manifest) this.cacheManifestOwners(manifest);
 			} catch {
-				return undefined;
+				// negative-cached by the attempt stamp above
 			}
 		}
-		return this.manifestPathOwners?.get(path) ?? null;
+		if (!this.manifestPathOwners) return undefined;
+		return this.manifestPathOwners.get(path) ?? null;
 	}
 
 	private cacheManifestOwners(manifest: ManifestResponse): void {
 		this.manifestPathOwners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
+		this.manifestOwnersFetchedAt = Date.now();
+	}
+
+	/** Trash files whose refused id-keyed-move turned out to be a genuine
+	 *  rename after all: the path is absent from the (fresh) manifest and no
+	 *  local id claims it — a duplicate old copy nothing else will clean. */
+	private async sweepPendingOrphans(): Promise<void> {
+		for (const p of [...this.pendingOrphanSweep]) {
+			this.pendingOrphanSweep.delete(p);
+			if (this.manifestPathOwners?.has(p)) continue; // live server-side note
+			if (this.noteIdMap?.get(p)) continue; // locally claimed again
+			const file = this.app.vault.getFileByPath(p);
+			if (!file) continue;
+			this.syncState.delete(p);
+			this.baseStore?.delete(p);
+			await this.app.fileManager.trashFile(file);
+			rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`);
+		}
 	}
 
 	async reconcileNoteIdMapFromManifest(): Promise<number> {
@@ -439,6 +481,9 @@ export class SyncEngine {
 		if (applied > 0) {
 			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 		}
+		// The manifest in hand is as fresh as it gets — resolve any trashes the
+		// destructive-op guard deferred while ownership was unknowable.
+		await this.sweepPendingOrphans();
 		return applied;
 	}
 
@@ -2587,6 +2632,10 @@ export class SyncEngine {
 			// touching priorPath's file, syncState, or baseStore (they belong to
 			// whatever note actually lives there).
 			this.noteIdMap?.set(newPath, id);
+			// If this refusal was wrong (it WAS a genuine rename), the old file
+			// is now a duplicate no id references — queue it for the orphan
+			// sweep, which re-judges against a fresh manifest on reconcile.
+			this.pendingOrphanSweep.add(normalizePath(priorPath));
 			return;
 		}
 		this.noteIdMap?.rename(priorPath, newPath);
