@@ -49,7 +49,6 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
-import type { CrdtChannel } from "./crdt/channel";
 import type { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { ycollabExtension } from "./crdt/live/ycollab-binding";
@@ -172,7 +171,6 @@ export default class EngramSyncPlugin extends Plugin {
 	private baseStore: BaseStore | null = null;
 	private explicitFolders: ExplicitFolders | null = null;
 	private crdtManager: CrdtManager | null = null;
-	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
 	/** CRDT data-plane glue (manager/channel/enrollment + id->path callbacks +
 	 *  strand-heal), extracted from the inline setupNoteStream block. Rebuilt on
@@ -1201,7 +1199,6 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtWiring = null;
 		void this.crdtManager?.destroy();
 		this.crdtManager = null;
-		this.crdtChannel = null;
 		this.crdtEnrollment?.resetAll();
 		this.crdtEnrollment = null;
 		// Teardown must NOT depend on the connection-state transition that nulls
@@ -1474,7 +1471,6 @@ export default class EngramSyncPlugin extends Plugin {
 					});
 					this.crdtWiring = wiring;
 					this.crdtManager = wiring.manager;
-					this.crdtChannel = wiring.channel;
 					this.crdtEnrollment = wiring.enrollment;
 					// Level-triggered discovery: a pull that surfaces a CRDT-managed
 					// note we don't have locally enrolls it (sync-step-1), so the body
