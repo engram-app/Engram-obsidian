@@ -62,6 +62,7 @@ import { EmailCaptureModal } from "./email-capture-modal";
 import { ExplicitFolders } from "./explicit-folders";
 import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
 import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
+import { ReportIssueModal } from "./report-issue-modal";
 import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
 import { SyncLog } from "./sync-log";
 import { SyncLogModal } from "./sync-log-modal";
@@ -514,6 +515,14 @@ export default class EngramSyncPlugin extends Plugin {
 			name: "Show sync log",
 			callback: () => {
 				new SyncLogModal(this.app, this.syncLog).open();
+			},
+		});
+
+		this.addCommand({
+			id: "report-issue",
+			name: "Report an issue",
+			callback: () => {
+				new ReportIssueModal(this.app, this.api, this.manifest.version).open();
 			},
 		});
 

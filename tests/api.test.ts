@@ -590,6 +590,23 @@ describe("EngramApi", () => {
 		});
 	});
 
+	describe("reportIssue", () => {
+		test("reportIssue POSTs description, surface, and app_version to /reports", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 201,
+				json: { report: { id: "1", status: "open" } },
+			} as any);
+			await api.reportIssue("broken sync", "1.9.24");
+			expect(mockRequestUrl).toHaveBeenCalledWith(
+				expect.objectContaining({
+					method: "POST",
+					url: `${TEST_API_BASE}/reports`,
+					body: JSON.stringify({ description: "broken sync", surface: "plugin", app_version: "1.9.24" }),
+				}),
+			);
+		});
+	});
+
 	// -------------------------------------------------------------------------
 	// 402 standardization — see spec §4.6
 	// All write paths returning 402 must surface a LimitExceededError carrying
