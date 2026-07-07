@@ -6351,21 +6351,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
     }
     if (this.shouldIgnore(event.path)) return;
-    if (devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`), this.pushing.has(event.path)) {
-      rlog().info("ws", `Echo skip (pushing): ${event.path}`);
-      return;
-    }
-    if (this.recentlyPushed.has(event.path)) {
-      rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
-      return;
-    }
+    devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
+    if (event.event_type === "upsert" && !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path), event.event_type !== "delete") {
+      if (this.pushing.has(event.path)) {
+        rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+        return;
+      }
+      if (this.recentlyPushed.has(event.path)) {
+        rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+        return;
+      }
+    }
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
       let stored = this.syncState.get((0, import_obsidian21.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
@@ -6378,14 +6381,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian21.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
-      if (existing && (await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized)), normalized.endsWith(".md")) {
-        let crdtNoteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
-        (_f = this.noteIdMap) == null || _f.delete(normalized), crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
+      if (existing) {
+        let ownedId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(normalized)) != null ? _d : null;
+        if (ownedId && this.isNoteConfirmed(ownedId) && ((_e = this.noteIdMap) == null ? void 0 : _e.pathForId(ownedId)) === normalized) {
+          rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
+          return;
+        }
+        await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized);
+      }
+      if (normalized.endsWith(".md")) {
+        let crdtNoteId = (_h = (_g = this.noteIdMap) == null ? void 0 : _g.get(normalized)) != null ? _h : null;
+        (_i = this.noteIdMap) == null || _i.delete(normalized), crdtNoteId && (await ((_j = this.crdt) == null ? void 0 : _j.removeDoc(crdtNoteId)), (_k = this.crdtEnrollment) == null || _k.reset(crdtNoteId));
       }
       return;
     }
-    if (event.event_type === "upsert") {
-      !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path);
+    if (event.event_type === "upsert")
       try {
         if (isAttachment) {
           let attachment = await this.api.getAttachment(event.path);
@@ -6400,19 +6410,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_j = event.id) != null ? _j : (_i = this.noteIdMap) != null && _i.get(event.path))) {
-          let noteId = (_l = event.id) != null ? _l : (_k = this.noteIdMap) == null ? void 0 : _k.get(event.path);
-          (_m = this.noteIdMap) == null || _m.set(event.path, noteId), this.confirmNoteId(noteId), (_n = this.crdtEnrollment) == null || _n.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+        } else if (this.crdt && event.path.endsWith(".md") && ((_m = event.id) != null ? _m : (_l = this.noteIdMap) != null && _l.get(event.path))) {
+          let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path);
+          (_p = this.noteIdMap) == null || _p.set(event.path, noteId), this.confirmNoteId(noteId), (_q = this.crdtEnrollment) == null || _q.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_o = event.title) != null ? _o : "",
+            title: (_r = event.title) != null ? _r : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_p = event.folder) != null ? _p : "",
-            tags: (_q = event.tags) != null ? _q : [],
-            mtime: (_r = event.mtime) != null ? _r : Date.now(),
-            updated_at: (_s = event.updated_at) != null ? _s : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_s = event.folder) != null ? _s : "",
+            tags: (_t2 = event.tags) != null ? _t2 : [],
+            mtime: (_u = event.mtime) != null ? _u : Date.now(),
+            updated_at: (_v = event.updated_at) != null ? _v : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6422,19 +6432,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_t2 = note.content_hash) != null ? _t2 : event.content_hash,
+            content_hash: (_w = note.content_hash) != null ? _w : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_u = note.version) != null ? _u : event.version
+            version: (_x = note.version) != null ? _x : event.version
           });
         }
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
-    }
   }
   /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
    *  `newPath`, the server moved one row (a rename resurrects the same note_id

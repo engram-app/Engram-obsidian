@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { encodeCursor } from "../src/cursor";
 import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
@@ -583,6 +584,102 @@ describe("SyncEngine.handleStreamEvent", () => {
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 		expect(mockApi.getNote).not.toHaveBeenCalled();
+	});
+
+	test("delete event is honored even when the path was recently pushed", async () => {
+		// An id-keyed rename resurrects the old path on the receiver (its CRDT
+		// room is still bound there, so incoming channel traffic re-pushes it).
+		// That push lands the old path in the echo-suppression set. The server's
+		// authoritative delete for the old path then arrives — echo suppression
+		// must NOT swallow it, or the renamed-away file lingers forever (e2e
+		// test_10). A delete is never an echo of the client's own content push.
+		const engine = createEngine();
+		const path = "E2E/RenameOld.md";
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+		(engine as unknown as { markRecentlyPushed(p: string): void }).markRecentlyPushed(path);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path,
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+	});
+
+	test("delete for a live confirmed note defers to pull instead of trashing it", async () => {
+		// A WS delete is unordered and can be a STALE echo — e.g. of our own
+		// delete→recreate at the same path. Trashing the live recreated file
+		// would lose the user's content. When the path canonically holds a
+		// confirmed note we own, the delete is ambiguous (stale echo vs. a real
+		// remote delete), so defer to the seq-ordered pull, which reconciles
+		// correctly. (A renamed-away old path is NOT canonical for its id, so it
+		// is trashed by the branch — see the id-keyed move tests.)
+		const engine = createEngine();
+		engine.setSyncCursor("CUR-1"); // pull() → pullViaCursor → getSyncChanges
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/Live.md", "id-live");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
+
+		const liveFile = new TFile("E2E/Live.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+		(mockApi.getSyncChanges as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/Live.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
+	});
+
+	test("delete trashes when the path's id is not confirmed (defer guard falls through)", async () => {
+		// Owned but unconfirmed id → not a note we know the server has under this
+		// id → don't defer; the WS delete is honored (trashed) as before.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/Unconf.md", "id-unconf"); // set but never confirmed
+		engine.setNoteIdMap(noteIdMap);
+		const file = new TFile("E2E/Unconf.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/Unconf.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
+	test("delete trashes a renamed-away old path (id resolves elsewhere, not canonical)", async () => {
+		// The id now lives at the NEW path (pathForId !== oldPath), so the old path
+		// is a duplicate to remove — the defer guard must NOT fire (test_10 invariant).
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		// Set old first, then new: byPath keeps a stale old→id entry while byId
+		// (pathForId) resolves to the new path — the delete-first rename state.
+		noteIdMap.set("E2E/RenameOld.md", "id-moved");
+		noteIdMap.set("E2E/RenameNew.md", "id-moved");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-moved");
+		const oldFile = new TFile("E2E/RenameOld.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(oldFile);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/RenameOld.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
 	});
 
 	test("ignores events for ignored paths", async () => {

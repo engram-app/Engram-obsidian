@@ -2348,18 +2348,35 @@ export class SyncEngine {
 		devLog().log("ws", `${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 		rlog().info("ws", `Event: ${event.event_type} ${event.kind ?? "note"}: ${event.path}`);
 
-		// Echo suppression — skip events for notes we're currently pushing
-		// or have recently finished pushing (WebSocket events arrive after push completes)
-		if (this.pushing.has(event.path)) {
-			rlog().info("ws", `Echo skip (pushing): ${event.path}`);
-			return;
-		}
-		if (this.recentlyPushed.has(event.path)) {
-			rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
-			return;
+		const isAttachment = event.kind === "attachment";
+
+		// Id-keyed relocation must run BEFORE echo suppression: an echo-skipped
+		// upsert at the NEW path would otherwise leave this device's CRDT room
+		// bound to the OLD path, which then perpetually resurrects it (e2e
+		// test_10). moveIfIdRelocated is idempotent — it no-ops unless the id
+		// already maps to a different local path. Gated on a known id
+		// (attachments aren't keyed).
+		if (event.event_type === "upsert" && !isAttachment && event.id) {
+			await this.moveIfIdRelocated(event.id, event.path);
 		}
 
-		const isAttachment = event.kind === "attachment";
+		// Echo suppression — skip UPSERT events for notes we're currently pushing
+		// or have recently finished pushing (the server broadcasts our own push
+		// back to us). DELETE is exempt: a delete is never an echo of a content
+		// push, and suppressing it lets a renamed-away old path linger forever
+		// when the receiver resurrected it into the push set (id-keyed rename —
+		// its CRDT room is still bound to the old path, so channel traffic
+		// re-pushes it). A redundant delete just no-ops in the delete branch below.
+		if (event.event_type !== "delete") {
+			if (this.pushing.has(event.path)) {
+				rlog().info("ws", `Echo skip (pushing): ${event.path}`);
+				return;
+			}
+			if (this.recentlyPushed.has(event.path)) {
+				rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
+				return;
+			}
+		}
 
 		// Protocol rev — hash-compare dedupe: if the event's content_hash
 		// matches the server hash we already hold for this path, the local
@@ -2382,6 +2399,27 @@ export class SyncEngine {
 			const normalized = normalizePath(event.path);
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
+				// A WS delete is unordered and can be a STALE echo — e.g. of our own
+				// delete→recreate at the same path (the recreate re-established a live
+				// note here). If this path canonically holds a CONFIRMED note we own,
+				// trashing now could destroy the recreated file, and the delete is
+				// ambiguous (stale echo vs. a real remote delete). Defer to the
+				// seq-ordered pull, which reconciles delete-vs-recreate correctly.
+				// A renamed-away old path is handled either way (test_10): once
+				// moveIfIdRelocated has run it is non-canonical (its id resolves to the
+				// new path) and is trashed here; if the delete arrives FIRST it is still
+				// canonical and defers, and the pull's moveIfIdRelocated trashes it — no
+				// duplicate leaks in either ordering.
+				const ownedId = this.noteIdMap?.get(normalized) ?? null;
+				if (
+					ownedId &&
+					this.isNoteConfirmed(ownedId) &&
+					this.noteIdMap?.pathForId(ownedId) === normalized
+				) {
+					rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`);
+					void this.pull();
+					return;
+				}
 				await this.app.fileManager.trashFile(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
@@ -2405,14 +2443,8 @@ export class SyncEngine {
 		}
 
 		if (event.event_type === "upsert") {
-			// Belt-and-suspenders id-keyed move: a rename normally also emits a
-			// separate delete broadcast for the old path, but if that is missed or
-			// reordered the upsert alone would orphan the old file. Same handling as
-			// the pull feed (moveIfIdRelocated); no-ops unless the id already maps to
-			// a different local path. Gated on a known id (attachments aren't keyed).
-			if (!isAttachment && event.id) {
-				await this.moveIfIdRelocated(event.id, event.path);
-			}
+			// Id-keyed relocation already ran above (hoisted before echo
+			// suppression so an echo-skipped rename still relocates the room).
 			try {
 				if (isAttachment) {
 					const attachment = await this.api.getAttachment(event.path);
