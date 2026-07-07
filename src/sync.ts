@@ -381,6 +381,14 @@ export class SyncEngine {
 		let applied = 0;
 		for (const note of manifest.notes) {
 			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
+			// Fill only ids we don't already know. This repairs a drifted/empty map
+			// (server id absent locally, e.g. a wrong id minted by getOrMint, or no
+			// entry at all) because a wrong/absent id fails this guard and gets set.
+			// But it must NOT overwrite an id we ALREADY map: the manifest is a
+			// snapshot that can be stale during an in-flight rename, and re-setting
+			// the old path would clobber the reverse index (byId) and resurrect the
+			// old path on disk/server (the test_10 rename-propagation regression).
+			if (this.noteIdMap.pathForId(note.id)) continue;
 			this.noteIdMap.set(note.path, note.id);
 			applied++;
 		}

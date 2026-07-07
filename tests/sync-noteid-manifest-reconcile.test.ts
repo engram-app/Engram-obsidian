@@ -77,6 +77,23 @@ describe("SyncEngine.reconcileNoteIdMapFromManifest", () => {
 		expect(map.pathForId("local-mint-wrong")).toBeNull();
 	});
 
+	test("does NOT clobber a known id with a stale manifest path (in-flight rename)", async () => {
+		// Manifest snapshot is stale: it still lists the note at its OLD path while
+		// the device has already renamed it locally (a reconnect landing mid-rename).
+		const { engine, map } = makeEngine([{ id: "X", path: "Old.md", content_hash: "h" }]);
+		// Local already renamed Old.md -> New.md for the same id (handleRename).
+		map.set("New.md", "X");
+		expect(map.pathForId("X")).toBe("New.md");
+
+		await engine.reconcileNoteIdMapFromManifest();
+
+		// The reconcile must NOT resurrect the old path from the stale manifest —
+		// doing so clobbers the reverse index and re-creates Old.md on disk/server
+		// (the test_10 rename-propagation regression).
+		expect(map.pathForId("X")).toBe("New.md");
+		expect(map.get("Old.md")).toBeNull();
+	});
+
 	test("persists the map so it survives a reload", async () => {
 		const { engine, saveData } = makeEngine([{ id: "srv-1", path: "A.md", content_hash: "h" }]);
 

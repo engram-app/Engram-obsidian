@@ -5294,7 +5294,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!manifest) return 0;
     let applied = 0;
     for (let note of manifest.notes)
-      note.id && (this.noteIdMap.set(note.path, note.id), applied++);
+      note.id && (this.noteIdMap.pathForId(note.id) || (this.noteIdMap.set(note.path, note.id), applied++));
     return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), applied;
   }
   isNoteConfirmed(noteId) {
