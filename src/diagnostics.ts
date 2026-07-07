@@ -2,7 +2,7 @@
  * Verbose diagnostic firehose. Emits metadata-only log lines for vault and
  * workspace activity so a WS "blip" can be reconstructed from the client side.
  * NEVER logs note content: only path, event kind, byte counts, and timing.
- * Gated by the diagnosticMode setting (which itself requires remoteLoggingEnabled).
+ * Gated by the single diagnosticsEnabled setting.
  */
 import { type App, TFile, TFolder } from "obsidian";
 import { rlog } from "./remote-log";
@@ -24,11 +24,11 @@ export function formatVaultEvent(
 interface DiagnosticsHost {
 	app: App;
 	registerEvent(ref: unknown): void;
-	settings: { diagnosticMode: boolean };
+	settings: { diagnosticsEnabled: boolean };
 }
 
 export function registerDiagnostics(plugin: DiagnosticsHost): void {
-	const on = () => plugin.settings.diagnosticMode;
+	const on = () => plugin.settings.diagnosticsEnabled;
 	const emit = (kind: EventKind, path: string, extra?: Record<string, string | number>) => {
 		if (!on()) return;
 		rlog().diag("vault", formatVaultEvent(kind, path, extra));

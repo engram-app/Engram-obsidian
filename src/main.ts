@@ -33,6 +33,7 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
+import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
@@ -189,6 +190,20 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
 
+	/** Whether the noteIdMap has been reconciled from the server manifest this
+	 *  session. The reconcile repairs a stale/empty map (drift is a one-time
+	 *  startup/migration event), so it runs ONCE on the first successful connect,
+	 *  not on every reconnect — re-fetching the manifest on each network blip adds
+	 *  load and perturbs in-flight sync timing. Reset on vault change. */
+	private crdtMapReconciled = false;
+
+	/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
+	 *  here (id -> latest content) and a single manifest reconcile + retry drains
+	 *  them, so a mid-session map drift self-heals without one fetch per frame. */
+	private static readonly STRAND_HEAL_DEBOUNCE_MS = 750;
+	private readonly strandedFlushes = new Map<string, string>();
+	private strandHealTimer: number | null = null;
+
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
 	 *  open is a silent no-op. See single-flight.ts. */
@@ -222,7 +237,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// Wire the per-install device id (minted in loadSettings) onto the real
 		// api instance before any sync runs, so cursor pulls carry X-Device-Id.
 		this.api.setDeviceId(this.deviceId);
-		this.api.setTracingEnabled(this.settings.tracingEnabled);
+		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
 
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
@@ -236,7 +251,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.manifest.version,
 			Platform.isMobile ? "mobile" : "desktop",
 		);
-		remoteLogger.setEnabled(this.settings.remoteLoggingEnabled);
+		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
 		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
 			"lifecycle",
@@ -414,12 +429,18 @@ export default class EngramSyncPlugin extends Plugin {
 
 		registerDiagnostics(this);
 
-		// Flush remote logs when app goes to background (mobile)
+		// Mobile lifecycle: flush + persist on background, recover the socket on
+		// foreground. Mobile OSes suspend the WebSocket while backgrounded, so on
+		// resume the channel may be silently half-dead, so onResume probes it (and
+		// pulls a pending reconnect forward) instead of waiting ~30s for the next
+		// heartbeat tick, which is what made the first post-unlock sync feel laggy.
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
 			if (activeDocument.visibilityState === "hidden") {
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
 				void this.baseStore?.save();
+			} else if (activeDocument.visibilityState === "visible") {
+				this.noteStream?.onResume();
 			}
 		});
 
@@ -742,7 +763,44 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 	}
 
+	/** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
+	 *  reconciling the noteIdMap from the server manifest, then retrying the
+	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
+	 *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
+	 *  once-per-connect reconcile cannot catch. */
+	private healUnknownNoteId(noteId: string, content: string): void {
+		this.strandedFlushes.set(noteId, content); // keep the latest content per id
+		if (this.strandHealTimer !== null) return;
+		this.strandHealTimer = window.setTimeout(() => {
+			this.strandHealTimer = null;
+			void this.drainStrandedFlushes();
+		}, EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS);
+	}
+
+	private async drainStrandedFlushes(): Promise<void> {
+		const pending = new Map(this.strandedFlushes);
+		this.strandedFlushes.clear();
+		try {
+			await this.syncEngine.reconcileNoteIdMapFromManifest();
+		} catch (e) {
+			rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
+		}
+		for (const [id, content] of pending) {
+			const path = this.noteIdMap.pathForId(id);
+			if (!path) {
+				rlog().warn(
+					"crdt",
+					`onFlushToDisk: still no path for note_id=${id} after heal — retained in Y.Doc`,
+				);
+				continue;
+			}
+			if (this.crdtLiveViews?.isBound(path)) continue; // live editor owns disk
+			void this.syncEngine.flushFromCrdt(path, content);
+		}
+	}
+
 	onunload(): void {
+		if (this.strandHealTimer !== null) window.clearTimeout(this.strandHealTimer);
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
 		activeDocument.body.classList.remove("engram-vault-sync-active");
@@ -780,6 +838,14 @@ export default class EngramSyncPlugin extends Plugin {
 	async loadSettings(): Promise<void> {
 		const data = await this.loadPluginData();
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, data?.settings);
+		// Collapse the legacy remoteLoggingEnabled / diagnosticMode / tracingEnabled
+		// toggles into the single diagnosticsEnabled (on if any legacy one was on),
+		// then drop the stale keys so the next save persists only the new shape.
+		const rawSettings = data?.settings as Record<string, unknown> | undefined;
+		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
+		for (const legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"]) {
+			delete (this.settings as unknown as Record<string, unknown>)[legacy];
+		}
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
 		this.noteIdMap = NoteIdMap.fromJSON(data?.noteIds);
 		// Migrate a stored Cloud apiUrl off the legacy SPA host (app.engram.page,
@@ -821,9 +887,9 @@ export default class EngramSyncPlugin extends Plugin {
 	async saveSettings(): Promise<void> {
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
-		this.api.setTracingEnabled(this.settings.tracingEnabled);
+		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
 		this.syncEngine.updateSettings(this.settings);
-		rlog().setEnabled(this.settings.remoteLoggingEnabled);
+		rlog().setEnabled(this.settings.diagnosticsEnabled);
 		this.startSyncInterval();
 		this.setupNoteStream();
 		await this.savePluginData(this.syncEngine.getLastSync());
@@ -1281,17 +1347,50 @@ export default class EngramSyncPlugin extends Plugin {
 						// next write back to durable REST; the catch-up pull below re-
 						// confirms whatever changed.
 						this.syncEngine.clearConfirmedNoteIds();
-						// Reset all CRDT enrollments so a fresh startSync STEP1
-						// handshake fires for each open note after reconnect.
-						this.crdtEnrollment?.resetAll();
-						this.syncEngine.pull().catch((e) => {
-							// biome-ignore lint/suspicious/noConsole: error boundary
-							console.error("Engram Sync: catch-up pull failed", e);
-							rlog().error(
-								"channel",
-								`Catch-up pull on reconnect failed: ${errMsg(e)}`,
-							);
-						});
+						// Repair a stale noteIdMap from the server manifest BEFORE
+						// re-enrolling. Live pull of an existing note is CRDT-only and
+						// onFlushToDisk resolves the disk path via noteIdMap.pathForId;
+						// after the id-keying cutover a cursor-bearing device never
+						// re-ran bootstrap(), so its map stayed stale and every inbound
+						// frame stranded ("no known path"). The manifest is authoritative
+						// id->path (id+path+hash only, no content), so reconciling it here
+						// makes live pull resolve. Await it so the map is ready before the
+						// STEP1/STEP2 handshakes below deliver content.
+						void (async () => {
+							// Once per session (first successful connect): a stale map is a
+							// startup/migration condition, not a per-reconnect one. On failure
+							// (e.g. offline at first connect) leave the flag unset so a later
+							// connect retries.
+							if (!this.crdtMapReconciled) {
+								try {
+									const n =
+										await this.syncEngine.reconcileNoteIdMapFromManifest();
+									this.crdtMapReconciled = true;
+									if (n > 0) {
+										rlog().info(
+											"crdt",
+											`noteIdMap reconciled from manifest: ${n} notes`,
+										);
+									}
+								} catch (e) {
+									rlog().warn(
+										"crdt",
+										`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
+									);
+								}
+							}
+							// Reset all CRDT enrollments so a fresh startSync STEP1
+							// handshake fires for each open note after reconnect.
+							this.crdtEnrollment?.resetAll();
+							this.syncEngine.pull().catch((e) => {
+								// biome-ignore lint/suspicious/noConsole: error boundary
+								console.error("Engram Sync: catch-up pull failed", e);
+								rlog().error(
+									"channel",
+									`Catch-up pull on reconnect failed: ${errMsg(e)}`,
+								);
+							});
+						})();
 					} else {
 						// On disconnect: if onCrdtJoined has already fired for this
 						// channel session (crdtEverJoined), KEEP the CRDT manager wired
@@ -1408,16 +1507,12 @@ export default class EngramSyncPlugin extends Plugin {
 							if (!path) {
 								// Unknown id: a crdt_msg/STEP2 arrived for a note this device
 								// hasn't learned a path for yet (e.g. a brand-new note created
-								// on another device, discovered via crdt_doc_ready before this
-								// device's next REST pull). The content is safely retained in
-								// the Y.Doc/IndexedDB — nothing is lost. The next regular sync
-								// pull (applySyncChange) independently materializes the file
-								// from its own REST-fetched body once it learns the id->path
-								// mapping, so no explicit retry is needed here.
-								rlog().warn(
-									"crdt",
-									`onFlushToDisk: no known path for note_id=${noteId} — content retained in Y.Doc, awaiting a sync pull to learn the path`,
-								);
+								// on another device seen before the next pull, OR a mid-session
+								// drift where the map lost/diverged this id. Content is safe in
+								// the Y.Doc meanwhile; healUnknownNoteId re-resolves the id from
+								// the server manifest and retries the flush so a drift self-heals
+								// instead of stranding forever.
+								this.healUnknownNoteId(noteId, content);
 								return Promise.resolve();
 							}
 							return this.crdtLiveViews?.isBound(path)
@@ -1792,6 +1887,8 @@ export default class EngramSyncPlugin extends Plugin {
 						// even when the new vault is empty.
 						await this.syncEngine.resetForVaultChange();
 						this.syncGateAcceptedFor = null;
+						// New vault = new id/path space; re-reconcile on next connect.
+						this.crdtMapReconciled = false;
 						this.syncEngine.setSyncBlocked(true);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and

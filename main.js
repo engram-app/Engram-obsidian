@@ -1221,14 +1221,6 @@ var EngramApi = class _EngramApi {
     let body = { query };
     return limit !== void 0 && (body.limit = limit), tags != null && tags.length && (body.tags = tags), folder && (body.folder = folder), (await this.request("POST", "/search", body)).json;
   }
-  /** Query the server's rate limit. Returns 0 for unlimited. */
-  async getRateLimit() {
-    try {
-      return (await this.request("GET", "/rate-limit")).json.requests_per_minute;
-    } catch (e) {
-      return 0;
-    }
-  }
   /** Fetch sync manifest for reconciliation.
    *  Returns null if the server doesn't support this endpoint (404). */
   async getManifest() {
@@ -1423,7 +1415,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
@@ -1540,6 +1532,24 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   }
   disconnect() {
     this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
+  }
+  /** Call when the app returns to the foreground (mobile resume). Mobile OSes
+   *  suspend the socket while backgrounded; readyState can still report OPEN on a
+   *  connection that is actually dead. Rather than wait up to 30s for the next
+   *  heartbeat tick, probe liveness now and pull any pending reconnect forward so
+   *  the first post-unlock interaction is snappy.
+   *
+   *  - OPEN socket: run a heartbeat tick immediately (closes at once if the
+   *    pre-suspend heartbeat was never answered), then a fast follow-up tick so a
+   *    socket that died silently during suspend is caught in ~RESUME_PROBE_MS.
+   *  - Down with a reconnect pending: bring it forward.
+   *  - Connecting, or intentionally disconnected: nothing to do. */
+  onResume() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.heartbeatTick(), window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
+      return;
+    }
+    !this.ws && this.reconnectTimer !== null && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null, this.openSocket());
   }
   isConnected() {
     return this.connected;
@@ -3062,16 +3072,14 @@ var DEFAULT_SETTINGS = {
   ignorePatterns: "",
   debounceMs: 2e3,
   conflictViewMode: "unified",
-  remoteLoggingEnabled: !1,
-  diagnosticMode: !1,
+  diagnosticsEnabled: !1,
   conflictResolution: "auto",
   enableCrdt: !0,
   vaultId: null,
   clientId: "",
   planState: null,
   searchDefaultMode: "hybrid",
-  waitlistPromptSeen: !1,
-  tracingEnabled: !1
+  waitlistPromptSeen: !1
 }, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
   "pull-all-delete-local",
   "push-all-delete-remote"
@@ -4624,21 +4632,11 @@ function renderAdvancedTab(ctx) {
 secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
       plugin.settings.ignorePatterns = value, await plugin.saveSettings();
     }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
-  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Remote logging").setDesc("Send sync events to the server for remote debugging.").addToggle(
-    (toggle) => toggle.setValue(plugin.settings.remoteLoggingEnabled).onChange(async (value) => {
-      plugin.settings.remoteLoggingEnabled = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Diagnostic mode (verbose)").setDesc(
-    "Log detailed vault and connection activity for troubleshooting. Metadata only, never note content. Requires remote logging. Leave off for normal use."
+  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
+    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
   ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.diagnosticMode).onChange(async (value) => {
-      plugin.settings.diagnosticMode = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Distributed tracing").setDesc(
-    "Attach a trace ID to sync requests and report timing to the server for cross-system debugging. No note content is sent."
-  ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.tracingEnabled).onChange(async (value) => {
-      plugin.settings.tracingEnabled = value, await plugin.saveSettings();
+    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
+      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
     })
   ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
@@ -4784,6 +4782,11 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     this.plugin.onStatusBarChange = null, this.statusContainerEl = null;
   }
 };
+
+// src/settings-migrate.ts
+function migrateDiagnosticsEnabled(raw) {
+  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
+}
 
 // src/single-flight.ts
 function createSingleFlight() {
@@ -5129,9 +5132,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.activePushCount = 0;
     this.maxConcurrentPushes = 5;
     this.pushWaiters = [];
-    this.rateLimitRPM = 0;
-    // 0 = unlimited
-    this.requestTimestamps = [];
     this.queue = new OfflineQueue();
     /** Per-file sync metadata (content hash + server version).
      *  Used to detect whether the user actually modified a file since
@@ -5272,6 +5272,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
+  }
+  /** Populate `noteIdMap` authoritatively from the server manifest's
+   *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
+   *  id+path+hash only, ~µs/row server-side).
+   *
+   *  This is the fix for inbound CRDT updates stranding with "no known path"
+   *  after the id-keying cutover: live pull of an existing note is CRDT-only
+   *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
+   *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
+   *  whose sync cursor is already set (every normal reconnect) never repaired
+   *  a stale map — `pathForId` returned null and every inbound frame was
+   *  dropped until a manual full sync. Reconciling from the manifest on connect
+   *  keeps the map authoritative so live pull just works.
+   *
+   *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
+   *  path (the manifest is the source of truth). Returns mappings applied. */
+  async reconcileNoteIdMapFromManifest() {
+    if (!this.noteIdMap) return 0;
+    let manifest = await this.api.getManifest();
+    if (!manifest) return 0;
+    let applied = 0;
+    for (let note of manifest.notes)
+      note.id && (this.noteIdMap.pathForId(note.id) || (this.noteIdMap.set(note.path, note.id), applied++));
+    return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), applied;
   }
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
@@ -5655,7 +5679,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (0, import_obsidian21.normalizePath)(f.path);
       if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
         try {
-          await this.paceRequest(), await this.api.createFolder(path), await this.explicitFolders.add(path);
+          await this.api.createFolder(path), await this.explicitFolders.add(path);
         } catch (e) {
           devLog().log("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`), rlog().warn("push", `seedEmptyFolders("${path}") failed: ${errMsg(e)}`);
         }
@@ -5685,39 +5709,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.activePushCount--;
     let next = this.pushWaiters.shift();
     next && next();
-  }
-  /** Query the server's rate limit and configure the pacer.
-   *  Applies a 10% safety margin (e.g. 100 RPM → 90 effective). */
-  async configureRateLimit() {
-    try {
-      let serverRPM = await this.api.getRateLimit();
-      serverRPM > 0 ? (this.rateLimitRPM = Math.floor(serverRPM * 0.9), devLog().log(
-        "pacer",
-        `server limit=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`
-      ), rlog().info(
-        "pacer",
-        `Rate limit: server=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`
-      )) : (this.rateLimitRPM = 0, devLog().log("pacer", "server reports unlimited \u2014 pacer disabled"), rlog().info("pacer", "Server reports unlimited \u2014 pacer disabled"));
-    } catch (e) {
-      this.rateLimitRPM = 0, devLog().log("pacer", "failed to query rate limit \u2014 assuming unlimited"), rlog().warn("pacer", "Failed to query rate limit \u2014 assuming unlimited");
-    }
-  }
-  /** Wait if needed to stay within the server's rate limit. */
-  async paceRequest() {
-    if (this.rateLimitRPM <= 0) return;
-    let now = Date.now(), windowMs = 6e4, cutoff = now - windowMs;
-    if (this.requestTimestamps = this.requestTimestamps.filter((t) => t > cutoff), this.requestTimestamps.length < this.rateLimitRPM) {
-      this.requestTimestamps.push(now);
-      return;
-    }
-    let waitMs = this.requestTimestamps[0] + windowMs - now + 50;
-    devLog().log(
-      "pacer",
-      `at capacity (${this.requestTimestamps.length}/${this.rateLimitRPM}), waiting ${waitMs}ms`
-    ), rlog().info(
-      "pacer",
-      `Throttled: ${this.requestTimestamps.length}/${this.rateLimitRPM} RPM, waiting ${waitMs}ms`
-    ), await new Promise((resolve) => window.setTimeout(resolve, waitMs)), this.requestTimestamps = this.requestTimestamps.filter((t) => t > Date.now() - windowMs), this.requestTimestamps.push(Date.now());
   }
   /** Push a single file to Engram. Returns true on success.
    *  When force is true, skip echo suppression (used by pushAll).
@@ -5758,7 +5749,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       `Push start: ${file.path} | type=${isBinary ? "attachment" : "note"} | active=${this.activePushCount}`
     );
     try {
-      await this.paceRequest();
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
         let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
@@ -6884,7 +6874,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
-    await this.configureRateLimit(), await this.invalidateIfVaultChanged();
+    await this.invalidateIfVaultChanged();
     let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
@@ -6913,7 +6903,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       chunk = [], chunkBytes = 0;
       for (let e of entries) this.pushing.add(e.file.path);
       try {
-        await this.paceRequest();
         let resp = await this.api.pushNotesBatch(
           entries.map((e) => ({
             path: e.file.path,
@@ -7457,7 +7446,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let flushed = 0;
     for (let entry of entries)
       try {
-        if (await this.paceRequest(), entry.action === "delete")
+        if (entry.action === "delete")
           try {
             entry.kind === "attachment" ? await this.api.deleteAttachment(entry.path) : await this.api.deleteNote(entry.path);
           } catch (e) {
@@ -20533,7 +20522,7 @@ function formatVaultEvent(kind, path, extra) {
   return parts.join(" ");
 }
 function registerDiagnostics(plugin) {
-  let on = () => plugin.settings.diagnosticMode, emit = (kind, path, extra) => {
+  let on = () => plugin.settings.diagnosticsEnabled, emit = (kind, path, extra) => {
     on() && rlog().diag("vault", formatVaultEvent(kind, path, extra));
   };
   plugin.registerEvent(
@@ -20814,6 +20803,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
      *  auth/vault change. Compared against current fingerprint to decide
      *  whether the sync gate should be open. */
     this.syncGateAcceptedFor = null;
+    /** Whether the noteIdMap has been reconciled from the server manifest this
+     *  session. The reconcile repairs a stale/empty map (drift is a one-time
+     *  startup/migration event), so it runs ONCE on the first successful connect,
+     *  not on every reconnect — re-fetching the manifest on each network blip adds
+     *  load and perturbs in-flight sync timing. Reset on vault change. */
+    this.crdtMapReconciled = !1;
+    this.strandedFlushes = /* @__PURE__ */ new Map();
+    this.strandHealTimer = null;
     /** Single-flight guard so a vault switch (or any racing trigger) cannot
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
@@ -20833,13 +20830,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       new EmailCaptureModal(this.app, () => {
         this.settings.waitlistPromptSeen = !0, this.saveSettings();
       }).open();
-    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
+    }), this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey), this.settings.vaultId && this.api.setVaultId(this.settings.vaultId), this.api.setDeviceId(this.deviceId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider);
     let remoteLogger = initRemoteLog();
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
       import_obsidian25.Platform.isMobile ? "mobile" : "desktop"
-    ), remoteLogger.setEnabled(this.settings.remoteLoggingEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
+    ), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian25.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
@@ -20882,8 +20879,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         this.syncEngine.handleRename(file, oldPath), (_a2 = this.crdtLiveViews) == null || _a2.refresh();
       })
     ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
-      var _a2;
-      activeDocument.visibilityState === "hidden" && (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save());
+      var _a2, _b;
+      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save()) : activeDocument.visibilityState === "visible" && ((_b = this.noteStream) == null || _b.onResume());
     }), this.addCommand({
       id: "sync-now",
       name: "Sync now",
@@ -21091,14 +21088,50 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }
     });
   }
+  /** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
+   *  reconciling the noteIdMap from the server manifest, then retrying the
+   *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
+   *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
+   *  once-per-connect reconcile cannot catch. */
+  healUnknownNoteId(noteId, content) {
+    this.strandedFlushes.set(noteId, content), this.strandHealTimer === null && (this.strandHealTimer = window.setTimeout(() => {
+      this.strandHealTimer = null, this.drainStrandedFlushes();
+    }, _EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS));
+  }
+  async drainStrandedFlushes() {
+    var _a;
+    let pending = new Map(this.strandedFlushes);
+    this.strandedFlushes.clear();
+    try {
+      await this.syncEngine.reconcileNoteIdMapFromManifest();
+    } catch (e) {
+      rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
+    }
+    for (let [id2, content] of pending) {
+      let path = this.noteIdMap.pathForId(id2);
+      if (!path) {
+        rlog().warn(
+          "crdt",
+          `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retained in Y.Doc`
+        );
+        continue;
+      }
+      (_a = this.crdtLiveViews) != null && _a.isBound(path) || this.syncEngine.flushFromCrdt(path, content);
+    }
+  }
   onunload() {
     var _a, _b, _c, _d, _e, _f;
-    devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    this.strandHealTimer !== null && window.clearTimeout(this.strandHealTimer), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
     let data = await this.loadPluginData();
-    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings), this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
+    this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
+    let rawSettings = data == null ? void 0 : data.settings;
+    this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
+    for (let legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"])
+      delete this.settings[legacy];
+    this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
     migratedUrl && migratedUrl !== this.settings.apiUrl && (this.settings.apiUrl = migratedUrl, dirty = !0), this.settings.clientId || (this.settings.clientId = await generateClientId(this.app), dirty = !0), this.deviceId = (_b = data == null ? void 0 : data.deviceId) != null ? _b : null, this.deviceId || (this.deviceId = crypto.randomUUID(), dirty = !0), dirty && await this.writePluginData({
       ...data,
@@ -21107,7 +21140,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     });
   }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.tracingEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.remoteLoggingEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
       if (!registered) return;
       if (!await this.applySyncGate())
         return this.doSyncWithFirstSyncCheck();
@@ -21337,19 +21370,35 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        var _a2, _b2;
-        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (_a2 = this.crdtEnrollment) == null || _a2.resetAll(), this.syncEngine.pull().catch((e) => {
-          console.error("Engram Sync: catch-up pull failed", e), rlog().error(
-            "channel",
-            `Catch-up pull on reconnect failed: ${errMsg(e)}`
-          );
-        })) : (this.crdtEverJoined ? rlog().info(
+        var _a2;
+        this.liveConnected = connected, this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
+          var _a3;
+          if (!this.crdtMapReconciled)
+            try {
+              let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+              this.crdtMapReconciled = !0, n > 0 && rlog().info(
+                "crdt",
+                `noteIdMap reconciled from manifest: ${n} notes`
+              );
+            } catch (e) {
+              rlog().warn(
+                "crdt",
+                `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
+              );
+            }
+          (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
+            console.error("Engram Sync: catch-up pull failed", e), rlog().error(
+              "channel",
+              `Catch-up pull on reconnect failed: ${errMsg(e)}`
+            );
+          });
+        })()) : (this.crdtEverJoined ? rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
         ) : (this.syncEngine.setCrdtManager(null), rlog().info(
           "crdt",
           "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
-        )), (_b2 = this.crdtManager) == null || _b2.clearSynced());
+        )), (_a2 = this.crdtManager) == null || _a2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
@@ -21382,10 +21431,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           onFlushToDisk: (noteId, content) => {
             var _a2;
             let path = this.noteIdMap.pathForId(noteId);
-            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (rlog().warn(
-              "crdt",
-              `onFlushToDisk: no known path for note_id=${noteId} \u2014 content retained in Y.Doc, awaiting a sync pull to learn the path`
-            ), Promise.resolve());
+            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (this.healUnknownNoteId(noteId, content), Promise.resolve());
           },
           // Adopt-first seed gate: never re-encode content the server
           // already holds (see CrdtManagerOptions.isUnchangedSynced).
@@ -21606,7 +21652,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.crdtMapReconciled = !1, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
@@ -21664,5 +21710,8 @@ Last sync: ${date.toLocaleString()}`;
     }, _EngramSyncPlugin.FALLBACK_POLL_MS), this.registerInterval(this.syncInterval));
   }
 };
-_EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
+/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
+ *  here (id -> latest content) and a single manifest reconcile + retry drains
+ *  them, so a mid-session map drift self-heals without one fetch per frame. */
+_EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS = 750, _EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
 var EngramSyncPlugin = _EngramSyncPlugin;

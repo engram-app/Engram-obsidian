@@ -320,20 +320,6 @@ describe("SyncEngine.seedEmptyFolders", () => {
 
 		expect(mockApi.createFolder).toHaveBeenCalledWith("Foo");
 	});
-
-	test("paces each marker POST through the rate limiter", async () => {
-		const { engine } = await createEngine();
-		const pace = jest.spyOn(
-			engine as unknown as { paceRequest(): Promise<void> },
-			"paceRequest",
-		);
-		setVaultFolders([new TFolder("A", []), new TFolder("B", [])]);
-
-		await engine.seedEmptyFolders();
-
-		// One pace per POSTed folder — never an unthrottled burst.
-		expect(pace).toHaveBeenCalledTimes(2);
-	});
 });
 
 // File-export hint so the test runner sees this file. Tests also serve as

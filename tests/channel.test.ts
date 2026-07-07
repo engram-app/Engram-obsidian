@@ -608,3 +608,109 @@ describe("NoteChannel heartbeat reply timeout", () => {
 		(globalThis as any).WebSocket = MockWebSocket;
 	});
 });
+
+// ---------------------------------------------------------------------------
+// onResume() — mobile foreground recovery. Mobile OSes suspend the socket while
+// backgrounded; readyState can report OPEN on a connection that is actually dead.
+// onResume brings the liveness check (and any pending reconnect) forward so the
+// first interaction after unlock is snappy instead of waiting ~30s for the next
+// heartbeat tick. Tests drive it synchronously (no fake timers).
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel onResume (mobile foreground recovery)", () => {
+	class TrackingWebSocket {
+		static OPEN = 1;
+		readyState = TrackingWebSocket.OPEN;
+		onopen: (() => void) | null = null;
+		onclose: (() => void) | null = null;
+		onmessage: ((evt: { data: string }) => void) | null = null;
+		onerror: ((e: any) => void) | null = null;
+		sent: string[] = [];
+		closeCalls = 0;
+		constructor(_url: string) {
+			lastWsInstance = this;
+		}
+		send(data: string): void {
+			this.sent.push(data);
+		}
+		close(): void {
+			this.closeCalls++;
+			const cb = this.onclose;
+			this.onclose = null;
+			cb?.();
+		}
+	}
+
+	test("on an OPEN socket, fires an immediate heartbeat probe", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		const ws = lastWsInstance as TrackingWebSocket;
+		ws.onopen?.();
+		const before = ws.sent.length;
+
+		channel.onResume();
+
+		expect(ws.sent.length).toBe(before + 1);
+		const hb = JSON.parse(ws.sent[ws.sent.length - 1]!);
+		expect(hb[2]).toBe("phoenix");
+		expect(hb[3]).toBe("heartbeat");
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+
+	test("closes a half-dead socket whose pre-suspend heartbeat was never answered", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		const ws = lastWsInstance as TrackingWebSocket;
+		ws.onopen?.();
+
+		// A heartbeat went out before the app was backgrounded and was never answered.
+		(channel as any).heartbeatTick();
+		expect((channel as any).pendingHeartbeatRef).not.toBeNull();
+		expect(ws.closeCalls).toBe(0);
+
+		// Resume: the still-pending ref proves the socket is dead → close now.
+		channel.onResume();
+		expect(ws.closeCalls).toBe(1);
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+
+	test("brings a pending reconnect forward when the socket is down", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		// Simulate mid-backoff: no live socket, a reconnect timer pending.
+		(channel as any).ws = null;
+		(channel as any).reconnectTimer = window.setTimeout(() => {}, 60_000);
+
+		channel.onResume();
+
+		// The pending timer is cleared and a fresh socket open is kicked off.
+		expect((channel as any).reconnectTimer).toBeNull();
+		await Promise.resolve();
+		expect(lastWsInstance).not.toBeNull();
+
+		channel.disconnect();
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+
+	test("is a no-op when intentionally disconnected (no socket, no pending reconnect)", async () => {
+		(globalThis as any).WebSocket = TrackingWebSocket;
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
+		await channel.connect();
+		channel.disconnect();
+		lastWsInstance = null;
+
+		channel.onResume();
+		await Promise.resolve();
+
+		// Nothing reconnected: no new socket was constructed.
+		expect(lastWsInstance).toBeNull();
+
+		(globalThis as any).WebSocket = MockWebSocket;
+	});
+});

@@ -19,6 +19,13 @@ const NO_AUTH_RECONNECT_MS = 30_000;
  */
 const AUTH_FAIL_WINDOW_MS = 5_000;
 
+/** After a mobile foreground resume, how long to wait for the resume liveness
+ *  probe to be answered before declaring the socket dead. A live connection just
+ *  answers (at most one extra heartbeat); a socket the OS killed during suspend
+ *  never replies, so we close and reconnect in seconds instead of waiting for the
+ *  next 30s heartbeat tick. */
+const RESUME_PROBE_MS = 5_000;
+
 /** Full-jitter reconnect window (ms) for the FIRST reconnect after a live
  *  connection drops (e.g. graceful server drain). Spreads a drained fleet's
  *  reconnects over random(0, window) so the freshly-booted node isn't
@@ -240,6 +247,33 @@ export class NoteChannel {
 		// that advertises none falls back to the default floor, not a stale value.
 		this.reconnectJitterMaxMs = null;
 		rlog().info("channel", "Channel disconnected");
+	}
+
+	/** Call when the app returns to the foreground (mobile resume). Mobile OSes
+	 *  suspend the socket while backgrounded; readyState can still report OPEN on a
+	 *  connection that is actually dead. Rather than wait up to 30s for the next
+	 *  heartbeat tick, probe liveness now and pull any pending reconnect forward so
+	 *  the first post-unlock interaction is snappy.
+	 *
+	 *  - OPEN socket: run a heartbeat tick immediately (closes at once if the
+	 *    pre-suspend heartbeat was never answered), then a fast follow-up tick so a
+	 *    socket that died silently during suspend is caught in ~RESUME_PROBE_MS.
+	 *  - Down with a reconnect pending: bring it forward.
+	 *  - Connecting, or intentionally disconnected: nothing to do. */
+	onResume(): void {
+		if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+			this.heartbeatTick();
+			// Reuses the heartbeat machinery: an unanswered probe closes on this tick.
+			// Not tracked in clearTimers: a stray fire after disconnect is a guarded
+			// no-op (heartbeatTick bails when the socket is not OPEN).
+			window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
+			return;
+		}
+		if (!this.ws && this.reconnectTimer !== null) {
+			window.clearTimeout(this.reconnectTimer);
+			this.reconnectTimer = null;
+			void this.openSocket();
+		}
 	}
 
 	isConnected(): boolean {

@@ -425,17 +425,6 @@ export class EngramApi {
 		return resp.json as SearchResponse;
 	}
 
-	/** Query the server's rate limit. Returns 0 for unlimited. */
-	async getRateLimit(): Promise<number> {
-		try {
-			const resp = await this.request("GET", "/rate-limit");
-			return (resp.json as { requests_per_minute: number }).requests_per_minute;
-		} catch {
-			// Server doesn't support this endpoint — assume unlimited
-			return 0;
-		}
-	}
-
 	/** Fetch sync manifest for reconciliation.
 	 *  Returns null if the server doesn't support this endpoint (404). */
 	async getManifest(): Promise<ManifestResponse | null> {

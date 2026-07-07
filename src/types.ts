@@ -12,11 +12,12 @@ export interface EngramSyncSettings {
 	debounceMs: number;
 	/** Preferred conflict diff view: unified or side-by-side */
 	conflictViewMode: "unified" | "side-by-side";
-	/** Send errors and sync lifecycle events to the server for remote debugging */
-	remoteLoggingEnabled: boolean;
-	/** Verbose diagnostic firehose: log vault/editor + WS/sync events (metadata
-	 *  only, never content). Requires remoteLoggingEnabled. Default OFF. */
-	diagnosticMode: boolean;
+	/** Single diagnostics switch. When on: ship sync/error events AND verbose
+	 *  vault/editor/WS activity to the server, AND attach distributed-tracing
+	 *  headers to requests. Metadata only, never note content. Default OFF.
+	 *  Collapses the former remoteLoggingEnabled / diagnosticMode / tracingEnabled
+	 *  trio (migrated in settings-migrate.ts). */
+	diagnosticsEnabled: boolean;
 	/** How to handle conflicts that can't be auto-merged.
 	 *  "auto" creates a conflict copy file (non-blocking).
 	 *  "modal" shows the interactive diff modal. */
@@ -61,11 +62,6 @@ export interface EngramSyncSettings {
 	/** True once the first-run waitlist popup has been shown (submitted OR
 	 *  dismissed). Set once, never re-shown. */
 	waitlistPromptSeen?: boolean;
-	/** Dark-launch gate for distributed tracing: inject a `traceparent` header
-	 *  on backend requests and emit a coalesced `obsidian.push` beacon. Default
-	 *  OFF: when false, sendRequest does no id generation, no timing capture,
-	 *  no header, and enqueues nothing (single boolean check). */
-	tracingEnabled: boolean;
 }
 
 /** Which search backend the panel uses. */
@@ -98,8 +94,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	ignorePatterns: "",
 	debounceMs: 2000,
 	conflictViewMode: "unified",
-	remoteLoggingEnabled: false,
-	diagnosticMode: false,
+	diagnosticsEnabled: false,
 	conflictResolution: "auto",
 	enableCrdt: true,
 	vaultId: null,
@@ -107,7 +102,6 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	planState: null,
 	searchDefaultMode: "hybrid",
 	waitlistPromptSeen: false,
-	tracingEnabled: false,
 };
 
 /** A note as returned by POST /notes */
@@ -383,6 +377,11 @@ export interface AttachmentChangesResponse {
 
 /** A single entry in the sync manifest (path + content hash). */
 export interface ManifestEntry {
+	/** Stable server note_id (backend render_manifest projects it, T3.6+). The
+	 *  authoritative id->path source the plugin reconciles noteIdMap from so
+	 *  inbound CRDT frames (keyed by note_id) can resolve a disk path. Optional
+	 *  to tolerate a pre-T3.6 self-host backend that omitted it. */
+	id?: string;
 	path: string;
 	content_hash: string;
 	version?: number;

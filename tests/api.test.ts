@@ -369,21 +369,6 @@ describe("EngramApi", () => {
 		});
 	});
 
-	describe("getRateLimit", () => {
-		test("returns requests_per_minute value", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 200,
-				json: { requests_per_minute: 120 },
-			} as any);
-			expect(await api.getRateLimit()).toBe(120);
-		});
-
-		test("returns 0 on error (assume unlimited)", async () => {
-			mockRequestUrl.mockRejectedValueOnce(new Error("404"));
-			expect(await api.getRateLimit()).toBe(0);
-		});
-	});
-
 	describe("getManifest", () => {
 		test("returns manifest on success", async () => {
 			const manifest = { notes: {}, attachments: {} };

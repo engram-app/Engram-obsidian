@@ -289,8 +289,6 @@ export class SyncEngine {
 	private activePushCount = 0;
 	private maxConcurrentPushes = 5;
 	private pushWaiters: (() => void)[] = [];
-	private rateLimitRPM = 0; // 0 = unlimited
-	private requestTimestamps: number[] = [];
 	readonly queue: OfflineQueue = new OfflineQueue();
 
 	/** Per-file sync metadata (content hash + server version).
@@ -357,6 +355,45 @@ export class SyncEngine {
 
 	setNoteIdMap(map: NoteIdMap | null): void {
 		this.noteIdMap = map;
+	}
+
+	/** Populate `noteIdMap` authoritatively from the server manifest's
+	 *  `{ id, path }` for every note, WITHOUT a full content pull (manifest is
+	 *  id+path+hash only, ~µs/row server-side).
+	 *
+	 *  This is the fix for inbound CRDT updates stranding with "no known path"
+	 *  after the id-keying cutover: live pull of an existing note is CRDT-only
+	 *  and `onFlushToDisk` resolves the disk path via `noteIdMap.pathForId`. The
+	 *  map was only ever rebuilt during a no-cursor `bootstrap()`, so a device
+	 *  whose sync cursor is already set (every normal reconnect) never repaired
+	 *  a stale map — `pathForId` returned null and every inbound frame was
+	 *  dropped until a manual full sync. Reconciling from the manifest on connect
+	 *  keeps the map authoritative so live pull just works.
+	 *
+	 *  Idempotent; `NoteIdMap.set` overwrites a stale/locally-minted id for a
+	 *  path (the manifest is the source of truth). Returns mappings applied. */
+	async reconcileNoteIdMapFromManifest(): Promise<number> {
+		if (!this.noteIdMap) return 0;
+		const manifest = await this.api.getManifest();
+		if (!manifest) return 0; // pre-B1 backend: no manifest endpoint, nothing to reconcile
+		let applied = 0;
+		for (const note of manifest.notes) {
+			if (!note.id) continue; // pre-T3.6 backend omitted id — cannot map it
+			// Fill only ids we don't already know. This repairs a drifted/empty map
+			// (server id absent locally, e.g. a wrong id minted by getOrMint, or no
+			// entry at all) because a wrong/absent id fails this guard and gets set.
+			// But it must NOT overwrite an id we ALREADY map: the manifest is a
+			// snapshot that can be stale during an in-flight rename, and re-setting
+			// the old path would clobber the reverse index (byId) and resurrect the
+			// old path on disk/server (the test_10 rename-propagation regression).
+			if (this.noteIdMap.pathForId(note.id)) continue;
+			this.noteIdMap.set(note.path, note.id);
+			applied++;
+		}
+		if (applied > 0) {
+			await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+		}
+		return applied;
 	}
 
 	/** note_ids the SERVER is known to already have a note row for — learned
@@ -622,6 +659,11 @@ export class SyncEngine {
 		private saveData: (data: {
 			lastSync?: string;
 			syncCursor?: string | null;
+			// Signals the engine mutated the shared noteIdMap and it should be
+			// persisted. main.ts's savePluginData writes the map instance directly
+			// (same object), so the callback need not read this — it just triggers
+			// the wholesale save.
+			noteIds?: Record<string, string>;
 		}) => Promise<void>,
 	) {
 		this.parseIgnorePatterns();
@@ -1123,7 +1165,6 @@ export class SyncEngine {
 			if (this.subtreeHasSyncableFile(f)) continue; // appears via its notes
 
 			try {
-				await this.paceRequest();
 				await this.api.createFolder(path);
 				await this.explicitFolders.add(path);
 			} catch (e) {
@@ -1166,67 +1207,6 @@ export class SyncEngine {
 		this.activePushCount--;
 		const next = this.pushWaiters.shift();
 		if (next) next();
-	}
-
-	/** Query the server's rate limit and configure the pacer.
-	 *  Applies a 10% safety margin (e.g. 100 RPM → 90 effective). */
-	async configureRateLimit(): Promise<void> {
-		try {
-			const serverRPM = await this.api.getRateLimit();
-			if (serverRPM > 0) {
-				this.rateLimitRPM = Math.floor(serverRPM * 0.9);
-				devLog().log(
-					"pacer",
-					`server limit=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`,
-				);
-				rlog().info(
-					"pacer",
-					`Rate limit: server=${serverRPM} RPM, effective=${this.rateLimitRPM} RPM`,
-				);
-			} else {
-				this.rateLimitRPM = 0;
-				devLog().log("pacer", "server reports unlimited — pacer disabled");
-				rlog().info("pacer", "Server reports unlimited — pacer disabled");
-			}
-		} catch {
-			this.rateLimitRPM = 0;
-			devLog().log("pacer", "failed to query rate limit — assuming unlimited");
-			rlog().warn("pacer", "Failed to query rate limit — assuming unlimited");
-		}
-	}
-
-	/** Wait if needed to stay within the server's rate limit. */
-	private async paceRequest(): Promise<void> {
-		if (this.rateLimitRPM <= 0) return;
-
-		const now = Date.now();
-		const windowMs = 60_000;
-		const cutoff = now - windowMs;
-
-		// Prune timestamps outside the window
-		this.requestTimestamps = this.requestTimestamps.filter((t) => t > cutoff);
-
-		if (this.requestTimestamps.length < this.rateLimitRPM) {
-			this.requestTimestamps.push(now);
-			return;
-		}
-
-		// At capacity — wait until the oldest request exits the window
-		const oldest = this.requestTimestamps[0]!;
-		const waitMs = oldest + windowMs - now + 50; // +50ms buffer
-		devLog().log(
-			"pacer",
-			`at capacity (${this.requestTimestamps.length}/${this.rateLimitRPM}), waiting ${waitMs}ms`,
-		);
-		rlog().info(
-			"pacer",
-			`Throttled: ${this.requestTimestamps.length}/${this.rateLimitRPM} RPM, waiting ${waitMs}ms`,
-		);
-		await new Promise<void>((resolve) => window.setTimeout(resolve, waitMs));
-
-		// Prune again and record
-		this.requestTimestamps = this.requestTimestamps.filter((t) => t > Date.now() - windowMs);
-		this.requestTimestamps.push(Date.now());
 	}
 
 	/** Paths modified during a pull that need pushing once pull completes. */
@@ -1302,7 +1282,6 @@ export class SyncEngine {
 		);
 
 		try {
-			await this.paceRequest();
 			const mtime = file.stat.mtime / 1000; // Obsidian uses ms, Engram uses seconds
 			if (isBinary) {
 				const buffer = await this.app.vault.readBinary(file);
@@ -3327,9 +3306,6 @@ export class SyncEngine {
 			throw new Error(this.lastError);
 		}
 
-		// Configure request pacer from server-reported rate limit
-		await this.configureRateLimit();
-
 		// Drop stale per-vault bookkeeping if the active vault changed since
 		// syncState was recorded (must run before prePullSync is snapshotted).
 		await this.invalidateIfVaultChanged();
@@ -3419,7 +3395,6 @@ export class SyncEngine {
 
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
-				await this.paceRequest();
 				const resp = await this.api.pushNotesBatch(
 					entries.map((e) => ({
 						path: e.file.path,
@@ -4343,7 +4318,6 @@ export class SyncEngine {
 		let flushed = 0;
 		for (const entry of entries) {
 			try {
-				await this.paceRequest();
 				if (entry.action === "delete") {
 					try {
 						if (entry.kind === "attachment") {

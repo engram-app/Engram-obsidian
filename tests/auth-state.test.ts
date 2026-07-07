@@ -23,7 +23,7 @@ const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSet
 	ignorePatterns: "node_modules",
 	debounceMs: 2000,
 	conflictViewMode: "unified",
-	remoteLoggingEnabled: false,
+	diagnosticsEnabled: false,
 	conflictResolution: "auto",
 	...override,
 });
@@ -176,14 +176,14 @@ describe("withClearedAuth", () => {
 			clientId: "stable-client-id",
 			ignorePatterns: "tmp/**",
 			debounceMs: 1500,
-			remoteLoggingEnabled: true,
+			diagnosticsEnabled: true,
 		});
 		const cleared = withClearedAuth(before);
 		expect(cleared.apiUrl).toBe("http://engram.ax");
 		expect(cleared.clientId).toBe("stable-client-id");
 		expect(cleared.ignorePatterns).toBe("tmp/**");
 		expect(cleared.debounceMs).toBe(1500);
-		expect(cleared.remoteLoggingEnabled).toBe(true);
+		expect(cleared.diagnosticsEnabled).toBe(true);
 	});
 
 	test("does not mutate input settings object", () => {
