@@ -24,7 +24,6 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { NoteChannel } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
@@ -34,6 +33,7 @@ import { parsePlanState } from "./plan-state";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
+import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
@@ -429,12 +429,18 @@ export default class EngramSyncPlugin extends Plugin {
 
 		registerDiagnostics(this);
 
-		// Flush remote logs when app goes to background (mobile)
+		// Mobile lifecycle: flush + persist on background, recover the socket on
+		// foreground. Mobile OSes suspend the WebSocket while backgrounded, so on
+		// resume the channel may be silently half-dead — onResume probes it (and
+		// pulls a pending reconnect forward) instead of waiting ~30s for the next
+		// heartbeat tick, which is what made the first post-unlock sync feel laggy.
 		this.registerDomEvent(activeDocument, "visibilitychange", () => {
 			if (activeDocument.visibilityState === "hidden") {
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
 				void this.baseStore?.save();
+			} else if (activeDocument.visibilityState === "visible") {
+				this.noteStream?.onResume();
 			}
 		});
 
@@ -1357,7 +1363,8 @@ export default class EngramSyncPlugin extends Plugin {
 							// connect retries.
 							if (!this.crdtMapReconciled) {
 								try {
-									const n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+									const n =
+										await this.syncEngine.reconcileNoteIdMapFromManifest();
 									this.crdtMapReconciled = true;
 									if (n > 0) {
 										rlog().info(

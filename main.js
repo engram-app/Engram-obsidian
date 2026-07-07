@@ -1402,11 +1402,6 @@ var ApiKeyAuth = class {
 _OAuthAuth.EXPIRY_BUFFER_MS = 6e4;
 var OAuthAuth = _OAuthAuth;
 
-// src/settings-migrate.ts
-function migrateDiagnosticsEnabled(raw) {
-  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
-}
-
 // src/error-util.ts
 function errMsg(e) {
   var _a;
@@ -1420,7 +1415,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
@@ -1537,6 +1532,24 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   }
   disconnect() {
     this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
+  }
+  /** Call when the app returns to the foreground (mobile resume). Mobile OSes
+   *  suspend the socket while backgrounded; readyState can still report OPEN on a
+   *  connection that is actually dead. Rather than wait up to 30s for the next
+   *  heartbeat tick, probe liveness now and pull any pending reconnect forward so
+   *  the first post-unlock interaction is snappy.
+   *
+   *  - OPEN socket: run a heartbeat tick immediately (closes at once if the
+   *    pre-suspend heartbeat was never answered), then a fast follow-up tick so a
+   *    socket that died silently during suspend is caught in ~RESUME_PROBE_MS.
+   *  - Down with a reconnect pending: bring it forward.
+   *  - Connecting, or intentionally disconnected: nothing to do. */
+  onResume() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.heartbeatTick(), window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
+      return;
+    }
+    !this.ws && this.reconnectTimer !== null && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null, this.openSocket());
   }
   isConnected() {
     return this.connected;
@@ -4769,6 +4782,11 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     this.plugin.onStatusBarChange = null, this.statusContainerEl = null;
   }
 };
+
+// src/settings-migrate.ts
+function migrateDiagnosticsEnabled(raw) {
+  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
+}
 
 // src/single-flight.ts
 function createSingleFlight() {
@@ -20861,8 +20879,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         this.syncEngine.handleRename(file, oldPath), (_a2 = this.crdtLiveViews) == null || _a2.refresh();
       })
     ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
-      var _a2;
-      activeDocument.visibilityState === "hidden" && (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save());
+      var _a2, _b;
+      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save()) : activeDocument.visibilityState === "visible" && ((_b = this.noteStream) == null || _b.onResume());
     }), this.addCommand({
       id: "sync-now",
       name: "Sync now",
