@@ -260,6 +260,15 @@ export class EngramApi {
 		return (resp.json as { vault: VaultInfo }).vault;
 	}
 
+	/** Submit a user-initiated issue report from this plugin surface. */
+	async reportIssue(description: string, appVersion: string): Promise<void> {
+		await this.request("POST", "/reports", {
+			description,
+			surface: "plugin",
+			app_version: appVersion,
+		});
+	}
+
 	/** Fetch all vaults accessible by the current user. Throws the underlying
 	 *  request error (with `.status` for HTTP responses) so callers can render
 	 *  401/timeout/5xx distinctly from "successful empty list". */
