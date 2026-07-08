@@ -93,6 +93,22 @@ describe("vault change wipes note identity (plugin #200)", () => {
 		expect(engine.getSyncStateVaultId()).toBe("vault-B");
 	});
 
+	test("resetForVaultChange (explicit picker path) wipes the map and confirmed ids", async () => {
+		// The picker path sets syncStateVaultId itself, so the backstop
+		// short-circuits and never runs — the wipe must happen here too or
+		// #200 stays open on the most common user-facing vault switch.
+		const engine = createEngine("vault-B");
+		const map = new NoteIdMap();
+		map.set("a.md", "id-from-vault-A");
+		engine.setNoteIdMap(map);
+		(engine as any).confirmNoteId("id-from-vault-A");
+
+		await engine.resetForVaultChange();
+
+		expect(map.get("a.md")).toBeNull();
+		expect((engine as any).isNoteConfirmed("id-from-vault-A")).toBe(false);
+	});
+
 	test("same vault: map untouched", async () => {
 		const engine = createEngine("vault-A");
 		const map = new NoteIdMap();

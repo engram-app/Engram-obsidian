@@ -876,19 +876,35 @@ export class SyncEngine {
 		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
 	}
 
-	/** Reset all per-vault sync bookkeeping. Used when the user switches the
-	 *  active server vault inside the SyncPreviewModal so the next sync starts
-	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
-	async resetForVaultChange(): Promise<void> {
+	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
+	 *  (explicit picker `resetForVaultChange`, backstop
+	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
+	 *  point; a wipe that exists on only one path re-opens #200. */
+	private async wipePerVaultState(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
 		// The cursor marks a position in the OLD vault's ordered feed — drop it so
 		// the next sync re-bootstraps against the new vault (else a genesis pull
 		// would resume from a foreign vault's seq).
 		this.syncCursor = null;
-		this.syncStateVaultId = this.settings.vaultId ?? null;
+		// The note-id map and confirmed set are per-vault identity state.
+		// Carrying them across vaults keys CRDT frames/rooms by another
+		// vault's note ids — the cross-vault flavor of the 2026-07-07
+		// cross-wire class (plugin #200). Wipe both; ids re-learn via the
+		// manifest reconcile + push adoption. clear() mutates in place: the
+		// instance is shared with main.ts + live views.
+		this.noteIdMap?.clear();
+		this.clearConfirmedNoteIds();
 		await this.saveData({ lastSync: "", syncCursor: null });
-		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+	}
+
+	/** Reset all per-vault sync bookkeeping. Used when the user switches the
+	 *  active server vault inside the SyncPreviewModal so the next sync starts
+	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
+	async resetForVaultChange(): Promise<void> {
+		this.syncStateVaultId = this.settings.vaultId ?? null;
+		await this.wipePerVaultState();
+		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor + ids cleared");
 	}
 
 	getSyncStateVaultId(): string | null {
@@ -922,19 +938,8 @@ export class SyncEngine {
 			"lifecycle",
 			`vault changed ${this.syncStateVaultId} → ${current} — clearing syncState + lastSync`,
 		);
-		this.syncState.clear();
-		this.lastSync = "";
-		// Drop the cursor too — it points into the prior vault's ordered feed.
-		this.syncCursor = null;
-		// The note-id map and confirmed set are per-vault identity state.
-		// Carrying them across vaults keys CRDT frames/rooms by another
-		// vault's note ids — the cross-vault flavor of the 2026-07-07
-		// cross-wire class (plugin #200). Wipe both; ids re-learn via the
-		// manifest reconcile + push adoption.
-		this.noteIdMap?.clear();
-		this.clearConfirmedNoteIds();
 		this.syncStateVaultId = current;
-		await this.saveData({ lastSync: "", syncCursor: null, noteIds: {} });
+		await this.wipePerVaultState();
 	}
 
 	/** Export sync state for persistence across sessions. */

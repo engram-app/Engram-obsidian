@@ -5574,12 +5574,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setSyncCursor(cursor) {
     this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
   }
+  /** Wipe ALL per-vault sync + identity state. Both vault-change paths
+   *  (explicit picker `resetForVaultChange`, backstop
+   *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
+   *  point; a wipe that exists on only one path re-opens #200. */
+  async wipePerVaultState() {
+    var _a;
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), await this.saveData({ lastSync: "", syncCursor: null });
+  }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+    this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.wipePerVaultState(), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor + ids cleared");
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -5594,7 +5602,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  resetForVaultChange. A `null` recorded id (fresh install / pre-upgrade
    *  data) is adopted WITHOUT wiping, so upgrading doesn't drop valid state. */
   async invalidateIfVaultChanged() {
-    var _a, _b;
+    var _a;
     let current = (_a = this.settings.vaultId) != null ? _a : null;
     if (current) {
       if (this.syncStateVaultId === null) {
@@ -5607,7 +5615,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), devLog().log(
         "lifecycle",
         `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
-      ), this.syncState.clear(), this.lastSync = "", this.syncCursor = null, (_b = this.noteIdMap) == null || _b.clear(), this.clearConfirmedNoteIds(), this.syncStateVaultId = current, await this.saveData({ lastSync: "", syncCursor: null, noteIds: {} }));
+      ), this.syncStateVaultId = current, await this.wipePerVaultState());
     }
   }
   /** Export sync state for persistence across sessions. */
