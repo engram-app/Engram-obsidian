@@ -20,7 +20,7 @@ import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { SyncEngine } from "../src/sync";
+import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
@@ -72,11 +72,11 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
-function createEngine(): SyncEngine {
+function createEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
 		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1, ...overrides },
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
@@ -178,8 +178,8 @@ describe("base_hash on pushes (CAS against the v0.5.642 backend gate)", () => {
 });
 
 describe("pull un-masking — CRDT-owned local note must catch up from /changes", () => {
-	function crdtEngine() {
-		const engine = createEngine();
+	function crdtEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
+		const engine = createEngine(overrides);
 		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
 		const map = new NoteIdMap();
 		map.set("owned.md", "note-id-1");
@@ -195,8 +195,10 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Local is CLEAN (its content still hashes to the last-synced hash) —
+		// only the SERVER moved. This is the missed-announce catch-up case.
 		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
 		});
 
 		await engine.applyChange({
@@ -217,6 +219,63 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 		// Enrollment still fires (live routing unaffected).
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
+	});
+
+	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
+		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Local content NO LONGER matches the last-synced hash — the user
+		// edited it. The server ALSO moved. That is a conflict, not a catch-up:
+		// backfilling would silently overwrite the local edit (2026-07-08
+		// e2e test_14: "skip" was never consulted).
+		mockApp.vault.cachedRead.mockResolvedValue("Edited by B");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("Base content"), version: 1, serverHash: "old-hash" },
+		});
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "Edited by A",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// The conflict flow was consulted and skip left everything untouched.
+		expect(onConflict).toHaveBeenCalledTimes(1);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApp.vault.process).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("local edited to EXACTLY the remote content: no conflict — converges quietly", async () => {
+		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("same on both");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("older base"), version: 1, serverHash: "old-hash" },
+		});
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "same on both",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(onConflict).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 
 	test("diverged + live-bound: no disk write — forced re-handshake instead", async () => {

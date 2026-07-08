@@ -6880,6 +6880,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
+    let crdtConflictFallthrough = !1;
     if (this.crdt && normalized.endsWith(".md")) {
       let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
       if (!this.app.vault.getFileByPath(normalized))
@@ -6887,19 +6888,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       else {
         noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
         let stored = this.syncState.get(normalized);
-        change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash ? this.isLiveBound(normalized) ? (rlog().warn(
-          "pull",
-          `CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`
-        ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId))) : (rlog().warn(
-          "pull",
-          `CRDT catch-up: pull backfilling diverged note ${change.path}`
-        ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
-          hash: fnv1a(content),
-          version: change.version,
-          serverHash: change.content_hash
-        })) : rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+        if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
+          if (this.isLiveBound(normalized))
+            rlog().warn(
+              "pull",
+              `CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`
+            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId));
+          else {
+            let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
+            localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
+              "pull",
+              `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
+            ), crdtConflictFallthrough = !0) : (rlog().warn(
+              "pull",
+              `CRDT catch-up: pull backfilling diverged note ${change.path}`
+            ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+              hash: fnv1a(content),
+              version: change.version,
+              serverHash: change.content_hash
+            }));
+          }
+        else
+          rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
       }
-      return !1;
+      if (!crdtConflictFallthrough) return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
