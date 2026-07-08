@@ -904,7 +904,10 @@ export class SyncEngine {
 	async resetForVaultChange(): Promise<void> {
 		this.syncStateVaultId = this.settings.vaultId ?? null;
 		await this.wipePerVaultState();
-		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor + ids cleared");
+		devLog().log(
+			"lifecycle",
+			"resetForVaultChange: lastSync + syncState + cursor + ids cleared",
+		);
 	}
 
 	getSyncStateVaultId(): string | null {
