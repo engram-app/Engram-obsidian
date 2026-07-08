@@ -1,5 +1,5 @@
 /**
- * Tests: partitionStrandedFlushes (main.ts), the pure retry/give-up decision
+ * Tests: partitionStrandedFlushes (src/crdt/wiring.ts), the pure retry/give-up decision
  * for one strand-heal drain pass.
  *
  * Root cause (e2e test_43 brand-new-note burst, round 3): drainStrandedFlushes
@@ -14,7 +14,7 @@
  * a 4-note burst while the others succeed.
  */
 import { describe, expect, test } from "bun:test";
-import { partitionStrandedFlushes } from "../src/main";
+import { partitionStrandedFlushes } from "../src/crdt/wiring";
 
 describe("partitionStrandedFlushes", () => {
 	test("flushes ids whose path resolves, clearing their attempt count", () => {

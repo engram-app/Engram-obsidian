@@ -216,16 +216,19 @@ export class NoteChannel {
 		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
 	}
 
-	/** Send a CRDT update frame to the server on the crdt topic.
-	 *  No-op when vaultId is null (crdt topic not joined). */
-	sendCrdt(docId: string, b64: string): void {
+	/** Send a CRDT update frame on the crdt topic.
+	 *  Returns false without sending until the crdt: join is server-acked —
+	 *  a frame with a stale/absent join_ref is silently dropped server-side
+	 *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
+	sendCrdt(docId: string, b64: string): boolean {
 		const t = this.crdtTopic;
-		if (!t) return;
+		if (!t || !this.crdtJoined) return false;
 		// join_ref MUST be the crdt: topic's join_ref. Phoenix routes channel
 		// messages by (topic, join_ref); sending null here means the server can't
 		// match the joined channel and silently drops the frame (every CRDT update
 		// vanished before reaching the backend).
 		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+		return true;
 	}
 
 	async connect(): Promise<void> {
