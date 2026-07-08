@@ -183,6 +183,11 @@ function countFolders(paths: Iterable<string>): number {
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
+/** How long (ms) after wipeRemote deletes a path to suppress the server's
+ *  fanout echo of that delete. Longer than ECHO_COOLDOWN_MS because the echo
+ *  can queue behind the rest of a large wipe + the follow-up bulk push. */
+const WIPE_ECHO_COOLDOWN_MS = 60_000;
+
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -256,6 +261,13 @@ export class SyncEngine {
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
+	/** Paths whose remote copy THIS device just deleted via wipeRemote (the
+	 *  replace-remote sync). The server fans our own deletes back with no
+	 *  origin attribution; applying them trashed the entire local vault
+	 *  mid-replace (2026-07-08 incident). Deletes are otherwise exempt from
+	 *  echo suppression, so this set is the only thing standing between a
+	 *  remote wipe and the local files it is about to re-upload. */
+	private wipedRemote: Map<string, number> = new Map();
 	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
 	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
 	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
@@ -2139,6 +2151,19 @@ export class SyncEngine {
 		return this.recentlyPushed.has(path);
 	}
 
+	/** Suppress the stream echo of a wipeRemote delete for this path. Marked
+	 *  BEFORE the REST delete is issued — the fanout can arrive faster than
+	 *  the HTTP response. Kept on error too: a client-side timeout can mask a
+	 *  delete that actually landed, and the TTL bounds the false-positive. */
+	private markWipedRemote(path: string): void {
+		const existing = this.wipedRemote.get(path);
+		if (existing) window.clearTimeout(existing);
+		const timer = window.setTimeout(() => {
+			this.wipedRemote.delete(path);
+		}, WIPE_ECHO_COOLDOWN_MS);
+		this.wipedRemote.set(path, timer);
+	}
+
 	/** Suppress the handleModify echo of a flushFromCrdt disk write for
 	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
 	 *  never swallows a genuine local edit. */
@@ -2706,6 +2731,14 @@ export class SyncEngine {
 
 		if (event.event_type === "delete") {
 			const normalized = normalizePath(event.path);
+			// Self-echo of a replace-remote wipe: WE deleted this path on the
+			// server moments ago (wipeRemote) and are about to re-upload it.
+			// The general delete-exemption from echo suppression must not let
+			// our own wipe come back and trash the vault (2026-07-08 incident).
+			if (this.wipedRemote.has(normalized)) {
+				rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
+				return;
+			}
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
 				// A WS delete is unordered and can be a STALE echo — e.g. of our own
@@ -4733,9 +4766,27 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
 
 		for (const path of notePaths) {
+			const normalized = normalizePath(path);
+			// Mark BEFORE the delete — the fanout echo can beat the response.
+			this.markWipedRemote(normalized);
 			try {
 				await this.api.deleteNote(path);
 				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
+				// Forget the note's server bindings: the follow-up pushAll must
+				// mint it as NEW. A retained serverHash would hash-skip every
+				// "unchanged" note — silently leaving it deleted on the server —
+				// and a retained note_id points at a tombstone (dead CRDT room,
+				// note_not_found join spam).
+				this.syncState.delete(normalized);
+				this.baseStore?.delete(normalized);
+				if (normalized.endsWith(".md")) {
+					const noteId = this.noteIdMap?.get(normalized) ?? null;
+					this.noteIdMap?.delete(normalized);
+					if (noteId) {
+						await this.crdt?.removeDoc(noteId);
+						this.crdtEnrollment?.reset(noteId);
+					}
+				}
 			} catch (e) {
 				this.logEntry("delete", path, "error", errMsg(e));
 			}
@@ -4749,9 +4800,12 @@ export class SyncEngine {
 			});
 		}
 		for (const path of attachmentPaths) {
+			const normalized = normalizePath(path);
+			this.markWipedRemote(normalized);
 			try {
 				await this.api.deleteAttachment(path);
 				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
+				this.syncState.delete(normalized);
 			} catch (e) {
 				this.logEntry("delete", path, "error", errMsg(e));
 			}

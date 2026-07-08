@@ -5061,7 +5061,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 6e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -5115,6 +5115,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
+    /** Paths whose remote copy THIS device just deleted via wipeRemote (the
+     *  replace-remote sync). The server fans our own deletes back with no
+     *  origin attribution; applying them trashed the entire local vault
+     *  mid-replace (2026-07-08 incident). Deletes are otherwise exempt from
+     *  echo suppression, so this set is the only thing standing between a
+     *  remote wipe and the local files it is about to re-upload. */
+    this.wipedRemote = /* @__PURE__ */ new Map();
     /** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
      *  Distinct from recentlyPushed (WS echo suppression after a push): only the
      *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
@@ -6288,6 +6295,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   isRecentlyPushed(path) {
     return this.recentlyPushed.has(path);
   }
+  /** Suppress the stream echo of a wipeRemote delete for this path. Marked
+   *  BEFORE the REST delete is issued — the fanout can arrive faster than
+   *  the HTTP response. Kept on error too: a client-side timeout can mask a
+   *  delete that actually landed, and the TTL bounds the false-positive. */
+  markWipedRemote(path) {
+    let existing = this.wipedRemote.get(path);
+    existing && window.clearTimeout(existing);
+    let timer = window.setTimeout(() => {
+      this.wipedRemote.delete(path);
+    }, WIPE_ECHO_COOLDOWN_MS);
+    this.wipedRemote.set(path, timer);
+  }
   /** Suppress the handleModify echo of a flushFromCrdt disk write for
    *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
    *  never swallows a genuine local edit. */
@@ -6622,7 +6641,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     if (event.event_type === "delete") {
-      let normalized = (0, import_obsidian21.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
+      let normalized = (0, import_obsidian21.normalizePath)(event.path);
+      if (this.wipedRemote.has(normalized)) {
+        rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
+        return;
+      }
+      let existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
         let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
         if (ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized) {
@@ -7613,7 +7637,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  gate. Failures on individual deletes are logged, not thrown, so the
    *  re-upload still runs. */
   async wipeRemote() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     let manifest = await this.api.getManifest();
     if (!manifest) {
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
@@ -7627,12 +7651,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let done = 0;
     (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 });
     for (let path of notePaths) {
+      let normalized = (0, import_obsidian21.normalizePath)(path);
+      this.markWipedRemote(normalized);
       try {
-        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
+        if (await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote"), this.syncState.delete(normalized), (_b = this.baseStore) == null || _b.delete(normalized), normalized.endsWith(".md")) {
+          let noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(normalized)) != null ? _d : null;
+          (_e = this.noteIdMap) == null || _e.delete(normalized), noteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(noteId)), (_g = this.crdtEnrollment) == null || _g.reset(noteId));
+        }
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-      done++, (_b = this.onSyncProgress) == null || _b.call(this, {
+      done++, (_h = this.onSyncProgress) == null || _h.call(this, {
         phase: "deleting",
         current: done,
         total,
@@ -7641,12 +7670,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       });
     }
     for (let path of attachmentPaths) {
+      let normalized = (0, import_obsidian21.normalizePath)(path);
+      this.markWipedRemote(normalized);
       try {
-        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
+        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote"), this.syncState.delete(normalized);
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-      done++, (_c = this.onSyncProgress) == null || _c.call(this, {
+      done++, (_i = this.onSyncProgress) == null || _i.call(this, {
         phase: "deleting",
         current: done,
         total,
