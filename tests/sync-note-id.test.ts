@@ -1033,6 +1033,78 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 	});
 });
 
+describe("moveIfIdRelocated's disk-content flush must be create-only (final review CRITICAL-1)", () => {
+	test("does not overwrite content a concurrent flush already wrote to newPath during the suspend window", async () => {
+		// moveIfIdRelocated suspends on cachedRead + trashFile awaits while
+		// holding the OLD file's now-stale bytes. If a concurrent doc-triggered
+		// flush (e.g. another applyChange racing this same upsert) writes NEWER
+		// content to newPath during that window, flushFromCrdt's modify-if-
+		// exists semantics would clobber it with the stale bytes on resume.
+		// Fix: re-check newPath for existence right before flushing (mirrors
+		// materializeRelocated's own exists check) and skip when something else
+		// already landed there.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-race-overwrite");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-race-overwrite", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		const newFile = new TFile("New.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		// oldFile reads as the stale pre-rename content; newFile (once it
+		// exists) reads as whatever the concurrent flush already wrote —
+		// distinct content, so flushFromCrdt's idempotency check (skip when
+		// disk already holds exactly `content`) can't mask a real overwrite.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
+			Promise.resolve(
+				f.path === "Old.md"
+					? "# stale content read before the rename"
+					: "# newer content the concurrent flush already wrote",
+			),
+		);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.vault.modify as ReturnType<typeof mock>).mockClear();
+		// Model the race: trashFile's await is the suspend window. By the time
+		// it resolves, a concurrent flush has already created New.md with newer
+		// content — getAbstractFileByPath must now report it.
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(async () => {
+			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(newFile);
+		});
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		try {
+			await engine.handleStreamEvent({
+				event_type: "upsert",
+				kind: "note",
+				id: "id-race-overwrite",
+				path: "New.md",
+				timestamp: 2,
+				title: "New",
+				folder: "",
+				tags: [],
+				mtime: 2,
+				updated_at: "2026-01-01T00:00:00Z",
+			} as any);
+		} finally {
+			(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockReset();
+			(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockResolvedValue(undefined);
+		}
+
+		// The just-landed content at New.md must survive untouched — the
+		// relocation must never write the old file's stale bytes over it.
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+});
+
 describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 content-loss mechanism)", () => {
 	// Root cause (CI backend PR #950, plugin e7e0e4f): a note's own
 	// materialize write (e.g. applyChange's CRDT-discovery flushFromCrdt, or

@@ -2790,7 +2790,21 @@ export class SyncEngine {
 				} catch {
 					// Already gone — the concurrent tombstone won the race.
 				}
-				await this.flushFromCrdt(newPath, content);
+				// CREATE-ONLY GUARD (final review CRITICAL-1): the cachedRead/
+				// trashFile awaits above are a suspend window. flushFromCrdt's
+				// modify-if-exists semantics would overwrite content a CONCURRENT
+				// doc-triggered flush already wrote to newPath during that window
+				// with these old-file bytes, which are never newer. Re-check right
+				// before flushing — mirrors materializeRelocated's own exists check.
+				if (this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
+					rlog().info(
+						"pull",
+						`Id-keyed move: skipping stale disk flush for ${newPath} — ` +
+							`already exists (a concurrent flush won the race)`,
+					);
+				} else {
+					await this.flushFromCrdt(newPath, content);
+				}
 				rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
 			} catch (e) {
 				rlog().warn(
