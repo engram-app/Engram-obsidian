@@ -270,6 +270,46 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 		channel.disconnect();
 	});
 
+	test("note_not_found on a NON-crdt topic does not fire the heal callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const missing: string[] = [];
+		channel.onCrdtNoteNotFound = (docId) => missing.push(docId);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			"8",
+			"sync:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "note_not_found", doc_id: "x" } },
+		]);
+
+		expect(missing).toEqual([]);
+		channel.disconnect();
+	});
+
+	test("note_not_found without doc_id falls through (no crash, no callback)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const missing: string[] = [];
+		channel.onCrdtNoteNotFound = (docId) => missing.push(docId);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(() =>
+			simulateMessage(lastWsInstance, [
+				null,
+				"9",
+				"crdt:u1:v1",
+				"phx_reply",
+				{ status: "error", response: { reason: "note_not_found" } },
+			]),
+		).not.toThrow();
+
+		expect(missing).toEqual([]);
+		channel.disconnect();
+	});
+
 	test("crdt_doc_ready without onCrdtDocReady is a no-op (no crash)", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
 		await channel.connect();

@@ -1705,7 +1705,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
       else if (status === "error") {
         let response = payload.response;
-        if ((response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
+        if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
           rlog().warn(
             "channel",
             `crdt_msg dropped by server (note_not_found): ${response.doc_id} \u2014 triggering id-map reconcile`
@@ -21720,7 +21720,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           var _a2;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
         }, channel.onCrdtNoteNotFound = (docId) => {
-          this.syncEngine.ensureNoteIdMapped(docId);
+          this.syncEngine.isSyncBlocked() || this.syncEngine.ensureNoteIdMapped(docId);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
           this.syncEngine.isSyncBlocked() || (this.syncEngine.ensureNoteIdMapped(docId), (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId));

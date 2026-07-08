@@ -1635,7 +1635,13 @@ export default class EngramSyncPlugin extends Plugin {
 					// C1 guard suppresses the legacy note_changed discovery path.
 					// Backend #955: the server now tells us when a crdt_msg we sent was
 					// dropped for an unknown note_id — heal the id map immediately.
+					// Gate like the sibling onCrdtDocReady: ensureNoteIdMapped is NOT
+					// disk-write-free — the manifest reconcile it triggers ends with
+					// sweepPendingOrphans, which can trashFile. Never run that while
+					// the sync gate is closed (the user hasn't picked a direction);
+					// the drop re-fires on the next frame after the gate opens.
 					channel.onCrdtNoteNotFound = (docId) => {
+						if (this.syncEngine.isSyncBlocked()) return;
 						this.syncEngine.ensureNoteIdMapped(docId);
 					};
 					channel.onCrdtDocReady = (docId) => {

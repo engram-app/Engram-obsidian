@@ -571,7 +571,11 @@ export class NoteChannel {
 				// signature. Not a join failure; handle before join-error logging.
 				const response = (payload as { response?: { reason?: string; doc_id?: string } })
 					.response;
-				if (response?.reason === "note_not_found" && response.doc_id) {
+				if (
+					topic === this.crdtTopic &&
+					response?.reason === "note_not_found" &&
+					response.doc_id
+				) {
 					rlog().warn(
 						"channel",
 						`crdt_msg dropped by server (note_not_found): ${response.doc_id} — triggering id-map reconcile`,
