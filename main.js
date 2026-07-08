@@ -5626,7 +5626,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
    *  still owns materializing it) or the file already exists at `path`. */
   async materializeRelocated(path, noteId) {
+    var _a, _b;
     if (!this.crdt || !path.endsWith(".md") || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
+    let canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
+    if (canonical !== null && (0, import_obsidian21.normalizePath)(canonical) !== (0, import_obsidian21.normalizePath)(path)) {
+      rlog().info(
+        "ws",
+        `Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`
+      );
+      return;
+    }
     let text2 = await this.crdt.projectedText(noteId);
     await this.flushFromCrdt(path, text2);
   }

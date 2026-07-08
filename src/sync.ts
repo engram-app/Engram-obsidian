@@ -835,6 +835,22 @@ export class SyncEngine {
 		// throw.
 		if (typeof this.crdt.isSynced !== "function" || !this.crdt.isSynced(noteId)) return;
 		if (this.app.vault.getAbstractFileByPath(normalizePath(path))) return;
+		// Identity re-check at WRITE time (issue #210, e2e test_34): this call is
+		// unawaited and races the pull's id-keyed move. A stale old-path upsert
+		// captures (path, noteId) while old is still canonical; by the time we
+		// run, the pull may have relocated the id and cleaned the old file —
+		// writing now re-creates the tombstoned path, and its modify event
+		// re-pushes it under a FRESH mint (the old-path map entry moved away),
+		// resurrecting the path server-side. If the id no longer maps to the
+		// path we captured, the write is stale: skip.
+		const canonical = this.noteIdMap?.pathForId(noteId) ?? null;
+		if (canonical !== null && normalizePath(canonical) !== normalizePath(path)) {
+			rlog().info(
+				"ws",
+				`Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`,
+			);
+			return;
+		}
 		const text = await this.crdt.projectedText(noteId);
 		await this.flushFromCrdt(path, text);
 	}
