@@ -174,4 +174,8 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 
 If you need info on the `version-bump.mjs` script (and the silent-corruption foot-gun where running it directly drops the `version` key from `manifest.json`), see `docs/context/version-bump-script.md`
 
+If a note's content gets copied into a DIFFERENT file on file-switch with a clean noteIdMap (the editor-binding stale-buffer race, PR #194) — the bindTo await gap where the old ySync binding captured Obsidian's setViewData whole-doc replace, the sync-detach-before-await + bindEpoch + drift view-identity-guard fix, and why detach-not-release matters in the drift guard, see `docs/context/crdt-editor-bind-race-pollution.md`
+
+If a missed CRDT delivery never heals (create-race dead local id → `crdt_channel: dropped crdt_msg → not_found` in Loki, edge-triggered announce black hole, or an ignorant push "convergently" deleting content the client never saw) — the catch-up convergence system from PRs #197 + #198 (id adoption parity, base_hash CAS 409, pull backfill, `verifyConvergenceOnOpen`, reset+enroll as the universal re-deliver primitive), see `docs/context/sync-catchup-convergence.md`
+
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md

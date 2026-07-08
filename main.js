@@ -1144,9 +1144,9 @@ var EngramApi = class _EngramApi {
    *  server adopts as the note's primary key on first create (note_id-keyed
    *  CRDT rework, Task 5). Harmless to send for an existing note: the server
    *  already has an id and ignores it. */
-  async pushNote(path, content, mtime, version, clientId) {
+  async pushNote(path, content, mtime, version, clientId, baseHash) {
     let body = { path, content, mtime };
-    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId);
+    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId), baseHash !== void 0 && (body.base_hash = baseHash);
     try {
       return (await this.request("POST", "/notes", body)).json;
     } catch (e) {
@@ -1472,6 +1472,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
      *  for this doc so a device that doesn't yet have the note pulls it. */
     this.onCrdtDocReady = null;
+    /** A crdt_msg we sent was dropped server-side: the note_id has no row
+     *  (backend #955 error reply). The create-race cross-wire signature — wire
+     *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
+    this.onCrdtNoteNotFound = null;
     /** Fired when the `crdt:` topic join is acknowledged by the server.
      *  Use this to activate CRDT routing in the SyncEngine — only wire
      *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -1678,7 +1682,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1701,34 +1705,44 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
         } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
-      else if (status === "error" && (rlog().error(
-        "channel",
-        `Channel join error on ${topic}: ${JSON.stringify(payload)}`
-      ), topic === this.crdtTopic)) {
-        let response = payload.response, reason = typeof (response == null ? void 0 : response.reason) == "string" ? response.reason : void 0, min2 = typeof (response == null ? void 0 : response.min) == "number" ? response.min : void 0;
-        ref === this.crdtJoinMsgRef ? (_c = this.onCrdtJoinError) == null || _c.call(this, reason, min2) : rlog().warn(
+      else if (status === "error") {
+        let response = payload.response;
+        if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
+          rlog().warn(
+            "channel",
+            `crdt_msg dropped by server (note_not_found): ${response.doc_id} \u2014 triggering id-map reconcile`
+          ), (_c = this.onCrdtNoteNotFound) == null || _c.call(this, response.doc_id);
+          return;
+        }
+        if (rlog().error(
           "channel",
-          `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
-        );
+          `Channel join error on ${topic}: ${JSON.stringify(payload)}`
+        ), topic === this.crdtTopic) {
+          let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
+          ref === this.crdtJoinMsgRef ? (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2) : rlog().warn(
+            "channel",
+            `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
+          );
+        }
       }
       return;
     }
     if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_d = this.onPlanState) == null || _d.call(this, payload);
+      rlog().info("channel", "Received subscription_activated event"), (_e = this.onPlanState) == null || _e.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_e = this.onVaultDeleted) == null || _e.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_f = this.onVaultDeleted) == null || _f.call(this);
       return;
     }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_f = this.onCrdtMessage) == null || _f.call(this, docId, b64));
+      docId && b64 && ((_g = this.onCrdtMessage) == null || _g.call(this, docId, b64));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_g = this.onCrdtDocReady) == null || _g.call(this, docId));
+      docId && ((_h = this.onCrdtDocReady) == null || _h.call(this, docId));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1736,7 +1750,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_h = p.kind) != null ? _h : "note",
+        kind: (_i = p.kind) != null ? _i : "note",
         id: p.id,
         content: p.content,
         content_hash: p.content_hash,
@@ -1747,10 +1761,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_i = this.onEvent) == null || _i.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_j = this.onEvent) == null || _j.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_j = payload.notes) != null ? _j : [];
+      let notes = (_k = payload.notes) != null ? _k : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1767,7 +1781,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_k = this.onEvent) == null || _k.call(this, streamEvent);
+        (_l = this.onEvent) == null || _l.call(this, streamEvent);
       }
     }
   }
@@ -5215,6 +5229,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  ever clean it. Swept by the next reconcile against a fresh manifest:
      *  absent from the manifest + unclaimed by the local map -> trash then. */
     this.pendingOrphanSweep = /* @__PURE__ */ new Set();
+    this.manifestPathHashes = null;
+    this.idMapReconcileInflight = null;
+    this.idMapReconcileQueued = !1;
     /** note_ids the SERVER is known to already have a note row for — learned
      *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
      *  successful REST push response. The backend's CRDT channel now requires
@@ -5375,7 +5392,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   cacheManifestOwners(manifest) {
     this.manifestPathOwners = new Map(
       manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.id])
+    ), this.manifestPathHashes = new Map(
+      manifest.notes.filter((n) => n.content_hash).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.content_hash])
     ), this.manifestOwnersFetchedAt = Date.now();
+  }
+  /** Bind-time convergence check (2026-07-07 catch-up gap). Called when a
+   *  note is opened: compare the server's content_hash for the path (from
+   *  the cached manifest snapshot, 30s TTL — refreshed here when stale)
+   *  against the serverHash this client last synced. A mismatch means a
+   *  delivery was missed (announce lost, STEP2 dropped, offline window):
+   *  force a fresh CRDT handshake — reset lifts the once-per-session
+   *  enrollment guard, enroll re-fires STEP1, and the server's STEP2 reply
+   *  carries exactly the ops we are missing. No-ops for unmapped notes and
+   *  when ownership is unknowable (no manifest). */
+  async verifyConvergenceOnOpen(path) {
+    var _a, _b, _c;
+    let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized);
+    if (!noteId || !this.crdtEnrollment || await this.manifestOwnerOf(normalized) === void 0) return;
+    let serverHash = (_b = this.manifestPathHashes) == null ? void 0 : _b.get(normalized);
+    if (!serverHash) return;
+    let stored = this.syncState.get(normalized);
+    (stored == null ? void 0 : stored.serverHash) !== serverHash && (rlog().warn(
+      "pull",
+      `bind-time divergence: forcing re-handshake ${normalized} (have=${(_c = stored == null ? void 0 : stored.serverHash) != null ? _c : "none"} server=${serverHash})`
+    ), this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId));
   }
   /** Trash files whose refused id-keyed-move turned out to be a genuine
    *  rename after all: the path is absent from the (fresh) manifest and no
@@ -5401,11 +5441,53 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), await this.sweepPendingOrphans(), applied;
   }
+  /** Coalesced LIVE id-map reconcile. Called when a crdt_doc_ready announce
+   *  names a note_id the map cannot resolve — the create-race signature:
+   *  another writer (MCP/web) owns the note under an id this device never
+   *  learned, so every announce/frame for it is undeliverable. Today's only
+   *  other heal is the cold-start reconcile, which leaves the note deaf for
+   *  the whole session. Runs the full manifest reconcile (already the
+   *  authoritative {id,path} source; per-id fetch not worth a new endpoint),
+   *  single-flight with one trailing rerun so an announce burst costs at most
+   *  two manifest fetches. */
+  ensureNoteIdMapped(noteId) {
+    if (!(!this.noteIdMap || !noteId) && !this.syncBlocked && this.noteIdMap.pathForId(noteId) === null) {
+      if (this.idMapReconcileInflight) {
+        this.idMapReconcileQueued = !0;
+        return;
+      }
+      this.idMapReconcileInflight = (async () => {
+        try {
+          do
+            this.idMapReconcileQueued = !1, await this.reconcileNoteIdMapFromManifest();
+          while (this.idMapReconcileQueued);
+        } catch (e) {
+          rlog().warn(
+            "sync",
+            `live id-map reconcile failed: ${e instanceof Error ? e.message : String(e)}`
+          );
+        } finally {
+          this.idMapReconcileInflight = null;
+        }
+      })();
+    }
+  }
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
   }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
+  }
+  /** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
+   *  (no row yet → note_not_found) and the once-per-session enrollment guard
+   *  never re-fires it, leaving the note deaf to live sync until a later
+   *  catch-up (~30s observed live). Called with the id the create-push
+   *  response confirmed, BEFORE confirmNoteId: if the id was not yet
+   *  confirmed this is the create — re-fire the handshake now that the row
+   *  exists. Md + size gated exactly like the pre-push enroll (an oversized
+   *  doc must never enroll — 8 MB WS frame limit). */
+  refireEnrollmentOnFirstConfirm(noteId, path, content) {
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -5573,12 +5655,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setSyncCursor(cursor) {
     this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
   }
+  /** Wipe ALL per-vault sync + identity state. Both vault-change paths
+   *  (explicit picker `resetForVaultChange`, backstop
+   *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
+   *  point; a wipe that exists on only one path re-opens #200. */
+  async wipePerVaultState() {
+    var _a;
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null });
+  }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+    this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.wipePerVaultState(), devLog().log(
+      "lifecycle",
+      "resetForVaultChange: lastSync + syncState + cursor + ids cleared"
+    );
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -5606,7 +5699,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), devLog().log(
         "lifecycle",
         `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
-      ), this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = current, await this.saveData({ lastSync: "", syncCursor: null }));
+      ), this.syncStateVaultId = current, await this.wipePerVaultState());
     }
   }
   /** Export sync state for persistence across sessions. */
@@ -5906,7 +5999,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { ...existing, hash }), (_h = this.crdtEnrollment) == null || _h.enroll(noteId), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
           file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId));
         }
-        let resp = noteId ? await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version, noteId) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
+        let baseHash = existing == null ? void 0 : existing.serverHash, resp = baseHash !== void 0 ? await this.api.pushNote(
+          file.path,
+          content,
+          mtime,
+          existing == null ? void 0 : existing.version,
+          noteId != null ? noteId : void 0,
+          baseHash
+        ) : noteId ? await this.api.pushNote(
+          file.path,
+          content,
+          mtime,
+          existing == null ? void 0 : existing.version,
+          noteId
+        ) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
           let serverNote = resp.server_note;
           devLog().log(
@@ -6009,13 +6115,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_s = this.baseStore) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_t2 = this.baseStore) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_u = this.noteIdMap) == null || _u.delete((0, import_obsidian21.normalizePath)(file.path)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.confirmNoteId(resp.note.id);
+          }), (_s = this.baseStore) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_t2 = this.baseStore) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_u = this.noteIdMap) == null || _u.delete((0, import_obsidian21.normalizePath)(file.path)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_w = this.baseStore) == null || _w.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_x = this.noteIdMap) == null || _x.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.confirmNoteId(resp.note.id);
+          }), serverVersion != null && ((_w = this.baseStore) == null || _w.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_x = this.noteIdMap) == null || _x.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -6775,7 +6881,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (this.crdt && normalized.endsWith(".md")) {
       let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
-      return this.app.vault.getFileByPath(normalized) ? (noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : (noteId && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content)), !1;
+      if (!this.app.vault.getFileByPath(normalized))
+        noteId && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+      else {
+        noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
+        let stored = this.syncState.get(normalized);
+        change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash ? this.isLiveBound(normalized) ? (rlog().warn(
+          "pull",
+          `CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`
+        ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId))) : (rlog().warn(
+          "pull",
+          `CRDT catch-up: pull backfilling diverged note ${change.path}`
+        ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+          hash: fnv1a(content),
+          version: change.version,
+          serverHash: change.content_hash
+        })) : rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+      }
+      return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
@@ -7093,12 +7216,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       for (let e of entries) this.pushing.add(e.file.path);
       try {
         let resp = await this.api.pushNotesBatch(
-          entries.map((e) => ({
-            path: e.file.path,
-            content: e.content,
-            mtime: e.file.stat.mtime / 1e3,
-            version: e.version
-          }))
+          entries.map((e) => {
+            var _a3, _b3;
+            let np = (0, import_obsidian21.normalizePath)(e.file.path), noteId = (_b3 = (_a3 = this.noteIdMap) == null ? void 0 : _a3.get(np)) != null ? _b3 : null;
+            return !noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(np, noteId)), {
+              path: e.file.path,
+              content: e.content,
+              mtime: e.file.stat.mtime / 1e3,
+              version: e.version,
+              ...noteId ? { id: noteId } : {}
+            };
+          })
         ), byPath = new Map(resp.results.map((r) => [r.path, r]));
         for (let e of entries) {
           let r = byPath.get(e.file.path);
@@ -7211,7 +7339,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Record a successful batch-push result: sync state, base store, issue
    *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
   async recordBatchPushOk(file, content, hash, result) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
     if (serverPath) {
       let localFile = this.app.vault.getFileByPath(file.path);
@@ -7231,6 +7359,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         version: result.version,
         serverHash: result.content_hash
       }), result.version != null && ((_c = this.baseStore) == null || _c.set(np, content, result.version));
+    }
+    if (result.id) {
+      serverPath && ((_d = this.noteIdMap) == null || _d.delete((0, import_obsidian21.normalizePath)(file.path)));
+      let np = (0, import_obsidian21.normalizePath)(serverPath != null ? serverPath : file.path);
+      (_e = this.noteIdMap) == null || _e.set(np, result.id), this.confirmNoteId(result.id);
     }
     this.issues.clear(file.path);
   }
@@ -7632,7 +7765,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return total;
   }
   async runFlushQueue() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -7673,19 +7806,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
-          let resp = await this.api.pushNote(entry.path, content, mtime);
+          let replayNp = (0, import_obsidian21.normalizePath)(entry.path), replayId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(replayNp)) != null ? _f : null;
+          !replayId && this.noteIdMap && (replayId = uuid7(), this.noteIdMap.set(replayNp, replayId));
+          let replayState = this.syncState.get(replayNp), replayBase = replayState == null ? void 0 : replayState.serverHash, resp = replayBase !== void 0 ? await this.api.pushNote(
+            entry.path,
+            content,
+            mtime,
+            replayState == null ? void 0 : replayState.version,
+            replayId != null ? replayId : void 0,
+            replayBase
+          ) : replayId ? await this.api.pushNote(
+            entry.path,
+            content,
+            mtime,
+            void 0,
+            replayId
+          ) : await this.api.pushNote(entry.path, content, mtime);
+          if ("conflict" in resp) {
+            let conflicted = this.app.vault.getFileByPath(entry.path);
+            conflicted && await this.pushFile(conflicted, !0);
+          }
           if (!("conflict" in resp) && content !== void 0) {
             let np = (0, import_obsidian21.normalizePath)(entry.path);
             this.syncState.set(np, {
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, resp.note.version));
+            }), resp.note.version != null && ((_g = this.baseStore) == null || _g.set(np, content, resp.note.version)), resp.note.id && ((_h = this.noteIdMap) == null || _h.set(np, resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content), this.confirmNoteId(resp.note.id));
           }
         }
         await this.queue.dequeue(
           entry.path,
-          (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0
+          (_j = (_i = entry.vaultId) != null ? _i : this.settings.vaultId) != null ? _j : void 0
         ), this.issues.clear(entry.path), flushed++;
       } catch (e) {
         let classified = categorizeError(e);
@@ -7693,7 +7845,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let now = Date.now();
           this.issues.record({
             path: entry.path,
-            kind: (_h = entry.kind) != null ? _h : "note",
+            kind: (_k = entry.kind) != null ? _k : "note",
             category: classified.category,
             status: classified.status,
             message: classified.message,
@@ -7701,9 +7853,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             firstFailedAt: now,
             lastFailedAt: now,
             attempts: 1
-          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
+          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_l = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
             entry.path,
-            (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0
+            (_n = (_m = entry.vaultId) != null ? _m : this.settings.vaultId) != null ? _n : void 0
           );
           continue;
         }
@@ -20400,6 +20552,9 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
      *  getYText. Once released, the controller is permanently inert: refresh()
      *  drops it from the map and mints a fresh one on next refresh. */
     this.released = !1;
+    /** Monotonic bind counter; a bindTo whose epoch is stale after its await
+     *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
+    this.bindEpoch = 0;
     this.bindResult = null;
     this.boundYtext = null;
     this.driftTimer = null;
@@ -20410,10 +20565,9 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
   }
   async bindTo(view, path) {
     if (this.path === path) return;
-    let ytext = await this.deps.getYText(path);
-    if (this.released) return;
-    let oldPath = this.path;
-    oldPath && this.deps.onRelease(oldPath, this.viewId);
+    this.detach(view);
+    let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
+    if (this.released || epoch !== this.bindEpoch) return;
     let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
@@ -20421,18 +20575,31 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
     }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
   }
   release(view) {
-    this.released = !0, this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.released = !0, this.detach(view);
+  }
+  /** Clears the active binding NOW: compartment emptied, refcount released,
+   *  drift timer stopped. Unlike release(), the controller stays usable so
+   *  bindTo can re-bind the same view to a new path. */
+  detach(view) {
+    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
   }
   clearDriftTimer() {
     this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
   }
   scheduleDriftCheck(view) {
+    var _a;
     this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
       this.driftTimer = null, this.runDriftCheck(view);
-    }, DRIFT_CHECK_INTERVAL_MS);
+    }, (_a = this.deps.driftIntervalMs) != null ? _a : DRIFT_CHECK_INTERVAL_MS);
   }
   runDriftCheck(view) {
+    var _a, _b;
     if (this.released || this.boundYtext === null || this.bindResult === null) return;
+    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
+    if (shown !== void 0 && shown !== this.path) {
+      this.detach(view);
+      return;
+    }
     let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
     if (changes.length > 0) {
       let captured = this.bindResult.getSyncAnnotation();
@@ -20623,7 +20790,11 @@ var ViewerRefcount = class {
         getYText: (p) => this.getYText(p),
         awareness: () => this.localAwareness,
         onBind: (p, id2) => this.refcount.bind(p, id2),
-        onRelease: (p, id2) => this.refcount.release(p, id2)
+        onRelease: (p, id2) => this.refcount.release(p, id2),
+        // The MdView owning this cm is stable for the cm's lifetime, but the
+        // FILE it displays is not (Obsidian reuses views across note
+        // switches) — this closure always reports the currently shown file.
+        viewPath: () => getMarkdownFilePath(view)
       }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
     }
     for (let [cm, ctrl] of this.controllers)
@@ -20691,6 +20862,13 @@ var NoteIdMap = class _NoteIdMap {
     if (id2 === void 0) return;
     let displacedId = this.byPath.get(newPath);
     displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
+  }
+  /** Drop every mapping. Used on vault change: the map is per-vault identity
+   *  state — carrying ids across vaults routes CRDT frames to another
+   *  vault's notes (plugin #200). Mutates in place so every holder of the
+   *  instance (main, sync engine, live views) sees the wipe. */
+  clear() {
+    this.byPath.clear(), this.byId.clear();
   }
   toJSON() {
     return Object.fromEntries(this.byPath);
@@ -21233,10 +21411,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           ), new import_obsidian25.Notice("Engram sync: sync failed");
         });
       }
-    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", () => {
-      var _a2;
-      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
-    })), this.registerEvent(
+    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        var _a2;
+        (_a2 = this.crdtLiveViews) == null || _a2.refresh(), (file == null ? void 0 : file.extension) === "md" && !this.syncEngine.isSyncBlocked() && this.syncEngine.verifyConvergenceOnOpen(file.path);
+      })
+    ), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
@@ -21746,9 +21926,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
+        }, channel.onCrdtNoteNotFound = (docId) => {
+          this.syncEngine.isSyncBlocked() || this.syncEngine.ensureNoteIdMapped(docId);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
-          this.syncEngine.isSyncBlocked() || (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId);
+          this.syncEngine.isSyncBlocked() || (this.syncEngine.ensureNoteIdMapped(docId), (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId));
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",

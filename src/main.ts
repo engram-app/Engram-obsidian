@@ -718,7 +718,18 @@ export default class EngramSyncPlugin extends Plugin {
 		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
 		// reconfigures it for each open note via EditorController.bindTo().
 		this.registerEditorExtension([ycollabExtension()]);
-		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
+		this.registerEvent(
+			this.app.workspace.on("file-open", (file) => {
+				this.crdtLiveViews?.refresh();
+				// Bind-time convergence check (2026-07-07 catch-up gap): opening a
+				// note verifies the local synced state against the server's manifest
+				// hash; divergence forces a fresh CRDT handshake so a missed
+				// announce/STEP2 heals the moment the user looks at the note.
+				if (file?.extension === "md" && !this.syncEngine.isSyncBlocked()) {
+					void this.syncEngine.verifyConvergenceOnOpen(file.path);
+				}
+			}),
+		);
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
@@ -1743,6 +1754,17 @@ export default class EngramSyncPlugin extends Plugin {
 					// brand-new note created on device A is never observed on device B
 					// (B only observes rooms it itself sends a `crdt_msg` for), and the
 					// C1 guard suppresses the legacy note_changed discovery path.
+					// Backend #955: the server now tells us when a crdt_msg we sent was
+					// dropped for an unknown note_id — heal the id map immediately.
+					// Gate like the sibling onCrdtDocReady: ensureNoteIdMapped is NOT
+					// disk-write-free — the manifest reconcile it triggers ends with
+					// sweepPendingOrphans, which can trashFile. Never run that while
+					// the sync gate is closed (the user hasn't picked a direction);
+					// the drop re-fires on the next frame after the gate opens.
+					channel.onCrdtNoteNotFound = (docId) => {
+						if (this.syncEngine.isSyncBlocked()) return;
+						this.syncEngine.ensureNoteIdMapped(docId);
+					};
 					channel.onCrdtDocReady = (docId) => {
 						// Gate: while the sync gate is closed, skip enrollment entirely.
 						// Without this gate, STEP2 ops integrate into the Y.Doc but can
@@ -1753,6 +1775,12 @@ export default class EngramSyncPlugin extends Plugin {
 						// here keeps gated-period state out of the doc entirely; the
 						// announce re-fires via pull discovery once the gate opens.
 						if (this.syncEngine.isSyncBlocked()) return;
+						// Live heal for the create-race: an announce naming an id the map
+						// cannot resolve means another writer owns this note under an
+						// identity we never learned — enrollment alone would sync a doc we
+						// can't flush (no path). Kick the coalesced manifest reconcile so
+						// the mapping lands now, not at the next cold start.
+						this.syncEngine.ensureNoteIdMapped(docId);
 						// Enroll → send our discovery STEP1. The server answers with a
 						// STEP2: a content STEP2 flushes the body via the update path; an
 						// EMPTY STEP2 (genuinely-empty note) is materialized off the

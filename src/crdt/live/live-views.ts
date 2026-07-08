@@ -132,6 +132,10 @@ export class CrdtLiveViews {
 					awareness: () => this.localAwareness,
 					onBind: (p, id) => this.refcount.bind(p, id),
 					onRelease: (p, id) => this.refcount.release(p, id),
+					// The MdView owning this cm is stable for the cm's lifetime, but the
+					// FILE it displays is not (Obsidian reuses views across note
+					// switches) — this closure always reports the currently shown file.
+					viewPath: () => getMarkdownFilePath(view),
 				});
 				this.controllers.set(cm, ctrl);
 			}

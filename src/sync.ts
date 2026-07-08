@@ -426,7 +426,45 @@ export class SyncEngine {
 		this.manifestPathOwners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
+		// Same snapshot, second projection: path -> server content_hash. Feeds
+		// the bind-time convergence check (verifyConvergenceOnOpen) for free —
+		// the manifest already carried the hashes; we were dropping them.
+		this.manifestPathHashes = new Map(
+			manifest.notes
+				.filter((n) => n.content_hash)
+				.map((n) => [normalizePath(n.path), n.content_hash]),
+		);
 		this.manifestOwnersFetchedAt = Date.now();
+	}
+
+	private manifestPathHashes: Map<string, string> | null = null;
+
+	/** Bind-time convergence check (2026-07-07 catch-up gap). Called when a
+	 *  note is opened: compare the server's content_hash for the path (from
+	 *  the cached manifest snapshot, 30s TTL — refreshed here when stale)
+	 *  against the serverHash this client last synced. A mismatch means a
+	 *  delivery was missed (announce lost, STEP2 dropped, offline window):
+	 *  force a fresh CRDT handshake — reset lifts the once-per-session
+	 *  enrollment guard, enroll re-fires STEP1, and the server's STEP2 reply
+	 *  carries exactly the ops we are missing. No-ops for unmapped notes and
+	 *  when ownership is unknowable (no manifest). */
+	async verifyConvergenceOnOpen(path: string): Promise<void> {
+		const normalized = normalizePath(path);
+		const noteId = this.noteIdMap?.get(normalized);
+		if (!noteId || !this.crdtEnrollment) return;
+		// Reuse manifestOwnerOf's refresh discipline (it repopulates both maps).
+		const owner = await this.manifestOwnerOf(normalized);
+		if (owner === undefined) return; // unknowable — never force on no data
+		const serverHash = this.manifestPathHashes?.get(normalized);
+		if (!serverHash) return;
+		const stored = this.syncState.get(normalized);
+		if (stored?.serverHash === serverHash) return; // converged
+		rlog().warn(
+			"pull",
+			`bind-time divergence: forcing re-handshake ${normalized} (have=${stored?.serverHash ?? "none"} server=${serverHash})`,
+		);
+		this.crdtEnrollment.reset(noteId);
+		this.crdtEnrollment.enroll(noteId);
 	}
 
 	/** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -486,6 +524,47 @@ export class SyncEngine {
 		return applied;
 	}
 
+	/** Coalesced LIVE id-map reconcile. Called when a crdt_doc_ready announce
+	 *  names a note_id the map cannot resolve — the create-race signature:
+	 *  another writer (MCP/web) owns the note under an id this device never
+	 *  learned, so every announce/frame for it is undeliverable. Today's only
+	 *  other heal is the cold-start reconcile, which leaves the note deaf for
+	 *  the whole session. Runs the full manifest reconcile (already the
+	 *  authoritative {id,path} source; per-id fetch not worth a new endpoint),
+	 *  single-flight with one trailing rerun so an announce burst costs at most
+	 *  two manifest fetches. */
+	ensureNoteIdMapped(noteId: string): void {
+		if (!this.noteIdMap || !noteId) return;
+		// Intrinsic gate check (not caller-dependent): the reconcile this
+		// triggers ends with sweepPendingOrphans, which can trashFile — never
+		// run that while the sync gate is closed. Callers may also gate for
+		// their own reasons, but safety must not depend on them remembering.
+		if (this.syncBlocked) return;
+		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
+		if (this.idMapReconcileInflight) {
+			this.idMapReconcileQueued = true;
+			return;
+		}
+		this.idMapReconcileInflight = (async () => {
+			try {
+				do {
+					this.idMapReconcileQueued = false;
+					await this.reconcileNoteIdMapFromManifest();
+				} while (this.idMapReconcileQueued);
+			} catch (e) {
+				rlog().warn(
+					"sync",
+					`live id-map reconcile failed: ${e instanceof Error ? e.message : String(e)}`,
+				);
+			} finally {
+				this.idMapReconcileInflight = null;
+			}
+		})();
+	}
+
+	private idMapReconcileInflight: Promise<void> | null = null;
+	private idMapReconcileQueued = false;
+
 	/** note_ids the SERVER is known to already have a note row for — learned
 	 *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
 	 *  successful REST push response. The backend's CRDT channel now requires
@@ -510,6 +589,27 @@ export class SyncEngine {
 
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
+	}
+
+	/** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
+	 *  (no row yet → note_not_found) and the once-per-session enrollment guard
+	 *  never re-fires it, leaving the note deaf to live sync until a later
+	 *  catch-up (~30s observed live). Called with the id the create-push
+	 *  response confirmed, BEFORE confirmNoteId: if the id was not yet
+	 *  confirmed this is the create — re-fire the handshake now that the row
+	 *  exists. Md + size gated exactly like the pre-push enroll (an oversized
+	 *  doc must never enroll — 8 MB WS frame limit). */
+	private refireEnrollmentOnFirstConfirm(
+		noteId: string | null | undefined,
+		path: string,
+		content: string,
+	): void {
+		if (!noteId || !this.crdtEnrollment) return;
+		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
+		if (!path.endsWith(".md")) return;
+		if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) return;
+		this.crdtEnrollment.reset(noteId);
+		this.crdtEnrollment.enroll(noteId);
 	}
 
 	/** Drop a note_id's confirmed status when its server row is deleted, so a
@@ -829,24 +929,44 @@ export class SyncEngine {
 		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
 	}
 
-	/** Reset all per-vault sync bookkeeping. Used when the user switches the
-	 *  active server vault inside the SyncPreviewModal so the next sync starts
-	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
-	async resetForVaultChange(): Promise<void> {
+	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
+	 *  (explicit picker `resetForVaultChange`, backstop
+	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
+	 *  point; a wipe that exists on only one path re-opens #200. */
+	private async wipePerVaultState(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
 		// The cursor marks a position in the OLD vault's ordered feed — drop it so
 		// the next sync re-bootstraps against the new vault (else a genesis pull
 		// would resume from a foreign vault's seq).
 		this.syncCursor = null;
-		this.syncStateVaultId = this.settings.vaultId ?? null;
+		// The note-id map and confirmed set are per-vault identity state.
+		// Carrying them across vaults keys CRDT frames/rooms by another
+		// vault's note ids — the cross-vault flavor of the 2026-07-07
+		// cross-wire class (plugin #200). Wipe both; ids re-learn via the
+		// manifest reconcile + push adoption. clear() mutates in place: the
+		// instance is shared with main.ts + live views.
+		this.noteIdMap?.clear();
+		this.clearConfirmedNoteIds();
 		// note_ids are only unique WITHIN a vault (final review MINOR-6) — a
 		// relocation timestamp recorded for an id under the OLD vault must not
 		// survive to stale-gate an unrelated note that happens to reuse the same
-		// id in the new vault.
+		// id in the new vault. Living here (not just resetForVaultChange) keeps
+		// BOTH vault-change paths in lockstep, per this method's contract.
 		this.lastRelocationTs.clear();
 		await this.saveData({ lastSync: "", syncCursor: null });
-		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+	}
+
+	/** Reset all per-vault sync bookkeeping. Used when the user switches the
+	 *  active server vault inside the SyncPreviewModal so the next sync starts
+	 *  from a clean slate (lastSync empty, no stale per-file hashes). */
+	async resetForVaultChange(): Promise<void> {
+		this.syncStateVaultId = this.settings.vaultId ?? null;
+		await this.wipePerVaultState();
+		devLog().log(
+			"lifecycle",
+			"resetForVaultChange: lastSync + syncState + cursor + ids cleared",
+		);
 	}
 
 	getSyncStateVaultId(): string | null {
@@ -880,12 +1000,8 @@ export class SyncEngine {
 			"lifecycle",
 			`vault changed ${this.syncStateVaultId} → ${current} — clearing syncState + lastSync`,
 		);
-		this.syncState.clear();
-		this.lastSync = "";
-		// Drop the cursor too — it points into the prior vault's ordered feed.
-		this.syncCursor = null;
 		this.syncStateVaultId = current;
-		await this.saveData({ lastSync: "", syncCursor: null });
+		await this.wipePerVaultState();
 	}
 
 	/** Export sync state for persistence across sessions. */
@@ -1554,12 +1670,34 @@ export class SyncEngine {
 					}
 				}
 
-				// Only pass a 5th positional arg when an id is actually known — an
-				// explicit trailing `undefined` still changes Function.arguments.length,
-				// which several existing tests pin exactly via toHaveBeenCalledWith.
-				const resp = noteId
-					? await this.api.pushNote(file.path, content, mtime, existing?.version, noteId)
-					: await this.api.pushNote(file.path, content, mtime, existing?.version);
+				// (Echo suppression ran ABOVE the CRDT branch — `hash`/`existing`
+				// are already in scope; see the hoisted gate, e2e test_37.)
+				// Only pass trailing positional args when actually known — an explicit
+				// trailing `undefined` still changes Function.arguments.length, which
+				// several existing tests pin exactly via toHaveBeenCalledWith.
+				// base_hash = the server content_hash we last synced (CAS against the
+				// v0.5.642 gate); only the INITIAL push declares it — the conflict-flow
+				// re-pushes below are deliberate overwrites and send none.
+				const baseHash = existing?.serverHash;
+				const resp =
+					baseHash !== undefined
+						? await this.api.pushNote(
+								file.path,
+								content,
+								mtime,
+								existing?.version,
+								noteId ?? undefined,
+								baseHash,
+							)
+						: noteId
+							? await this.api.pushNote(
+									file.path,
+									content,
+									mtime,
+									existing?.version,
+									noteId,
+								)
+							: await this.api.pushNote(file.path, content, mtime, existing?.version);
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
@@ -1723,6 +1861,7 @@ export class SyncEngine {
 					// is authoritative even when client_id was sent.
 					this.noteIdMap?.delete(normalizePath(file.path));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
+					this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content);
 					this.confirmNoteId(resp.note.id);
 				} else {
 					this.syncState.set(normalizePath(file.path), {
@@ -1734,6 +1873,7 @@ export class SyncEngine {
 						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
 					}
 					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
+					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
 					this.confirmNoteId(resp.note.id);
 				}
 			}
@@ -3170,14 +3310,46 @@ export class SyncEngine {
 				// re-flush suppressed by markRecentlyFlushed.
 				await this.flushFromCrdt(normalized, content);
 			} else {
-				// The note already exists locally and CRDT owns its body, so we never
-				// legacy-write it here.
-				// The note already exists locally and CRDT owns its body; we never legacy-
-				// write here. Re-enroll so a post-reconnect resetAll re-fires STEP1 and the
-				// server replies with any update we missed while disconnected (STEP2) ->
-				// flushFromCrdt. Idempotent while the guard is still set.
+				// The note exists locally and CRDT owns its body for LIVE edits — but
+				// this pull entry is the authoritative safety net. The old behavior
+				// (enroll and return, never comparing) meant a missed crdt_doc_ready
+				// announce was missed FOREVER: enrollment is once-per-session, so
+				// nothing ever backfilled the content (2026-07-07: "Obsidian never
+				// got any updates"). When the hashes prove we are behind, write the
+				// body we are already holding; markRecentlyFlushed suppresses the
+				// echo and the converged serverHash keeps dedupe quiet. The later
+				// idempotent STEP2 re-flush is suppressed by the same window.
 				if (noteId) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+				const stored = this.syncState.get(normalized);
+				if (change.content_hash && stored?.serverHash !== change.content_hash) {
+					if (this.isLiveBound(normalized)) {
+						// An open, bound editor is the sole CRDT writer for the note —
+						// writing disk under it would fight the binding. Deliver the
+						// missed ops through a fresh handshake instead: reset lifts the
+						// once-per-session enrollment guard, enroll re-fires STEP1.
+						rlog().warn(
+							"pull",
+							`CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`,
+						);
+						if (noteId && this.crdtEnrollment) {
+							this.crdtEnrollment.reset(noteId);
+							this.crdtEnrollment.enroll(noteId);
+						}
+					} else {
+						rlog().warn(
+							"pull",
+							`CRDT catch-up: pull backfilling diverged note ${change.path}`,
+						);
+						await this.flushFromCrdt(normalized, content);
+						this.syncState.set(normalized, {
+							hash: fnv1a(content),
+							version: change.version,
+							serverHash: change.content_hash,
+						});
+					}
+				} else {
+					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+				}
 			}
 			return false;
 		}
@@ -3757,12 +3929,24 @@ export class SyncEngine {
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
 				const resp = await this.api.pushNotesBatch(
-					entries.map((e) => ({
-						path: e.file.path,
-						content: e.content,
-						mtime: e.file.stat.mtime / 1000,
-						version: e.version,
-					})),
+					entries.map((e) => {
+						// Mint-and-send the client id, mirroring pushFile: a clean create
+						// keeps our uuidv7; a create-race is corrected when the response
+						// echoes the winning id (recordBatchPushOk adopts it).
+						const np = normalizePath(e.file.path);
+						let noteId = this.noteIdMap?.get(np) ?? null;
+						if (!noteId && this.noteIdMap) {
+							noteId = uuid7();
+							this.noteIdMap.set(np, noteId);
+						}
+						return {
+							path: e.file.path,
+							content: e.content,
+							mtime: e.file.stat.mtime / 1000,
+							version: e.version,
+							...(noteId ? { id: noteId } : {}),
+						};
+					}),
 				);
 				const byPath = new Map(resp.results.map((r) => [r.path, r]));
 
@@ -3992,6 +4176,23 @@ export class SyncEngine {
 			if (result.version != null) {
 				this.baseStore?.set(np, content, result.version);
 			}
+		}
+		// Adopt the authoritative id. The server echoes the winner even when a
+		// create-race means it differs from our mint (2026-07-07 incident: the
+		// batch path never adopted, so the CRDT receive path stayed keyed to a
+		// dead local id — announces for the real id were ignored until a
+		// cold-start reconcile). Mirrors pushFile's post-response adoption;
+		// set() evicts the stale mint (bijection), confirm unlocks CRDT routing.
+		if (result.id) {
+			// On a server rename, evict the OLD path first (mirror pushFile's
+			// sanitized-rename branch): when result.id also differs from the
+			// pre-request mint (create-race + sanitize together), set() alone
+			// leaves the dead mint dangling on the renamed-away path
+			// (#197 retro-review).
+			if (serverPath) this.noteIdMap?.delete(normalizePath(file.path));
+			const np = normalizePath(serverPath ?? file.path);
+			this.noteIdMap?.set(np, result.id);
+			this.confirmNoteId(result.id);
 		}
 		this.issues.clear(file.path);
 	}
@@ -4756,7 +4957,51 @@ export class SyncEngine {
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
 					}
-					const resp = await this.api.pushNote(entry.path, content, mtime!);
+					// Mint-and-send the client id like a live push — and adopt the id
+					// the server echoes back. The replay path never adopted, so a
+					// create-race during the offline window left the CRDT receive
+					// path keyed to a dead local id (2026-07-07 incident class).
+					const replayNp = normalizePath(entry.path);
+					let replayId = this.noteIdMap?.get(replayNp) ?? null;
+					if (!replayId && this.noteIdMap) {
+						replayId = uuid7();
+						this.noteIdMap.set(replayNp, replayId);
+					}
+					// CAS base, mirroring pushFile: a queued edit may be STALE (the
+					// server moved on during the offline window) — without base_hash
+					// it sails past the v0.5.642 gate and overwrites content this
+					// client never saw. Same 3-shape cascade as pushFile (several
+					// tests pin pushNote's exact arguments.length).
+					const replayState = this.syncState.get(replayNp);
+					const replayBase = replayState?.serverHash;
+					const resp =
+						replayBase !== undefined
+							? await this.api.pushNote(
+									entry.path,
+									content,
+									mtime!,
+									replayState?.version,
+									replayId ?? undefined,
+									replayBase,
+								)
+							: replayId
+								? await this.api.pushNote(
+										entry.path,
+										content,
+										mtime!,
+										undefined,
+										replayId,
+									)
+								: await this.api.pushNote(entry.path, content, mtime!);
+					if ("conflict" in resp) {
+						// Hand the conflict to the single-note flow, which owns 3-way
+						// merge + resolution — previously a conflicting replay was
+						// silently dequeued and the local edit vanished from the
+						// pipeline with no conflict handling at all. pushFile re-reads
+						// current disk content (fresher than the queued snapshot).
+						const conflicted = this.app.vault.getFileByPath(entry.path);
+						if (conflicted) await this.pushFile(conflicted, true);
+					}
 					// Record fresh sync state — without this the replayed push
 					// leaves a stale version (next push 409s avoidably) and no
 					// serverHash (hash-skip dedupe misses the echo).
@@ -4769,6 +5014,11 @@ export class SyncEngine {
 						});
 						if (resp.note.version != null) {
 							this.baseStore?.set(np, content, resp.note.version);
+						}
+						if (resp.note.id) {
+							this.noteIdMap?.set(np, resp.note.id);
+							this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content);
+							this.confirmNoteId(resp.note.id);
 						}
 					}
 				}
