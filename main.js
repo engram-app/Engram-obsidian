@@ -5290,6 +5290,44 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
+    /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
+     *  `newPath`, the server moved one row (a rename resurrects the same note_id
+     *  at a new path). Neither delivery channel is guaranteed to carry a delete
+     *  for the old path — the seq-ordered pull feed collapses the move into a
+     *  single upsert, and a realtime delete broadcast can be missed/reordered —
+     *  so relocate the old file ourselves or it lingers as a duplicate.
+     *
+     *  Re-keys the map (id stable, path moves) BEFORE trashing the old file, so
+     *  the vault delete event handleDelete fires resolves get(priorPath) to null:
+     *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
+     *  intact — only the path moved, not the id/room (mirrors handleRename's
+     *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
+     *  or already at newPath, so callers can invoke it unconditionally.
+     *
+     *  Materializes the new path directly from the OLD file's on-disk content
+     *  (round 2, e2e test_10 mechanism a): a rename carries no content change,
+     *  so relying solely on the CRDT handshake (`materializeRelocated`'s
+     *  `isSynced` gate) to backfill the new path races a fresh-boot receiver
+     *  whose STEP2 hasn't landed yet this session — the gate declines and
+     *  nothing ever retries (received=yes, materialized=no). The old file's
+     *  bytes are already real, trustworthy content (this device had it on disk
+     *  before the rename); read + flush them to the new path here, independent
+     *  of CRDT session state. No-ops (falls through to the isSynced-gated
+     *  backstop) when there is no old file locally to read from.
+     *
+     *  STALE-EVENT GUARD (round 2, e2e test_34 mechanism, live-repro'd
+     *  2026-07-08): the WS channel is explicitly unordered (see class doc), so
+     *  a duplicate/reordered upsert can carry an id's PRIOR path after this
+     *  device already applied a more current relocation for that id this
+     *  session. Without a staleness check, the precondition above ("mapped to
+     *  a DIFFERENT path than event.path") is satisfied in EITHER direction —
+     *  the stale event reads as a second, backward relocation: re-keys the map
+     *  back, trashes the just-materialized new-path file, and (via the
+     *  disk-content fix above) recreates the old path from it. Observed live:
+     *  the old path was perpetually resurrected every few seconds. `eventTs`
+     *  (the broadcast's `timestamp`) is tracked per note_id; an event older
+     *  than the last one already applied for this id is ignored outright. */
+    this.lastRelocationTs = /* @__PURE__ */ new Map();
     /** Push all files that have been modified since last sync, plus any
      *  syncable file that the engine has never seen (no syncState entry).
      *  The untracked branch covers the first-sync case and the post
@@ -6425,7 +6463,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -6433,7 +6471,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path), event.event_type !== "delete") {
+    if (event.event_type === "upsert" && !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path, event.timestamp), event.event_type !== "delete") {
       if (this.pushing.has(event.path)) {
         rlog().info("ws", `Echo skip (pushing): ${event.path}`);
         return;
@@ -6485,18 +6523,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             attachment.content_base64
           );
         } else if (this.crdt && event.path.endsWith(".md") && ((_m = event.id) != null ? _m : (_l = this.noteIdMap) != null && _l.get(event.path))) {
-          let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path);
-          (_p = this.noteIdMap) == null || _p.set(event.path, noteId), this.confirmNoteId(noteId), (_q = this.crdtEnrollment) == null || _q.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`), this.materializeRelocated(event.path, noteId);
+          let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path), canonicalPath = (_q = (_p = this.noteIdMap) == null ? void 0 : _p.pathForId(noteId)) != null ? _q : null;
+          canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path) ? rlog().info(
+            "ws",
+            `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
+          ) : ((_r = this.noteIdMap) == null || _r.set(event.path, noteId), this.confirmNoteId(noteId), (_s = this.crdtEnrollment) == null || _s.enroll(noteId), rlog().info(
+            "ws",
+            `CRDT-managed: skipping legacy body apply for ${event.path}`
+          ), this.materializeRelocated(event.path, noteId));
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_r = event.title) != null ? _r : "",
+            title: (_t2 = event.title) != null ? _t2 : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_s = event.folder) != null ? _s : "",
-            tags: (_t2 = event.tags) != null ? _t2 : [],
-            mtime: (_u = event.mtime) != null ? _u : Date.now(),
-            updated_at: (_v = event.updated_at) != null ? _v : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_u = event.folder) != null ? _u : "",
+            tags: (_v = event.tags) != null ? _v : [],
+            mtime: (_w = event.mtime) != null ? _w : Date.now(),
+            updated_at: (_x = event.updated_at) != null ? _x : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6506,36 +6550,34 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_w = note.content_hash) != null ? _w : event.content_hash,
+            content_hash: (_y = note.content_hash) != null ? _y : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_x = note.version) != null ? _x : event.version
+            version: (_z = note.version) != null ? _z : event.version
           });
         }
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }
   }
-  /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
-   *  `newPath`, the server moved one row (a rename resurrects the same note_id
-   *  at a new path). Neither delivery channel is guaranteed to carry a delete
-   *  for the old path — the seq-ordered pull feed collapses the move into a
-   *  single upsert, and a realtime delete broadcast can be missed/reordered —
-   *  so relocate the old file ourselves or it lingers as a duplicate.
-   *
-   *  Re-keys the map (id stable, path moves) BEFORE trashing the old file, so
-   *  the vault delete event handleDelete fires resolves get(priorPath) to null:
-   *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
-   *  intact — only the path moved, not the id/room (mirrors handleRename's
-   *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
-   *  or already at newPath, so callers can invoke it unconditionally. */
-  async moveIfIdRelocated(id2, newPath) {
+  async moveIfIdRelocated(id2, newPath, eventTs) {
     var _a, _b, _c, _d, _e;
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
     if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
+    if (eventTs !== void 0) {
+      let lastTs = this.lastRelocationTs.get(id2);
+      if (lastTs !== void 0 && eventTs < lastTs) {
+        rlog().info(
+          "pull",
+          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${newPath}`
+        );
+        return;
+      }
+      this.lastRelocationTs.set(id2, eventTs);
+    }
     let owner = await this.manifestOwnerOf((0, import_obsidian21.normalizePath)(priorPath));
     if (owner !== null && owner !== id2) {
       rlog().warn(
@@ -6546,7 +6588,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian21.normalizePath)(priorPath));
     let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
-    oldFile && (await this.app.fileManager.trashFile(oldFile), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`));
+    if (oldFile) {
+      let content = await this.app.vault.cachedRead(oldFile);
+      await this.app.fileManager.trashFile(oldFile), await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
+    }
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
    *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;

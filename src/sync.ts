@@ -2466,7 +2466,7 @@ export class SyncEngine {
 		// already maps to a different local path. Gated on a known id
 		// (attachments aren't keyed).
 		if (event.event_type === "upsert" && !isAttachment && event.id) {
-			await this.moveIfIdRelocated(event.id, event.path);
+			await this.moveIfIdRelocated(event.id, event.path, event.timestamp);
 		}
 
 		// Echo suppression — skip UPSERT events for notes we're currently pushing
@@ -2589,17 +2589,41 @@ export class SyncEngine {
 					// note directly (pre-id-keying behavior; without this fallback a
 					// never-seen note is received but silently never written to disk).
 					const noteId = (event.id ?? this.noteIdMap?.get(event.path)) as string;
-					this.noteIdMap?.set(event.path, noteId);
-					this.confirmNoteId(noteId);
-					this.crdtEnrollment?.enroll(noteId);
-					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
-					// #189: a rename carries no content change, so it never produces a
-					// Y.Doc update — onFlushToDisk never fires for it — and enroll()
-					// above is a per-session no-op for an id this device already
-					// enrolled (e.g. it received the old path live before the rename).
-					// Left alone, the file is never written: received=yes,
-					// materialized=no. materializeRelocated closes that gap directly.
-					void this.materializeRelocated(event.path, noteId);
+					// STALE-PATH GUARD (round 2, e2e test_34 mechanism): moveIfIdRelocated
+					// above already decided whether `event.path` is this id's current
+					// canonical path (it declines a stale/out-of-order relocation — see
+					// its own staleness gate). If the map now disagrees with this event's
+					// path, learning it here would silently undo that decision: it would
+					// re-key the map BACKWARD to the stale path (a bijection `set()`
+					// evicts the correct, just-established mapping) and materialize a
+					// stale-path file the relocation guard just decided not to touch.
+					// Skip path-learning/materialize entirely for a stale event; the
+					// canonical mapping (and file) already in place stands.
+					const canonicalPath = this.noteIdMap?.pathForId(noteId) ?? null;
+					if (
+						canonicalPath !== null &&
+						normalizePath(canonicalPath) !== normalizePath(event.path)
+					) {
+						rlog().info(
+							"ws",
+							`Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`,
+						);
+					} else {
+						this.noteIdMap?.set(event.path, noteId);
+						this.confirmNoteId(noteId);
+						this.crdtEnrollment?.enroll(noteId);
+						rlog().info(
+							"ws",
+							`CRDT-managed: skipping legacy body apply for ${event.path}`,
+						);
+						// #189: a rename carries no content change, so it never produces a
+						// Y.Doc update — onFlushToDisk never fires for it — and enroll()
+						// above is a per-session no-op for an id this device already
+						// enrolled (e.g. it received the old path live before the rename).
+						// Left alone, the file is never written: received=yes,
+						// materialized=no. materializeRelocated closes that gap directly.
+						void this.materializeRelocated(event.path, noteId);
+					}
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
@@ -2652,10 +2676,48 @@ export class SyncEngine {
 	 *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
 	 *  intact — only the path moved, not the id/room (mirrors handleRename's
 	 *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
-	 *  or already at newPath, so callers can invoke it unconditionally. */
-	private async moveIfIdRelocated(id: string, newPath: string): Promise<void> {
+	 *  or already at newPath, so callers can invoke it unconditionally.
+	 *
+	 *  Materializes the new path directly from the OLD file's on-disk content
+	 *  (round 2, e2e test_10 mechanism a): a rename carries no content change,
+	 *  so relying solely on the CRDT handshake (`materializeRelocated`'s
+	 *  `isSynced` gate) to backfill the new path races a fresh-boot receiver
+	 *  whose STEP2 hasn't landed yet this session — the gate declines and
+	 *  nothing ever retries (received=yes, materialized=no). The old file's
+	 *  bytes are already real, trustworthy content (this device had it on disk
+	 *  before the rename); read + flush them to the new path here, independent
+	 *  of CRDT session state. No-ops (falls through to the isSynced-gated
+	 *  backstop) when there is no old file locally to read from.
+	 *
+	 *  STALE-EVENT GUARD (round 2, e2e test_34 mechanism, live-repro'd
+	 *  2026-07-08): the WS channel is explicitly unordered (see class doc), so
+	 *  a duplicate/reordered upsert can carry an id's PRIOR path after this
+	 *  device already applied a more current relocation for that id this
+	 *  session. Without a staleness check, the precondition above ("mapped to
+	 *  a DIFFERENT path than event.path") is satisfied in EITHER direction —
+	 *  the stale event reads as a second, backward relocation: re-keys the map
+	 *  back, trashes the just-materialized new-path file, and (via the
+	 *  disk-content fix above) recreates the old path from it. Observed live:
+	 *  the old path was perpetually resurrected every few seconds. `eventTs`
+	 *  (the broadcast's `timestamp`) is tracked per note_id; an event older
+	 *  than the last one already applied for this id is ignored outright. */
+	private lastRelocationTs = new Map<string, number>();
+
+	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		if (eventTs !== undefined) {
+			const lastTs = this.lastRelocationTs.get(id);
+			if (lastTs !== undefined && eventTs < lastTs) {
+				rlog().info(
+					"pull",
+					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
+						`${id} -> ${newPath}`,
+				);
+				return;
+			}
+			this.lastRelocationTs.set(id, eventTs);
+		}
 		// DESTRUCTIVE-OP GUARD (2026-07-07 cross-file data-loss incident): the
 		// local map can be CROSS-WIRED — `id` pointing at a path that really
 		// belongs to a DIFFERENT live note. Trusting it here trashed an unrelated
@@ -2695,7 +2757,11 @@ export class SyncEngine {
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
 		if (oldFile) {
+			// Read before trashing — the content must be captured while the file
+			// still exists at its old location.
+			const content = await this.app.vault.cachedRead(oldFile);
 			await this.app.fileManager.trashFile(oldFile);
+			await this.flushFromCrdt(newPath, content);
 			rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
 		}
 	}

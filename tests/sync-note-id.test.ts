@@ -739,3 +739,189 @@ describe("CRDT-managed rename materializes the new path when enroll() no-ops (#1
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 });
+
+describe("moveIfIdRelocated materializes the new path from ON-DISK content directly (round 2, e2e test_10 mechanism a)", () => {
+	test("writes New.md from the old file's disk content even when isSynced is still false (fresh-boot receiver race)", async () => {
+		// CI evidence (backend PR #950): test_10 STILL showed
+		// "received=yes materialized=no" on the renamed NEW path even with the
+		// #189 materializeRelocated fix present. Root cause: materializeRelocated
+		// is correctly gated on `crdt.isSynced(noteId)` (declining avoids the
+		// #547 premature-empty-write class), but on a fresh-boot receiver the
+		// rename event can arrive before this device's own STEP2 handshake for
+		// the note_id has landed THIS session — isSynced() reads false, the gate
+		// declines, and nothing ever retries (no timer, no later hook). Relying
+		// SOLELY on the CRDT handshake to backfill the new path is unnecessary:
+		// the OLD file's on-disk content is already real, trustworthy content
+		// (this device received it live before the rename). moveIfIdRelocated
+		// should read it and flush it to the new path directly — independent of
+		// CRDT session state — closing the race for good.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-fresh-race");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-fresh-race", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# Rename Test\nreal content already on disk",
+		);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		// isSynced is FALSE — this device's STEP2 handshake for this note_id has
+		// not landed this session (the fresh-boot race). The old materialize
+		// path (gated on isSynced) must decline; the fix must not need it.
+		const projectedText = mock().mockResolvedValue("");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(false), projectedText } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-fresh-race",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"New.md",
+			"# Rename Test\nreal content already on disk",
+		);
+		// The isSynced-gated CRDT backstop must not have been needed at all —
+		// the disk-content path materialized New.md first.
+		expect(projectedText).not.toHaveBeenCalled();
+	});
+
+	test("does NOT materialize (no source content) when the old file never existed locally — leaves the isSynced-gated backstop in charge", async () => {
+		// If this device never had the note on disk at all (only ever knew it
+		// via CRDT), there is no on-disk content to read — moveIfIdRelocated's
+		// disk-content path must no-op (oldFile null) and defer entirely to the
+		// existing isSynced-gated materializeRelocated backstop, unchanged.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-no-disk");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-no-disk", path: "New.md" }]);
+
+		// No file at Old.md locally.
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		const projectedText = mock().mockResolvedValue("# from CRDT doc");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-no-disk",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		// No file to trash, but the isSynced-gated backstop still materializes
+		// New.md from the CRDT doc.
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(projectedText).toHaveBeenCalledWith("id-no-disk");
+		expect(mockApp.vault.create).toHaveBeenCalledWith("New.md", "# from CRDT doc");
+	});
+});
+
+describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would relocate BACKWARD (round 2, e2e test_34 mechanism)", () => {
+	test("a late-arriving upsert with an OLDER timestamp and the note's OLD path does not undo an already-applied relocation", async () => {
+		// Live-repro evidence (local, 2026-07-08): a folder rename delivered a
+		// genuine forward relocation (Old.md -> New.md) that this device applied
+		// correctly, immediately followed by a duplicate/reordered upsert
+		// broadcast still carrying the OLD path for the SAME note_id (a late
+		// echo of the pre-rename create, or the tombstone's own broadcast).
+		// moveIfIdRelocated's only precondition was "noteIdMap says id is at a
+		// DIFFERENT path than event.path" — true in EITHER direction — so it
+		// treated the stale event as a second, backward relocation: re-keyed the
+		// map back to Old.md, trashed the just-created New.md, and (with the
+		// on-disk materialize fix) recreated Old.md from New.md's content. The
+		// old path was then perpetually resurrected (e2e test_34
+		// old_paths_cleaned: "File .../Cleanup.md still exists after 30s").
+		// Fix: track the timestamp of the last applied relocation per note_id
+		// and ignore a relocation instruction whose event is OLDER — it cannot
+		// be more current than what this device already applied.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-stale-echo");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-stale-echo", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		const newFile = new TFile("New.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) => {
+			if (p === "Old.md") return oldFile;
+			if (p === "New.md") return newFile;
+			return null;
+		});
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
+			Promise.resolve(f.path === "Old.md" ? "# original content" : "# original content"),
+		);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// 1) Genuine forward relocation, timestamp=100.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-stale-echo",
+			path: "New.md",
+			timestamp: 100,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledTimes(1);
+		expect(noteIdMap.pathForId("id-stale-echo")).toBe("New.md");
+
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+
+		// 2) A STALE echo arrives with the OLD path and an OLDER timestamp (50 <
+		// 100) — must be ignored, not treated as a second relocation.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-stale-echo",
+			path: "Old.md",
+			timestamp: 50,
+			title: "Old",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		// The already-applied forward relocation must stand: New.md is not
+		// trashed, and the map is not re-keyed backward.
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(noteIdMap.pathForId("id-stale-echo")).toBe("New.md");
+	});
+});
