@@ -2689,6 +2689,23 @@ export class SyncEngine {
 					this.noteIdMap?.set(event.path, noteId);
 					this.confirmNoteId(noteId);
 					this.crdtEnrollment?.enroll(noteId);
+					// Record the CAS base NOW, from the event — the CRDT delivery that
+					// writes the body never advances serverHash (issue #203), so a
+					// device whose only knowledge of this note came through here had
+					// NO base for its later REST-fallback push (channel down = the
+					// missed-delivery scenario) and silently overwrote server content
+					// it never saw (e2e test_83). The local `hash` is preserved (or
+					// seeded empty for a never-seen note — flushFromCrdt's write will
+					// differ, which only biases toward pushing, the safe direction).
+					if (event.content_hash !== undefined) {
+						const np = normalizePath(event.path);
+						const prior = this.syncState.get(np);
+						this.syncState.set(np, {
+							hash: prior?.hash ?? fnv1a(""),
+							version: event.version ?? prior?.version,
+							serverHash: event.content_hash,
+						});
+					}
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
