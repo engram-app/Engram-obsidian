@@ -353,7 +353,7 @@ export class EngramApi {
 	 *  status 404/405 on pre-rev backends; callers fall back to per-note
 	 *  pushes. */
 	async pushNotesBatch(
-		notes: Array<{ path: string; content: string; mtime: number; version?: number }>,
+		notes: Array<{ path: string; content: string; mtime: number; version?: number; id?: string }>,
 	): Promise<BatchUpsertResponse> {
 		const resp = await this.request(
 			"POST",

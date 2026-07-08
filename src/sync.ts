@@ -486,6 +486,42 @@ export class SyncEngine {
 		return applied;
 	}
 
+	/** Coalesced LIVE id-map reconcile. Called when a crdt_doc_ready announce
+	 *  names a note_id the map cannot resolve — the create-race signature:
+	 *  another writer (MCP/web) owns the note under an id this device never
+	 *  learned, so every announce/frame for it is undeliverable. Today's only
+	 *  other heal is the cold-start reconcile, which leaves the note deaf for
+	 *  the whole session. Runs the full manifest reconcile (already the
+	 *  authoritative {id,path} source; per-id fetch not worth a new endpoint),
+	 *  single-flight with one trailing rerun so an announce burst costs at most
+	 *  two manifest fetches. */
+	ensureNoteIdMapped(noteId: string): void {
+		if (!this.noteIdMap || !noteId) return;
+		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
+		if (this.idMapReconcileInflight) {
+			this.idMapReconcileQueued = true;
+			return;
+		}
+		this.idMapReconcileInflight = (async () => {
+			try {
+				do {
+					this.idMapReconcileQueued = false;
+					await this.reconcileNoteIdMapFromManifest();
+				} while (this.idMapReconcileQueued);
+			} catch (e) {
+				rlog().warn(
+					"sync",
+					`live id-map reconcile failed: ${e instanceof Error ? e.message : String(e)}`,
+				);
+			} finally {
+				this.idMapReconcileInflight = null;
+			}
+		})();
+	}
+
+	private idMapReconcileInflight: Promise<void> | null = null;
+	private idMapReconcileQueued = false;
+
 	/** note_ids the SERVER is known to already have a note row for — learned
 	 *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
 	 *  successful REST push response. The backend's CRDT channel now requires
@@ -3514,12 +3550,24 @@ export class SyncEngine {
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
 				const resp = await this.api.pushNotesBatch(
-					entries.map((e) => ({
-						path: e.file.path,
-						content: e.content,
-						mtime: e.file.stat.mtime / 1000,
-						version: e.version,
-					})),
+					entries.map((e) => {
+						// Mint-and-send the client id, mirroring pushFile: a clean create
+						// keeps our uuidv7; a create-race is corrected when the response
+						// echoes the winning id (recordBatchPushOk adopts it).
+						const np = normalizePath(e.file.path);
+						let noteId = this.noteIdMap?.get(np) ?? null;
+						if (!noteId && this.noteIdMap) {
+							noteId = uuid7();
+							this.noteIdMap.set(np, noteId);
+						}
+						return {
+							path: e.file.path,
+							content: e.content,
+							mtime: e.file.stat.mtime / 1000,
+							version: e.version,
+							...(noteId ? { id: noteId } : {}),
+						};
+					}),
 				);
 				const byPath = new Map(resp.results.map((r) => [r.path, r]));
 
@@ -3749,6 +3797,17 @@ export class SyncEngine {
 			if (result.version != null) {
 				this.baseStore?.set(np, content, result.version);
 			}
+		}
+		// Adopt the authoritative id. The server echoes the winner even when a
+		// create-race means it differs from our mint (2026-07-07 incident: the
+		// batch path never adopted, so the CRDT receive path stayed keyed to a
+		// dead local id — announces for the real id were ignored until a
+		// cold-start reconcile). Mirrors pushFile's post-response adoption;
+		// set() evicts the stale mint (bijection), confirm unlocks CRDT routing.
+		if (result.id) {
+			const np = normalizePath(serverPath ?? file.path);
+			this.noteIdMap?.set(np, result.id);
+			this.confirmNoteId(result.id);
 		}
 		this.issues.clear(file.path);
 	}
@@ -4513,7 +4572,19 @@ export class SyncEngine {
 						content = await this.app.vault.cachedRead(file);
 						mtime = file.stat.mtime / 1000;
 					}
-					const resp = await this.api.pushNote(entry.path, content, mtime!);
+					// Mint-and-send the client id like a live push — and adopt the id
+					// the server echoes back. The replay path never adopted, so a
+					// create-race during the offline window left the CRDT receive
+					// path keyed to a dead local id (2026-07-07 incident class).
+					const replayNp = normalizePath(entry.path);
+					let replayId = this.noteIdMap?.get(replayNp) ?? null;
+					if (!replayId && this.noteIdMap) {
+						replayId = uuid7();
+						this.noteIdMap.set(replayNp, replayId);
+					}
+					const resp = replayId
+						? await this.api.pushNote(entry.path, content, mtime!, undefined, replayId)
+						: await this.api.pushNote(entry.path, content, mtime!);
 					// Record fresh sync state — without this the replayed push
 					// leaves a stale version (next push 409s avoidably) and no
 					// serverHash (hash-skip dedupe misses the echo).
@@ -4526,6 +4597,10 @@ export class SyncEngine {
 						});
 						if (resp.note.version != null) {
 							this.baseStore?.set(np, content, resp.note.version);
+						}
+						if (resp.note.id) {
+							this.noteIdMap?.set(np, resp.note.id);
+							this.confirmNoteId(resp.note.id);
 						}
 					}
 				}

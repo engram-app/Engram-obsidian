@@ -5213,6 +5213,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  ever clean it. Swept by the next reconcile against a fresh manifest:
      *  absent from the manifest + unclaimed by the local map -> trash then. */
     this.pendingOrphanSweep = /* @__PURE__ */ new Set();
+    this.idMapReconcileInflight = null;
+    this.idMapReconcileQueued = !1;
     /** note_ids the SERVER is known to already have a note row for — learned
      *  either from a `/sync/changes` pull (applySyncChange) or confirmed by a
      *  successful REST push response. The backend's CRDT channel now requires
@@ -5355,6 +5357,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       localPath !== note.path && (localPath !== null && !manifestPaths.has(localPath) || (this.noteIdMap.set(note.path, note.id), applied++));
     }
     return applied > 0 && await this.saveData({ noteIds: this.noteIdMap.toJSON() }), await this.sweepPendingOrphans(), applied;
+  }
+  /** Coalesced LIVE id-map reconcile. Called when a crdt_doc_ready announce
+   *  names a note_id the map cannot resolve — the create-race signature:
+   *  another writer (MCP/web) owns the note under an id this device never
+   *  learned, so every announce/frame for it is undeliverable. Today's only
+   *  other heal is the cold-start reconcile, which leaves the note deaf for
+   *  the whole session. Runs the full manifest reconcile (already the
+   *  authoritative {id,path} source; per-id fetch not worth a new endpoint),
+   *  single-flight with one trailing rerun so an announce burst costs at most
+   *  two manifest fetches. */
+  ensureNoteIdMapped(noteId) {
+    if (!(!this.noteIdMap || !noteId) && this.noteIdMap.pathForId(noteId) === null) {
+      if (this.idMapReconcileInflight) {
+        this.idMapReconcileQueued = !0;
+        return;
+      }
+      this.idMapReconcileInflight = (async () => {
+        try {
+          do
+            this.idMapReconcileQueued = !1, await this.reconcileNoteIdMapFromManifest();
+          while (this.idMapReconcileQueued);
+        } catch (e) {
+          rlog().warn(
+            "sync",
+            `live id-map reconcile failed: ${e instanceof Error ? e.message : String(e)}`
+          );
+        } finally {
+          this.idMapReconcileInflight = null;
+        }
+      })();
+    }
   }
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
@@ -6971,12 +7004,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       for (let e of entries) this.pushing.add(e.file.path);
       try {
         let resp = await this.api.pushNotesBatch(
-          entries.map((e) => ({
-            path: e.file.path,
-            content: e.content,
-            mtime: e.file.stat.mtime / 1e3,
-            version: e.version
-          }))
+          entries.map((e) => {
+            var _a3, _b3;
+            let np = (0, import_obsidian21.normalizePath)(e.file.path), noteId = (_b3 = (_a3 = this.noteIdMap) == null ? void 0 : _a3.get(np)) != null ? _b3 : null;
+            return !noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(np, noteId)), {
+              path: e.file.path,
+              content: e.content,
+              mtime: e.file.stat.mtime / 1e3,
+              version: e.version,
+              ...noteId ? { id: noteId } : {}
+            };
+          })
         ), byPath = new Map(resp.results.map((r) => [r.path, r]));
         for (let e of entries) {
           let r = byPath.get(e.file.path);
@@ -7089,7 +7127,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Record a successful batch-push result: sync state, base store, issue
    *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
   async recordBatchPushOk(file, content, hash, result) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
     if (serverPath) {
       let localFile = this.app.vault.getFileByPath(file.path);
@@ -7109,6 +7147,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         version: result.version,
         serverHash: result.content_hash
       }), result.version != null && ((_c = this.baseStore) == null || _c.set(np, content, result.version));
+    }
+    if (result.id) {
+      let np = (0, import_obsidian21.normalizePath)(serverPath != null ? serverPath : file.path);
+      (_d = this.noteIdMap) == null || _d.set(np, result.id), this.confirmNoteId(result.id);
     }
     this.issues.clear(file.path);
   }
@@ -7510,7 +7552,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return total;
   }
   async runFlushQueue() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     let entries = this.queue.all();
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
@@ -7551,19 +7593,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
-          let resp = await this.api.pushNote(entry.path, content, mtime);
+          let replayNp = (0, import_obsidian21.normalizePath)(entry.path), replayId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(replayNp)) != null ? _f : null;
+          !replayId && this.noteIdMap && (replayId = uuid7(), this.noteIdMap.set(replayNp, replayId));
+          let resp = replayId ? await this.api.pushNote(entry.path, content, mtime, void 0, replayId) : await this.api.pushNote(entry.path, content, mtime);
           if (!("conflict" in resp) && content !== void 0) {
             let np = (0, import_obsidian21.normalizePath)(entry.path);
             this.syncState.set(np, {
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_e = this.baseStore) == null || _e.set(np, content, resp.note.version));
+            }), resp.note.version != null && ((_g = this.baseStore) == null || _g.set(np, content, resp.note.version)), resp.note.id && ((_h = this.noteIdMap) == null || _h.set(np, resp.note.id), this.confirmNoteId(resp.note.id));
           }
         }
         await this.queue.dequeue(
           entry.path,
-          (_g = (_f = entry.vaultId) != null ? _f : this.settings.vaultId) != null ? _g : void 0
+          (_j = (_i = entry.vaultId) != null ? _i : this.settings.vaultId) != null ? _j : void 0
         ), this.issues.clear(entry.path), flushed++;
       } catch (e) {
         let classified = categorizeError(e);
@@ -7571,7 +7615,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let now = Date.now();
           this.issues.record({
             path: entry.path,
-            kind: (_h = entry.kind) != null ? _h : "note",
+            kind: (_k = entry.kind) != null ? _k : "note",
             category: classified.category,
             status: classified.status,
             message: classified.message,
@@ -7579,9 +7623,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             firstFailedAt: now,
             lastFailedAt: now,
             attempts: 1
-          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_i = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
+          }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_l = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(
             entry.path,
-            (_k = (_j = entry.vaultId) != null ? _j : this.settings.vaultId) != null ? _k : void 0
+            (_n = (_m = entry.vaultId) != null ? _m : this.settings.vaultId) != null ? _n : void 0
           );
           continue;
         }
@@ -21607,7 +21651,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
-          this.syncEngine.isSyncBlocked() || (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId);
+          this.syncEngine.isSyncBlocked() || (this.syncEngine.ensureNoteIdMapped(docId), (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId));
         }, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",
