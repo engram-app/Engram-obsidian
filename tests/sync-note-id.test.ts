@@ -1038,6 +1038,120 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 	});
 });
 
+describe("pull-applied relocations record lastRelocationTs too (final review IMPORTANT-2)", () => {
+	test("a stale WS echo after a PULL-applied relocation does not relocate backward", async () => {
+		// applySyncChange (the pull/`/sync/changes` path) called moveIfIdRelocated
+		// with no eventTs at all, so a relocation applied via pull never recorded
+		// lastRelocationTs for that id. A later stale/reordered WS broadcast
+		// carrying the pre-rename path then found no recorded timestamp to compare
+		// against — the staleness guard silently no-ops (`lastTs !== undefined`
+		// is false) — and re-keyed the map BACKWARD to the old path, cross-channel
+		// ping-pong.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-pull-then-ws");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-pull-then-ws", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// 1) Pull delivers the forward relocation, `updated_at` far in the future
+		// relative to any WS `timestamp` used below.
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-pull-then-ws",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "# original content",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:10Z",
+			deleted: false,
+		} as any);
+		expect(noteIdMap.pathForId("id-pull-then-ws")).toBe("New.md");
+
+		// 2) A stale/reordered WS echo arrives with the OLD path and a `timestamp`
+		// that predates the pull's `updated_at` (converted to the same epoch-ms
+		// basis) — must be ignored, not re-key the map backward.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-pull-then-ws",
+			path: "Old.md",
+			timestamp: 1,
+			title: "Old",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(noteIdMap.pathForId("id-pull-then-ws")).toBe("New.md");
+	});
+
+	test("an event whose ts TIES the last-applied ts is treated as stale, not newer (review finding 5)", async () => {
+		// updated_at is only seconds-precision on the wire, so two genuinely
+		// different relocations for the same id within one second can produce
+		// the exact same normalized eventTs. A tie can't be proven newer than
+		// what's already applied, so it must not win — strict `<` alone would
+		// let it through.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-tie");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-tie", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		const tieTs = Date.parse("2026-01-01T00:00:10Z");
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-tie",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "# original content",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:10Z",
+			deleted: false,
+		} as any);
+		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
+
+		// A second, different relocation event carrying the exact same
+		// normalized epoch-ms timestamp — must not be treated as newer.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-tie",
+			path: "Old.md",
+			timestamp: tieTs,
+			title: "Old",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
+	});
+});
+
 describe("moveIfIdRelocated's disk-content flush must be create-only (final review CRITICAL-1)", () => {
 	test("does not overwrite content a concurrent flush already wrote to newPath during the suspend window", async () => {
 		// moveIfIdRelocated suspends on cachedRead + trashFile awaits while

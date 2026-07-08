@@ -2720,8 +2720,12 @@ export class SyncEngine {
 	 *  back, trashes the just-materialized new-path file, and (via the
 	 *  disk-content fix above) recreates the old path from it. Observed live:
 	 *  the old path was perpetually resurrected every few seconds. `eventTs`
-	 *  (the broadcast's `timestamp`) is tracked per note_id; an event older
-	 *  than the last one already applied for this id is ignored outright. */
+	 *  (the broadcast's `timestamp`, or the pull feed's `updated_at` normalized
+	 *  to epoch ms) is tracked per note_id; an event no NEWER than the last one
+	 *  already applied for this id is ignored outright — `<=`, not strict `<`:
+	 *  the pull feed's `updated_at` is only seconds-precision on the wire, so
+	 *  two genuinely different relocations for the same id within one second
+	 *  can tie exactly. A tie can't be proven newer, so it must not win. */
 	private lastRelocationTs = new Map<string, number>();
 
 	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
@@ -2729,7 +2733,7 @@ export class SyncEngine {
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
 		if (eventTs !== undefined) {
 			const lastTs = this.lastRelocationTs.get(id);
-			if (lastTs !== undefined && eventTs < lastTs) {
+			if (lastTs !== undefined && eventTs <= lastTs) {
 				rlog().info(
 					"pull",
 					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
@@ -2855,7 +2859,23 @@ export class SyncEngine {
 			// the seq-ordered /sync/changes feed carries only the upsert at the new
 			// path — never a separate delete for the old one. Relocate the old file
 			// so it isn't orphaned as a duplicate (e2e test_10). See moveIfIdRelocated.
-			await this.moveIfIdRelocated(c.id, c.path);
+			// eventTs (final review IMPORTANT-2): without this, a pull-applied
+			// relocation never recorded lastRelocationTs for the id, so a LATER
+			// stale/reordered WS broadcast carrying the pre-rename path found no
+			// timestamp to compare against and relocated backward (cross-channel
+			// ping-pong). c.updated_at is an ISO-8601 string (seconds precision on
+			// the wire); normalize to the same epoch-ms basis moveIfIdRelocated's
+			// WS callers already use (event.timestamp, epoch ms) via Date.parse.
+			// An unparseable value degrades to "no timestamp" (undefined) rather
+			// than NaN, which would poison every future comparison for this id
+			// (NaN is never < anything, so the guard would silently stop
+			// protecting it for the rest of the session).
+			const relocationTs = Date.parse(c.updated_at);
+			await this.moveIfIdRelocated(
+				c.id,
+				c.path,
+				Number.isNaN(relocationTs) ? undefined : relocationTs,
+			);
 			this.noteIdMap?.set(c.path, c.id);
 			// Learned from the server's own feed — it unquestionably has a note
 			// row for this id, so future edits may route through CRDT (see
