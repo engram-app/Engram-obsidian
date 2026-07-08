@@ -1,5 +1,7 @@
 # Pull Sync Bug Cluster (Fixed 2026-03)
 
+_Last verified: 2026-04-03_
+
 Four interrelated bugs made pull completely non-functional for existing files.
 
 ## Bug 1: mtime guard silently skips all updates (CRITICAL)

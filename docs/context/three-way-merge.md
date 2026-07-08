@@ -1,5 +1,7 @@
 # 3-Way Merge Conflict Resolution (v0.6.0)
 
+_Last verified: 2026-04-03_
+
 ## How It Works
 
 When a conflict is detected (both local and remote changed since lastSync), the plugin attempts automatic 3-way merge before showing the conflict modal.

@@ -1,5 +1,7 @@
 ## Engram Vault Sync — Internals Quick Reference
 
+_Last verified: 2026-07-08_
+
 ### Source Map
 
 > Line counts are rough orientation only — run `wc -l src/*.ts` for current figures (the codebase has grown well past these as features landed).
@@ -257,11 +259,26 @@ Compile-time gated via `DEV_MODE` constant (set in `esbuild.config.mjs`).
 
 ### CRDT Sync Layer (`src/crdt/`)
 
-v1 CRDT sync persists one `Y.Doc` per note to IndexedDB via `y-indexeddb`. The three modules are:
+CRDT sync persists one `Y.Doc` per note to IndexedDB via `y-indexeddb`, **keyed by stable `note_id`** (not vault path) so a rename is a metadata change rather than a delete+create. `src/crdt/` splits into a core sync layer and a `live/` editor-binding subsystem.
 
-- `manager.ts` — `CrdtManager`: opens/rehydrates Y.Docs, routes local edits and remote updates, owns persistence.
-- `channel.ts` — `CrdtChannel`: y-protocols framing (STEP1/STEP2/UPDATE), once-per-doc startSync guard.
-- `enrollment.ts` — `CrdtEnrollment`: calls `startSync(path)` exactly once per note per channel session so the state-vector handshake fires on first open (down-sync gap fix). Wired from `active-leaf-change` in `main.ts`.
+**Core sync (`src/crdt/`):**
+- `manager.ts` — `CrdtManager`: opens/rehydrates Y.Docs, routes local edits and remote updates, owns persistence; stamps `REMOTE_ORIGIN` on inbound server bytes so they flush to disk but are not re-broadcast.
+- `channel.ts` — `CrdtChannel`: y-protocols framing (STEP1/STEP2/UPDATE), per-doc `startSync(noteId)` handshake guard.
+- `enrollment.ts` — `CrdtEnrollment`: calls `startSync(noteId)` once per note_id per channel session so the state-vector handshake fires on first open (down-sync gap fix). Wired from `active-leaf-change` in `main.ts`.
+- `note-id-map.ts` — `NoteIdMap`: path → note_id sidecar that survives renames; the plugin-side bridge that makes id-keying work.
+- `bridge.ts` — `seedOnce()`: seeds disk content into a fresh doc exactly once, guarded so it never clobbers a history another device already owns.
+- `frontmatter-codec.ts` — splits/rejoins the frontmatter fence so it lives apart from the body Y.Text.
+- `schema.ts` — `ensureDocSchema()`: one-time IndexedDB wipe when upgrading pre-1.10 (proto-1) local docs.
+- `uuid7.ts` — `uuid7()`: client-mintable, time-ordered note_id for brand-new notes (`crypto.randomUUID()` is v4-only, no ordering).
+- `wiring.ts` — structural `CrdtWiringDeps` seam so tests wire the CRDT layer without standing up the whole SyncEngine.
+
+**Live editing (`src/crdt/live/`)** — binds an open note's Y.Doc to the CodeMirror 6 editor and reading view for real-time collaborative editing:
+- `editor-controller.ts` — owns the bind lifecycle + 3s drift check; refuses to dispatch into a view showing a different file (the bind-race pollution guard, PR #194).
+- `ycollab-binding.ts` — the single CM6 `Compartment` reconfigured to the active note's yCollab binding on note switch.
+- `cm-yjs-bridge.ts` — converts Y.Text deltas ↔ CM6 `ChangeSpec`s.
+- `annotations.ts` — `ySyncAnnotation` marks CRDT-originated CM6 transactions so the binding does not re-capture them as local edits.
+- `live-views.ts` — `ViewerRefcount`: per-path viewer refcount; suppresses disk writes while a pane or reading-view holds the note open, flushes once on last release.
+- `reading-view.ts`, `frontmatter-hook.ts`, `obsidian-internals.ts` — reading-mode binding, live frontmatter-update hook, and Obsidian-internal `EditorView` access.
 
 #### iOS / Mobile IndexedDB assumption
 

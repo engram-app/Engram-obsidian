@@ -32,7 +32,7 @@ For Obsidian API best practices and correct usage patterns, read `docs/context/o
 For audit of API misuses and improvement opportunities, read `docs/context/obsidian-api-audit.md`.
 For submitting to the Community Plugins directory (new flow as of 2026-05-12), read `docs/context/obsidian-community-submission.md`.
 For the 3-way merge conflict-resolution algorithm, read `docs/context/three-way-merge.md`.
-For the SSE→WebSocket sync-stream migration (`channel.ts`, `note:changes` topic), read `docs/context/websocket-migration.md`.
+For the SSE→WebSocket sync-stream migration (`channel.ts`; the live topic is `sync:{userId}:{vaultId}`, event `note_changed`), read `docs/context/websocket-migration.md`.
 For the logging architecture (dev-log categories, remote-log thresholds), read `docs/context/logging-architecture.md`.
 For the Obsidian mtime quirk that sync logic must account for, read `docs/context/obsidian-mtime-quirk.md`.
 For the 2026-03 pull-sync bug cluster (four interrelated pull-breaking bugs, fixed), read `docs/context/pull-sync-bug-cluster.md`.

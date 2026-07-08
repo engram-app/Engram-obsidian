@@ -1,5 +1,7 @@
 # SSE to WebSocket Migration (v0.6.0)
 
+_Last verified: 2026-04-03_
+
 ## What Changed
 
 Real-time sync moved from Server-Sent Events (SSE via `NoteStream` in `note-stream.ts`) to Phoenix WebSocket channels (`NoteChannel` in `channel.ts`).
