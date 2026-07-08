@@ -2829,6 +2829,13 @@ export class SyncEngine {
 					"pull",
 					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} — ${errMsg(e)}`,
 				);
+				// No disk content to flush here, and the caller's isSynced-gated
+				// materializeRelocated backstop may ALSO decline (fresh-boot
+				// receiver, STEP2 not landed yet) — leaving the note invisible on
+				// this device until the next scheduled poll, up to 5 minutes
+				// (final review MINOR-7). Kick an immediate pull so that window
+				// is one pull instead.
+				void this.pull();
 			}
 		}
 	}

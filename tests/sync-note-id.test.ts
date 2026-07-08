@@ -6,7 +6,7 @@
  *   feed) learns a note's id into the NoteIdMap.
  * - handleRename re-keys the map (id stable, path moves).
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { BaseStore } from "../src/base-store";
@@ -952,6 +952,51 @@ describe("moveIfIdRelocated survives the old file vanishing MID-FLIGHT (round 4,
 
 		expect(projectedText).toHaveBeenCalledWith("id-race-read");
 		expect(mockApp.vault.create).toHaveBeenCalledWith("New.md", "# from CRDT doc");
+	});
+
+	test("cachedRead rejecting AND the isSynced backstop declining triggers an immediate pull (final review MINOR-7)", async () => {
+		// Neither materialize path can land the note: no disk content to flush
+		// (cachedRead rejected) and the CRDT handshake for this note_id hasn't
+		// completed yet this session (isSynced=false), so materializeRelocated's
+		// backstop also declines. Left alone, the note stays invisible on this
+		// device until the next scheduled poll (up to 5 min). The catch block
+		// must kick an immediate pull to close that window to one pull instead.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-stall-face");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-stall-face", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("ENOENT: no such file"),
+		);
+
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(false),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		const pullSpy = spyOn(engine, "pull").mockResolvedValue(0);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-stall-face",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(pullSpy).toHaveBeenCalled();
 	});
 });
 
