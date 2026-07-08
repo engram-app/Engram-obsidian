@@ -5406,7 +5406,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  single-flight with one trailing rerun so an announce burst costs at most
    *  two manifest fetches. */
   ensureNoteIdMapped(noteId) {
-    if (!(!this.noteIdMap || !noteId) && this.noteIdMap.pathForId(noteId) === null) {
+    if (!(!this.noteIdMap || !noteId) && !this.syncBlocked && this.noteIdMap.pathForId(noteId) === null) {
       if (this.idMapReconcileInflight) {
         this.idMapReconcileQueued = !0;
         return;
@@ -5574,12 +5574,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setSyncCursor(cursor) {
     this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
   }
+  /** Wipe ALL per-vault sync + identity state. Both vault-change paths
+   *  (explicit picker `resetForVaultChange`, backstop
+   *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
+   *  point; a wipe that exists on only one path re-opens #200. */
+  async wipePerVaultState() {
+    var _a;
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), await this.saveData({ lastSync: "", syncCursor: null });
+  }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+    this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.wipePerVaultState(), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor + ids cleared");
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -5607,7 +5615,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), devLog().log(
         "lifecycle",
         `vault changed ${this.syncStateVaultId} \u2192 ${current} \u2014 clearing syncState + lastSync`
-      ), this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = current, await this.saveData({ lastSync: "", syncCursor: null }));
+      ), this.syncStateVaultId = current, await this.wipePerVaultState());
     }
   }
   /** Export sync state for persistence across sessions. */
@@ -7195,7 +7203,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Record a successful batch-push result: sync state, base store, issue
    *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
   async recordBatchPushOk(file, content, hash, result) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
     if (serverPath) {
       let localFile = this.app.vault.getFileByPath(file.path);
@@ -7217,8 +7225,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }), result.version != null && ((_c = this.baseStore) == null || _c.set(np, content, result.version));
     }
     if (result.id) {
+      serverPath && ((_d = this.noteIdMap) == null || _d.delete((0, import_obsidian21.normalizePath)(file.path)));
       let np = (0, import_obsidian21.normalizePath)(serverPath != null ? serverPath : file.path);
-      (_d = this.noteIdMap) == null || _d.set(np, result.id), this.confirmNoteId(result.id);
+      (_e = this.noteIdMap) == null || _e.set(np, result.id), this.confirmNoteId(result.id);
     }
     this.issues.clear(file.path);
   }
@@ -20700,6 +20709,13 @@ var NoteIdMap = class _NoteIdMap {
     if (id2 === void 0) return;
     let displacedId = this.byPath.get(newPath);
     displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
+  }
+  /** Drop every mapping. Used on vault change: the map is per-vault identity
+   *  state — carrying ids across vaults routes CRDT frames to another
+   *  vault's notes (plugin #200). Mutates in place so every holder of the
+   *  instance (main, sync engine, live views) sees the wipe. */
+  clear() {
+    this.byPath.clear(), this.byId.clear();
   }
   toJSON() {
     return Object.fromEntries(this.byPath);
