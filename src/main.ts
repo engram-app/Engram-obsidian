@@ -159,20 +159,29 @@ export function partitionStrandedFlushes(
 /** Whether setupNoteStream() may keep the existing stream instead of
  *  rebuilding it. The short-circuit exists to protect a HEALTHY socket from
  *  unrelated saveSettings() churn (#169) — so beyond the connection-identity
- *  key match it must require the stream to actually be CONNECTED (sync: topic
- *  joined). A stream that exists but never connected can be a doomed channel
- *  built mid-auth-swap (new settings, old authProvider → old-user + new-vault
- *  join the server refuses with no retry, e2e test_48 run 28919928915);
- *  reusing it strands the plugin until the next full setup. Exported
- *  standalone (pure) so the decision is unit-testable without a plugin
- *  instance. */
+ *  key match it must require the stream to have CONNECTED at least once
+ *  (sync: topic joined). A stream that exists but NEVER connected can be a
+ *  doomed channel built mid-auth-swap (new settings, old authProvider →
+ *  old-user + new-vault join the server refuses with no retry, e2e test_48
+ *  run 28919928915); reusing it strands the plugin until the next full setup.
+ *
+ *  `everConnected` (final review IMPORTANT-3), not "currently connected": the
+ *  caller must pass a flag that stays true across a transient disconnect, not
+ *  the raw live-status flag, which flips false on every blip. Gating reuse on
+ *  raw current-connectedness tore down the entire CRDT stack on any
+ *  saveSettings() during a blip (the #169 churn + live-doc clobber family) —
+ *  the doomed channel this guard exists to catch NEVER connected at all, so
+ *  a sticky "connected at least once this stream" flag still catches it
+ *  (everConnected=false) while surviving a healthy stream's later blips
+ *  (everConnected stays true). Exported standalone (pure) so the decision is
+ *  unit-testable without a plugin instance. */
 export function shouldReuseLiveStream(
 	hasStream: boolean,
-	liveConnected: boolean,
+	everConnected: boolean,
 	connectionKey: string,
 	liveChannelKey: string | null,
 ): boolean {
-	return hasStream && liveConnected && connectionKey === liveChannelKey;
+	return hasStream && everConnected && connectionKey === liveChannelKey;
 }
 
 export default class EngramSyncPlugin extends Plugin {
@@ -201,6 +210,14 @@ export default class EngramSyncPlugin extends Plugin {
 	private statusBarEl: HTMLElement | null = null;
 	private settingTab: EngramSyncSettingTab | null = null;
 	private liveConnected = false;
+	/** Sticky per-stream "has this channel EVER connected" flag (final review
+	 *  IMPORTANT-3). Set true on the first onStatusChange(true) after a stream
+	 *  is created; unlike liveConnected it does NOT flip false on a transient
+	 *  disconnect — only when a genuinely NEW stream is about to be built
+	 *  (setupNoteStream teardown, or auth fully cleared). setupNoteStream()
+	 *  gates reuse on this instead of liveConnected so a saveSettings() during
+	 *  a mid-blip disconnect doesn't tear down a healthy CRDT stack. */
+	private everConnected = false;
 	// Bumped every setupNoteStream(). connectChannel() captures it and aborts if
 	// it changed before its async getMe() resolved — otherwise a re-auth (e.g.
 	// OAuth swap) that calls setupNoteStream() again while a prior connect is
@@ -1179,6 +1196,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.noteStream?.disconnect();
 		this.noteStream = null;
 		this.liveConnected = false;
+		this.everConnected = false;
 		await this.savePluginData(this.syncEngine.getLastSync());
 		this.updateStatusBar(this.syncEngine.getStatus());
 		if (notify) {
@@ -1328,7 +1346,7 @@ export default class EngramSyncPlugin extends Plugin {
 		if (
 			shouldReuseLiveStream(
 				this.noteStream !== null,
-				this.liveConnected,
+				this.everConnected,
 				connectionKey,
 				this.liveChannelKey,
 			)
@@ -1336,6 +1354,9 @@ export default class EngramSyncPlugin extends Plugin {
 			return;
 		}
 		this.liveChannelKey = connectionKey;
+		// A genuinely new stream is about to be built below — the "ever
+		// connected" flag is per-stream, not per-plugin-lifetime.
+		this.everConnected = false;
 
 		// Tear down any existing CRDT instances before disconnecting the channel.
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
@@ -1444,6 +1465,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 				channel.onStatusChange = (connected) => {
 					this.liveConnected = connected;
+					if (connected) this.everConnected = true;
 					this.updateStatusBar(this.syncEngine.getStatus());
 					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {

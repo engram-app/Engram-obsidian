@@ -13,7 +13,16 @@
  * doomed channel survived as the live stream and check_stream_connected hung
  * for the full 60s. The short-circuit exists only to protect a HEALTHY socket
  * from unrelated saveSettings churn (#169), so it must additionally require
- * the stream to actually be CONNECTED (sync: topic joined).
+ * the stream to have CONNECTED at least once (sync: topic joined).
+ *
+ * Final review IMPORTANT-3: the second parameter must be `everConnected` —
+ * sticky true once a stream connects for the first time — NOT the raw
+ * currently-connected flag, which flips false on every transient disconnect.
+ * Gating reuse on raw current-connectedness tore down the entire CRDT stack
+ * on any saveSettings() during a blip (the #169 churn + live-doc clobber
+ * family). The swap-bug case stays covered either way: a fresh doomed channel
+ * has everConnected=false (it never connected at all), same as it had
+ * liveConnected=false.
  */
 import { describe, expect, test } from "bun:test";
 import { shouldReuseLiveStream } from "../src/main";
@@ -25,9 +34,17 @@ describe("shouldReuseLiveStream", () => {
 
 	test("does NOT reuse a stream that exists but never connected (test_48 doomed channel)", () => {
 		// Key matches — the doomed channel was built from the same (new)
-		// settings — but its sync: join was refused, so liveConnected is false.
+		// settings — but its sync: join was refused, so everConnected is false.
 		// Reusing it strands the plugin on a channel bound to the wrong user.
 		expect(shouldReuseLiveStream(true, false, "url|me|v1", "url|me|v1")).toBe(false);
+	});
+
+	test("STILL reuses a stream that has since transiently disconnected, once it ever connected (IMPORTANT-3)", () => {
+		// A healthy stream that connected once, then dropped mid-blip
+		// (everConnected stays true — only the raw live-status flag would
+		// have flipped false). saveSettings() during the blip must not tear
+		// down the whole CRDT stack; the connection key still matches.
+		expect(shouldReuseLiveStream(true, true, "url|me|v1", "url|me|v1")).toBe(true);
 	});
 
 	test("does NOT reuse when the connection identity changed", () => {
