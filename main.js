@@ -5433,6 +5433,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
   }
+  /** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
+   *  (no row yet → note_not_found) and the once-per-session enrollment guard
+   *  never re-fires it, leaving the note deaf to live sync until a later
+   *  catch-up (~30s observed live). Called with the id the create-push
+   *  response confirmed, BEFORE confirmNoteId: if the id was not yet
+   *  confirmed this is the create — re-fire the handshake now that the row
+   *  exists. Md + size gated exactly like the pre-push enroll (an oversized
+   *  doc must never enroll — 8 MB WS frame limit). */
+  refireEnrollmentOnFirstConfirm(noteId, path, content) {
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+  }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
    *  REST-first path that recreates/moves the row rather than routing to a
@@ -5587,7 +5598,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.wipePerVaultState(), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor + ids cleared");
+    this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.wipePerVaultState(), devLog().log(
+      "lifecycle",
+      "resetForVaultChange: lastSync + syncState + cursor + ids cleared"
+    );
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -6031,13 +6045,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_s = this.baseStore) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_t2 = this.baseStore) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_u = this.noteIdMap) == null || _u.delete((0, import_obsidian21.normalizePath)(file.path)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.confirmNoteId(resp.note.id);
+          }), (_s = this.baseStore) == null || _s.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_t2 = this.baseStore) == null || _t2.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_u = this.noteIdMap) == null || _u.delete((0, import_obsidian21.normalizePath)(file.path)), (_v = this.noteIdMap) == null || _v.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_w = this.baseStore) == null || _w.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_x = this.noteIdMap) == null || _x.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.confirmNoteId(resp.note.id);
+          }), serverVersion != null && ((_w = this.baseStore) == null || _w.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_x = this.noteIdMap) == null || _x.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
       }
       success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
@@ -7672,14 +7686,31 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
           let replayNp = (0, import_obsidian21.normalizePath)(entry.path), replayId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(replayNp)) != null ? _f : null;
           !replayId && this.noteIdMap && (replayId = uuid7(), this.noteIdMap.set(replayNp, replayId));
-          let resp = replayId ? await this.api.pushNote(entry.path, content, mtime, void 0, replayId) : await this.api.pushNote(entry.path, content, mtime);
+          let replayState = this.syncState.get(replayNp), replayBase = replayState == null ? void 0 : replayState.serverHash, resp = replayBase !== void 0 ? await this.api.pushNote(
+            entry.path,
+            content,
+            mtime,
+            replayState == null ? void 0 : replayState.version,
+            replayId != null ? replayId : void 0,
+            replayBase
+          ) : replayId ? await this.api.pushNote(
+            entry.path,
+            content,
+            mtime,
+            void 0,
+            replayId
+          ) : await this.api.pushNote(entry.path, content, mtime);
+          if ("conflict" in resp) {
+            let conflicted = this.app.vault.getFileByPath(entry.path);
+            conflicted && await this.pushFile(conflicted, !0);
+          }
           if (!("conflict" in resp) && content !== void 0) {
             let np = (0, import_obsidian21.normalizePath)(entry.path);
             this.syncState.set(np, {
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
-            }), resp.note.version != null && ((_g = this.baseStore) == null || _g.set(np, content, resp.note.version)), resp.note.id && ((_h = this.noteIdMap) == null || _h.set(np, resp.note.id), this.confirmNoteId(resp.note.id));
+            }), resp.note.version != null && ((_g = this.baseStore) == null || _g.set(np, content, resp.note.version)), resp.note.id && ((_h = this.noteIdMap) == null || _h.set(np, resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content), this.confirmNoteId(resp.note.id));
           }
         }
         await this.queue.dequeue(

@@ -591,6 +591,27 @@ export class SyncEngine {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
 
+	/** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
+	 *  (no row yet → note_not_found) and the once-per-session enrollment guard
+	 *  never re-fires it, leaving the note deaf to live sync until a later
+	 *  catch-up (~30s observed live). Called with the id the create-push
+	 *  response confirmed, BEFORE confirmNoteId: if the id was not yet
+	 *  confirmed this is the create — re-fire the handshake now that the row
+	 *  exists. Md + size gated exactly like the pre-push enroll (an oversized
+	 *  doc must never enroll — 8 MB WS frame limit). */
+	private refireEnrollmentOnFirstConfirm(
+		noteId: string | null | undefined,
+		path: string,
+		content: string,
+	): void {
+		if (!noteId || !this.crdtEnrollment) return;
+		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
+		if (!path.endsWith(".md")) return;
+		if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) return;
+		this.crdtEnrollment.reset(noteId);
+		this.crdtEnrollment.enroll(noteId);
+	}
+
 	/** Drop a note_id's confirmed status when its server row is deleted, so a
 	 *  subsequent push of the same id (a rename's new-path push) takes the
 	 *  REST-first path that recreates/moves the row rather than routing to a
@@ -1779,6 +1800,7 @@ export class SyncEngine {
 					// is authoritative even when client_id was sent.
 					this.noteIdMap?.delete(normalizePath(file.path));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
+					this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content);
 					this.confirmNoteId(resp.note.id);
 				} else {
 					this.syncState.set(normalizePath(file.path), {
@@ -1790,6 +1812,7 @@ export class SyncEngine {
 						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
 					}
 					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
+					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
 					this.confirmNoteId(resp.note.id);
 				}
 			}
@@ -4698,9 +4721,41 @@ export class SyncEngine {
 						replayId = uuid7();
 						this.noteIdMap.set(replayNp, replayId);
 					}
-					const resp = replayId
-						? await this.api.pushNote(entry.path, content, mtime!, undefined, replayId)
-						: await this.api.pushNote(entry.path, content, mtime!);
+					// CAS base, mirroring pushFile: a queued edit may be STALE (the
+					// server moved on during the offline window) — without base_hash
+					// it sails past the v0.5.642 gate and overwrites content this
+					// client never saw. Same 3-shape cascade as pushFile (several
+					// tests pin pushNote's exact arguments.length).
+					const replayState = this.syncState.get(replayNp);
+					const replayBase = replayState?.serverHash;
+					const resp =
+						replayBase !== undefined
+							? await this.api.pushNote(
+									entry.path,
+									content,
+									mtime!,
+									replayState?.version,
+									replayId ?? undefined,
+									replayBase,
+								)
+							: replayId
+								? await this.api.pushNote(
+										entry.path,
+										content,
+										mtime!,
+										undefined,
+										replayId,
+									)
+								: await this.api.pushNote(entry.path, content, mtime!);
+					if ("conflict" in resp) {
+						// Hand the conflict to the single-note flow, which owns 3-way
+						// merge + resolution — previously a conflicting replay was
+						// silently dequeued and the local edit vanished from the
+						// pipeline with no conflict handling at all. pushFile re-reads
+						// current disk content (fresher than the queued snapshot).
+						const conflicted = this.app.vault.getFileByPath(entry.path);
+						if (conflicted) await this.pushFile(conflicted, true);
+					}
 					// Record fresh sync state — without this the replayed push
 					// leaves a stale version (next push 409s avoidably) and no
 					// serverHash (hash-skip dedupe misses the echo).
@@ -4716,6 +4771,7 @@ export class SyncEngine {
 						}
 						if (resp.note.id) {
 							this.noteIdMap?.set(np, resp.note.id);
+							this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content);
 							this.confirmNoteId(resp.note.id);
 						}
 					}
