@@ -6589,10 +6589,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian21.normalizePath)(priorPath));
     let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
-    if (oldFile) {
-      let content = await this.app.vault.cachedRead(oldFile);
-      await this.app.fileManager.trashFile(oldFile), await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
-    }
+    if (oldFile)
+      try {
+        let content = await this.app.vault.cachedRead(oldFile);
+        try {
+          await this.app.fileManager.trashFile(oldFile);
+        } catch (e) {
+        }
+        await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
+      } catch (e) {
+        rlog().warn(
+          "pull",
+          `Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} \u2014 ${errMsg(e)}`
+        );
+      }
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /
    *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;

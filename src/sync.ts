@@ -2769,12 +2769,36 @@ export class SyncEngine {
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
 		if (oldFile) {
-			// Read before trashing — the content must be captured while the file
-			// still exists at its old location.
-			const content = await this.app.vault.cachedRead(oldFile);
-			await this.app.fileManager.trashFile(oldFile);
-			await this.flushFromCrdt(newPath, content);
-			rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+			// MID-FLIGHT VANISH GUARD (round 4, e2e test_10 CI run 28915097812):
+			// the old file can be trashed CONCURRENTLY while this function is
+			// suspended on the manifest await above — the rename's own delete
+			// tombstone, deferred to a pull, races these file ops. A rejection
+			// here must not escape: handleStreamEvent's hoisted call is outside
+			// its try/catch, so an escape kills the ENTIRE upsert — no relocation,
+			// no CRDT-branch materialize, no file, silently (received=yes
+			// materialized=no). Degrade instead: a failed trash means the
+			// tombstone already removed the file (the outcome the trash wanted) —
+			// still flush the content we read; a failed read means no local
+			// content — fall through to the caller's isSynced-gated
+			// materializeRelocated backstop.
+			try {
+				// Read before trashing — the content must be captured while the
+				// file still exists at its old location.
+				const content = await this.app.vault.cachedRead(oldFile);
+				try {
+					await this.app.fileManager.trashFile(oldFile);
+				} catch {
+					// Already gone — the concurrent tombstone won the race.
+				}
+				await this.flushFromCrdt(newPath, content);
+				rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ` +
+						`${priorPath} -> ${newPath} — ${errMsg(e)}`,
+				);
+			}
 		}
 	}
 

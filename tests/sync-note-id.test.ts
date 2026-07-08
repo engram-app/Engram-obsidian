@@ -843,6 +843,113 @@ describe("moveIfIdRelocated materializes the new path from ON-DISK content direc
 	});
 });
 
+describe("moveIfIdRelocated survives the old file vanishing MID-FLIGHT (round 4, e2e test_10 CI run 28915097812)", () => {
+	// Artifact trace (backend run 28915097812, B = device c151add9): the WS
+	// delete for the OLD path arrives first and is deferred to a pull; the WS
+	// upsert for the NEW path then enters moveIfIdRelocated and suspends on
+	// `await manifestOwnerOf` (network). While suspended, the pull applies the
+	// delete tombstone and trashes the OLD file. moveIfIdRelocated resumes,
+	// cachedRead/trashFile hit the now-gone file and REJECT — and because
+	// handleStreamEvent's hoisted call sits OUTSIDE its try/catch, the whole
+	// upsert dies as an unhandled rejection: no relocation, no CRDT-branch
+	// materialize, no file. received=yes materialized=no, 30s timeout.
+	test("trashFile rejecting (concurrent tombstone won the race) must not drop the materialize", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-race-trash");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-race-trash", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# Rename Test\ndisk content read before the race",
+		);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("File does not exist"),
+		);
+
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		try {
+			// Must resolve (not reject) AND still write New.md from the content
+			// already read off disk — the trash failing means the concurrent
+			// tombstone already removed the old file, which is the outcome the
+			// trash wanted anyway.
+			await engine.handleStreamEvent({
+				event_type: "upsert",
+				kind: "note",
+				id: "id-race-trash",
+				path: "New.md",
+				timestamp: 2,
+				title: "New",
+				folder: "",
+				tags: [],
+				mtime: 2,
+				updated_at: "2026-01-01T00:00:00Z",
+			} as any);
+		} finally {
+			(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockReset();
+			(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockResolvedValue(undefined);
+		}
+
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"New.md",
+			"# Rename Test\ndisk content read before the race",
+		);
+	});
+
+	test("cachedRead rejecting (file gone before the read) falls through to the isSynced backstop", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-race-read");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-race-read", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		// Lookup still returns the TFile (stale handle), but the read rejects —
+		// the pull's tombstone deleted the file between lookup and read.
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("ENOENT: no such file"),
+		);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		const projectedText = mock().mockResolvedValue("# from CRDT doc");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// Must resolve; with no readable disk content the CRDT-branch backstop
+		// (materializeRelocated, isSynced=true — STEP2 landed when the old path
+		// materialized earlier this session) writes New.md from the doc.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-race-read",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(projectedText).toHaveBeenCalledWith("id-race-read");
+		expect(mockApp.vault.create).toHaveBeenCalledWith("New.md", "# from CRDT doc");
+	});
+});
+
 describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would relocate BACKWARD (round 2, e2e test_34 mechanism)", () => {
 	test("a late-arriving upsert with an OLDER timestamp and the note's OLD path does not undo an already-applied relocation", async () => {
 		// Live-repro evidence (local, 2026-07-08): a folder rename delivered a
