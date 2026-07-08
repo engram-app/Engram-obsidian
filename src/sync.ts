@@ -836,6 +836,26 @@ export class SyncEngine {
 		if (typeof this.crdt.isSynced !== "function" || !this.crdt.isSynced(noteId)) return;
 		if (this.app.vault.getAbstractFileByPath(normalizePath(path))) return;
 		const text = await this.crdt.projectedText(noteId);
+		// Identity re-check at WRITE time (issue #210, e2e test_34): this call is
+		// unawaited and races the pull's id-keyed move. A stale old-path upsert
+		// captures (path, noteId) while old is still canonical; the relocation
+		// can land any time up to here — including DURING the projectedText
+		// await (it suspends on IDB load), which is why the check sits after it,
+		// immediately before the write (flushFromCrdt has no identity guard and
+		// fails open). Writing a relocated path re-creates the tombstoned file,
+		// and its modify event re-pushes it under a FRESH mint (the old-path
+		// map entry moved away), resurrecting the path server-side. Defends the
+		// MOVE case only: a tombstone delete clears the byId entry entirely
+		// (canonical === null), where the doc teardown's isSynced gate above is
+		// the backstop.
+		const canonical = this.noteIdMap?.pathForId(noteId) ?? null;
+		if (canonical !== null && normalizePath(canonical) !== normalizePath(path)) {
+			rlog().info(
+				"ws",
+				`Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`,
+			);
+			return;
+		}
 		await this.flushFromCrdt(path, text);
 	}
 
