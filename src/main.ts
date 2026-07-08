@@ -156,6 +156,25 @@ export function partitionStrandedFlushes(
 	return { toFlush, toRetry, toGiveUp };
 }
 
+/** Whether setupNoteStream() may keep the existing stream instead of
+ *  rebuilding it. The short-circuit exists to protect a HEALTHY socket from
+ *  unrelated saveSettings() churn (#169) — so beyond the connection-identity
+ *  key match it must require the stream to actually be CONNECTED (sync: topic
+ *  joined). A stream that exists but never connected can be a doomed channel
+ *  built mid-auth-swap (new settings, old authProvider → old-user + new-vault
+ *  join the server refuses with no retry, e2e test_48 run 28919928915);
+ *  reusing it strands the plugin until the next full setup. Exported
+ *  standalone (pure) so the decision is unit-testable without a plugin
+ *  instance. */
+export function shouldReuseLiveStream(
+	hasStream: boolean,
+	liveConnected: boolean,
+	connectionKey: string,
+	liveChannelKey: string | null,
+): boolean {
+	return hasStream && liveConnected && connectionKey === liveChannelKey;
+}
+
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
@@ -1306,7 +1325,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// reconnect churn raced note reconciliation and clobbered live docs (empty
 		// flush on a transient disconnect). Only rebuild when the identity changes.
 		const connectionKey = channelConnectionKey(this.settings);
-		if (this.noteStream && connectionKey === this.liveChannelKey) {
+		if (
+			shouldReuseLiveStream(
+				this.noteStream !== null,
+				this.liveConnected,
+				connectionKey,
+				this.liveChannelKey,
+			)
+		) {
 			return;
 		}
 		this.liveChannelKey = connectionKey;
