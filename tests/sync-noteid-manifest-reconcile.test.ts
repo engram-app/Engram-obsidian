@@ -94,6 +94,29 @@ describe("SyncEngine.reconcileNoteIdMapFromManifest", () => {
 		expect(map.get("Old.md")).toBeNull();
 	});
 
+	test("corrects a cross-wired id: id mapped to a path the manifest assigns to a DIFFERENT id", async () => {
+		// The data-loss incident (2026-07-07): a stale map + getOrMint left an id
+		// X pointing at path B.md, while the manifest authoritatively assigns
+		// X -> A.md and B.md -> Y. The old fill-unknown guard skipped X (pathForId
+		// was non-null) so the cross-wire persisted, and onFlushToDisk(X) wrote
+		// A.md's CRDT content onto B.md — overwriting an unrelated note.
+		const { engine, map } = makeEngine([
+			{ id: "X", path: "A.md", content_hash: "h1" },
+			{ id: "Y", path: "B.md", content_hash: "h2" },
+		]);
+		// Corrupted local state: X cross-wired onto B.md (B.md's real id is Y).
+		map.set("B.md", "X");
+		expect(map.pathForId("X")).toBe("B.md");
+
+		await engine.reconcileNoteIdMapFromManifest();
+
+		// The manifest is authoritative: X belongs to A.md, Y to B.md.
+		expect(map.pathForId("X")).toBe("A.md");
+		expect(map.pathForId("Y")).toBe("B.md");
+		expect(map.get("A.md")).toBe("X");
+		expect(map.get("B.md")).toBe("Y");
+	});
+
 	test("persists the map so it survives a reload", async () => {
 		const { engine, saveData } = makeEngine([{ id: "srv-1", path: "A.md", content_hash: "h" }]);
 

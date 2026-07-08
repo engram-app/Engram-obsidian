@@ -684,6 +684,21 @@ export default class EngramSyncPlugin extends Plugin {
 
 			if (!registered) return;
 
+			// The cold-start loop below resolve-or-mints a note_id for EVERY
+			// markdown file. With a stale/empty map that mass-mints wrong ids —
+			// the highest-volume offender in the 2026-07-07 cross-file-overwrite
+			// incident class. Reconcile from the server manifest FIRST so
+			// existing notes resolve to their real server ids; a failed fetch
+			// (offline startup) degrades to the old behavior instead of blocking.
+			// Also warms the manifest snapshot the destructive-op guard uses.
+			if (gateOpen) {
+				try {
+					await this.syncEngine.reconcileNoteIdMapFromManifest();
+				} catch (e) {
+					rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
+				}
+			}
+
 			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
 			// doc for any markdown file that changed while the app was closed
 			// (external editor, another sync app, OS). Runs after readiness is
