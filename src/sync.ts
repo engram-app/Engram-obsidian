@@ -840,6 +840,11 @@ export class SyncEngine {
 		// would resume from a foreign vault's seq).
 		this.syncCursor = null;
 		this.syncStateVaultId = this.settings.vaultId ?? null;
+		// note_ids are only unique WITHIN a vault (final review MINOR-6) — a
+		// relocation timestamp recorded for an id under the OLD vault must not
+		// survive to stale-gate an unrelated note that happens to reuse the same
+		// id in the new vault.
+		this.lastRelocationTs.clear();
 		await this.saveData({ lastSync: "", syncCursor: null });
 		devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
 	}

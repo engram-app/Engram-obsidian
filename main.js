@@ -5577,7 +5577,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  from a clean slate (lastSync empty, no stale per-file hashes). */
   async resetForVaultChange() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.syncStateVaultId = (_a = this.settings.vaultId) != null ? _a : null, this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null }), devLog().log("lifecycle", "resetForVaultChange: lastSync + syncState + cursor cleared");
   }
   getSyncStateVaultId() {
     return this.syncStateVaultId;
@@ -21624,7 +21624,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
                 `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
               );
             }
-          (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.syncEngine.pull().catch((e) => {
+          (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), this.strandHealAttempts.clear(), this.syncEngine.pull().catch((e) => {
             console.error("Engram Sync: catch-up pull failed", e), rlog().error(
               "channel",
               `Catch-up pull on reconnect failed: ${errMsg(e)}`
@@ -21890,7 +21890,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.crdtMapReconciled = !1, this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.crdtMapReconciled = !1, this.strandHealAttempts.clear(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.settingTab) == null || _a2.display(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {

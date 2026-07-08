@@ -1512,6 +1512,12 @@ export default class EngramSyncPlugin extends Plugin {
 							// Reset all CRDT enrollments so a fresh startSync STEP1
 							// handshake fires for each open note after reconnect.
 							this.crdtEnrollment?.resetAll();
+							// A reconnect just reconciled the noteIdMap above — any
+							// note_id that was stranded due to map drift deserves
+							// fresh retry attempts against the now-current map
+							// (final review MINOR-6), not a counter left over from
+							// before the drift was fixed.
+							this.strandHealAttempts.clear();
 							this.syncEngine.pull().catch((e) => {
 								// biome-ignore lint/suspicious/noConsole: error boundary
 								console.error("Engram Sync: catch-up pull failed", e);
@@ -2019,6 +2025,11 @@ export default class EngramSyncPlugin extends Plugin {
 						this.syncGateAcceptedFor = null;
 						// New vault = new id/path space; re-reconcile on next connect.
 						this.crdtMapReconciled = false;
+						// Strand-heal retry counts are scoped to the previous vault's
+						// note_ids (final review MINOR-6) — stale counts here could
+						// prematurely give up on a note_id that happens to be reused
+						// in the new vault.
+						this.strandHealAttempts.clear();
 						this.syncEngine.setSyncBlocked(true);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and

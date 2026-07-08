@@ -1361,3 +1361,64 @@ describe("a successful CRDT push updates the echo-hash baseline (final review IM
 		expect(applyLocalEdit).toHaveBeenCalled();
 	});
 });
+
+describe("resetForVaultChange clears the relocation-guard's per-vault state (final review MINOR-6)", () => {
+	test("a relocation timestamp recorded under the OLD vault must not stale-gate an event after a vault switch", async () => {
+		// lastRelocationTs is keyed by note_id, but note_ids are only unique
+		// WITHIN a vault — resetForVaultChange (fired on a vault switch) must
+		// drop it along with the rest of the per-vault bookkeeping, or a
+		// timestamp recorded for "id-x" under the old vault could wrongly
+		// stale-gate a genuine relocation for an unrelated "id-x" in the new
+		// vault.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-vault-switch");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-vault-switch", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
+		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// Record a relocation timestamp far in the future.
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-vault-switch",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "# original content",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:10Z",
+			deleted: false,
+		} as any);
+		expect(noteIdMap.pathForId("id-vault-switch")).toBe("New.md");
+
+		await engine.resetForVaultChange();
+
+		// New vault, same (coincidentally reused) id, at a path this device
+		// still maps to New.md locally — a genuine relocation delivered with an
+		// OLDER-looking timestamp than the stale pre-switch record must not be
+		// rejected as stale; the guard's state belongs to the vault that's gone.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-vault-switch",
+			path: "Old.md",
+			timestamp: 1,
+			title: "Old",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(noteIdMap.pathForId("id-vault-switch")).toBe("Old.md");
+	});
+});
