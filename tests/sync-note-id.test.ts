@@ -1030,9 +1030,9 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 			if (p === "New.md") return newFile;
 			return null;
 		});
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockImplementation((f: TFile) =>
-			Promise.resolve(f.path === "Old.md" ? "# original content" : "# original content"),
-		);
+		// Same content at both paths — only the ORDERING/routing matters here,
+		// not a content diff (final review MINOR-8: was a dead per-path ternary).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 		engine.setCrdtManager({
