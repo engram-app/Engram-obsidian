@@ -1,9 +1,9 @@
 # Context Doc: Catch-up convergence (missed-delivery healing)
 
-_Last verified: 2026-07-07_
+_Last verified: 2026-07-08_
 
 ## Status
-Working — shipped in plugin PRs #197 (v1.11.22) + #198 (v1.11.23), backend v0.5.642.
+Working — shipped in plugin PRs #197 (v1.11.22) + #198 (v1.11.23), backend v0.5.642; hardened by #207/#209/#211 (v1.11.31-33) after reruns=0 unmasked three holes in the original design (see "The four guards").
 
 ## What This Is
 Why a missed CRDT delivery used to be missed forever, and the healing system (PRs #197 + #198, 2026-07-07/08) that makes the plugin converge instead of silently diverging or deleting content.
@@ -30,8 +30,47 @@ Why a missed CRDT delivery used to be missed forever, and the healing system (PR
 - **`CrdtEnrollment.reset(id)` + `enroll(id)`** = forced STEP1 re-handshake (lifts the once-per-session guard) — the universal "re-deliver whatever I missed" primitive.
 - **Diagnosis breadcrumbs:** `crdt_channel: dropped crdt_msg → not_found` in prod Loki = id cross-wire; plugin rlog warns `CRDT catch-up:` and `bind-time divergence:` mark the healing paths firing.
 
+## The four guards (added 2026-07-08, after reruns=0 unmasked the gaps)
+
+The catch-up system's healing writes all needed guarding — each shipped after a
+real failure, three of them caught by e2e within one night:
+
+1. **C1 seed-only CAS base (#207, v1.11.32).** The WS-event C1 branch recorded
+   NO syncState, so a device that received a note only over CRDT had no
+   `base_hash` — its REST-fallback push (channel down) bypassed the CAS gate
+   and erased server edits (e2e test_85 caught it live). The branch now SEEDS
+   `serverHash`+`version` from the event, gated on `prior?.serverHash ===
+   undefined`: seed-only, never advance. Stamping the announced hash over a
+   real converged base would mark the note converged before the body lands,
+   defeating every recovery path if the room delivery is then missed. Gate on
+   "no base yet", NOT file existence — the room delivery races the file onto
+   disk.
+2. **Backfill dirty-guard (#209, v1.11.31).** "Server moved" is not enough to
+   backfill: when the LOCAL file also diverged from the last-synced hash it is
+   a genuine three-way conflict, and the backfill silently erased the unpushed
+   local edit (e2e test_14). Local+remote both diverged now falls through to
+   the legacy conflict flow (3-way merge → modal/auto).
+3. **Materialize identity re-check (#211, v1.11.33).** `materializeRelocated`
+   is unawaited and races the pull's id-keyed move: a stale old-path upsert
+   re-created the tombstoned file, whose modify event re-pushed it under a
+   FRESH mint — server-side path resurrection (e2e test_34, CI artifacts show
+   the second id). The id→path identity is re-checked AFTER the
+   `projectedText` await (the relocation can land during its IDB suspend;
+   `flushFromCrdt` has no identity guard and fails open), immediately before
+   the write. Defends the MOVE case; the tombstone-delete case is backstopped
+   by the doc-teardown `isSynced` gate.
+4. **Live-bound split (#198, original).** A bound editor is the sole CRDT
+   writer — divergence there forces a reset+enroll re-handshake instead of a
+   disk write.
+
+The lesson repeating across all three new guards: a healing write is itself a
+write, and every write needs the same staleness/dirtiness discipline as a
+push. e2e test_84/test_85 (backend #962) pin the incident chain permanently.
+
 ## References
 
 - `docs/context/crdt-editor-bind-race-pollution.md` (PR #194)
 - engram-workspace `docs/context/identity-as-crdt-decision.md` (the architecture this serves)
 - engram-workspace `docs/context/testing-surface-audit-2026-07-07.md` (pull-masking was finding #1)
+- Plugin issues #203 (CRDT-frame leg: serverHash lags checkpoint — errs toward false conflict, open), #206 (flush-loop dequeue clobber, open), #210 (resurrection forensics)
+- Backend e2e `test_84_create_race.py` / `test_85_missed_delivery_no_deletion.py` (backend #962)
