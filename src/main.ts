@@ -631,7 +631,18 @@ export default class EngramSyncPlugin extends Plugin {
 		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
 		// reconfigures it for each open note via EditorController.bindTo().
 		this.registerEditorExtension([ycollabExtension()]);
-		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
+		this.registerEvent(
+			this.app.workspace.on("file-open", (file) => {
+				this.crdtLiveViews?.refresh();
+				// Bind-time convergence check (2026-07-07 catch-up gap): opening a
+				// note verifies the local synced state against the server's manifest
+				// hash; divergence forces a fresh CRDT handshake so a missed
+				// announce/STEP2 heals the moment the user looks at the note.
+				if (file?.extension === "md" && !this.syncEngine.isSyncBlocked()) {
+					void this.syncEngine.verifyConvergenceOnOpen(file.path);
+				}
+			}),
+		);
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
