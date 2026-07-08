@@ -6585,7 +6585,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -6654,23 +6654,35 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         } else if (this.crdt && event.path.endsWith(".md") && ((_n = event.id) != null ? _n : (_m = this.noteIdMap) != null && _m.get(event.path))) {
           let noteId = (_p = event.id) != null ? _p : (_o = this.noteIdMap) == null ? void 0 : _o.get(event.path), canonicalPath = (_r = (_q = this.noteIdMap) == null ? void 0 : _q.pathForId(noteId)) != null ? _r : null;
-          canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path) ? rlog().info(
-            "ws",
-            `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
-          ) : ((_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), (_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId), rlog().info(
-            "ws",
-            `CRDT-managed: skipping legacy body apply for ${event.path}`
-          ), this.materializeRelocated(event.path, noteId));
+          if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
+            rlog().info(
+              "ws",
+              `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
+            );
+          else {
+            if ((_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), (_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId), event.content_hash !== void 0) {
+              let np = (0, import_obsidian21.normalizePath)(event.path), prior = this.syncState.get(np);
+              (prior == null ? void 0 : prior.serverHash) === void 0 && this.syncState.set(np, {
+                hash: (_u = prior == null ? void 0 : prior.hash) != null ? _u : fnv1a(""),
+                version: (_v = event.version) != null ? _v : prior == null ? void 0 : prior.version,
+                serverHash: event.content_hash
+              });
+            }
+            rlog().info(
+              "ws",
+              `CRDT-managed: skipping legacy body apply for ${event.path}`
+            ), this.materializeRelocated(event.path, noteId);
+          }
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_u = event.title) != null ? _u : "",
+            title: (_w = event.title) != null ? _w : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_v = event.folder) != null ? _v : "",
-            tags: (_w = event.tags) != null ? _w : [],
-            mtime: (_x = event.mtime) != null ? _x : Date.now(),
-            updated_at: (_y = event.updated_at) != null ? _y : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_x = event.folder) != null ? _x : "",
+            tags: (_y = event.tags) != null ? _y : [],
+            mtime: (_z = event.mtime) != null ? _z : Date.now(),
+            updated_at: (_A = event.updated_at) != null ? _A : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6680,13 +6692,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_z = note.content_hash) != null ? _z : event.content_hash,
+            content_hash: (_B = note.content_hash) != null ? _B : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_A = note.version) != null ? _A : event.version
+            version: (_C = note.version) != null ? _C : event.version
           });
         }
       } catch (e) {
