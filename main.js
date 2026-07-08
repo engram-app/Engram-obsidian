@@ -6609,7 +6609,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().warn(
           "pull",
           `Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} \u2014 ${errMsg(e)}`
-        );
+        ), this.pull();
       }
   }
   /** Apply one merged cursor-feed entry by dispatching to the existing note /

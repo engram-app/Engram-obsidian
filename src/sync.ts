@@ -2817,8 +2817,7 @@ export class SyncEngine {
 				if (this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
 					rlog().info(
 						"pull",
-						`Id-keyed move: skipping stale disk flush for ${newPath} — ` +
-							`already exists (a concurrent flush won the race)`,
+						`Id-keyed move: skipping stale disk flush for ${newPath} — already exists (a concurrent flush won the race)`,
 					);
 				} else {
 					await this.flushFromCrdt(newPath, content);

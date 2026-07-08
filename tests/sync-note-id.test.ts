@@ -1032,7 +1032,9 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 		});
 		// Same content at both paths — only the ORDERING/routing matters here,
 		// not a content diff (final review MINOR-8: was a dead per-path ternary).
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# original content",
+		);
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 		engine.setCrdtManager({
@@ -1102,8 +1104,13 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
 			p === "Old.md" ? oldFile : null,
 		);
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
-		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# original content",
+		);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 
 		// 1) Pull delivers the forward relocation, `updated_at` far in the future
@@ -1158,8 +1165,13 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
 			p === "Old.md" ? oldFile : null,
 		);
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
-		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# original content",
+		);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 
 		const tieTs = Date.parse("2026-01-01T00:00:10Z");
@@ -1236,7 +1248,9 @@ describe("moveIfIdRelocated's disk-content flush must be create-only (final revi
 		// it resolves, a concurrent flush has already created New.md with newer
 		// content — getAbstractFileByPath must now report it.
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockImplementation(async () => {
-			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(newFile);
+			(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(
+				newFile,
+			);
 		});
 		engine.setCrdtManager({
 			isSynced: mock().mockReturnValue(true),
@@ -1425,8 +1439,13 @@ describe("resetForVaultChange clears the relocation-guard's per-vault state (fin
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
 			p === "Old.md" ? oldFile : null,
 		);
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# original content");
-		engine.setCrdtManager({ isSynced: mock().mockReturnValue(true), projectedText: mock() } as any);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# original content",
+		);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 
 		// Record a relocation timestamp far in the future.
