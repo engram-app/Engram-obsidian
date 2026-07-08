@@ -729,7 +729,8 @@ var require_diff_match_patch = __commonJS({
 var main_exports = {};
 __export(main_exports, {
   default: () => EngramSyncPlugin,
-  partitionStrandedFlushes: () => partitionStrandedFlushes
+  partitionStrandedFlushes: () => partitionStrandedFlushes,
+  shouldReuseLiveStream: () => shouldReuseLiveStream
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian25 = require("obsidian");
@@ -6960,7 +6961,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   async createFileWithFolders(normalized, content) {
     let folder = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : "";
-    folder && await this.ensureFolder(folder), await this.app.vault.create(normalized, content);
+    folder && await this.ensureFolder(folder);
+    try {
+      await this.app.vault.create(normalized, content);
+    } catch (e) {
+      let raced = this.app.vault.getAbstractFileByPath(normalized);
+      if (raced instanceof import_obsidian21.TFile) {
+        await this.modifyFile(raced, content);
+        return;
+      }
+      throw e;
+    }
   }
   /** Create a binary file, ensuring parent folders exist. */
   async createBinaryFileWithFolders(normalized, data) {
@@ -6974,7 +6985,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let parent = path.substring(0, path.lastIndexOf("/"));
         parent && await this.ensureFolder(parent);
       }
-      await this.app.vault.createFolder(path);
+      try {
+        await this.app.vault.createFolder(path);
+      } catch (e) {
+        if (this.app.vault.getAbstractFileByPath(path) || /already exists/i.test(errMsg(e))) return;
+        throw e;
+      }
     }
   }
   /** Pull the server's explicit empty-folder markers, persist them, and
@@ -20913,6 +20929,9 @@ function partitionStrandedFlushes(pending, resolvePath, attempts, maxAttempts) {
   }
   return { toFlush, toRetry, toGiveUp };
 }
+function shouldReuseLiveStream(hasStream, liveConnected, connectionKey, liveChannelKey) {
+  return hasStream && liveConnected && connectionKey === liveChannelKey;
+}
 var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin {
   constructor() {
     super(...arguments);
@@ -21505,7 +21524,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   setupNoteStream() {
     var _a, _b, _c, _d;
     let connectionKey = channelConnectionKey(this.settings);
-    if (this.noteStream && connectionKey === this.liveChannelKey)
+    if (shouldReuseLiveStream(
+      this.noteStream !== null,
+      this.liveConnected,
+      connectionKey,
+      this.liveChannelKey
+    ))
       return;
     this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;

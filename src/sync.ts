@@ -2795,8 +2795,7 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().warn(
 					"pull",
-					`Id-keyed move file ops failed (old file vanished mid-flight?): ` +
-						`${priorPath} -> ${newPath} — ${errMsg(e)}`,
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} — ${errMsg(e)}`,
 				);
 			}
 		}
@@ -3471,7 +3470,21 @@ export class SyncEngine {
 		if (folder) {
 			await this.ensureFolder(folder);
 		}
-		await this.app.vault.create(normalized, content);
+		try {
+			await this.app.vault.create(normalized, content);
+		} catch (e) {
+			// A concurrent materialization path (pull vs WS delivery) can create
+			// this file between the caller's existence check and our create —
+			// vault.create then rejects "File already exists." (e2e round 5,
+			// run 28919928915 catch-up bursts). The body landing on disk is the
+			// goal, so degrade to modify with the same content; rethrow the rest.
+			const raced = this.app.vault.getAbstractFileByPath(normalized);
+			if (raced instanceof TFile) {
+				await this.modifyFile(raced, content);
+				return;
+			}
+			throw e;
+		}
 	}
 
 	/** Create a binary file, ensuring parent folders exist. */
@@ -3499,7 +3512,19 @@ export class SyncEngine {
 			if (parent) await this.ensureFolder(parent);
 		}
 
-		await this.app.vault.createFolder(path);
+		try {
+			await this.app.vault.createFolder(path);
+		} catch (e) {
+			// Check-then-create races a concurrent materialization of a sibling
+			// note into the same new folder: N notes delivered in a burst each
+			// ensureFolder the same path and the losers reject "Folder already
+			// exists." (e2e test_34, run 28919928915 — the dropped note then
+			// missed the 30s delivery window). Losing the race means the folder
+			// IS there — the outcome we wanted — so swallow ONLY that case.
+			if (this.app.vault.getAbstractFileByPath(path)) return;
+			if (/already exists/i.test(errMsg(e))) return;
+			throw e;
+		}
 	}
 
 	/** Pull the server's explicit empty-folder markers, persist them, and
