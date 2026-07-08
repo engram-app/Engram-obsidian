@@ -627,7 +627,18 @@ export default class EngramSyncPlugin extends Plugin {
 		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
 		// reconfigures it for each open note via EditorController.bindTo().
 		this.registerEditorExtension([ycollabExtension()]);
-		this.registerEvent(this.app.workspace.on("file-open", () => this.crdtLiveViews?.refresh()));
+		this.registerEvent(
+			this.app.workspace.on("file-open", (file) => {
+				this.crdtLiveViews?.refresh();
+				// Bind-time convergence check (2026-07-07 catch-up gap): opening a
+				// note verifies the local synced state against the server's manifest
+				// hash; divergence forces a fresh CRDT handshake so a missed
+				// announce/STEP2 heals the moment the user looks at the note.
+				if (file?.extension === "md" && !this.syncEngine.isSyncBlocked()) {
+					void this.syncEngine.verifyConvergenceOnOpen(file.path);
+				}
+			}),
+		);
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
@@ -1517,9 +1528,11 @@ export default class EngramSyncPlugin extends Plugin {
 					// initial refresh here so the new manager sees currently-open leaves.
 					this.crdtLiveViews.refresh();
 					// Inbound frame + remote room-open discovery handlers (id->path
-					// resolution, enrollment gating) are built by createCrdtWiring.
+					// resolution, enrollment gating, #955 note_not_found id-map heal)
+					// are built by createCrdtWiring.
 					channel.onCrdtMessage = wiring.onCrdtMessage;
 					channel.onCrdtDocReady = wiring.onCrdtDocReady;
+					channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
 					// backend this never fires and setCrdtManager stays null → every

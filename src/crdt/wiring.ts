@@ -15,6 +15,7 @@ type WiringSyncEngine = Pick<
 	| "materializeEmptyDiscovered"
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
+	| "ensureNoteIdMapped"
 >;
 
 export interface CrdtWiringDeps {
@@ -45,6 +46,10 @@ export interface CrdtWiring {
 	onCrdtMessage: (docId: string, b64: string) => void;
 	/** Remote room-open announce handler (channel.onCrdtDocReady). */
 	onCrdtDocReady: (docId: string) => void;
+	/** Server dropped a crdt_msg we sent for an unknown note_id (backend #955,
+	 *  plugin #202) — the create-race cross-wire signature. Handler kicks the
+	 *  sync engine's coalesced live id-map reconcile (channel.onCrdtNoteNotFound). */
+	onCrdtNoteNotFound: (docId: string) => void;
 	/** Reconcile the noteIdMap from the manifest, then retry every stranded
 	 *  flush. Exposed for tests + teardown; production fires it via the debounce
 	 *  timer set in the manager's onFlushToDisk. */
@@ -198,7 +203,23 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// delivers zero new ops. Gating here keeps gated-period state out of the doc
 		// entirely; the announce re-fires via pull discovery once the gate opens.
 		if (syncEngine.isSyncBlocked()) return;
+		// Live heal for the create-race: an announce naming an id the map cannot
+		// resolve means another writer owns this note under an identity we never
+		// learned — enrollment alone would sync a doc we can't flush (no path).
+		// Kick the coalesced manifest reconcile so the mapping lands now, not at
+		// the next cold start.
+		syncEngine.ensureNoteIdMapped(docId);
 		enrollment.enroll(docId);
+	};
+
+	// Backend #955 (plugin #202): the server tells us when a crdt_msg we sent
+	// was dropped for an unknown note_id — heal the id map immediately.
+	// ensureNoteIdMapped is NOT disk-write-free (its reconcile can reach
+	// sweepPendingOrphans → trashFile); it is intrinsically gate-safe (#204),
+	// and we gate here too, matching the sibling onCrdtDocReady.
+	const onCrdtNoteNotFound = (docId: string): void => {
+		if (syncEngine.isSyncBlocked()) return;
+		syncEngine.ensureNoteIdMapped(docId);
 	};
 
 	function dispose(): void {
@@ -214,6 +235,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		enrollment,
 		onCrdtMessage,
 		onCrdtDocReady,
+		onCrdtNoteNotFound,
 		drainStrandedFlushes,
 		dispose,
 	};

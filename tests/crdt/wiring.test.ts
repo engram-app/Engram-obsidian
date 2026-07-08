@@ -71,6 +71,9 @@ function makeDevice(id: string, reconcile: () => number): Device {
 		},
 		reconcileNoteIdMapFromManifest: async () => reconcile(),
 		isSyncBlocked: () => false,
+		// Live id-map heal (announce/#955 note_not_found). The scenarios drive
+		// the manifest reconcile explicitly, so the coalesced trigger is a no-op.
+		ensureNoteIdMapped: () => {},
 	};
 
 	const wiring = createCrdtWiring({

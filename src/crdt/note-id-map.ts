@@ -104,6 +104,15 @@ export class NoteIdMap {
 		this.byId.set(id, newPath);
 	}
 
+	/** Drop every mapping. Used on vault change: the map is per-vault identity
+	 *  state — carrying ids across vaults routes CRDT frames to another
+	 *  vault's notes (plugin #200). Mutates in place so every holder of the
+	 *  instance (main, sync engine, live views) sees the wipe. */
+	clear(): void {
+		this.byPath.clear();
+		this.byId.clear();
+	}
+
 	toJSON(): Record<string, string> {
 		return Object.fromEntries(this.byPath);
 	}

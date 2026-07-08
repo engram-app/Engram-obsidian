@@ -121,6 +121,10 @@ export class NoteChannel {
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
 	 *  for this doc so a device that doesn't yet have the note pulls it. */
 	onCrdtDocReady: ((docId: string) => void) | null = null;
+	/** A crdt_msg we sent was dropped server-side: the note_id has no row
+	 *  (backend #955 error reply). The create-race cross-wire signature — wire
+	 *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
+	onCrdtNoteNotFound: ((docId: string) => void) | null = null;
 	/** Fired when the `crdt:` topic join is acknowledged by the server.
 	 *  Use this to activate CRDT routing in the SyncEngine — only wire
 	 *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -565,6 +569,23 @@ export class NoteChannel {
 					this.onCrdtJoined?.();
 				}
 			} else if (status === "error") {
+				// A dropped crdt_msg for an unknown note_id (backend #955): the
+				// sender must heal its id map NOW — the create-race cross-wire
+				// signature. Not a join failure; handle before join-error logging.
+				const response = (payload as { response?: { reason?: string; doc_id?: string } })
+					.response;
+				if (
+					topic === this.crdtTopic &&
+					response?.reason === "note_not_found" &&
+					response.doc_id
+				) {
+					rlog().warn(
+						"channel",
+						`crdt_msg dropped by server (note_not_found): ${response.doc_id} — triggering id-map reconcile`,
+					);
+					this.onCrdtNoteNotFound?.(response.doc_id);
+					return;
+				}
 				// Include the topic so a best-effort user-topic join failure
 				// (e.g. an older backend) is distinguishable from a sync failure.
 				// Either way we do NOT touch sync connection state here.

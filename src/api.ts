@@ -302,10 +302,15 @@ export class EngramApi {
 		mtime: number,
 		version?: number,
 		clientId?: string,
+		baseHash?: string,
 	): Promise<NoteResponse | VersionConflictResponse> {
 		const body: Record<string, unknown> = { path, content, mtime };
 		if (version !== undefined) body.version = version;
 		if (clientId !== undefined) body.id = clientId;
+		// CAS guard (backend v0.5.642): the server content_hash this client last
+		// synced. A stale base 409s instead of merging — a client that missed a
+		// delivery must not "convergently" delete content it never saw.
+		if (baseHash !== undefined) body.base_hash = baseHash;
 		try {
 			const resp = await this.request("POST", "/notes", body);
 			return resp.json as NoteResponse;
@@ -353,7 +358,13 @@ export class EngramApi {
 	 *  status 404/405 on pre-rev backends; callers fall back to per-note
 	 *  pushes. */
 	async pushNotesBatch(
-		notes: Array<{ path: string; content: string; mtime: number; version?: number }>,
+		notes: Array<{
+			path: string;
+			content: string;
+			mtime: number;
+			version?: number;
+			id?: string;
+		}>,
 	): Promise<BatchUpsertResponse> {
 		const resp = await this.request(
 			"POST",
