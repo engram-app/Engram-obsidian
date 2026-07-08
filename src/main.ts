@@ -1632,6 +1632,12 @@ export default class EngramSyncPlugin extends Plugin {
 						// here keeps gated-period state out of the doc entirely; the
 						// announce re-fires via pull discovery once the gate opens.
 						if (this.syncEngine.isSyncBlocked()) return;
+						// Live heal for the create-race: an announce naming an id the map
+						// cannot resolve means another writer owns this note under an
+						// identity we never learned — enrollment alone would sync a doc we
+						// can't flush (no path). Kick the coalesced manifest reconcile so
+						// the mapping lands now, not at the next cold start.
+						this.syncEngine.ensureNoteIdMapped(docId);
 						// Enroll → send our discovery STEP1. The server answers with a
 						// STEP2: a content STEP2 flushes the body via the update path; an
 						// EMPTY STEP2 (genuinely-empty note) is materialized off the
