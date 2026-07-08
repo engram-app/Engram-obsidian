@@ -20278,6 +20278,9 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
      *  getYText. Once released, the controller is permanently inert: refresh()
      *  drops it from the map and mints a fresh one on next refresh. */
     this.released = !1;
+    /** Monotonic bind counter; a bindTo whose epoch is stale after its await
+     *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
+    this.bindEpoch = 0;
     this.bindResult = null;
     this.boundYtext = null;
     this.driftTimer = null;
@@ -20288,10 +20291,9 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
   }
   async bindTo(view, path) {
     if (this.path === path) return;
-    let ytext = await this.deps.getYText(path);
-    if (this.released) return;
-    let oldPath = this.path;
-    oldPath && this.deps.onRelease(oldPath, this.viewId);
+    this.detach(view);
+    let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
+    if (this.released || epoch !== this.bindEpoch) return;
     let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
@@ -20299,18 +20301,31 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
     }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
   }
   release(view) {
-    this.released = !0, this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.released = !0, this.detach(view);
+  }
+  /** Clears the active binding NOW: compartment emptied, refcount released,
+   *  drift timer stopped. Unlike release(), the controller stays usable so
+   *  bindTo can re-bind the same view to a new path. */
+  detach(view) {
+    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
   }
   clearDriftTimer() {
     this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
   }
   scheduleDriftCheck(view) {
+    var _a;
     this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
       this.driftTimer = null, this.runDriftCheck(view);
-    }, DRIFT_CHECK_INTERVAL_MS);
+    }, (_a = this.deps.driftIntervalMs) != null ? _a : DRIFT_CHECK_INTERVAL_MS);
   }
   runDriftCheck(view) {
+    var _a, _b;
     if (this.released || this.boundYtext === null || this.bindResult === null) return;
+    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
+    if (shown !== void 0 && shown !== this.path) {
+      this.detach(view);
+      return;
+    }
     let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
     if (changes.length > 0) {
       let captured = this.bindResult.getSyncAnnotation();
@@ -20501,7 +20516,11 @@ var ViewerRefcount = class {
         getYText: (p) => this.getYText(p),
         awareness: () => this.localAwareness,
         onBind: (p, id2) => this.refcount.bind(p, id2),
-        onRelease: (p, id2) => this.refcount.release(p, id2)
+        onRelease: (p, id2) => this.refcount.release(p, id2),
+        // The MdView owning this cm is stable for the cm's lifetime, but the
+        // FILE it displays is not (Obsidian reuses views across note
+        // switches) — this closure always reports the currently shown file.
+        viewPath: () => getMarkdownFilePath(view)
       }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
     }
     for (let [cm, ctrl] of this.controllers)

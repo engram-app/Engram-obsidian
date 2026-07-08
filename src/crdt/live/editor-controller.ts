@@ -13,6 +13,14 @@ export interface ControllerDeps {
 	awareness(): Awareness;
 	onBind(path: string, viewId: string): void;
 	onRelease(path: string, viewId: string): void;
+	/** The path the Obsidian view currently DISPLAYS (Relay's view.file identity
+	 *  check). The drift check refuses to dispatch when this differs from the
+	 *  bound path — a repair into a view showing a different file would paint
+	 *  the old note's content into the visible one. Optional: absent in tests
+	 *  that don't exercise the guard. */
+	viewPath?(): string | null;
+	/** Test override for the drift-check interval. */
+	driftIntervalMs?: number;
 }
 
 const DRIFT_CHECK_INTERVAL_MS = 3000;
@@ -37,6 +45,9 @@ export class EditorController {
 	 *  getYText. Once released, the controller is permanently inert: refresh()
 	 *  drops it from the map and mints a fresh one on next refresh. */
 	private released = false;
+	/** Monotonic bind counter; a bindTo whose epoch is stale after its await
+	 *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
+	private bindEpoch = 0;
 
 	private bindResult: BindResult | null = null;
 	private boundYtext: Y.Text | null = null;
@@ -52,16 +63,20 @@ export class EditorController {
 
 	async bindTo(view: EditorView, path: string): Promise<void> {
 		if (this.path === path) return; // already bound to this note
-		// Fetch the new Y.Text BEFORE mutating any state. This ensures that if
-		// getYText rejects, the controller remains unchanged (no onRelease fired,
-		// path untouched, refcount balanced).
+		// Detach the old binding SYNCHRONOUSLY, before any await. The await gap
+		// below is exactly where Obsidian's loadFileInternal/setViewData lands the
+		// NEW file's full content in this editor: a still-attached old ySync would
+		// apply that replacement to the OLD note's Y.Text and sync it up as that
+		// note's content (cross-file pollution, 2026-07-07/05 incident). An
+		// unbound gap is safe — worst case a getYText failure leaves the editor
+		// without live sync until the next refresh(); a stale-bound gap eats the
+		// next file's content. (Relay never lets a binding span a file load.)
+		this.detach(view);
+		// Epoch guard: if a newer bindTo starts while we await, this one is stale
+		// and must abort — otherwise a slow b.md bind can clobber a fast c.md one.
+		const epoch = ++this.bindEpoch;
 		const ytext = await this.deps.getYText(path);
-		// Concurrency guard: if release() was called while we awaited getYText,
-		// abort. Do not dispatch, do not call onBind. The controller is inert.
-		if (this.released) return;
-		// Now safe to release the old binding, since getYText has resolved.
-		const oldPath = this.path;
-		if (oldPath) this.deps.onRelease(oldPath, this.viewId);
+		if (this.released || epoch !== this.bindEpoch) return;
 		// yCollab only forwards future deltas, so reconcile the editor to the
 		// current Y.Text content before activating the binding.
 		const changes = reconcileEditorToYText(view.state.doc.toString(), ytext);
@@ -79,6 +94,13 @@ export class EditorController {
 
 	release(view: EditorView): void {
 		this.released = true;
+		this.detach(view);
+	}
+
+	/** Clears the active binding NOW: compartment emptied, refcount released,
+	 *  drift timer stopped. Unlike release(), the controller stays usable so
+	 *  bindTo can re-bind the same view to a new path. */
+	private detach(view: EditorView): void {
 		this.clearDriftTimer();
 		this.bindResult = null;
 		this.boundYtext = null;
@@ -100,11 +122,22 @@ export class EditorController {
 		this.driftTimer = window.setTimeout(() => {
 			this.driftTimer = null;
 			this.runDriftCheck(view);
-		}, DRIFT_CHECK_INTERVAL_MS);
+		}, this.deps.driftIntervalMs ?? DRIFT_CHECK_INTERVAL_MS);
 	}
 
 	private runDriftCheck(view: EditorView): void {
 		if (this.released || this.boundYtext === null || this.bindResult === null) return;
+		// View-identity guard (Relay's view.file check): if Obsidian swapped the
+		// file shown in this view and the rebind was missed or is still pending,
+		// dispatching a repair would paint the OLD note's content into the VISIBLE
+		// new file. Never repair a view that no longer shows the bound path —
+		// detach (NOT release: release marks the controller permanently inert
+		// while it stays in live-views' map) and let the next refresh() re-bind.
+		const shown = this.deps.viewPath?.();
+		if (shown !== undefined && shown !== this.path) {
+			this.detach(view);
+			return;
+		}
 		const changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
 		if (changes.length > 0) {
 			const captured = this.bindResult.getSyncAnnotation();

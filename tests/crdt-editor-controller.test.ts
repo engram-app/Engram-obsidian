@@ -137,7 +137,13 @@ describe("EditorController", () => {
 		expect(reconfigureCallsForB.length).toBe(0);
 	});
 
-	it("getYText rejection on rebind: old binding untouched, refcount balanced", async () => {
+	it("getYText rejection on rebind: editor left UNBOUND (never stale-bound), refcount balanced", async () => {
+		// Semantic flip from the original invariant ("old binding untouched"):
+		// keeping the old ySync attached across a failed rebind is exactly the
+		// window where Obsidian's setViewData lands the NEW file's content into
+		// the OLD note's Y.Text (2026-07-07/05 cross-file pollution). A failed
+		// rebind must leave the editor unbound (safe: no live sync until the next
+		// refresh) rather than bound to the wrong note (data loss).
 		const d = new Y.Doc();
 		const ta = d.getText("a");
 		const calls: string[] = [];
@@ -160,7 +166,132 @@ describe("EditorController", () => {
 		} catch {
 			// expected rejection
 		}
-		expect(c.currentPath()).toBe("a.md"); // path unchanged
-		expect(calls.some((s) => s.startsWith("release:a.md:"))).toBe(false); // no release fired
+		expect(c.currentPath()).toBe(null); // unbound, not stale-bound
+		expect(calls.filter((s) => s.startsWith("release:a.md:")).length).toBe(1); // refcount balanced
+		expect(calls.some((s) => s.startsWith("bind:b.md:"))).toBe(false);
+	});
+
+	it("bindTo detaches the old binding SYNCHRONOUSLY, before awaiting getYText", async () => {
+		// THE pollution window: while bindTo awaits getYText(newPath), Obsidian's
+		// loadFileInternal completes and setViewData replaces the whole editor doc
+		// with the NEW file's content. If the OLD note's ySync is still attached,
+		// it applies that replacement to the OLD note's Y.Text and syncs it up
+		// (2026-07-07 content landing in 2026-07-05). The old binding must be gone
+		// before the first await — an unbound gap is safe, a stale-bound gap eats
+		// the next file's content. (Relay never lets a binding span a load:
+		// __relayLoading in their loadFileInternal patch.)
+		const d = new Y.Doc();
+		const ta = d.getText("a");
+		const tb = d.getText("b");
+		let resolveB!: (t: Y.Text) => void;
+		const deferredB = new Promise<Y.Text>((res) => {
+			resolveB = res;
+		});
+		const calls: string[] = [];
+		const dispatches: unknown[] = [];
+		const c = new EditorController({
+			getYText: async (p: string) => (p === "b.md" ? deferredB : ta),
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+		});
+		const v = {
+			dispatch: mock((spec: unknown) => {
+				dispatches.push(spec);
+			}),
+			state: { doc: { toString: () => "" } },
+		} as any;
+		await c.bindTo(v, "a.md");
+		calls.length = 0;
+		dispatches.length = 0;
+		const pending = c.bindTo(v, "b.md"); // do NOT resolve getYText yet
+		// Old binding must already be detached — synchronously, before any await
+		// completed: refcount released AND the compartment cleared via dispatch.
+		expect(calls.filter((s) => s.startsWith("release:a.md:")).length).toBe(1);
+		expect(dispatches.length).toBe(1);
+		expect(c.currentPath()).toBe(null);
+		resolveB(tb);
+		await pending;
+		expect(c.currentPath()).toBe("b.md");
+		expect(calls.some((s) => s.startsWith("bind:b.md:"))).toBe(true);
+	});
+
+	it("overlapping bindTo calls: the LATEST path wins even when an earlier call resolves later", async () => {
+		// User switches a.md -> b.md -> c.md fast enough that refresh() fires two
+		// bindTo calls while the first still awaits getYText. If the stale b.md
+		// bind is allowed to complete after c.md's, the view shows c.md but the
+		// controller syncs b.md's Y.Text — same stale-binding pollution class.
+		const d = new Y.Doc();
+		const ta = d.getText("a");
+		const tb = d.getText("b");
+		const tc = d.getText("c");
+		let resolveB!: (t: Y.Text) => void;
+		let resolveC!: (t: Y.Text) => void;
+		const deferredB = new Promise<Y.Text>((res) => {
+			resolveB = res;
+		});
+		const deferredC = new Promise<Y.Text>((res) => {
+			resolveC = res;
+		});
+		const calls: string[] = [];
+		const c = new EditorController({
+			getYText: async (p: string) => {
+				if (p === "b.md") return deferredB;
+				if (p === "c.md") return deferredC;
+				return ta;
+			},
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+		});
+		const v = fakeView();
+		await c.bindTo(v, "a.md");
+		const pendingB = c.bindTo(v, "b.md");
+		const pendingC = c.bindTo(v, "c.md");
+		// The stale bind resolves LAST — it must abort, not clobber c.md.
+		resolveC(tc);
+		resolveB(tb);
+		await Promise.all([pendingB, pendingC]);
+		expect(c.currentPath()).toBe("c.md");
+		expect(calls.some((s) => s.startsWith("bind:b.md:"))).toBe(false);
+	});
+
+	it("drift check releases the binding when the view no longer shows the bound path", async () => {
+		// Relay's view-identity guard (their view.file check): if Obsidian swapped
+		// the file in this view and the rebind was missed, the 3s drift repair
+		// would paint the OLD note's content into the VISIBLE new file (the
+		// "keeps reverting" symptom). It must instead release and let refresh()
+		// re-bind — never dispatch into a view showing a different path.
+		const d = new Y.Doc();
+		const ta = d.getText("a");
+		ta.insert(0, "note A content");
+		let shown: string | null = "a.md";
+		const calls: string[] = [];
+		const dispatches: unknown[] = [];
+		const c = new EditorController({
+			getYText: async () => ta,
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+			viewPath: () => shown,
+			driftIntervalMs: 5,
+		});
+		const v = {
+			dispatch: mock((spec: unknown) => {
+				dispatches.push(spec);
+			}),
+			// Buffer shows note B's content — drifted from ta on purpose.
+			state: { doc: { toString: () => "note B content" } },
+		} as any;
+		await c.bindTo(v, "a.md");
+		calls.length = 0;
+		dispatches.length = 0;
+		shown = "b.md"; // Obsidian swapped the file; no rebind happened
+		await new Promise((res) => setTimeout(res, 30)); // let the drift timer fire
+		expect(c.currentPath()).toBe(null); // released itself instead of repairing
+		expect(calls.filter((s) => s.startsWith("release:a.md:")).length).toBe(1);
+		// Exactly one dispatch: the compartment clear. NO repair changes.
+		expect(dispatches.length).toBe(1);
+		expect(JSON.stringify(dispatches[0])).not.toContain("note A content");
 	});
 });
