@@ -5477,6 +5477,31 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
     await this.flushFromCrdt(path, text2);
   }
+  /** Materialize a note at a NEW path after an id-keyed relocation
+   *  (`moveIfIdRelocated`) when this device's CRDT handshake for `noteId`
+   *  already completed earlier THIS session (e2e test_10, #189).
+   *
+   *  A rename changes no doc content, so it never produces a Y.Doc update —
+   *  `onFlushToDisk` never fires for it — and `crdtEnrollment.enroll()` is a
+   *  documented per-session no-op once a note_id is already enrolled (true
+   *  here: this device received the note live, at its old path, earlier this
+   *  session). With neither trigger left, the file at the new path is never
+   *  written: the event is received but never materialized. This closes that
+   *  gap by flushing the CRDT doc's already-known content directly.
+   *
+   *  Gated on `crdt.isSynced(noteId)` — NOT on "already enrolled". `enroll()`
+   *  marks a note_id enrolled synchronously, before its STEP2 handshake
+   *  resolves, so an "already enrolled" check would race a note's genuine
+   *  FIRST enrollment and could flush empty/partial content (the #547 class
+   *  of premature-empty-file bug). `isSynced` only turns true once a STEP2
+   *  has actually landed, so the content read here is trustworthy. No-ops
+   *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
+   *  still owns materializing it) or the file already exists at `path`. */
+  async materializeRelocated(path, noteId) {
+    if (!this.crdt || !path.endsWith(".md") || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
+    let text2 = await this.crdt.projectedText(noteId);
+    await this.flushFromCrdt(path, text2);
+  }
   updateSettings(settings) {
     this.settings = settings, this.parseIgnorePatterns();
   }
@@ -6461,7 +6486,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         } else if (this.crdt && event.path.endsWith(".md") && ((_m = event.id) != null ? _m : (_l = this.noteIdMap) != null && _l.get(event.path))) {
           let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path);
-          (_p = this.noteIdMap) == null || _p.set(event.path, noteId), this.confirmNoteId(noteId), (_q = this.crdtEnrollment) == null || _q.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+          (_p = this.noteIdMap) == null || _p.set(event.path, noteId), this.confirmNoteId(noteId), (_q = this.crdtEnrollment) == null || _q.enroll(noteId), rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`), this.materializeRelocated(event.path, noteId);
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,

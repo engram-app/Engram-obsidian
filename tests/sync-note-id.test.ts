@@ -650,3 +650,92 @@ describe("id-keyed move: pull upsert at a new path for a known id trashes the ol
 		expect(noteIdMap.pathForId("id-echo-move")).toBe("New.md");
 	});
 });
+
+describe("CRDT-managed rename materializes the new path when enroll() no-ops (#189)", () => {
+	test("handleStreamEvent writes New.md from the already-synced CRDT doc", async () => {
+		// e2e test_10: B already received Old.md live (this session) before A
+		// renames it. moveIfIdRelocated trashes Old.md and re-keys the map, but
+		// a rename changes no doc content, so no Y.Doc update ever fires
+		// onFlushToDisk — and crdtEnrollment.enroll() is a documented
+		// per-session no-op for an id already enrolled. Without a direct
+		// materialize, New.md is never written: received=yes materialized=no.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-relocate");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-relocate", path: "New.md" }]);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockImplementation(
+			(p: string) => (p === "Old.md" ? oldFile : null),
+		);
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+
+		const projectedText = mock().mockResolvedValue("# Rename Test\nunchanged body");
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText,
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// Realtime rename broadcast — no content/content_hash on the wire, same
+		// shape as the server's real "Event: upsert" for a pure path move.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-relocate",
+			path: "New.md",
+			timestamp: 2,
+			title: "New",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		expect(projectedText).toHaveBeenCalledWith("id-relocate");
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"New.md",
+			"# Rename Test\nunchanged body",
+		);
+	});
+
+	test("does NOT materialize when the CRDT handshake for this id hasn't completed yet (avoids premature-empty writes)", async () => {
+		// A brand-new note this device has never enrolled: enroll() fires for
+		// the first time and isSynced() is still false until its STEP2 lands.
+		// Materializing here would risk writing an empty/partial file (#547
+		// class) — this must stay on the existing STEP2->onFlushToDisk path.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+
+		const projectedText = mock().mockResolvedValue("");
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(false),
+			projectedText,
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-fresh",
+			path: "Fresh.md",
+			timestamp: 1,
+			title: "Fresh",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		} as any);
+
+		expect(projectedText).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+});

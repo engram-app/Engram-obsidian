@@ -707,6 +707,38 @@ export class SyncEngine {
 		await this.flushFromCrdt(path, text);
 	}
 
+	/** Materialize a note at a NEW path after an id-keyed relocation
+	 *  (`moveIfIdRelocated`) when this device's CRDT handshake for `noteId`
+	 *  already completed earlier THIS session (e2e test_10, #189).
+	 *
+	 *  A rename changes no doc content, so it never produces a Y.Doc update —
+	 *  `onFlushToDisk` never fires for it — and `crdtEnrollment.enroll()` is a
+	 *  documented per-session no-op once a note_id is already enrolled (true
+	 *  here: this device received the note live, at its old path, earlier this
+	 *  session). With neither trigger left, the file at the new path is never
+	 *  written: the event is received but never materialized. This closes that
+	 *  gap by flushing the CRDT doc's already-known content directly.
+	 *
+	 *  Gated on `crdt.isSynced(noteId)` — NOT on "already enrolled". `enroll()`
+	 *  marks a note_id enrolled synchronously, before its STEP2 handshake
+	 *  resolves, so an "already enrolled" check would race a note's genuine
+	 *  FIRST enrollment and could flush empty/partial content (the #547 class
+	 *  of premature-empty-file bug). `isSynced` only turns true once a STEP2
+	 *  has actually landed, so the content read here is trustworthy. No-ops
+	 *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
+	 *  still owns materializing it) or the file already exists at `path`. */
+	private async materializeRelocated(path: string, noteId: string): Promise<void> {
+		if (!this.crdt || !path.endsWith(".md")) return;
+		// Defensive `typeof` (not `?.`) — CrdtManager always has isSynced, but many
+		// existing unit tests wire a partial `{ applyLocalEdit } as any` stand-in
+		// that doesn't, and a missing method must read as "not synced" rather than
+		// throw.
+		if (typeof this.crdt.isSynced !== "function" || !this.crdt.isSynced(noteId)) return;
+		if (this.app.vault.getAbstractFileByPath(normalizePath(path))) return;
+		const text = await this.crdt.projectedText(noteId);
+		await this.flushFromCrdt(path, text);
+	}
+
 	/** Persistent record of files that failed to sync, with reason. Surfaced
 	 *  in the Sync Center "Issues" panel and used to short-circuit the offline
 	 *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -2553,6 +2585,13 @@ export class SyncEngine {
 					this.confirmNoteId(noteId);
 					this.crdtEnrollment?.enroll(noteId);
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
+					// #189: a rename carries no content change, so it never produces a
+					// Y.Doc update — onFlushToDisk never fires for it — and enroll()
+					// above is a per-session no-op for an id this device already
+					// enrolled (e.g. it received the old path live before the rename).
+					// Left alone, the file is never written: received=yes,
+					// materialized=no. materializeRelocated closes that gap directly.
+					void this.materializeRelocated(event.path, noteId);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
