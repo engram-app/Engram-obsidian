@@ -92,7 +92,13 @@ describe("C1 branch records the CAS base from the WS event", () => {
 		expect(stored?.version).toBe(5);
 	});
 
-	test("a later event advances the recorded base without clobbering local hash", async () => {
+	test("an existing CONVERGED base is never clobbered by an announcement", async () => {
+		// serverHash means "server content this device actually converged to".
+		// Stamping the ANNOUNCED hash over a real converged base would mark a
+		// note converged before the CRDT body lands — if that delivery is then
+		// missed, every recovery path (hash-skip, resolveChangeBody,
+		// verifyConvergenceOnOpen) reads "converged" and the stale body sticks
+		// silently. Seed a base only when none exists.
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
 		const map = new NoteIdMap();
@@ -111,8 +117,36 @@ describe("C1 branch records the CAS base from the WS event", () => {
 		} as any);
 
 		const stored = engine.exportSyncState()["received.md"];
-		expect(stored?.serverHash).toBe("srv-h-2");
-		expect(stored?.version).toBe(6);
+		expect(stored?.serverHash).toBe("srv-h-1");
+		expect(stored?.version).toBe(5);
+		expect(stored?.hash).toBe(777);
+	});
+
+	test("baseless entry (file raced onto disk first) still gets the seed", async () => {
+		// The CRDT room delivery and the WS event race: flushFromCrdt may write
+		// the file (recording only a local hash, never serverHash) before the
+		// event processes. The gate must key on "no CAS base yet", not on file
+		// existence — otherwise the raced ordering re-opens the blind-push hole.
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		const map = new NoteIdMap();
+		map.set("received.md", "note-id-1");
+		engine.setNoteIdMap(map);
+		engine.importSyncState({
+			"received.md": { hash: 777 },
+		});
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "received.md",
+			id: "note-id-1",
+			content_hash: "srv-h-1",
+			version: 3,
+		} as any);
+
+		const stored = engine.exportSyncState()["received.md"];
+		expect(stored?.serverHash).toBe("srv-h-1");
+		expect(stored?.version).toBe(3);
 		expect(stored?.hash).toBe(777);
 	});
 });

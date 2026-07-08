@@ -6569,7 +6569,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path);
           if ((_p = this.noteIdMap) == null || _p.set(event.path, noteId), this.confirmNoteId(noteId), (_q = this.crdtEnrollment) == null || _q.enroll(noteId), event.content_hash !== void 0) {
             let np = (0, import_obsidian21.normalizePath)(event.path), prior = this.syncState.get(np);
-            this.syncState.set(np, {
+            (prior == null ? void 0 : prior.serverHash) === void 0 && this.syncState.set(np, {
               hash: (_r = prior == null ? void 0 : prior.hash) != null ? _r : fnv1a(""),
               version: (_s = event.version) != null ? _s : prior == null ? void 0 : prior.version,
               serverHash: event.content_hash

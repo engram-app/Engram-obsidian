@@ -2689,22 +2689,31 @@ export class SyncEngine {
 					this.noteIdMap?.set(event.path, noteId);
 					this.confirmNoteId(noteId);
 					this.crdtEnrollment?.enroll(noteId);
-					// Record the CAS base NOW, from the event — the CRDT delivery that
-					// writes the body never advances serverHash (issue #203), so a
-					// device whose only knowledge of this note came through here had
-					// NO base for its later REST-fallback push (channel down = the
-					// missed-delivery scenario) and silently overwrote server content
-					// it never saw (e2e test_83). The local `hash` is preserved (or
-					// seeded empty for a never-seen note — flushFromCrdt's write will
-					// differ, which only biases toward pushing, the safe direction).
+					// SEED the CAS base from the event when none exists — the CRDT
+					// delivery that writes the body never advances serverHash (issue
+					// #203), so a device whose only knowledge of this note came
+					// through here had NO base for its later REST-fallback push
+					// (channel down = the missed-delivery scenario) and silently
+					// overwrote server content it never saw (e2e test_83).
+					// Seed-only, never advance: serverHash means "server content this
+					// device actually CONVERGED to" everywhere it is read (hash-skip,
+					// resolveChangeBody, verifyConvergenceOnOpen). Stamping the
+					// announced hash over a real converged base would mark the note
+					// converged before the body lands — a missed room delivery then
+					// sticks silently, with every recovery path defeated. A stale
+					// seeded base errs toward a false 409/conflict copy, the safe
+					// direction. Gate on "no base yet", not file existence: the room
+					// delivery can race the file onto disk before this event runs.
 					if (event.content_hash !== undefined) {
 						const np = normalizePath(event.path);
 						const prior = this.syncState.get(np);
-						this.syncState.set(np, {
-							hash: prior?.hash ?? fnv1a(""),
-							version: event.version ?? prior?.version,
-							serverHash: event.content_hash,
-						});
+						if (prior?.serverHash === undefined) {
+							this.syncState.set(np, {
+								hash: prior?.hash ?? fnv1a(""),
+								version: event.version ?? prior?.version,
+								serverHash: event.content_hash,
+							});
+						}
 					}
 					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
