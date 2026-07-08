@@ -3303,7 +3303,11 @@ export class SyncEngine {
 		// when CRDT is active. This prevents the dual-write hazard where a
 		// note_changed broadcast and the crdt: update both try to write the same
 		// file. Deletes (handled above) and attachments (routed via
-		// applyAttachmentChange) are unaffected.
+		// applyAttachmentChange) are unaffected. One exception: when LOCAL and
+		// REMOTE both diverged from the last-synced state (a real conflict),
+		// the block falls through to the legacy conflict flow below instead of
+		// silently backfilling over the local edit.
+		let crdtConflictFallthrough = false;
 		if (this.crdt && normalized.endsWith(".md")) {
 			// Enroll by note_id (Task 6). This is populated for the merged-feed
 			// caller (applySyncChange learns `id` right before calling applyChange)
@@ -3362,22 +3366,47 @@ export class SyncEngine {
 							this.crdtEnrollment.enroll(noteId);
 						}
 					} else {
-						rlog().warn(
-							"pull",
-							`CRDT catch-up: pull backfilling diverged note ${change.path}`,
-						);
-						await this.flushFromCrdt(normalized, content);
-						this.syncState.set(normalized, {
-							hash: fnv1a(content),
-							version: change.version,
-							serverHash: change.content_hash,
-						});
+						// Backfill is ONLY a catch-up for a CLEAN local file. If the
+						// LOCAL content also moved off the last-synced hash, both
+						// sides diverged — that is a conflict, and overwriting here
+						// silently destroys the local edit with the conflict flow
+						// never consulted (e2e test_14 skip regression, 2026-07-08).
+						// Route it to the legacy conflict machinery below (3-way
+						// merge → resolveConflict → skip/keep-local/keep-both/merge),
+						// which every non-CRDT note already uses.
+						const localFile = this.app.vault.getFileByPath(normalized);
+						const localNow = localFile
+							? await this.app.vault.cachedRead(localFile)
+							: null;
+						const localDiverged =
+							localNow !== null &&
+							stored?.hash !== undefined &&
+							fnv1a(localNow) !== stored.hash &&
+							localNow !== content;
+						if (localDiverged) {
+							rlog().warn(
+								"pull",
+								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
+							);
+							crdtConflictFallthrough = true;
+						} else {
+							rlog().warn(
+								"pull",
+								`CRDT catch-up: pull backfilling diverged note ${change.path}`,
+							);
+							await this.flushFromCrdt(normalized, content);
+							this.syncState.set(normalized, {
+								hash: fnv1a(content),
+								version: change.version,
+								serverHash: change.content_hash,
+							});
+						}
 					}
 				} else {
 					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 				}
 			}
-			return false;
+			if (!crdtConflictFallthrough) return false;
 		}
 
 		// Create or update the file
