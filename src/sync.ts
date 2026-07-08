@@ -1424,6 +1424,28 @@ export class SyncEngine {
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 
+				// Echo suppression — skip pushing if content matches what the sync
+				// engine last wrote (pull/WebSocket/flushFromCrdt). Must run BEFORE
+				// the CRDT routing branch below, not just the legacy REST path: a
+				// disk write this engine itself just made (e.g. materializeRelocated
+				// discovering a note and calling flushFromCrdt, which records this
+				// exact hash via recordCrdtBaseline) fires vault's create/modify
+				// event same as a real edit. Routing that echo into
+				// routeModify/applyLocalEdit unconditionally diffs "content" against
+				// the Y.Doc's CURRENT state — if the Y.Doc has meanwhile advanced
+				// (e.g. a concurrent remote update just landed in the room), the
+				// diff is a genuine-looking but stale delta that DELETES the
+				// just-arrived remote content, not a harmless no-op (e2e test_37
+				// content-loss: first append vanishes). Hoisting this hash check
+				// above the CRDT branch closes that hole for both paths.
+				const hash = fnv1a(content);
+				const existing = this.syncState.get(normalizePath(file.path));
+				if (!force && existing !== undefined && hash === existing.hash) {
+					devLog().log("push", `skip (echo): ${file.path}`);
+					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
+					return false;
+				}
+
 				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
 				// stable id BEFORE routing, so both the CRDT path (Task 6) and the
 				// REST fallback below can key/send by it. A brand-new note has no
@@ -1518,16 +1540,6 @@ export class SyncEngine {
 					}
 				}
 
-				// Echo suppression — skip pushing if content matches what the
-				// sync engine last wrote (pull/WebSocket). Prevents the pull→push loop
-				// where vault.modify() triggers handleModify() for every pulled file.
-				const hash = fnv1a(content);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
-					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
-					return false;
-				}
 				// Only pass a 5th positional arg when an id is actually known — an
 				// explicit trailing `undefined` still changes Function.arguments.length,
 				// which several existing tests pin exactly via toHaveBeenCalledWith.

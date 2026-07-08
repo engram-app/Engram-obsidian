@@ -925,3 +925,90 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 		expect(noteIdMap.pathForId("id-stale-echo")).toBe("New.md");
 	});
 });
+
+describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 content-loss mechanism)", () => {
+	// Root cause (CI backend PR #950, plugin e7e0e4f): a note's own
+	// materialize write (e.g. applyChange's CRDT-discovery flushFromCrdt, or
+	// materializeRelocated) fires Obsidian's vault create/modify event same as
+	// a real edit. pushFile's echo-hash check (skip when disk content matches
+	// the last-synced hash) previously ran ONLY in the legacy REST branch,
+	// AFTER the CRDT branch had already returned — so a CRDT-managed note's
+	// self-materialize echo unconditionally diffed unchanged content into the
+	// Y.Doc via applyLocalEdit. If the Y.Doc had meanwhile advanced (a
+	// concurrent remote update — e.g. a second API append landing a moment
+	// later), that diff computed a stale delta and transmitted it, erasing
+	// the just-arrived remote content. Hoisting the echo check above the CRDT
+	// branch closes this for both paths.
+	test("does not re-diff already-synced content into CRDT on a self-materialize echo", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		// Discovery via pull: applyChange's CRDT-discovery branch calls
+		// flushFromCrdt, which records the written content's hash as the
+		// last-synced baseline (recordCrdtBaseline) and confirms the id.
+		const content = "# Append Test\nOriginal content.";
+		await engine.applySyncChange({
+			id: "id-echo",
+			path: "Notes/Echo.md",
+			title: "Echo",
+			content,
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+
+		// Simulate Obsidian firing vault create/modify for that exact disk
+		// write (the self-materialize echo) — pushFile reads the SAME content
+		// flushFromCrdt just wrote; nothing has changed since the last sync.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(content);
+		applyLocalEdit.mockClear();
+		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
+
+		const file = new TFile("Notes/Echo.md", Date.now());
+		await (engine as any).pushFile(file);
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("guard-rail: a genuine local edit after the same discovery still routes through CRDT", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		await engine.applySyncChange({
+			id: "id-real-edit",
+			path: "Notes/RealEdit.md",
+			title: "RealEdit",
+			content: "# RealEdit\nOriginal.",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# RealEdit\nOriginal.\nA genuine local edit.",
+		);
+		applyLocalEdit.mockClear();
+
+		const file = new TFile("Notes/RealEdit.md", Date.now());
+		await (engine as any).pushFile(file);
+
+		expect(applyLocalEdit).toHaveBeenCalled();
+	});
+});

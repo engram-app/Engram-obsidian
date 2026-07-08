@@ -115,6 +115,47 @@ interface PluginData {
 	noteIds?: Record<string, string>;
 }
 
+/** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
+ *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
+ *  stranded since the last heal (id -> content) and a path resolver (called
+ *  AFTER the caller's manifest reconcile), partitions each id into: flush now
+ *  (path resolved), retry (path still unknown, under the attempt cap), or
+ *  give up (cap exceeded — content stays safe in the Y.Doc; no disk write, no
+ *  further retry this session). `attempts` is mutated in place so repeated
+ *  calls across drain cycles accumulate the count per id correctly. Exported
+ *  standalone (no Obsidian API dependency) so the retry logic is unit-testable
+ *  without standing up a full EngramSyncPlugin instance. */
+export function partitionStrandedFlushes(
+	pending: Map<string, string>,
+	resolvePath: (id: string) => string | null,
+	attempts: Map<string, number>,
+	maxAttempts: number,
+): {
+	toFlush: Array<{ id: string; path: string; content: string }>;
+	toRetry: Array<{ id: string; content: string }>;
+	toGiveUp: string[];
+} {
+	const toFlush: Array<{ id: string; path: string; content: string }> = [];
+	const toRetry: Array<{ id: string; content: string }> = [];
+	const toGiveUp: string[] = [];
+	for (const [id, content] of pending) {
+		const path = resolvePath(id);
+		if (path) {
+			attempts.delete(id);
+			toFlush.push({ id, path, content });
+			continue;
+		}
+		const attempt = (attempts.get(id) ?? 0) + 1;
+		attempts.set(id, attempt);
+		if (attempt >= maxAttempts) {
+			toGiveUp.push(id);
+		} else {
+			toRetry.push({ id, content });
+		}
+	}
+	return { toFlush, toRetry, toGiveUp };
+}
+
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
@@ -203,6 +244,16 @@ export default class EngramSyncPlugin extends Plugin {
 	private static readonly STRAND_HEAL_DEBOUNCE_MS = 750;
 	private readonly strandedFlushes = new Map<string, string>();
 	private strandHealTimer: number | null = null;
+	/** Per-id heal attempt count (e2e test_43 burst mechanism, round 3): a
+	 *  single manifest fetch can race a just-created note's own commit — the
+	 *  server confirms the note exists moments later than this device's first
+	 *  heal attempt reads the manifest. Without a retry, that one-shot miss
+	 *  permanently stranded the id (content stays in the Y.Doc, but nothing
+	 *  ever calls healUnknownNoteId again this session — a brand-new note in a
+	 *  multi-note burst could sit invisible for the rest of the test/session).
+	 *  Capped so a genuinely orphaned id (never resolves) stops retrying. */
+	private static readonly STRAND_HEAL_MAX_ATTEMPTS = 5;
+	private readonly strandHealAttempts = new Map<string, number>();
 
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
@@ -800,15 +851,31 @@ export default class EngramSyncPlugin extends Plugin {
 		} catch (e) {
 			rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
 		}
-		for (const [id, content] of pending) {
-			const path = this.noteIdMap.pathForId(id);
-			if (!path) {
-				rlog().warn(
-					"crdt",
-					`onFlushToDisk: still no path for note_id=${id} after heal — retained in Y.Doc`,
-				);
-				continue;
-			}
+		const { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
+			pending,
+			(id) => this.noteIdMap.pathForId(id),
+			this.strandHealAttempts,
+			EngramSyncPlugin.STRAND_HEAL_MAX_ATTEMPTS,
+		);
+		for (const id of toGiveUp) {
+			rlog().warn(
+				"crdt",
+				`onFlushToDisk: giving up on note_id=${id} after ` +
+					`${EngramSyncPlugin.STRAND_HEAL_MAX_ATTEMPTS} heal attempts — retained in Y.Doc`,
+			);
+		}
+		// Re-queue unresolved ids for another debounced heal cycle instead of
+		// dropping them after one manifest fetch — a just-created note (e.g. one
+		// of several in a rapid burst) can commit server-side moments after this
+		// device's first reconcile read the manifest.
+		for (const { id, content } of toRetry) {
+			rlog().warn(
+				"crdt",
+				`onFlushToDisk: still no path for note_id=${id} after heal — retrying`,
+			);
+			this.healUnknownNoteId(id, content);
+		}
+		for (const { path, content } of toFlush) {
 			if (this.crdtLiveViews?.isBound(path)) continue; // live editor owns disk
 			void this.syncEngine.flushFromCrdt(path, content);
 		}

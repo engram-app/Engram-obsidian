@@ -728,7 +728,8 @@ var require_diff_match_patch = __commonJS({
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
-  default: () => EngramSyncPlugin
+  default: () => EngramSyncPlugin,
+  partitionStrandedFlushes: () => partitionStrandedFlushes
 });
 module.exports = __toCommonJS(main_exports);
 var import_obsidian25 = require("obsidian");
@@ -5879,7 +5880,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let mimeType = this.getMimeType(file);
         await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file), noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
+        if (!force && existing !== void 0 && hash === existing.hash)
+          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
+        let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
         if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), file.extension === "md" && rlog().info(
           "push",
           `route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
@@ -5896,9 +5900,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             return (_h = this.crdtEnrollment) == null || _h.enroll(noteId), success = !0, devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0;
           file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId));
         }
-        let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
-        if (!force && existing !== void 0 && hash === existing.hash)
-          return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let resp = noteId ? await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version, noteId) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
           let serverNote = resp.server_note;
@@ -20888,6 +20889,20 @@ async function generateClientId(app) {
   let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian25.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
+function partitionStrandedFlushes(pending, resolvePath, attempts, maxAttempts) {
+  var _a;
+  let toFlush = [], toRetry = [], toGiveUp = [];
+  for (let [id2, content] of pending) {
+    let path = resolvePath(id2);
+    if (path) {
+      attempts.delete(id2), toFlush.push({ id: id2, path, content });
+      continue;
+    }
+    let attempt = ((_a = attempts.get(id2)) != null ? _a : 0) + 1;
+    attempts.set(id2, attempt), attempt >= maxAttempts ? toGiveUp.push(id2) : toRetry.push({ id: id2, content });
+  }
+  return { toFlush, toRetry, toGiveUp };
+}
 var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin {
   constructor() {
     super(...arguments);
@@ -20962,6 +20977,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     this.crdtMapReconciled = !1;
     this.strandedFlushes = /* @__PURE__ */ new Map();
     this.strandHealTimer = null;
+    this.strandHealAttempts = /* @__PURE__ */ new Map();
     /** Single-flight guard so a vault switch (or any racing trigger) cannot
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
@@ -21264,17 +21280,24 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     } catch (e) {
       rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
     }
-    for (let [id2, content] of pending) {
-      let path = this.noteIdMap.pathForId(id2);
-      if (!path) {
-        rlog().warn(
-          "crdt",
-          `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retained in Y.Doc`
-        );
-        continue;
-      }
+    let { toFlush, toRetry, toGiveUp } = partitionStrandedFlushes(
+      pending,
+      (id2) => this.noteIdMap.pathForId(id2),
+      this.strandHealAttempts,
+      _EngramSyncPlugin.STRAND_HEAL_MAX_ATTEMPTS
+    );
+    for (let id2 of toGiveUp)
+      rlog().warn(
+        "crdt",
+        `onFlushToDisk: giving up on note_id=${id2} after ${_EngramSyncPlugin.STRAND_HEAL_MAX_ATTEMPTS} heal attempts \u2014 retained in Y.Doc`
+      );
+    for (let { id: id2, content } of toRetry)
+      rlog().warn(
+        "crdt",
+        `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retrying`
+      ), this.healUnknownNoteId(id2, content);
+    for (let { path, content } of toFlush)
       (_a = this.crdtLiveViews) != null && _a.isBound(path) || this.syncEngine.flushFromCrdt(path, content);
-    }
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f;
@@ -21870,5 +21893,13 @@ Last sync: ${date.toLocaleString()}`;
 /** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
  *  here (id -> latest content) and a single manifest reconcile + retry drains
  *  them, so a mid-session map drift self-heals without one fetch per frame. */
-_EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS = 750, _EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
+_EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS = 750, /** Per-id heal attempt count (e2e test_43 burst mechanism, round 3): a
+ *  single manifest fetch can race a just-created note's own commit — the
+ *  server confirms the note exists moments later than this device's first
+ *  heal attempt reads the manifest. Without a retry, that one-shot miss
+ *  permanently stranded the id (content stays in the Y.Doc, but nothing
+ *  ever calls healUnknownNoteId again this session — a brand-new note in a
+ *  multi-note burst could sit invisible for the rest of the test/session).
+ *  Capped so a genuinely orphaned id (never resolves) stops retrying. */
+_EngramSyncPlugin.STRAND_HEAL_MAX_ATTEMPTS = 5, _EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
 var EngramSyncPlugin = _EngramSyncPlugin;
