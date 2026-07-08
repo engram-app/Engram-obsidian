@@ -2492,7 +2492,21 @@ export class SyncEngine {
 		// already maps to a different local path. Gated on a known id
 		// (attachments aren't keyed).
 		if (event.event_type === "upsert" && !isAttachment && event.id) {
-			await this.moveIfIdRelocated(event.id, event.path, event.timestamp);
+			// eventTs must be on the SAME clock base as the pull path's relocationTs
+			// (Date.parse(c.updated_at), server clock) — NOT event.timestamp, which
+			// is Date.now() at client receipt (channel.ts). Cross-base comparison
+			// fails open: client-receipt time is almost always newer than a past
+			// server updated_at, so a stale backward WS relocation would win over
+			// (and then block the corrective re-pull from) a just-applied forward
+			// one. NaN (missing/malformed updated_at) becomes undefined, same as
+			// the pull path, which disables the staleness guard rather than
+			// comparing garbage.
+			const wsRelocationTs = Date.parse(event.updated_at ?? "");
+			await this.moveIfIdRelocated(
+				event.id,
+				event.path,
+				Number.isNaN(wsRelocationTs) ? undefined : wsRelocationTs,
+			);
 		}
 
 		// Echo suppression — skip UPSERT events for notes we're currently pushing
@@ -2725,9 +2739,10 @@ export class SyncEngine {
 	 *  back, trashes the just-materialized new-path file, and (via the
 	 *  disk-content fix above) recreates the old path from it. Observed live:
 	 *  the old path was perpetually resurrected every few seconds. `eventTs`
-	 *  (the broadcast's `timestamp`, or the pull feed's `updated_at` normalized
-	 *  to epoch ms) is tracked per note_id; an event no NEWER than the last one
-	 *  already applied for this id is ignored outright — `<=`, not strict `<`:
+	 *  (the WS broadcast's `updated_at`, or the pull feed's `updated_at` —
+	 *  both server clock, normalized to epoch ms via Date.parse) is tracked
+	 *  per note_id; an event no NEWER than the last one already applied for
+	 *  this id is ignored outright — `<=`, not strict `<`:
 	 *  the pull feed's `updated_at` is only seconds-precision on the wire, so
 	 *  two genuinely different relocations for the same id within one second
 	 *  can tie exactly. A tie can't be proven newer, so it must not win. */
@@ -2741,7 +2756,7 @@ export class SyncEngine {
 			if (lastTs !== undefined && eventTs <= lastTs) {
 				rlog().info(
 					"pull",
-					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
+					`Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ` +
 						`${id} -> ${newPath}`,
 				);
 				return;

@@ -1043,7 +1043,10 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 		} as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
 
-		// 1) Genuine forward relocation, timestamp=100.
+		// 1) Genuine forward relocation. The staleness guard now keys off the
+		// WS payload's `updated_at` (server clock) — NOT `timestamp` (client
+		// receipt time, set in channel.ts) — so it's `updated_at` that must be
+		// later here, not `timestamp`.
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			kind: "note",
@@ -1054,7 +1057,7 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 			folder: "",
 			tags: [],
 			mtime: 2,
-			updated_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:10Z",
 		} as any);
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledTimes(1);
@@ -1063,14 +1066,17 @@ describe("moveIfIdRelocated ignores a stale/out-of-order WS event that would rel
 		(mockApp.fileManager.trashFile as ReturnType<typeof mock>).mockClear();
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
 
-		// 2) A STALE echo arrives with the OLD path and an OLDER timestamp (50 <
-		// 100) — must be ignored, not treated as a second relocation.
+		// 2) A STALE echo arrives with the OLD path and an OLDER `updated_at`
+		// (00:00:00Z < 00:00:10Z) — must be ignored, not treated as a second
+		// relocation. `timestamp` is deliberately set NEWER than event 1's (the
+		// realistic geometry: client receipt time is always ~now) to prove the
+		// guard ignores it and compares `updated_at` instead.
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			kind: "note",
 			id: "id-stale-echo",
 			path: "Old.md",
-			timestamp: 50,
+			timestamp: 200,
 			title: "Old",
 			folder: "",
 			tags: [],
@@ -1190,22 +1196,92 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 		} as any);
 		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
 
-		// A second, different relocation event carrying the exact same
-		// normalized epoch-ms timestamp — must not be treated as newer.
+		// A second, different relocation event whose `updated_at` normalizes to
+		// the exact same epoch-ms value as the pull's — must not be treated as
+		// newer. `timestamp` (client receipt) is irrelevant to the guard now;
+		// set it to something else entirely to prove that.
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			kind: "note",
 			id: "id-tie",
 			path: "Old.md",
-			timestamp: tieTs,
+			timestamp: tieTs + 999,
 			title: "Old",
 			folder: "",
 			tags: [],
 			mtime: 1,
-			updated_at: "2026-01-01T00:00:00Z",
+			updated_at: "2026-01-01T00:00:10Z",
 		} as any);
 
 		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
+	});
+});
+
+describe("WS staleness guard uses server-clock `updated_at`, not client-receipt `timestamp` (re-review clock-base fix)", () => {
+	test("a stale WS backward event with a NOW `timestamp` but an older `updated_at` is refused after a forward pull", async () => {
+		// Realistic geometry that the bug missed: `timestamp` is Date.now() at
+		// client receipt (channel.ts), so a WS event delivered AFTER a pull is
+		// applied almost always carries a LATER `timestamp` than the pull's
+		// server-clock relocation — even when the WS event itself is stale
+		// (its `updated_at` predates the pull's). Comparing `timestamp` against
+		// the pull's `updated_at`-derived baseline therefore fails open: the
+		// stale event reads as newer and re-keys the map backward, trashing the
+		// just-applied forward relocation and permanently refusing the
+		// corrective pull (its `updated_at` never exceeds the wrongly-recorded
+		// receipt-time baseline). Fixed by keying the WS side off
+		// `event.updated_at` too (src/sync.ts moveIfIdRelocated call site).
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Old.md", "id-pingpong");
+		engine.setNoteIdMap(noteIdMap);
+		manifestWith([{ id: "id-pingpong", path: "New.md" }]);
+
+		const oldFile = new TFile("Old.md");
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockImplementation((p: string) =>
+			p === "Old.md" ? oldFile : null,
+		);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"# original content",
+		);
+		engine.setCrdtManager({
+			isSynced: mock().mockReturnValue(true),
+			projectedText: mock(),
+		} as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+
+		// 1) Pull applies the forward relocation at server ts T2.
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-pingpong",
+			seq: 2,
+			path: "New.md",
+			title: "New",
+			content: "# original content",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			updated_at: "2026-01-01T00:00:10Z", // T2
+			deleted: false,
+		} as any);
+		expect(noteIdMap.pathForId("id-pingpong")).toBe("New.md");
+
+		// 2) A stale WS backward event arrives: `updated_at` = T1 < T2, but
+		// `timestamp` (client receipt) is NOW — always later than any past
+		// server ts. Must be refused.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			kind: "note",
+			id: "id-pingpong",
+			path: "Old.md",
+			timestamp: Date.now(), // T1
+			title: "Old",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z", // T1 < T2
+		} as any);
+
+		expect(noteIdMap.pathForId("id-pingpong")).toBe("New.md");
 	});
 });
 

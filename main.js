@@ -5327,9 +5327,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  back, trashes the just-materialized new-path file, and (via the
      *  disk-content fix above) recreates the old path from it. Observed live:
      *  the old path was perpetually resurrected every few seconds. `eventTs`
-     *  (the broadcast's `timestamp`, or the pull feed's `updated_at` normalized
-     *  to epoch ms) is tracked per note_id; an event no NEWER than the last one
-     *  already applied for this id is ignored outright — `<=`, not strict `<`:
+     *  (the WS broadcast's `updated_at`, or the pull feed's `updated_at` —
+     *  both server clock, normalized to epoch ms via Date.parse) is tracked
+     *  per note_id; an event no NEWER than the last one already applied for
+     *  this id is ignored outright — `<=`, not strict `<`:
      *  the pull feed's `updated_at` is only seconds-precision on the wire, so
      *  two genuinely different relocations for the same id within one second
      *  can tie exactly. A tie can't be proven newer, so it must not win. */
@@ -6469,7 +6470,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -6477,7 +6478,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && !isAttachment && event.id && await this.moveIfIdRelocated(event.id, event.path, event.timestamp), event.event_type !== "delete") {
+    if (event.event_type === "upsert" && !isAttachment && event.id) {
+      let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
+      await this.moveIfIdRelocated(
+        event.id,
+        event.path,
+        Number.isNaN(wsRelocationTs) ? void 0 : wsRelocationTs
+      );
+    }
+    if (event.event_type !== "delete") {
       if (this.pushing.has(event.path)) {
         rlog().info("ws", `Echo skip (pushing): ${event.path}`);
         return;
@@ -6500,16 +6509,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian21.normalizePath)(event.path), existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
-        let ownedId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(normalized)) != null ? _d : null;
-        if (ownedId && this.isNoteConfirmed(ownedId) && ((_e = this.noteIdMap) == null ? void 0 : _e.pathForId(ownedId)) === normalized) {
+        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+        if (ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized) {
           rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
           return;
         }
-        await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized);
+        await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
       }
       if (normalized.endsWith(".md")) {
-        let crdtNoteId = (_h = (_g = this.noteIdMap) == null ? void 0 : _g.get(normalized)) != null ? _h : null;
-        (_i = this.noteIdMap) == null || _i.delete(normalized), crdtNoteId && (await ((_j = this.crdt) == null ? void 0 : _j.removeDoc(crdtNoteId)), (_k = this.crdtEnrollment) == null || _k.reset(crdtNoteId));
+        let crdtNoteId = (_i = (_h = this.noteIdMap) == null ? void 0 : _h.get(normalized)) != null ? _i : null;
+        (_j = this.noteIdMap) == null || _j.delete(normalized), crdtNoteId && (await ((_k = this.crdt) == null ? void 0 : _k.removeDoc(crdtNoteId)), (_l = this.crdtEnrollment) == null || _l.reset(crdtNoteId));
       }
       return;
     }
@@ -6528,25 +6537,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_m = event.id) != null ? _m : (_l = this.noteIdMap) != null && _l.get(event.path))) {
-          let noteId = (_o = event.id) != null ? _o : (_n = this.noteIdMap) == null ? void 0 : _n.get(event.path), canonicalPath = (_q = (_p = this.noteIdMap) == null ? void 0 : _p.pathForId(noteId)) != null ? _q : null;
+        } else if (this.crdt && event.path.endsWith(".md") && ((_n = event.id) != null ? _n : (_m = this.noteIdMap) != null && _m.get(event.path))) {
+          let noteId = (_p = event.id) != null ? _p : (_o = this.noteIdMap) == null ? void 0 : _o.get(event.path), canonicalPath = (_r = (_q = this.noteIdMap) == null ? void 0 : _q.pathForId(noteId)) != null ? _r : null;
           canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path) ? rlog().info(
             "ws",
             `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
-          ) : ((_r = this.noteIdMap) == null || _r.set(event.path, noteId), this.confirmNoteId(noteId), (_s = this.crdtEnrollment) == null || _s.enroll(noteId), rlog().info(
+          ) : ((_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), (_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId), rlog().info(
             "ws",
             `CRDT-managed: skipping legacy body apply for ${event.path}`
           ), this.materializeRelocated(event.path, noteId));
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_t2 = event.title) != null ? _t2 : "",
+            title: (_u = event.title) != null ? _u : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_u = event.folder) != null ? _u : "",
-            tags: (_v = event.tags) != null ? _v : [],
-            mtime: (_w = event.mtime) != null ? _w : Date.now(),
-            updated_at: (_x = event.updated_at) != null ? _x : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_v = event.folder) != null ? _v : "",
+            tags: (_w = event.tags) != null ? _w : [],
+            mtime: (_x = event.mtime) != null ? _x : Date.now(),
+            updated_at: (_y = event.updated_at) != null ? _y : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -6556,13 +6565,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_y = note.content_hash) != null ? _y : event.content_hash,
+            content_hash: (_z = note.content_hash) != null ? _z : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_z = note.version) != null ? _z : event.version
+            version: (_A = note.version) != null ? _A : event.version
           });
         }
       } catch (e) {
@@ -6578,7 +6587,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (lastTs !== void 0 && eventTs <= lastTs) {
         rlog().info(
           "pull",
-          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${newPath}`
+          `Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ${id2} -> ${newPath}`
         );
         return;
       }
