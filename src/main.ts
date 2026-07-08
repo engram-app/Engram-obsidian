@@ -1633,6 +1633,11 @@ export default class EngramSyncPlugin extends Plugin {
 					// brand-new note created on device A is never observed on device B
 					// (B only observes rooms it itself sends a `crdt_msg` for), and the
 					// C1 guard suppresses the legacy note_changed discovery path.
+					// Backend #955: the server now tells us when a crdt_msg we sent was
+					// dropped for an unknown note_id — heal the id map immediately.
+					channel.onCrdtNoteNotFound = (docId) => {
+						this.syncEngine.ensureNoteIdMapped(docId);
+					};
 					channel.onCrdtDocReady = (docId) => {
 						// Gate: while the sync gate is closed, skip enrollment entirely.
 						// Without this gate, STEP2 ops integrate into the Y.Doc but can

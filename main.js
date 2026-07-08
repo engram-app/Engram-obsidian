@@ -1470,6 +1470,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
      *  for this doc so a device that doesn't yet have the note pulls it. */
     this.onCrdtDocReady = null;
+    /** A crdt_msg we sent was dropped server-side: the note_id has no row
+     *  (backend #955 error reply). The create-race cross-wire signature — wire
+     *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
+    this.onCrdtNoteNotFound = null;
     /** Fired when the `crdt:` topic join is acknowledged by the server.
      *  Use this to activate CRDT routing in the SyncEngine — only wire
      *  `setCrdtManager` after this fires, so the legacy pushNote path stays
@@ -1676,7 +1680,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1699,34 +1703,44 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
         } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
-      else if (status === "error" && (rlog().error(
-        "channel",
-        `Channel join error on ${topic}: ${JSON.stringify(payload)}`
-      ), topic === this.crdtTopic)) {
-        let response = payload.response, reason = typeof (response == null ? void 0 : response.reason) == "string" ? response.reason : void 0, min2 = typeof (response == null ? void 0 : response.min) == "number" ? response.min : void 0;
-        ref === this.crdtJoinMsgRef ? (_c = this.onCrdtJoinError) == null || _c.call(this, reason, min2) : rlog().warn(
+      else if (status === "error") {
+        let response = payload.response;
+        if ((response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
+          rlog().warn(
+            "channel",
+            `crdt_msg dropped by server (note_not_found): ${response.doc_id} \u2014 triggering id-map reconcile`
+          ), (_c = this.onCrdtNoteNotFound) == null || _c.call(this, response.doc_id);
+          return;
+        }
+        if (rlog().error(
           "channel",
-          `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
-        );
+          `Channel join error on ${topic}: ${JSON.stringify(payload)}`
+        ), topic === this.crdtTopic) {
+          let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
+          ref === this.crdtJoinMsgRef ? (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2) : rlog().warn(
+            "channel",
+            `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
+          );
+        }
       }
       return;
     }
     if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_d = this.onPlanState) == null || _d.call(this, payload);
+      rlog().info("channel", "Received subscription_activated event"), (_e = this.onPlanState) == null || _e.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_e = this.onVaultDeleted) == null || _e.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_f = this.onVaultDeleted) == null || _f.call(this);
       return;
     }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_f = this.onCrdtMessage) == null || _f.call(this, docId, b64));
+      docId && b64 && ((_g = this.onCrdtMessage) == null || _g.call(this, docId, b64));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_g = this.onCrdtDocReady) == null || _g.call(this, docId));
+      docId && ((_h = this.onCrdtDocReady) == null || _h.call(this, docId));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1734,7 +1748,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_h = p.kind) != null ? _h : "note",
+        kind: (_i = p.kind) != null ? _i : "note",
         id: p.id,
         content: p.content,
         content_hash: p.content_hash,
@@ -1745,10 +1759,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_i = this.onEvent) == null || _i.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_j = this.onEvent) == null || _j.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_j = payload.notes) != null ? _j : [];
+      let notes = (_k = payload.notes) != null ? _k : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1765,7 +1779,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_k = this.onEvent) == null || _k.call(this, streamEvent);
+        (_l = this.onEvent) == null || _l.call(this, streamEvent);
       }
     }
   }
@@ -21705,6 +21719,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
           var _a2;
           (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
+        }, channel.onCrdtNoteNotFound = (docId) => {
+          this.syncEngine.ensureNoteIdMapped(docId);
         }, channel.onCrdtDocReady = (docId) => {
           var _a2;
           this.syncEngine.isSyncBlocked() || (this.syncEngine.ensureNoteIdMapped(docId), (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId));
