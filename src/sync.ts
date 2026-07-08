@@ -1505,6 +1505,15 @@ export class SyncEngine {
 						MAX_CRDT_NOTE_BYTES,
 					);
 					if (consumed) {
+						// Record the transmitted content's hash as the echo-hash baseline
+						// (final review IMPORTANT-4). Without this, the hoisted echo-hash
+						// gate above keeps comparing against the last-FLUSHED baseline
+						// (discovery/pull) instead of the last-TRANSMITTED content: an
+						// edit followed by an undo back to that stale baseline hash-
+						// matches and is echo-skipped, so the revert never reaches the
+						// Y.Doc. Merges onto any existing entry (mirrors recordCrdtBaseline)
+						// so version/serverHash survive.
+						this.syncState.set(normalizePath(file.path), { ...existing, hash });
 						// Register the doc with the server even when applyLocalEdit produced
 						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
 						// is a no-op, so nothing is transmitted and the note would never reach

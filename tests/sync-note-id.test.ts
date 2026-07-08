@@ -498,10 +498,15 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 
 		// Clear confirmations (as on a WS reconnect) — the next write must go REST,
 		// which re-creates/re-verifies the row server-side rather than routing to a
-		// CRDT room the server may no longer have (silent-drop → data loss).
+		// CRDT room the server may no longer have (silent-drop → data loss). A
+		// genuinely NEW edit (distinct disk content) isolates the routing decision
+		// from the echo-hash gate — since IMPORTANT-4, a successful CRDT push
+		// records the transmitted content's hash, so re-pushing the SAME bytes
+		// from the control step would now be (correctly) echo-skipped.
 		engine.clearConfirmedNoteIds();
 		applyLocalEdit.mockClear();
 		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("body v2");
 		engine.handleModify(new TFile("known.md"));
 		await flush();
 		expect(mockApi.pushNote).toHaveBeenCalled();
@@ -1186,6 +1191,57 @@ describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 
 		applyLocalEdit.mockClear();
 
 		const file = new TFile("Notes/RealEdit.md", Date.now());
+		await (engine as any).pushFile(file);
+
+		expect(applyLocalEdit).toHaveBeenCalled();
+	});
+});
+
+describe("a successful CRDT push updates the echo-hash baseline (final review IMPORTANT-4)", () => {
+	// Root cause: a successful `consumed` CRDT push (routeModify -> true) never
+	// updated syncState's hash. The hoisted echo-hash gate at the top of
+	// pushFile therefore kept comparing against the last-FLUSHED baseline
+	// (from discovery/pull), not the last-TRANSMITTED content. Edit -> CRDT
+	// push -> undo back to the original content hash-matches the stale
+	// baseline and is echo-skipped: the revert never reaches the Y.Doc.
+	test("edit, CRDT push, then revert-to-baseline must still route through CRDT (not echo-skip)", async () => {
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
+		engine.setCrdtLiveCheck(() => true);
+
+		// Discovery establishes the last-FLUSHED baseline.
+		const original = "# Revert Test\nOriginal content.";
+		await engine.applySyncChange({
+			id: "id-revert",
+			path: "Notes/Revert.md",
+			title: "Revert",
+			content: original,
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+
+		// User edits the note and it pushes through CRDT (consumed=true).
+		const edited = "# Revert Test\nOriginal content.\nA local edit.";
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(edited);
+		applyLocalEdit.mockClear();
+		const file = new TFile("Notes/Revert.md", Date.now());
+		await (engine as any).pushFile(file);
+		expect(applyLocalEdit).toHaveBeenCalled();
+
+		// User undoes back to the original content. Without recording the
+		// transmitted hash on the prior push, syncState still holds the
+		// discovery-time baseline (hash(original)) — which this revert's disk
+		// content also hashes to, so it would be wrongly echo-skipped.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(original);
+		applyLocalEdit.mockClear();
 		await (engine as any).pushFile(file);
 
 		expect(applyLocalEdit).toHaveBeenCalled();
