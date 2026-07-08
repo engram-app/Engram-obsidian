@@ -5628,7 +5628,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async materializeRelocated(path, noteId) {
     var _a, _b;
     if (!this.crdt || !path.endsWith(".md") || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
-    let canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
+    let text2 = await this.crdt.projectedText(noteId), canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (canonical !== null && (0, import_obsidian21.normalizePath)(canonical) !== (0, import_obsidian21.normalizePath)(path)) {
       rlog().info(
         "ws",
@@ -5636,7 +5636,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       return;
     }
-    let text2 = await this.crdt.projectedText(noteId);
     await this.flushFromCrdt(path, text2);
   }
   updateSettings(settings) {
