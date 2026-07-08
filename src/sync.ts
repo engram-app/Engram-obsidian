@@ -807,6 +807,38 @@ export class SyncEngine {
 		await this.flushFromCrdt(path, text);
 	}
 
+	/** Materialize a note at a NEW path after an id-keyed relocation
+	 *  (`moveIfIdRelocated`) when this device's CRDT handshake for `noteId`
+	 *  already completed earlier THIS session (e2e test_10, #189).
+	 *
+	 *  A rename changes no doc content, so it never produces a Y.Doc update —
+	 *  `onFlushToDisk` never fires for it — and `crdtEnrollment.enroll()` is a
+	 *  documented per-session no-op once a note_id is already enrolled (true
+	 *  here: this device received the note live, at its old path, earlier this
+	 *  session). With neither trigger left, the file at the new path is never
+	 *  written: the event is received but never materialized. This closes that
+	 *  gap by flushing the CRDT doc's already-known content directly.
+	 *
+	 *  Gated on `crdt.isSynced(noteId)` — NOT on "already enrolled". `enroll()`
+	 *  marks a note_id enrolled synchronously, before its STEP2 handshake
+	 *  resolves, so an "already enrolled" check would race a note's genuine
+	 *  FIRST enrollment and could flush empty/partial content (the #547 class
+	 *  of premature-empty-file bug). `isSynced` only turns true once a STEP2
+	 *  has actually landed, so the content read here is trustworthy. No-ops
+	 *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
+	 *  still owns materializing it) or the file already exists at `path`. */
+	private async materializeRelocated(path: string, noteId: string): Promise<void> {
+		if (!this.crdt || !path.endsWith(".md")) return;
+		// Defensive `typeof` (not `?.`) — CrdtManager always has isSynced, but many
+		// existing unit tests wire a partial `{ applyLocalEdit } as any` stand-in
+		// that doesn't, and a missing method must read as "not synced" rather than
+		// throw.
+		if (typeof this.crdt.isSynced !== "function" || !this.crdt.isSynced(noteId)) return;
+		if (this.app.vault.getAbstractFileByPath(normalizePath(path))) return;
+		const text = await this.crdt.projectedText(noteId);
+		await this.flushFromCrdt(path, text);
+	}
+
 	/** Persistent record of files that failed to sync, with reason. Surfaced
 	 *  in the Sync Center "Issues" panel and used to short-circuit the offline
 	 *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -916,6 +948,12 @@ export class SyncEngine {
 		// instance is shared with main.ts + live views.
 		this.noteIdMap?.clear();
 		this.clearConfirmedNoteIds();
+		// note_ids are only unique WITHIN a vault (final review MINOR-6) — a
+		// relocation timestamp recorded for an id under the OLD vault must not
+		// survive to stale-gate an unrelated note that happens to reuse the same
+		// id in the new vault. Living here (not just resetForVaultChange) keeps
+		// BOTH vault-change paths in lockstep, per this method's contract.
+		this.lastRelocationTs.clear();
 		await this.saveData({ lastSync: "", syncCursor: null });
 	}
 
@@ -1507,6 +1545,28 @@ export class SyncEngine {
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 
+				// Echo suppression — skip pushing if content matches what the sync
+				// engine last wrote (pull/WebSocket/flushFromCrdt). Must run BEFORE
+				// the CRDT routing branch below, not just the legacy REST path: a
+				// disk write this engine itself just made (e.g. materializeRelocated
+				// discovering a note and calling flushFromCrdt, which records this
+				// exact hash via recordCrdtBaseline) fires vault's create/modify
+				// event same as a real edit. Routing that echo into
+				// routeModify/applyLocalEdit unconditionally diffs "content" against
+				// the Y.Doc's CURRENT state — if the Y.Doc has meanwhile advanced
+				// (e.g. a concurrent remote update just landed in the room), the
+				// diff is a genuine-looking but stale delta that DELETES the
+				// just-arrived remote content, not a harmless no-op (e2e test_37
+				// content-loss: first append vanishes). Hoisting this hash check
+				// above the CRDT branch closes that hole for both paths.
+				const hash = fnv1a(content);
+				const existing = this.syncState.get(normalizePath(file.path));
+				if (!force && existing !== undefined && hash === existing.hash) {
+					devLog().log("push", `skip (echo): ${file.path}`);
+					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
+					return false;
+				}
+
 				// note_id-keyed CRDT rework (Task 5): resolve (or mint) this note's
 				// stable id BEFORE routing, so both the CRDT path (Task 6) and the
 				// REST fallback below can key/send by it. A brand-new note has no
@@ -1566,6 +1626,15 @@ export class SyncEngine {
 						MAX_CRDT_NOTE_BYTES,
 					);
 					if (consumed) {
+						// Record the transmitted content's hash as the echo-hash baseline
+						// (final review IMPORTANT-4). Without this, the hoisted echo-hash
+						// gate above keeps comparing against the last-FLUSHED baseline
+						// (discovery/pull) instead of the last-TRANSMITTED content: an
+						// edit followed by an undo back to that stale baseline hash-
+						// matches and is echo-skipped, so the revert never reaches the
+						// Y.Doc. Merges onto any existing entry (mirrors recordCrdtBaseline)
+						// so version/serverHash survive.
+						this.syncState.set(normalizePath(file.path), { ...existing, hash });
 						// Register the doc with the server even when applyLocalEdit produced
 						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
 						// is a no-op, so nothing is transmitted and the note would never reach
@@ -1601,16 +1670,8 @@ export class SyncEngine {
 					}
 				}
 
-				// Echo suppression — skip pushing if content matches what the
-				// sync engine last wrote (pull/WebSocket). Prevents the pull→push loop
-				// where vault.modify() triggers handleModify() for every pulled file.
-				const hash = fnv1a(content);
-				const existing = this.syncState.get(normalizePath(file.path));
-				if (!force && existing !== undefined && hash === existing.hash) {
-					devLog().log("push", `skip (echo): ${file.path}`);
-					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
-					return false;
-				}
+				// (Echo suppression ran ABOVE the CRDT branch — `hash`/`existing`
+				// are already in scope; see the hoisted gate, e2e test_37.)
 				// Only pass trailing positional args when actually known — an explicit
 				// trailing `undefined` still changes Function.arguments.length, which
 				// several existing tests pin exactly via toHaveBeenCalledWith.
@@ -1888,7 +1949,15 @@ export class SyncEngine {
 			// Keep path suppressed for a cooldown period after push completes.
 			// WebSocket events often arrive after the push finishes, and without this
 			// the echo suppression in handleStreamEvent would miss them.
-			this.markRecentlyPushed(file.path);
+			//
+			// Gated on `success`: only a push that actually transmitted content (a
+			// real POST or a CRDT emit) may open this window. The various no-op
+			// exits (echo hash-skip for notes/attachments, failed pushes caught
+			// above) leave `success` false — nothing reached the server, so there is
+			// no self-echo to suppress. Opening the window on those no-ops used to
+			// let it swallow a legitimately-arriving second remote update within the
+			// cooldown (Engram#944).
+			if (success) this.markRecentlyPushed(file.path);
 			this.emitStatus();
 		}
 		return success;
@@ -2563,7 +2632,21 @@ export class SyncEngine {
 		// already maps to a different local path. Gated on a known id
 		// (attachments aren't keyed).
 		if (event.event_type === "upsert" && !isAttachment && event.id) {
-			await this.moveIfIdRelocated(event.id, event.path);
+			// eventTs must be on the SAME clock base as the pull path's relocationTs
+			// (Date.parse(c.updated_at), server clock) — NOT event.timestamp, which
+			// is Date.now() at client receipt (channel.ts). Cross-base comparison
+			// fails open: client-receipt time is almost always newer than a past
+			// server updated_at, so a stale backward WS relocation would win over
+			// (and then block the corrective re-pull from) a just-applied forward
+			// one. NaN (missing/malformed updated_at) becomes undefined, same as
+			// the pull path, which disables the staleness guard rather than
+			// comparing garbage.
+			const wsRelocationTs = Date.parse(event.updated_at ?? "");
+			await this.moveIfIdRelocated(
+				event.id,
+				event.path,
+				Number.isNaN(wsRelocationTs) ? undefined : wsRelocationTs,
+			);
 		}
 
 		// Echo suppression — skip UPSERT events for notes we're currently pushing
@@ -2686,36 +2769,67 @@ export class SyncEngine {
 					// note directly (pre-id-keying behavior; without this fallback a
 					// never-seen note is received but silently never written to disk).
 					const noteId = (event.id ?? this.noteIdMap?.get(event.path)) as string;
-					this.noteIdMap?.set(event.path, noteId);
-					this.confirmNoteId(noteId);
-					this.crdtEnrollment?.enroll(noteId);
-					// SEED the CAS base from the event when none exists — the CRDT
-					// delivery that writes the body never advances serverHash (issue
-					// #203), so a device whose only knowledge of this note came
-					// through here had NO base for its later REST-fallback push
-					// (channel down = the missed-delivery scenario) and silently
-					// overwrote server content it never saw (e2e test_83).
-					// Seed-only, never advance: serverHash means "server content this
-					// device actually CONVERGED to" everywhere it is read (hash-skip,
-					// resolveChangeBody, verifyConvergenceOnOpen). Stamping the
-					// announced hash over a real converged base would mark the note
-					// converged before the body lands — a missed room delivery then
-					// sticks silently, with every recovery path defeated. A stale
-					// seeded base errs toward a false 409/conflict copy, the safe
-					// direction. Gate on "no base yet", not file existence: the room
-					// delivery can race the file onto disk before this event runs.
-					if (event.content_hash !== undefined) {
-						const np = normalizePath(event.path);
-						const prior = this.syncState.get(np);
-						if (prior?.serverHash === undefined) {
-							this.syncState.set(np, {
-								hash: prior?.hash ?? fnv1a(""),
-								version: event.version ?? prior?.version,
-								serverHash: event.content_hash,
-							});
+					// STALE-PATH GUARD (round 2, e2e test_34 mechanism): moveIfIdRelocated
+					// above already decided whether `event.path` is this id's current
+					// canonical path (it declines a stale/out-of-order relocation — see
+					// its own staleness gate). If the map now disagrees with this event's
+					// path, learning it here would silently undo that decision: it would
+					// re-key the map BACKWARD to the stale path (a bijection `set()`
+					// evicts the correct, just-established mapping) and materialize a
+					// stale-path file the relocation guard just decided not to touch.
+					// Skip path-learning/materialize entirely for a stale event; the
+					// canonical mapping (and file) already in place stands.
+					const canonicalPath = this.noteIdMap?.pathForId(noteId) ?? null;
+					if (
+						canonicalPath !== null &&
+						normalizePath(canonicalPath) !== normalizePath(event.path)
+					) {
+						rlog().info(
+							"ws",
+							`Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`,
+						);
+					} else {
+						this.noteIdMap?.set(event.path, noteId);
+						this.confirmNoteId(noteId);
+						this.crdtEnrollment?.enroll(noteId);
+						// SEED the CAS base from the event when none exists — the CRDT
+						// delivery that writes the body never advances serverHash (issue
+						// #203), so a device whose only knowledge of this note came
+						// through here had NO base for its later REST-fallback push
+						// (channel down = the missed-delivery scenario) and silently
+						// overwrote server content it never saw (e2e test_83).
+						// Seed-only, never advance: serverHash means "server content this
+						// device actually CONVERGED to" everywhere it is read (hash-skip,
+						// resolveChangeBody, verifyConvergenceOnOpen). Stamping the
+						// announced hash over a real converged base would mark the note
+						// converged before the body lands — a missed room delivery then
+						// sticks silently, with every recovery path defeated. A stale
+						// seeded base errs toward a false 409/conflict copy, the safe
+						// direction. Gate on "no base yet", not file existence: the room
+						// delivery can race the file onto disk before this event runs.
+						if (event.content_hash !== undefined) {
+							const np = normalizePath(event.path);
+							const prior = this.syncState.get(np);
+							if (prior?.serverHash === undefined) {
+								this.syncState.set(np, {
+									hash: prior?.hash ?? fnv1a(""),
+									version: event.version ?? prior?.version,
+									serverHash: event.content_hash,
+								});
+							}
 						}
+						rlog().info(
+							"ws",
+							`CRDT-managed: skipping legacy body apply for ${event.path}`,
+						);
+						// #189: a rename carries no content change, so it never produces a
+						// Y.Doc update — onFlushToDisk never fires for it — and enroll()
+						// above is a per-session no-op for an id this device already
+						// enrolled (e.g. it received the old path live before the rename).
+						// Left alone, the file is never written: received=yes,
+						// materialized=no. materializeRelocated closes that gap directly.
+						void this.materializeRelocated(event.path, noteId);
 					}
-					rlog().info("ws", `CRDT-managed: skipping legacy body apply for ${event.path}`);
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP
 					// roundtrip. (Dual-field transition: backends send content
@@ -2768,10 +2882,53 @@ export class SyncEngine {
 	 *  it tears down NOTHING (crdtNoteId null), leaving the CRDT room for `id`
 	 *  intact — only the path moved, not the id/room (mirrors handleRename's
 	 *  "a rename must not tear down the CRDT doc"). No-ops when the id is unknown
-	 *  or already at newPath, so callers can invoke it unconditionally. */
-	private async moveIfIdRelocated(id: string, newPath: string): Promise<void> {
+	 *  or already at newPath, so callers can invoke it unconditionally.
+	 *
+	 *  Materializes the new path directly from the OLD file's on-disk content
+	 *  (round 2, e2e test_10 mechanism a): a rename carries no content change,
+	 *  so relying solely on the CRDT handshake (`materializeRelocated`'s
+	 *  `isSynced` gate) to backfill the new path races a fresh-boot receiver
+	 *  whose STEP2 hasn't landed yet this session — the gate declines and
+	 *  nothing ever retries (received=yes, materialized=no). The old file's
+	 *  bytes are already real, trustworthy content (this device had it on disk
+	 *  before the rename); read + flush them to the new path here, independent
+	 *  of CRDT session state. No-ops (falls through to the isSynced-gated
+	 *  backstop) when there is no old file locally to read from.
+	 *
+	 *  STALE-EVENT GUARD (round 2, e2e test_34 mechanism, live-repro'd
+	 *  2026-07-08): the WS channel is explicitly unordered (see class doc), so
+	 *  a duplicate/reordered upsert can carry an id's PRIOR path after this
+	 *  device already applied a more current relocation for that id this
+	 *  session. Without a staleness check, the precondition above ("mapped to
+	 *  a DIFFERENT path than event.path") is satisfied in EITHER direction —
+	 *  the stale event reads as a second, backward relocation: re-keys the map
+	 *  back, trashes the just-materialized new-path file, and (via the
+	 *  disk-content fix above) recreates the old path from it. Observed live:
+	 *  the old path was perpetually resurrected every few seconds. `eventTs`
+	 *  (the WS broadcast's `updated_at`, or the pull feed's `updated_at` —
+	 *  both server clock, normalized to epoch ms via Date.parse) is tracked
+	 *  per note_id; an event no NEWER than the last one already applied for
+	 *  this id is ignored outright — `<=`, not strict `<`:
+	 *  the pull feed's `updated_at` is only seconds-precision on the wire, so
+	 *  two genuinely different relocations for the same id within one second
+	 *  can tie exactly. A tie can't be proven newer, so it must not win. */
+	private lastRelocationTs = new Map<string, number>();
+
+	private async moveIfIdRelocated(id: string, newPath: string, eventTs?: number): Promise<void> {
 		const priorPath = this.noteIdMap?.pathForId(id) ?? null;
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
+		if (eventTs !== undefined) {
+			const lastTs = this.lastRelocationTs.get(id);
+			if (lastTs !== undefined && eventTs <= lastTs) {
+				rlog().info(
+					"pull",
+					`Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ` +
+						`${id} -> ${newPath}`,
+				);
+				return;
+			}
+			this.lastRelocationTs.set(id, eventTs);
+		}
 		// DESTRUCTIVE-OP GUARD (2026-07-07 cross-file data-loss incident): the
 		// local map can be CROSS-WIRED — `id` pointing at a path that really
 		// belongs to a DIFFERENT live note. Trusting it here trashed an unrelated
@@ -2811,8 +2968,55 @@ export class SyncEngine {
 		// RAW priorPath — it must match the byPath key exactly to re-key the id.
 		const oldFile = this.app.vault.getFileByPath(normalizePath(priorPath));
 		if (oldFile) {
-			await this.app.fileManager.trashFile(oldFile);
-			rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+			// MID-FLIGHT VANISH GUARD (round 4, e2e test_10 CI run 28915097812):
+			// the old file can be trashed CONCURRENTLY while this function is
+			// suspended on the manifest await above — the rename's own delete
+			// tombstone, deferred to a pull, races these file ops. A rejection
+			// here must not escape: handleStreamEvent's hoisted call is outside
+			// its try/catch, so an escape kills the ENTIRE upsert — no relocation,
+			// no CRDT-branch materialize, no file, silently (received=yes
+			// materialized=no). Degrade instead: a failed trash means the
+			// tombstone already removed the file (the outcome the trash wanted) —
+			// still flush the content we read; a failed read means no local
+			// content — fall through to the caller's isSynced-gated
+			// materializeRelocated backstop.
+			try {
+				// Read before trashing — the content must be captured while the
+				// file still exists at its old location.
+				const content = await this.app.vault.cachedRead(oldFile);
+				try {
+					await this.app.fileManager.trashFile(oldFile);
+				} catch {
+					// Already gone — the concurrent tombstone won the race.
+				}
+				// CREATE-ONLY GUARD (final review CRITICAL-1): the cachedRead/
+				// trashFile awaits above are a suspend window. flushFromCrdt's
+				// modify-if-exists semantics would overwrite content a CONCURRENT
+				// doc-triggered flush already wrote to newPath during that window
+				// with these old-file bytes, which are never newer. Re-check right
+				// before flushing — mirrors materializeRelocated's own exists check.
+				if (this.app.vault.getAbstractFileByPath(normalizePath(newPath))) {
+					rlog().info(
+						"pull",
+						`Id-keyed move: skipping stale disk flush for ${newPath} — already exists (a concurrent flush won the race)`,
+					);
+				} else {
+					await this.flushFromCrdt(newPath, content);
+				}
+				rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id})`);
+			} catch (e) {
+				rlog().warn(
+					"pull",
+					`Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} — ${errMsg(e)}`,
+				);
+				// No disk content to flush here, and the caller's isSynced-gated
+				// materializeRelocated backstop may ALSO decline (fresh-boot
+				// receiver, STEP2 not landed yet) — leaving the note invisible on
+				// this device until the next scheduled poll, up to 5 minutes
+				// (final review MINOR-7). Kick an immediate pull so that window
+				// is one pull instead.
+				void this.pull();
+			}
 		}
 	}
 
@@ -2847,7 +3051,23 @@ export class SyncEngine {
 			// the seq-ordered /sync/changes feed carries only the upsert at the new
 			// path — never a separate delete for the old one. Relocate the old file
 			// so it isn't orphaned as a duplicate (e2e test_10). See moveIfIdRelocated.
-			await this.moveIfIdRelocated(c.id, c.path);
+			// eventTs (final review IMPORTANT-2): without this, a pull-applied
+			// relocation never recorded lastRelocationTs for the id, so a LATER
+			// stale/reordered WS broadcast carrying the pre-rename path found no
+			// timestamp to compare against and relocated backward (cross-channel
+			// ping-pong). c.updated_at is an ISO-8601 string (seconds precision on
+			// the wire); normalize to the same epoch-ms basis moveIfIdRelocated's
+			// WS callers already use (event.timestamp, epoch ms) via Date.parse.
+			// An unparseable value degrades to "no timestamp" (undefined) rather
+			// than NaN, which would poison every future comparison for this id
+			// (NaN is never < anything, so the guard would silently stop
+			// protecting it for the rest of the session).
+			const relocationTs = Date.parse(c.updated_at);
+			await this.moveIfIdRelocated(
+				c.id,
+				c.path,
+				Number.isNaN(relocationTs) ? undefined : relocationTs,
+			);
 			this.noteIdMap?.set(c.path, c.id);
 			// Learned from the server's own feed — it unquestionably has a note
 			// row for this id, so future edits may route through CRDT (see
@@ -3517,7 +3737,21 @@ export class SyncEngine {
 		if (folder) {
 			await this.ensureFolder(folder);
 		}
-		await this.app.vault.create(normalized, content);
+		try {
+			await this.app.vault.create(normalized, content);
+		} catch (e) {
+			// A concurrent materialization path (pull vs WS delivery) can create
+			// this file between the caller's existence check and our create —
+			// vault.create then rejects "File already exists." (e2e round 5,
+			// run 28919928915 catch-up bursts). The body landing on disk is the
+			// goal, so degrade to modify with the same content; rethrow the rest.
+			const raced = this.app.vault.getAbstractFileByPath(normalized);
+			if (raced instanceof TFile) {
+				await this.modifyFile(raced, content);
+				return;
+			}
+			throw e;
+		}
 	}
 
 	/** Create a binary file, ensuring parent folders exist. */
@@ -3545,7 +3779,19 @@ export class SyncEngine {
 			if (parent) await this.ensureFolder(parent);
 		}
 
-		await this.app.vault.createFolder(path);
+		try {
+			await this.app.vault.createFolder(path);
+		} catch (e) {
+			// Check-then-create races a concurrent materialization of a sibling
+			// note into the same new folder: N notes delivered in a burst each
+			// ensureFolder the same path and the losers reject "Folder already
+			// exists." (e2e test_34, run 28919928915 — the dropped note then
+			// missed the 30s delivery window). Losing the race means the folder
+			// IS there — the outcome we wanted — so swallow ONLY that case.
+			if (this.app.vault.getAbstractFileByPath(path)) return;
+			if (/already exists/i.test(errMsg(e))) return;
+			throw e;
+		}
 	}
 
 	/** Pull the server's explicit empty-folder markers, persist them, and
