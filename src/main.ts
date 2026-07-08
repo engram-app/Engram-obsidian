@@ -49,13 +49,13 @@ import {
 } from "./types";
 
 import { BaseStore } from "./base-store";
-import { CrdtChannel } from "./crdt/channel";
-import { CrdtEnrollment } from "./crdt/enrollment";
+import type { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { ycollabExtension } from "./crdt/live/ycollab-binding";
-import { CrdtManager } from "./crdt/manager";
+import type { CrdtManager } from "./crdt/manager";
 import { NoteIdMap } from "./crdt/note-id-map";
 import { ensureDocSchema } from "./crdt/schema";
+import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
@@ -171,8 +171,11 @@ export default class EngramSyncPlugin extends Plugin {
 	private baseStore: BaseStore | null = null;
 	private explicitFolders: ExplicitFolders | null = null;
 	private crdtManager: CrdtManager | null = null;
-	private crdtChannel: CrdtChannel | null = null;
 	private crdtEnrollment: CrdtEnrollment | null = null;
+	/** CRDT data-plane glue (manager/channel/enrollment + id->path callbacks +
+	 *  strand-heal), extracted from the inline setupNoteStream block. Rebuilt on
+	 *  each channel setup; disposed on teardown/unload to clear its heal timer. */
+	private crdtWiring: CrdtWiring | null = null;
 	/** True once onCrdtJoined has fired for the current channel session.
 	 *  Allows the disconnect handler to KEEP CRDT routing active while offline
 	 *  (Y.Doc + IndexedDB capture edits locally; reconnect handshake delivers
@@ -196,13 +199,6 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  not on every reconnect — re-fetching the manifest on each network blip adds
 	 *  load and perturbs in-flight sync timing. Reset on vault change. */
 	private crdtMapReconciled = false;
-
-	/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
-	 *  here (id -> latest content) and a single manifest reconcile + retry drains
-	 *  them, so a mid-session map drift self-heals without one fetch per frame. */
-	private static readonly STRAND_HEAL_DEBOUNCE_MS = 750;
-	private readonly strandedFlushes = new Map<string, string>();
-	private strandHealTimer: number | null = null;
 
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
@@ -789,44 +785,8 @@ export default class EngramSyncPlugin extends Plugin {
 		});
 	}
 
-	/** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
-	 *  reconciling the noteIdMap from the server manifest, then retrying the
-	 *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
-	 *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
-	 *  once-per-connect reconcile cannot catch. */
-	private healUnknownNoteId(noteId: string, content: string): void {
-		this.strandedFlushes.set(noteId, content); // keep the latest content per id
-		if (this.strandHealTimer !== null) return;
-		this.strandHealTimer = window.setTimeout(() => {
-			this.strandHealTimer = null;
-			void this.drainStrandedFlushes();
-		}, EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS);
-	}
-
-	private async drainStrandedFlushes(): Promise<void> {
-		const pending = new Map(this.strandedFlushes);
-		this.strandedFlushes.clear();
-		try {
-			await this.syncEngine.reconcileNoteIdMapFromManifest();
-		} catch (e) {
-			rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
-		}
-		for (const [id, content] of pending) {
-			const path = this.noteIdMap.pathForId(id);
-			if (!path) {
-				rlog().warn(
-					"crdt",
-					`onFlushToDisk: still no path for note_id=${id} after heal — retained in Y.Doc`,
-				);
-				continue;
-			}
-			if (this.crdtLiveViews?.isBound(path)) continue; // live editor owns disk
-			void this.syncEngine.flushFromCrdt(path, content);
-		}
-	}
-
 	onunload(): void {
-		if (this.strandHealTimer !== null) window.clearTimeout(this.strandHealTimer);
+		this.crdtWiring?.dispose();
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
 		activeDocument.body.classList.remove("engram-vault-sync-active");
@@ -1261,9 +1221,10 @@ export default class EngramSyncPlugin extends Plugin {
 		// old objects stay alive with their observers still firing.
 		this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
+		this.crdtWiring?.dispose();
+		this.crdtWiring = null;
 		void this.crdtManager?.destroy();
 		this.crdtManager = null;
-		this.crdtChannel = null;
 		this.crdtEnrollment?.resetAll();
 		this.crdtEnrollment = null;
 		// Teardown must NOT depend on the connection-state transition that nulls
@@ -1520,79 +1481,23 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						return;
 					}
-					// Task 6 (note_id-keyed CRDT): CrdtManager/CrdtChannel/CrdtEnrollment
-					// are all keyed by the note's stable note_id now, matching the
-					// backend's bare-UUID `doc_id` on `crdt_msg`/`crdt_doc_ready`. Disk
-					// I/O is still path-keyed (files live on disk paths, not ids), so
-					// every callback below that used to receive `path` now receives
-					// `noteId` and resolves the path itself via `this.noteIdMap`.
-					this.crdtManager = new CrdtManager({
-						onUpdate: (docId, update) => this.crdtChannel?.sendUpdateRaw(docId, update),
-						onFlushToDisk: (noteId, content) => {
-							const path = this.noteIdMap.pathForId(noteId);
-							if (!path) {
-								// Unknown id: a crdt_msg/STEP2 arrived for a note this device
-								// hasn't learned a path for yet (e.g. a brand-new note created
-								// on another device seen before the next pull, OR a mid-session
-								// drift where the map lost/diverged this id. Content is safe in
-								// the Y.Doc meanwhile; healUnknownNoteId re-resolves the id from
-								// the server manifest and retries the flush so a drift self-heals
-								// instead of stranding forever.
-								this.healUnknownNoteId(noteId, content);
-								return Promise.resolve();
-							}
-							return this.crdtLiveViews?.isBound(path)
-								? Promise.resolve()
-								: this.syncEngine.flushFromCrdt(path, content);
-						},
-						// Adopt-first seed gate: never re-encode content the server
-						// already holds (see CrdtManagerOptions.isUnchangedSynced).
-						isUnchangedSynced: (noteId, content) => {
-							const path = this.noteIdMap.pathForId(noteId);
-							return path ? this.syncEngine.isUnchangedSynced(path, content) : false;
-						},
-						onPersistError: (noteId, err) => {
-							const path = this.noteIdMap.pathForId(noteId) ?? noteId;
-							rlog().warn(
-								"crdt",
-								`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
-							);
-						},
+					// Task 6 (note_id-keyed CRDT): the CrdtManager/CrdtChannel/CrdtEnrollment
+					// trio and their id->path resolving callbacks (plus the strand-heal
+					// self-heal and the onCrdtMessage/onCrdtDocReady handlers) live in
+					// createCrdtWiring — see src/crdt/wiring.ts. Everything below (the
+					// Obsidian-bound CrdtLiveViews and the onCrdtJoined/JoinError control-
+					// plane) stays here because it touches plugin lifecycle, not keying.
+					const wiring = createCrdtWiring({
+						noteIdMap: this.noteIdMap,
+						syncEngine: this.syncEngine,
+						sendCrdt: (docId, frame) => channel.sendCrdt(docId, frame),
+						// Backed lazily: crdtLiveViews is constructed just below, so this
+						// closure must read the field at call time, not capture a value.
+						isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
 					});
-					this.crdtChannel = new CrdtChannel({
-						manager: this.crdtManager,
-						send: (docId, frame) => channel.sendCrdt(docId, frame),
-						// An inbound STEP2 that leaves the doc empty is the server's
-						// authoritative "genuinely empty note" signal — materialize the
-						// file off the handshake (not a timer) so a slow content STEP2 can
-						// never race a premature empty file onto disk (#547).
-						onEmptyStep2: (noteId) => {
-							const path = this.noteIdMap.pathForId(noteId);
-							if (!path) {
-								rlog().warn(
-									"crdt",
-									`onEmptyStep2: no known path for note_id=${noteId} — skipping materialize`,
-								);
-								return;
-							}
-							void this.syncEngine.materializeEmptyDiscovered(path, noteId);
-						},
-					});
-					// Enrollment tracker: calls startSync(noteId) exactly once per note
-					// per channel session so the state-vector handshake fires and the
-					// note pulls remote CRDT state (the down-sync gap). Reset on
-					// reconnect so a fresh handshake fires with updated server state.
-					this.crdtEnrollment = new CrdtEnrollment({
-						startSync: (noteId) =>
-							this.crdtChannel?.startSync(noteId) ?? Promise.resolve(),
-						resetSync: (noteId) => this.crdtChannel?.resetSync(noteId),
-						// After the handshake fires, compact any bloated docs. This is a
-						// no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
-						// so it is safe to run on every note open.
-						onAfterEnroll: async (noteId) => {
-							await this.crdtManager?.flattenIfBloated(noteId);
-						},
-					});
+					this.crdtWiring = wiring;
+					this.crdtManager = wiring.manager;
+					this.crdtEnrollment = wiring.enrollment;
 					// Level-triggered discovery: a pull that surfaces a CRDT-managed
 					// note we don't have locally enrolls it (sync-step-1), so the body
 					// arrives over the handshake. Backstops the edge-triggered
@@ -1622,54 +1527,12 @@ export default class EngramSyncPlugin extends Plugin {
 					// so repeated setupNoteStream() calls don't stack them. Trigger an
 					// initial refresh here so the new manager sees currently-open leaves.
 					this.crdtLiveViews.refresh();
-					// docId is now the bare note_id (no vault prefix to strip — Task 6),
-					// so it's forwarded to handleFrame directly.
-					channel.onCrdtMessage = (docId, b64) => {
-						void this.crdtChannel?.handleFrame(docId, b64);
-					};
-					// Discovery: when another device opens a room (server announces
-					// `crdt_doc_ready`), enroll the note here so a sync-step-1 fires and
-					// we pull the note even if we've never opened it. Without this a
-					// brand-new note created on device A is never observed on device B
-					// (B only observes rooms it itself sends a `crdt_msg` for), and the
-					// C1 guard suppresses the legacy note_changed discovery path.
-					// Backend #955: the server now tells us when a crdt_msg we sent was
-					// dropped for an unknown note_id — heal the id map immediately.
-					// Gate like the sibling onCrdtDocReady: ensureNoteIdMapped is NOT
-					// disk-write-free — the manifest reconcile it triggers ends with
-					// sweepPendingOrphans, which can trashFile. Never run that while
-					// the sync gate is closed (the user hasn't picked a direction);
-					// the drop re-fires on the next frame after the gate opens.
-					channel.onCrdtNoteNotFound = (docId) => {
-						if (this.syncEngine.isSyncBlocked()) return;
-						this.syncEngine.ensureNoteIdMapped(docId);
-					};
-					channel.onCrdtDocReady = (docId) => {
-						// Gate: while the sync gate is closed, skip enrollment entirely.
-						// Without this gate, STEP2 ops integrate into the Y.Doc but can
-						// never flush to disk. After gate-accept the re-handshake delivers
-						// zero new ops, so the absorbed content is never written — and the
-						// next restart's reconcileColdStart diffs the stale disk state into
-						// the doc, reverting the other device's edits everywhere. Gating
-						// here keeps gated-period state out of the doc entirely; the
-						// announce re-fires via pull discovery once the gate opens.
-						if (this.syncEngine.isSyncBlocked()) return;
-						// Live heal for the create-race: an announce naming an id the map
-						// cannot resolve means another writer owns this note under an
-						// identity we never learned — enrollment alone would sync a doc we
-						// can't flush (no path). Kick the coalesced manifest reconcile so
-						// the mapping lands now, not at the next cold start.
-						this.syncEngine.ensureNoteIdMapped(docId);
-						// Enroll → send our discovery STEP1. The server answers with a
-						// STEP2: a content STEP2 flushes the body via the update path; an
-						// EMPTY STEP2 (genuinely-empty note) is materialized off the
-						// handshake in CrdtChannel.onEmptyStep2. This replaces the former
-						// wall-clock materialize timer, which raced a slow content STEP2
-						// and wrote a premature empty file under load (#547). No path is
-						// needed here at all (Task 6) — docId IS the note_id, and enroll()
-						// no longer requires a path to start the handshake.
-						this.crdtEnrollment?.enroll(docId);
-					};
+					// Inbound frame + remote room-open discovery handlers (id->path
+					// resolution, enrollment gating, #955 note_not_found id-map heal)
+					// are built by createCrdtWiring.
+					channel.onCrdtMessage = wiring.onCrdtMessage;
+					channel.onCrdtDocReady = wiring.onCrdtDocReady;
+					channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
 					// backend this never fires and setCrdtManager stays null → every

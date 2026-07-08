@@ -38,10 +38,27 @@ beforeEach(() => {
 	lastWsInstance = null;
 });
 
+// sendCrdt is gated on the crdt: join being server-acked (see channel.ts) — open
+// the socket and deliver that ack before exercising sendCrdt, mirroring what a
+// real connection does before any CRDT frame can go out.
+function joinAndAckCrdt(): void {
+	lastWsInstance.onopen?.();
+	lastWsInstance.onmessage?.({
+		data: JSON.stringify([
+			"3",
+			"3",
+			"crdt:42:vault-1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]),
+	});
+}
+
 describe("outbound oversize frame warning", () => {
 	test("a frame over the threshold triggers a channel warn naming the event and size", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1", true);
 		await channel.connect();
+		joinAndAckCrdt();
 
 		const logger = rlog();
 		const warnSpy = spyOn(logger, "warn");
@@ -56,8 +73,8 @@ describe("outbound oversize frame warning", () => {
 		expect(message).toMatch(/bytes=\d+/);
 		expect(message.toLowerCase()).toContain("oversized");
 
-		// Observability only - the frame must still be sent.
-		expect(lastWsInstance.sent).toHaveLength(1);
+		// Observability only - the frame must still be sent (join frames + crdt_msg).
+		expect(lastWsInstance.sent).toHaveLength(4);
 
 		warnSpy.mockRestore();
 		channel.disconnect();
@@ -66,6 +83,7 @@ describe("outbound oversize frame warning", () => {
 	test("a small frame does NOT trigger a warn", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1", true);
 		await channel.connect();
+		joinAndAckCrdt();
 
 		const logger = rlog();
 		const warnSpy = spyOn(logger, "warn");
@@ -73,7 +91,7 @@ describe("outbound oversize frame warning", () => {
 		channel.sendCrdt("doc-1", "small-delta");
 
 		expect(warnSpy).not.toHaveBeenCalled();
-		expect(lastWsInstance.sent).toHaveLength(1);
+		expect(lastWsInstance.sent).toHaveLength(4);
 
 		warnSpy.mockRestore();
 		channel.disconnect();

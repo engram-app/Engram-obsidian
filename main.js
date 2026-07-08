@@ -1525,11 +1525,13 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   get crdtTopic() {
     return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
-  /** Send a CRDT update frame to the server on the crdt topic.
-   *  No-op when vaultId is null (crdt topic not joined). */
+  /** Send a CRDT update frame on the crdt topic.
+   *  Returns false without sending until the crdt: join is server-acked —
+   *  a frame with a stale/absent join_ref is silently dropped server-side
+   *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
   sendCrdt(docId, b64) {
     let t = this.crdtTopic;
-    t && this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]);
+    return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, await this.openSocket());
@@ -7831,6 +7833,9 @@ var BaseStore = class {
   }
 };
 
+// src/crdt/live/live-views.ts
+var import_obsidian22 = require("obsidian");
+
 // node_modules/lib0/math.js
 var floor = Math.floor;
 var abs = Math.abs;
@@ -7883,13 +7888,6 @@ var _encodeUtf8Polyfill = (str) => {
 var utf8TextDecoder = typeof TextDecoder == "undefined" ? null : new TextDecoder("utf-8", { fatal: !0, ignoreBOM: !0 });
 utf8TextDecoder && utf8TextDecoder.decode(new Uint8Array()).length === 1 && (utf8TextDecoder = null);
 var repeat = (source, n) => unfold(n, () => source).join("");
-
-// node_modules/lib0/error.js
-var create2 = (s) => new Error(s), methodUnimplemented = () => {
-  throw create2("Method unimplemented");
-}, unexpectedCase = () => {
-  throw create2("Unexpected case");
-};
 
 // node_modules/lib0/encoding.js
 var Encoder = class {
@@ -8068,6 +8066,13 @@ var flushIntDiffOptRleEncoder = (encoder) => {
   }
 };
 
+// node_modules/lib0/error.js
+var create2 = (s) => new Error(s), methodUnimplemented = () => {
+  throw create2("Method unimplemented");
+}, unexpectedCase = () => {
+  throw create2("Unexpected case");
+};
+
 // node_modules/lib0/decoding.js
 var errorUnexpectedEndOfArray = create2("Unexpected end of array"), errorIntegerOutOfRange = create2("Integer out of Range"), Decoder = class {
   /**
@@ -8235,6 +8240,9 @@ var IntDiffOptRleDecoder = class extends Decoder {
   }
 };
 
+// node_modules/lib0/time.js
+var getUnixTime = Date.now;
+
 // node_modules/lib0/map.js
 var create3 = () => /* @__PURE__ */ new Map(), copy = (m) => {
   let r = create3();
@@ -8364,55 +8372,6 @@ var ObservableV2 = class {
   }
 };
 
-// node_modules/lib0/webcrypto.js
-var subtle = crypto.subtle, getRandomValues = crypto.getRandomValues.bind(crypto);
-
-// node_modules/lib0/random.js
-var uint32 = () => getRandomValues(new Uint32Array(1))[0];
-var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Template.replace(
-  /[018]/g,
-  /** @param {number} c */
-  (c) => (c ^ uint32() & 15 >> c / 4).toString(16)
-);
-
-// node_modules/lib0/time.js
-var getUnixTime = Date.now;
-
-// node_modules/lib0/promise.js
-var create4 = (f) => (
-  /** @type {Promise<T>} */
-  new Promise(f)
-);
-var all = Promise.all.bind(Promise);
-
-// node_modules/lib0/conditions.js
-var undefinedToNull = (v) => v === void 0 ? null : v;
-
-// node_modules/lib0/storage.js
-var VarStoragePolyfill = class {
-  constructor() {
-    this.map = /* @__PURE__ */ new Map();
-  }
-  /**
-   * @param {string} key
-   * @param {any} newValue
-   */
-  setItem(key, newValue) {
-    this.map.set(key, newValue);
-  }
-  /**
-   * @param {string} key
-   */
-  getItem(key) {
-    return this.map.get(key);
-  }
-}, _localStorage = new VarStoragePolyfill(), usePolyfill = !0;
-try {
-  typeof localStorage != "undefined" && localStorage && (_localStorage = localStorage, usePolyfill = !1);
-} catch (e) {
-}
-var varStorage = _localStorage;
-
 // node_modules/lib0/trait/equality.js
 var EqualityTraitSymbol = /* @__PURE__ */ Symbol("Equality"), equals = (a, b) => {
   var _a;
@@ -8508,6 +8467,52 @@ var equalityDeep = (a, b) => {
   }
   return !0;
 }, isOneOf = (value, options) => options.includes(value);
+
+// node_modules/lib0/webcrypto.js
+var subtle = crypto.subtle, getRandomValues = crypto.getRandomValues.bind(crypto);
+
+// node_modules/lib0/random.js
+var uint32 = () => getRandomValues(new Uint32Array(1))[0];
+var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Template.replace(
+  /[018]/g,
+  /** @param {number} c */
+  (c) => (c ^ uint32() & 15 >> c / 4).toString(16)
+);
+
+// node_modules/lib0/promise.js
+var create4 = (f) => (
+  /** @type {Promise<T>} */
+  new Promise(f)
+);
+var all = Promise.all.bind(Promise);
+
+// node_modules/lib0/conditions.js
+var undefinedToNull = (v) => v === void 0 ? null : v;
+
+// node_modules/lib0/storage.js
+var VarStoragePolyfill = class {
+  constructor() {
+    this.map = /* @__PURE__ */ new Map();
+  }
+  /**
+   * @param {string} key
+   * @param {any} newValue
+   */
+  setItem(key, newValue) {
+    this.map.set(key, newValue);
+  }
+  /**
+   * @param {string} key
+   */
+  getItem(key) {
+    return this.map.get(key);
+  }
+}, _localStorage = new VarStoragePolyfill(), usePolyfill = !0;
+try {
+  typeof localStorage != "undefined" && localStorage && (_localStorage = localStorage, usePolyfill = !1);
+} catch (e) {
+}
+var varStorage = _localStorage;
 
 // node_modules/lib0/environment.js
 var isNode = typeof process != "undefined" && process.release && /node|io\.js/.test(process.release.name) && Object.prototype.toString.call(typeof process != "undefined" ? process : 0) === "[object process]";
@@ -14468,6 +14473,962 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
 glo[importIdentifier] === !0 && console.error("Yjs was already imported. This breaks constructor checks and will lead to issues! - https://github.com/yjs/yjs/issues/438");
 glo[importIdentifier] = !0;
 
+// node_modules/y-protocols/awareness.js
+var outdatedTimeout = 3e4, Awareness = class extends Observable {
+  /**
+   * @param {Y.Doc} doc
+   */
+  constructor(doc2) {
+    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
+    setInterval(() => {
+      let now = getUnixTime();
+      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
+      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
+      let remove = [];
+      this.meta.forEach((meta, clientid) => {
+        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
+      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
+    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
+      this.destroy();
+    }), this.setLocalState({});
+  }
+  destroy() {
+    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
+  }
+  /**
+   * @return {Object<string,any>|null}
+   */
+  getLocalState() {
+    return this.states.get(this.clientID) || null;
+  }
+  /**
+   * @param {Object<string,any>|null} state
+   */
+  setLocalState(state) {
+    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
+    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
+      clock,
+      lastUpdated: getUnixTime()
+    });
+    let added = [], updated = [], filteredUpdated = [], removed = [];
+    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
+  }
+  /**
+   * @param {string} field
+   * @param {any} value
+   */
+  setLocalStateField(field, value) {
+    let state = this.getLocalState();
+    state !== null && this.setLocalState({
+      ...state,
+      [field]: value
+    });
+  }
+  /**
+   * @return {Map<number,Object<string,any>>}
+   */
+  getStates() {
+    return this.states;
+  }
+}, removeAwarenessStates = (awareness, clients, origin) => {
+  let removed = [];
+  for (let i = 0; i < clients.length; i++) {
+    let clientID = clients[i];
+    if (awareness.states.has(clientID)) {
+      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
+        let curMeta = (
+          /** @type {MetaClientState} */
+          awareness.meta.get(clientID)
+        );
+        awareness.meta.set(clientID, {
+          clock: curMeta.clock + 1,
+          lastUpdated: getUnixTime()
+        });
+      }
+      removed.push(clientID);
+    }
+  }
+  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
+};
+
+// src/crdt/live/ycollab-binding.ts
+var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
+
+// node_modules/y-codemirror.next/src/index.js
+var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
+
+// node_modules/y-codemirror.next/src/y-range.js
+var YRange = class _YRange {
+  /**
+   * @param {Y.RelativePosition} yanchor
+   * @param {Y.RelativePosition} yhead
+   */
+  constructor(yanchor, yhead) {
+    this.yanchor = yanchor, this.yhead = yhead;
+  }
+  /**
+   * @returns {any}
+   */
+  toJSON() {
+    return {
+      yanchor: relativePositionToJSON(this.yanchor),
+      yhead: relativePositionToJSON(this.yhead)
+    };
+  }
+  /**
+   * @param {any} json
+   * @return {YRange}
+   */
+  static fromJSON(json) {
+    return new _YRange(createRelativePositionFromJSON(json.yanchor), createRelativePositionFromJSON(json.yhead));
+  }
+};
+
+// node_modules/y-codemirror.next/src/y-sync.js
+var cmState = __toESM(require("@codemirror/state"), 1), cmView = __toESM(require("@codemirror/view"), 1);
+var YSyncConfig = class {
+  constructor(ytext, awareness) {
+    this.ytext = ytext, this.awareness = awareness, this.undoManager = new UndoManager(ytext);
+  }
+  /**
+   * Helper function to transform an absolute index position to a Yjs-based relative position
+   * (https://docs.yjs.dev/api/relative-positions).
+   *
+   * A relative position can be transformed back to an absolute position even after the document has changed. The position is
+   * automatically adapted. This does not require any position transformations. Relative positions are computed based on
+   * the internal Yjs document model. Peers that share content through Yjs are guaranteed that their positions will always
+   * synced up when using relatve positions.
+   *
+   * ```js
+   * import { ySyncFacet } from 'y-codemirror'
+   *
+   * ..
+   * const ysync = view.state.facet(ySyncFacet)
+   * // transform an absolute index position to a ypos
+   * const ypos = ysync.getYPos(3)
+   * // transform the ypos back to an absolute position
+   * ysync.fromYPos(ypos) // => 3
+   * ```
+   *
+   * It cannot be guaranteed that absolute index positions can be synced up between peers.
+   * This might lead to undesired behavior when implementing features that require that all peers see the
+   * same marked range (e.g. a comment plugin).
+   *
+   * @param {number} pos
+   * @param {number} [assoc]
+   */
+  toYPos(pos, assoc = 0) {
+    return createRelativePositionFromTypeIndex(this.ytext, pos, assoc);
+  }
+  /**
+   * @param {Y.RelativePosition | Object} rpos
+   */
+  fromYPos(rpos) {
+    let pos = createAbsolutePositionFromRelativePosition(createRelativePositionFromJSON(rpos), this.ytext.doc);
+    if (pos == null || pos.type !== this.ytext)
+      throw new Error("[y-codemirror] The position you want to retrieve was created by a different document");
+    return {
+      pos: pos.index,
+      assoc: pos.assoc
+    };
+  }
+  /**
+   * @param {cmState.SelectionRange} range
+   * @return {YRange}
+   */
+  toYRange(range) {
+    let assoc = range.assoc, yanchor = this.toYPos(range.anchor, assoc), yhead = this.toYPos(range.head, assoc);
+    return new YRange(yanchor, yhead);
+  }
+  /**
+   * @param {YRange} yrange
+   */
+  fromYRange(yrange) {
+    let anchor = this.fromYPos(yrange.yanchor), head = this.fromYPos(yrange.yhead);
+    return anchor.pos === head.pos ? cmState.EditorSelection.cursor(head.pos, head.assoc) : cmState.EditorSelection.range(anchor.pos, head.pos);
+  }
+}, ySyncFacet = cmState.Facet.define({
+  combine(inputs) {
+    return inputs[inputs.length - 1];
+  }
+}), ySyncAnnotation = cmState.Annotation.define(), YSyncPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.view = view, this.conf = view.state.facet(ySyncFacet), this._observer = (event, tr) => {
+      if (tr.origin !== this.conf) {
+        let delta = event.delta, changes = [], pos = 0;
+        for (let i = 0; i < delta.length; i++) {
+          let d = delta[i];
+          d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : pos += d.retain;
+        }
+        view.dispatch({ changes, annotations: [ySyncAnnotation.of(this.conf)] });
+      }
+    }, this._ytext = this.conf.ytext, this._ytext.observe(this._observer);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    if (!update.docChanged || update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.conf)
+      return;
+    let ytext = this.conf.ytext;
+    ytext.doc.transact(() => {
+      let adj = 0;
+      update.changes.iterChanges((fromA, toA, fromB, toB, insert) => {
+        let insertText2 = insert.sliceString(0, insert.length, `
+`);
+        fromA !== toA && ytext.delete(fromA + adj, toA - fromA), insertText2.length > 0 && ytext.insert(fromA + adj, insertText2), adj += insertText2.length - (toA - fromA);
+      });
+    }, this.conf);
+  }
+  destroy() {
+    this._ytext.unobserve(this._observer);
+  }
+}, ySync = cmView.ViewPlugin.fromClass(YSyncPluginValue);
+
+// node_modules/y-codemirror.next/src/y-remote-selections.js
+var cmView2 = __toESM(require("@codemirror/view"), 1), cmState2 = __toESM(require("@codemirror/state"), 1);
+var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
+  ".cm-ySelection": {},
+  ".cm-yLineSelection": {
+    padding: 0,
+    margin: "0px 2px 0px 4px"
+  },
+  ".cm-ySelectionCaret": {
+    position: "relative",
+    borderLeft: "1px solid black",
+    borderRight: "1px solid black",
+    marginLeft: "-1px",
+    marginRight: "-1px",
+    boxSizing: "border-box",
+    display: "inline"
+  },
+  ".cm-ySelectionCaretDot": {
+    borderRadius: "50%",
+    position: "absolute",
+    width: ".4em",
+    height: ".4em",
+    top: "-.2em",
+    left: "-.2em",
+    backgroundColor: "inherit",
+    transition: "transform .3s ease-in-out",
+    boxSizing: "border-box"
+  },
+  ".cm-ySelectionCaret:hover > .cm-ySelectionCaretDot": {
+    transformOrigin: "bottom center",
+    transform: "scale(0)"
+  },
+  ".cm-ySelectionInfo": {
+    position: "absolute",
+    top: "-1.05em",
+    left: "-1px",
+    fontSize: ".75em",
+    fontFamily: "serif",
+    fontStyle: "normal",
+    fontWeight: "normal",
+    lineHeight: "normal",
+    userSelect: "none",
+    color: "white",
+    paddingLeft: "2px",
+    paddingRight: "2px",
+    zIndex: 101,
+    transition: "opacity .3s ease-in-out",
+    backgroundColor: "inherit",
+    // these should be separate
+    opacity: 0,
+    transitionDelay: "0s",
+    whiteSpace: "nowrap"
+  },
+  ".cm-ySelectionCaret:hover > .cm-ySelectionInfo": {
+    opacity: 1,
+    transitionDelay: "0s"
+  }
+}), yRemoteSelectionsAnnotation = cmState2.Annotation.define(), YRemoteCaretWidget = class extends cmView2.WidgetType {
+  /**
+   * @param {string} color
+   * @param {string} name
+   */
+  constructor(color, name) {
+    super(), this.color = color, this.name = name;
+  }
+  toDOM() {
+    return (
+      /** @type {HTMLElement} */
+      element("span", [create5("class", "cm-ySelectionCaret"), create5("style", `background-color: ${this.color}; border-color: ${this.color}`)], [
+        text("\u2060"),
+        element("div", [
+          create5("class", "cm-ySelectionCaretDot")
+        ]),
+        text("\u2060"),
+        element("div", [
+          create5("class", "cm-ySelectionInfo")
+        ], [
+          text(this.name)
+        ]),
+        text("\u2060")
+      ])
+    );
+  }
+  eq(widget) {
+    return widget.color === this.color;
+  }
+  compare(widget) {
+    return widget.color === this.color;
+  }
+  updateDOM() {
+    return !1;
+  }
+  get estimatedHeight() {
+    return -1;
+  }
+  ignoreEvent() {
+    return !0;
+  }
+}, YRemoteSelectionsPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.conf = view.state.facet(ySyncFacet), this._listener = ({ added, updated, removed }, s, t) => {
+      added.concat(updated).concat(removed).findIndex((id2) => id2 !== this.conf.awareness.doc.clientID) >= 0 && view.dispatch({ annotations: [yRemoteSelectionsAnnotation.of([])] });
+    }, this._awareness = this.conf.awareness, this._awareness.on("change", this._listener), this.decorations = cmState2.RangeSet.of([]);
+  }
+  destroy() {
+    this._awareness.off("change", this._listener);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    let ytext = this.conf.ytext, ydoc = (
+      /** @type {Y.Doc} */
+      ytext.doc
+    ), awareness = this.conf.awareness, decorations = [], localAwarenessState = this.conf.awareness.getLocalState();
+    if (localAwarenessState != null) {
+      let hasFocus = update.view.hasFocus && update.view.dom.ownerDocument.hasFocus(), sel = hasFocus ? update.state.selection.main : null, currentAnchor = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.anchor), currentHead = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.head);
+      if (sel != null) {
+        let anchor = createRelativePositionFromTypeIndex(ytext, sel.anchor), head = createRelativePositionFromTypeIndex(ytext, sel.head);
+        (localAwarenessState.cursor == null || !compareRelativePositions(currentAnchor, anchor) || !compareRelativePositions(currentHead, head)) && awareness.setLocalStateField("cursor", {
+          anchor,
+          head
+        });
+      } else localAwarenessState.cursor != null && hasFocus && awareness.setLocalStateField("cursor", null);
+    }
+    awareness.getStates().forEach((state, clientid) => {
+      if (clientid === awareness.doc.clientID)
+        return;
+      let cursor = state.cursor;
+      if (cursor == null || cursor.anchor == null || cursor.head == null)
+        return;
+      let anchor = createAbsolutePositionFromRelativePosition(cursor.anchor, ydoc), head = createAbsolutePositionFromRelativePosition(cursor.head, ydoc);
+      if (anchor == null || head == null || anchor.type !== ytext || head.type !== ytext)
+        return;
+      let { color = "#30bced", name = "Anonymous" } = state.user || {}, colorLight = state.user && state.user.colorLight || color + "33", start = min(anchor.index, head.index), end = max(anchor.index, head.index), startLine = update.view.state.doc.lineAt(start), endLine = update.view.state.doc.lineAt(end);
+      if (startLine.number === endLine.number)
+        decorations.push({
+          from: start,
+          to: end,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        });
+      else {
+        decorations.push({
+          from: start,
+          to: startLine.from + startLine.length,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        }), decorations.push({
+          from: endLine.from,
+          to: end,
+          value: cmView2.Decoration.mark({
+            attributes: { style: `background-color: ${colorLight}` },
+            class: "cm-ySelection"
+          })
+        });
+        for (let i = startLine.number + 1; i < endLine.number; i++) {
+          let linePos = update.view.state.doc.line(i).from;
+          decorations.push({
+            from: linePos,
+            to: linePos,
+            value: cmView2.Decoration.line({
+              attributes: { style: `background-color: ${colorLight}`, class: "cm-yLineSelection" }
+            })
+          });
+        }
+      }
+      decorations.push({
+        from: head.index,
+        to: head.index,
+        value: cmView2.Decoration.widget({
+          side: head.index - anchor.index > 0 ? -1 : 1,
+          // the local cursor should be rendered outside the remote selection
+          block: !1,
+          widget: new YRemoteCaretWidget(color, name)
+        })
+      });
+    }), this.decorations = cmView2.Decoration.set(decorations, !0);
+  }
+}, yRemoteSelections = cmView2.ViewPlugin.fromClass(YRemoteSelectionsPluginValue, {
+  decorations: (v) => v.decorations
+});
+
+// node_modules/y-codemirror.next/src/y-undomanager.js
+var cmState3 = __toESM(require("@codemirror/state"), 1), cmView3 = __toESM(require("@codemirror/view"), 1);
+
+// node_modules/lib0/mutex.js
+var createMutex = () => {
+  let token = !0;
+  return (f, g) => {
+    if (token) {
+      token = !1;
+      try {
+        f();
+      } finally {
+        token = !0;
+      }
+    } else g !== void 0 && g();
+  };
+};
+
+// node_modules/y-codemirror.next/src/y-undomanager.js
+var YUndoManagerConfig = class {
+  /**
+   * @param {Y.UndoManager} undoManager
+   */
+  constructor(undoManager) {
+    this.undoManager = undoManager;
+  }
+  /**
+   * @param {any} origin
+   */
+  addTrackedOrigin(origin) {
+    this.undoManager.addTrackedOrigin(origin);
+  }
+  /**
+   * @param {any} origin
+   */
+  removeTrackedOrigin(origin) {
+    this.undoManager.removeTrackedOrigin(origin);
+  }
+  /**
+   * @return {boolean} Whether a change was undone.
+   */
+  undo() {
+    return this.undoManager.undo() != null;
+  }
+  /**
+   * @return {boolean} Whether a change was redone.
+   */
+  redo() {
+    return this.undoManager.redo() != null;
+  }
+}, yUndoManagerFacet = cmState3.Facet.define({
+  combine(inputs) {
+    return inputs[inputs.length - 1];
+  }
+}), yUndoManagerAnnotation = cmState3.Annotation.define(), YUndoManagerPluginValue = class {
+  /**
+   * @param {cmView.EditorView} view
+   */
+  constructor(view) {
+    this.view = view, this.conf = view.state.facet(yUndoManagerFacet), this._undoManager = this.conf.undoManager, this.syncConf = view.state.facet(ySyncFacet), this._beforeChangeSelection = null, this._mux = createMutex(), this._onStackItemAdded = ({ stackItem, changedParentTypes }) => {
+      changedParentTypes.has(this.syncConf.ytext) && this._beforeChangeSelection && !stackItem.meta.has(this) && stackItem.meta.set(this, this._beforeChangeSelection);
+    }, this._onStackItemPopped = ({ stackItem }) => {
+      let sel = stackItem.meta.get(this);
+      if (sel) {
+        let selection = this.syncConf.fromYRange(sel);
+        view.dispatch(view.state.update({
+          selection,
+          effects: [cmView3.EditorView.scrollIntoView(selection)]
+        })), this._storeSelection();
+      }
+    }, this._storeSelection = () => {
+      this._beforeChangeSelection = this.syncConf.toYRange(this.view.state.selection.main);
+    }, this._undoManager.on("stack-item-added", this._onStackItemAdded), this._undoManager.on("stack-item-popped", this._onStackItemPopped), this._undoManager.addTrackedOrigin(this.syncConf);
+  }
+  /**
+   * @param {cmView.ViewUpdate} update
+   */
+  update(update) {
+    update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(ySyncAnnotation) !== this.syncConf) && this._storeSelection();
+  }
+  destroy() {
+    this._undoManager.off("stack-item-added", this._onStackItemAdded), this._undoManager.off("stack-item-popped", this._onStackItemPopped), this._undoManager.removeTrackedOrigin(this.syncConf);
+  }
+}, yUndoManager = cmView3.ViewPlugin.fromClass(YUndoManagerPluginValue), undo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).undo() || !0, redo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).redo() || !0;
+var yUndoManagerKeymap = [
+  { key: "Mod-z", run: undo, preventDefault: !0 },
+  { key: "Mod-y", mac: "Mod-Shift-z", run: redo, preventDefault: !0 },
+  { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
+];
+
+// node_modules/y-codemirror.next/src/index.js
+var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
+  let ySyncConfig = new YSyncConfig(ytext, awareness), plugins = [
+    ySyncFacet.of(ySyncConfig),
+    ySync
+  ];
+  return awareness && plugins.push(
+    yRemoteSelectionsTheme,
+    yRemoteSelections
+  ), undoManager !== !1 && plugins.push(
+    yUndoManagerFacet.of(new YUndoManagerConfig(undoManager)),
+    yUndoManager,
+    cmView4.EditorView.domEventHandlers({
+      beforeinput(e, view) {
+        return e.inputType === "historyUndo" ? undo(view) : e.inputType === "historyRedo" ? redo(view) : !1;
+      }
+    })
+  ), plugins;
+};
+
+// src/crdt/live/cm-yjs-bridge.ts
+var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
+function textDiffToChangeSpec(before, after) {
+  if (before === after) return [];
+  let diffs = dmp2.diff_main(before, after);
+  dmp2.diff_cleanupSemantic(diffs);
+  let changes = [], cursor = 0;
+  for (let [op, data] of diffs)
+    op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
+  return changes;
+}
+
+// src/crdt/live/ycollab-binding.ts
+var crdtCompartment = new import_state.Compartment();
+function ycollabExtension() {
+  return crdtCompartment.of([]);
+}
+function makeSyncAnnotationCapture(onCapture) {
+  let captured = !1;
+  return import_view.EditorView.updateListener.of((update) => {
+    if (!captured)
+      for (let tr of update.transactions) {
+        let rawAnnotations = tr.annotations;
+        if (rawAnnotations) {
+          for (let ann of rawAnnotations)
+            if (ann.value instanceof YSyncConfig) {
+              captured = !0, onCapture({ type: ann.type, conf: ann.value });
+              return;
+            }
+        }
+      }
+  });
+}
+function rerouteUndoFilter(router) {
+  return import_state.EditorState.transactionFilter.of((tr) => tr.isUserEvent("undo") ? (queueMicrotask(() => router.undo()), []) : tr.isUserEvent("redo") ? (queueMicrotask(() => router.redo()), []) : tr);
+}
+function handleUndoBeforeInput(inputType, router) {
+  return inputType === "historyUndo" ? (router.undo(), !0) : inputType === "historyRedo" ? (router.redo(), !0) : !1;
+}
+function bindSpec(ytext, awareness) {
+  let undoManager = new UndoManager(ytext, {
+    trackedOrigins: /* @__PURE__ */ new Set()
+  }), capturedAnnotation = null, captureExt = makeSyncAnnotationCapture((captured) => {
+    capturedAnnotation = captured;
+  }), ycollabExt = yCollab(ytext, awareness, { undoManager }), router = {
+    undo: () => undoManager.undo(),
+    redo: () => undoManager.redo()
+  }, beforeInputHandler = import_state.Prec.highest(
+    import_view.EditorView.domEventHandlers({
+      beforeinput(e) {
+        return handleUndoBeforeInput(e.inputType, router) ? (e.preventDefault(), !0) : !1;
+      }
+    })
+  );
+  return {
+    extension: [
+      captureExt,
+      ycollabExt,
+      // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
+      // Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
+      // native history does not also fire on the keyboard path.
+      import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap)),
+      beforeInputHandler,
+      // Layer 3: catch any native-history transaction that beat Layers 1-2.
+      rerouteUndoFilter(router)
+    ],
+    getSyncAnnotation: () => capturedAnnotation
+  };
+}
+function reconcileEditorToYText(currentDoc, ytext) {
+  return textDiffToChangeSpec(currentDoc, ytext.toJSON());
+}
+
+// src/crdt/live/editor-controller.ts
+var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
+  constructor(deps) {
+    this.viewId = `cm-${seq++}`;
+    this.path = null;
+    /** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
+     *  getYText. Once released, the controller is permanently inert: refresh()
+     *  drops it from the map and mints a fresh one on next refresh. */
+    this.released = !1;
+    /** Monotonic bind counter; a bindTo whose epoch is stale after its await
+     *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
+    this.bindEpoch = 0;
+    this.bindResult = null;
+    this.boundYtext = null;
+    this.driftTimer = null;
+    this.deps = deps;
+  }
+  currentPath() {
+    return this.path;
+  }
+  async bindTo(view, path) {
+    if (this.path === path) return;
+    this.detach(view);
+    let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
+    if (this.released || epoch !== this.bindEpoch) return;
+    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
+    view.dispatch({
+      changes,
+      effects: crdtCompartment.reconfigure(result.extension)
+    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+  }
+  release(view) {
+    this.released = !0, this.detach(view);
+  }
+  /** Clears the active binding NOW: compartment emptied, refcount released,
+   *  drift timer stopped. Unlike release(), the controller stays usable so
+   *  bindTo can re-bind the same view to a new path. */
+  detach(view) {
+    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+  }
+  clearDriftTimer() {
+    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
+  }
+  scheduleDriftCheck(view) {
+    var _a;
+    this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
+      this.driftTimer = null, this.runDriftCheck(view);
+    }, (_a = this.deps.driftIntervalMs) != null ? _a : DRIFT_CHECK_INTERVAL_MS);
+  }
+  runDriftCheck(view) {
+    var _a, _b;
+    if (this.released || this.boundYtext === null || this.bindResult === null) return;
+    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
+    if (shown !== void 0 && shown !== this.path) {
+      this.detach(view);
+      return;
+    }
+    let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
+    if (changes.length > 0) {
+      let captured = this.bindResult.getSyncAnnotation();
+      captured !== null && view.dispatch({
+        changes,
+        annotations: [captured.type.of(captured.conf)]
+      });
+    }
+    this.scheduleDriftCheck(view);
+  }
+};
+
+// src/crdt/bridge.ts
+var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp3 = new import_diff_match_patch3.diff_match_patch();
+function seedOnce(text2, disk, hasLca) {
+  if (hasLca) return !1;
+  let current = text2.toJSON();
+  return current === disk || current.length > 0 ? !1 : (text2.insert(0, disk), !0);
+}
+function diffIntoYText(text2, incoming) {
+  let current = text2.toJSON();
+  if (current === incoming) return;
+  let diffs = dmp3.diff_main(current, incoming);
+  dmp3.diff_cleanupSemantic(diffs);
+  let cursor = 0;
+  for (let [op, data] of diffs)
+    op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
+}
+
+// src/crdt/live/obsidian-internals.ts
+function getEditorViewForLeaf(view) {
+  var _a;
+  let cm = (_a = view == null ? void 0 : view.editor) == null ? void 0 : _a.cm;
+  return cm && typeof cm.dispatch == "function" ? cm : null;
+}
+function getMarkdownFilePath(view) {
+  var _a;
+  let path = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
+  return typeof path == "string" ? path : null;
+}
+function setPreviewRendered(view, text2) {
+  var _a, _b;
+  let pm = view == null ? void 0 : view.previewMode;
+  if (!(pm != null && pm.renderer) || typeof pm.renderer.set != "function") return !1;
+  try {
+    return pm.renderer.set(text2), (_a = view == null ? void 0 : view.editor) != null && _a.cm || (_b = view.onInternalDataChange) == null || _b.call(view), !0;
+  } catch (e) {
+    return !1;
+  }
+}
+function patchFrontmatterSave(view, onSave) {
+  let v = view;
+  if (typeof v.saveFrontmatter != "function") return null;
+  let original = v.saveFrontmatter.bind(v);
+  return v.saveFrontmatter = (...args2) => {
+    let result = original(...args2);
+    try {
+      typeof v.text == "string" && onSave(v.text);
+    } catch (e) {
+    }
+    return result;
+  }, () => {
+    v.saveFrontmatter = original;
+  };
+}
+
+// src/crdt/live/frontmatter-hook.ts
+var CrdtFrontmatterHook = class {
+  constructor(deps) {
+    this.uninstallers = /* @__PURE__ */ new WeakMap();
+    /** Strong-reference set so detachAll() can iterate all attached views.
+     *  The WeakMap alone is not iterable. */
+    this.attached = /* @__PURE__ */ new Set();
+    this.deps = deps;
+  }
+  attach(view) {
+    if (typeof view != "object" || view === null || this.uninstallers.has(view)) return;
+    let path = this.deps.getPath(view);
+    if (!path) return;
+    let uninstall = patchFrontmatterSave(view, (newText) => {
+      this.deps.getYText(path).then((ytext) => {
+        diffIntoYText(ytext, newText);
+      }).catch(
+        (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
+      );
+    });
+    if (!uninstall) {
+      rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
+      return;
+    }
+    this.uninstallers.set(view, uninstall), this.attached.add(view);
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let uninstall = this.uninstallers.get(view);
+    uninstall && (uninstall(), this.uninstallers.delete(view), this.attached.delete(view));
+  }
+  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
+  detachAll() {
+    for (let view of this.attached)
+      this.detach(view);
+    this.attached.clear();
+  }
+};
+
+// src/crdt/live/reading-view.ts
+var CrdtReadingView = class {
+  constructor(deps) {
+    this.observers = /* @__PURE__ */ new WeakMap();
+    /** Strong-reference set so detachAll() can iterate all attached views.
+     *  The WeakMap alone is not iterable. */
+    this.attached = /* @__PURE__ */ new Set();
+    this.deps = deps;
+  }
+  async attach(view, path) {
+    if (typeof view != "object" || view === null || this.observers.has(view)) return;
+    this.observers.set(view, () => {
+    }), this.attached.add(view);
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
+    if (!ytext) return;
+    let handler = () => {
+      this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
+    };
+    ytext.observe(handler), this.observers.set(view, () => ytext.unobserve(handler));
+  }
+  detach(view) {
+    if (typeof view != "object" || view === null) return;
+    let off = this.observers.get(view);
+    off && (off(), this.observers.delete(view), this.attached.delete(view));
+  }
+  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
+  detachAll() {
+    for (let view of this.attached)
+      this.detach(view);
+    this.attached.clear();
+  }
+};
+
+// src/crdt/live/live-views.ts
+var ViewerRefcount = class {
+  constructor(onLastRelease) {
+    this.viewers = /* @__PURE__ */ new Map();
+    this.onLastRelease = onLastRelease;
+  }
+  bind(path, viewId) {
+    let set2 = this.viewers.get(path);
+    set2 || (set2 = /* @__PURE__ */ new Set(), this.viewers.set(path, set2)), set2.add(viewId);
+  }
+  release(path, viewId) {
+    let set2 = this.viewers.get(path);
+    !set2 || !set2.has(viewId) || (set2.delete(viewId), set2.size === 0 && (this.viewers.delete(path), this.onLastRelease(path)));
+  }
+  isBound(path) {
+    var _a, _b;
+    return ((_b = (_a = this.viewers.get(path)) == null ? void 0 : _a.size) != null ? _b : 0) > 0;
+  }
+  /** Returns all paths that currently have at least one active viewer. */
+  boundPaths() {
+    return [...this.viewers.keys()];
+  }
+}, CrdtLiveViews = class {
+  constructor(deps) {
+    /** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
+    this.awarenessDoc = new Doc();
+    /** Single local-only awareness instance shared across all editor controllers. */
+    this.localAwareness = new Awareness(this.awarenessDoc);
+    /** One EditorController per live CodeMirror EditorView. */
+    this.controllers = /* @__PURE__ */ new Map();
+    this.deps = deps, this.refcount = new ViewerRefcount((path) => {
+      let noteId = this.deps.resolveId(path);
+      this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
+    }), this.frontmatter = new CrdtFrontmatterHook({
+      getPath: (v) => getMarkdownFilePath(v),
+      getYText: (path) => this.getYText(path)
+    }), this.reading = new CrdtReadingView({
+      getYText: (path) => this.getYText(path),
+      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
+    });
+  }
+  isBound(path) {
+    return this.refcount.isBound(path);
+  }
+  /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
+   *  (minting if needed) the note_id that actually keys the doc (Task 6). */
+  async getYText(path) {
+    let noteId = this.deps.resolveId(path);
+    return (await this.deps.manager.getDoc(noteId)).getText("content");
+  }
+  /** Re-evaluate open markdown leaves: bind each editor's controller to its
+   *  current path; release and drop controllers whose editor is gone.
+   *  Detaches frontmatter + reading hooks for views whose path changed before
+   *  re-attaching, so the idempotency guard does not block the rebind. */
+  refresh() {
+    let seen = /* @__PURE__ */ new Set();
+    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
+      let path = getMarkdownFilePath(view);
+      if (!path || !path.endsWith(".md")) continue;
+      let cm = getEditorViewForLeaf(view);
+      if (!cm) continue;
+      seen.add(cm);
+      let ctrl = this.controllers.get(cm);
+      ctrl || (ctrl = new EditorController({
+        getYText: (p) => this.getYText(p),
+        awareness: () => this.localAwareness,
+        onBind: (p, id2) => this.refcount.bind(p, id2),
+        onRelease: (p, id2) => this.refcount.release(p, id2),
+        // The MdView owning this cm is stable for the cm's lifetime, but the
+        // FILE it displays is not (Obsidian reuses views across note
+        // switches) — this closure always reports the currently shown file.
+        viewPath: () => getMarkdownFilePath(view)
+      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+    }
+    for (let [cm, ctrl] of this.controllers)
+      seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
+  }
+  destroy() {
+    for (let [cm, ctrl] of this.controllers)
+      ctrl.release(cm);
+    this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
+    for (let path of this.refcount.boundPaths()) {
+      let noteId = this.deps.resolveId(path);
+      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
+    }
+  }
+};
+
+// src/crdt/note-id-map.ts
+function isValidPath(path) {
+  return !!path && path !== "null" && path !== "undefined";
+}
+var NoteIdMap = class _NoteIdMap {
+  constructor() {
+    this.byPath = /* @__PURE__ */ new Map();
+    /** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
+    this.byId = /* @__PURE__ */ new Map();
+  }
+  get(path) {
+    var _a;
+    return (_a = this.byPath.get(path)) != null ? _a : null;
+  }
+  /** Resolve `path`'s id, minting + storing a fresh UUIDv7 if this is the
+   *  first time this path has been seen. Centralizes the mint-or-reuse
+   *  pattern (previously inlined separately in pushFile and duplicated for
+   *  the live-editor binding), so a concurrent "first touch" from either
+   *  seam (first save vs. first open) always converges on one id. */
+  getOrMint(path) {
+    if (!isValidPath(path))
+      throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
+    let existing = this.get(path);
+    if (existing) return existing;
+    let id2 = uuid7();
+    return this.set(path, id2), id2;
+  }
+  /** Reverse lookup: the path last known to correspond to `id`, or null if
+   *  this device has never learned/minted a mapping for it (e.g. a
+   *  `crdt_doc_ready` announce for a note created on another device that
+   *  hasn't reached this device via a regular sync pull yet). */
+  pathForId(id2) {
+    var _a;
+    return (_a = this.byId.get(id2)) != null ? _a : null;
+  }
+  set(path, id2) {
+    if (!isValidPath(path) || !id2) return;
+    let oldId = this.byPath.get(path);
+    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId);
+    let oldPath = this.byId.get(id2);
+    oldPath !== void 0 && oldPath !== path && this.byPath.delete(oldPath), this.byPath.set(path, id2), this.byId.set(id2, path);
+  }
+  delete(path) {
+    let id2 = this.byPath.get(path);
+    id2 !== void 0 && this.byId.delete(id2), this.byPath.delete(path);
+  }
+  rename(oldPath, newPath) {
+    let id2 = this.byPath.get(oldPath);
+    if (id2 === void 0) return;
+    let displacedId = this.byPath.get(newPath);
+    displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
+  }
+  /** Drop every mapping. Used on vault change: the map is per-vault identity
+   *  state — carrying ids across vaults routes CRDT frames to another
+   *  vault's notes (plugin #200). Mutates in place so every holder of the
+   *  instance (main, sync engine, live views) sees the wipe. */
+  clear() {
+    this.byPath.clear(), this.byId.clear();
+  }
+  toJSON() {
+    return Object.fromEntries(this.byPath);
+  }
+  static fromJSON(o) {
+    let m = new _NoteIdMap();
+    for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
+    return m;
+  }
+};
+
+// src/crdt/schema.ts
+async function ensureDocSchema(vaultId, storage, dbs) {
+  let markerKey = `engram-crdt-doc-schema/${vaultId}`;
+  if (storage.getItem(markerKey) === "2")
+    return !1;
+  let allDbs = await dbs.list(), prefix = `${vaultId}/`, dbsToWipe = allDbs.filter((db) => {
+    var _a, _b;
+    return (_b = (_a = db.name) == null ? void 0 : _a.startsWith(prefix)) != null ? _b : !1;
+  }).map((db) => db.name);
+  for (let name of dbsToWipe)
+    await dbs.drop(name);
+  return storage.setItem(markerKey, "2"), !0;
+}
+
 // node_modules/y-protocols/sync.js
 var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
   writeVarUint(encoder, messageYjsSyncStep1);
@@ -14640,23 +15601,6 @@ var IndexeddbPersistence = class extends Observable {
     });
   }
 };
-
-// src/crdt/bridge.ts
-var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
-function seedOnce(text2, disk, hasLca) {
-  if (hasLca) return !1;
-  let current = text2.toJSON();
-  return current === disk || current.length > 0 ? !1 : (text2.insert(0, disk), !0);
-}
-function diffIntoYText(text2, incoming) {
-  let current = text2.toJSON();
-  if (current === incoming) return;
-  let diffs = dmp2.diff_main(current, incoming);
-  dmp2.diff_cleanupSemantic(diffs);
-  let cursor = 0;
-  for (let [op, data] of diffs)
-    op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
-}
 
 // node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = /* @__PURE__ */ Symbol.for("yaml.alias"), DOC = /* @__PURE__ */ Symbol.for("yaml.document"), MAP = /* @__PURE__ */ Symbol.for("yaml.map"), PAIR = /* @__PURE__ */ Symbol.for("yaml.pair"), SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar"), SEQ = /* @__PURE__ */ Symbol.for("yaml.seq"), NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type"), isAlias = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === ALIAS, isDocument = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === DOC, isMap = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === MAP, isPair = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === PAIR, isScalar = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SCALAR, isSeq = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SEQ;
@@ -16159,7 +17103,7 @@ function asItemIndex(key) {
 }
 
 // node_modules/yaml/browser/dist/schema/common/seq.js
-var seq = {
+var seq2 = {
   collection: "seq",
   default: !0,
   nodeClass: YAMLSeq,
@@ -16292,7 +17236,7 @@ var intOct = {
 // node_modules/yaml/browser/dist/schema/core/schema.js
 var schema = [
   map2,
-  seq,
+  seq2,
   string,
   nullTag,
   boolTag,
@@ -16356,7 +17300,7 @@ var stringifyJSON = ({ value }) => JSON.stringify(value), jsonScalars = [
   resolve(str, onError) {
     return onError(`Unresolved plain scalar ${JSON.stringify(str)}`), str;
   }
-}, schema2 = [map2, seq].concat(jsonScalars, jsonError);
+}, schema2 = [map2, seq2].concat(jsonScalars, jsonError);
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
 var binary = {
@@ -16742,7 +17686,7 @@ var intTime = {
 // node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
 var schema3 = [
   map2,
-  seq,
+  seq2,
   string,
   nullTag,
   trueTag,
@@ -16767,7 +17711,7 @@ var schema3 = [
 // node_modules/yaml/browser/dist/schema/tags.js
 var schemas = /* @__PURE__ */ new Map([
   ["core", schema],
-  ["failsafe", [map2, seq, string]],
+  ["failsafe", [map2, seq2, string]],
   ["json", schema2],
   ["yaml11", schema3],
   ["yaml-1.1", schema3]
@@ -16787,7 +17731,7 @@ var schemas = /* @__PURE__ */ new Map([
   null: nullTag,
   omap,
   pairs,
-  seq,
+  seq: seq2,
   set,
   timestamp
 }, coreKnownTags = {
@@ -16827,7 +17771,7 @@ function getTags(customTags, schemaName, addMergeTag) {
 // node_modules/yaml/browser/dist/schema/Schema.js
 var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, Schema2 = class _Schema {
   constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
-    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
+    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq2 }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
   }
   clone() {
     let copy2 = Object.create(_Schema.prototype, Object.getOwnPropertyDescriptors(this));
@@ -19830,946 +20774,104 @@ var CrdtEnrollment = class {
   }
 };
 
-// src/crdt/live/live-views.ts
-var import_obsidian22 = require("obsidian");
-
-// node_modules/y-protocols/awareness.js
-var outdatedTimeout = 3e4, Awareness = class extends Observable {
-  /**
-   * @param {Y.Doc} doc
-   */
-  constructor(doc2) {
-    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
-    setInterval(() => {
-      let now = getUnixTime();
-      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
-      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
-      let remove = [];
-      this.meta.forEach((meta, clientid) => {
-        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
-      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
-    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
-      this.destroy();
-    }), this.setLocalState({});
-  }
-  destroy() {
-    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
-  }
-  /**
-   * @return {Object<string,any>|null}
-   */
-  getLocalState() {
-    return this.states.get(this.clientID) || null;
-  }
-  /**
-   * @param {Object<string,any>|null} state
-   */
-  setLocalState(state) {
-    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
-    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
-      clock,
-      lastUpdated: getUnixTime()
-    });
-    let added = [], updated = [], filteredUpdated = [], removed = [];
-    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
-  }
-  /**
-   * @param {string} field
-   * @param {any} value
-   */
-  setLocalStateField(field, value) {
-    let state = this.getLocalState();
-    state !== null && this.setLocalState({
-      ...state,
-      [field]: value
-    });
-  }
-  /**
-   * @return {Map<number,Object<string,any>>}
-   */
-  getStates() {
-    return this.states;
-  }
-}, removeAwarenessStates = (awareness, clients, origin) => {
-  let removed = [];
-  for (let i = 0; i < clients.length; i++) {
-    let clientID = clients[i];
-    if (awareness.states.has(clientID)) {
-      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
-        let curMeta = (
-          /** @type {MetaClientState} */
-          awareness.meta.get(clientID)
-        );
-        awareness.meta.set(clientID, {
-          clock: curMeta.clock + 1,
-          lastUpdated: getUnixTime()
-        });
-      }
-      removed.push(clientID);
-    }
-  }
-  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
-};
-
-// src/crdt/live/ycollab-binding.ts
-var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
-
-// node_modules/y-codemirror.next/src/index.js
-var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
-
-// node_modules/y-codemirror.next/src/y-range.js
-var YRange = class _YRange {
-  /**
-   * @param {Y.RelativePosition} yanchor
-   * @param {Y.RelativePosition} yhead
-   */
-  constructor(yanchor, yhead) {
-    this.yanchor = yanchor, this.yhead = yhead;
-  }
-  /**
-   * @returns {any}
-   */
-  toJSON() {
-    return {
-      yanchor: relativePositionToJSON(this.yanchor),
-      yhead: relativePositionToJSON(this.yhead)
-    };
-  }
-  /**
-   * @param {any} json
-   * @return {YRange}
-   */
-  static fromJSON(json) {
-    return new _YRange(createRelativePositionFromJSON(json.yanchor), createRelativePositionFromJSON(json.yhead));
-  }
-};
-
-// node_modules/y-codemirror.next/src/y-sync.js
-var cmState = __toESM(require("@codemirror/state"), 1), cmView = __toESM(require("@codemirror/view"), 1);
-var YSyncConfig = class {
-  constructor(ytext, awareness) {
-    this.ytext = ytext, this.awareness = awareness, this.undoManager = new UndoManager(ytext);
-  }
-  /**
-   * Helper function to transform an absolute index position to a Yjs-based relative position
-   * (https://docs.yjs.dev/api/relative-positions).
-   *
-   * A relative position can be transformed back to an absolute position even after the document has changed. The position is
-   * automatically adapted. This does not require any position transformations. Relative positions are computed based on
-   * the internal Yjs document model. Peers that share content through Yjs are guaranteed that their positions will always
-   * synced up when using relatve positions.
-   *
-   * ```js
-   * import { ySyncFacet } from 'y-codemirror'
-   *
-   * ..
-   * const ysync = view.state.facet(ySyncFacet)
-   * // transform an absolute index position to a ypos
-   * const ypos = ysync.getYPos(3)
-   * // transform the ypos back to an absolute position
-   * ysync.fromYPos(ypos) // => 3
-   * ```
-   *
-   * It cannot be guaranteed that absolute index positions can be synced up between peers.
-   * This might lead to undesired behavior when implementing features that require that all peers see the
-   * same marked range (e.g. a comment plugin).
-   *
-   * @param {number} pos
-   * @param {number} [assoc]
-   */
-  toYPos(pos, assoc = 0) {
-    return createRelativePositionFromTypeIndex(this.ytext, pos, assoc);
-  }
-  /**
-   * @param {Y.RelativePosition | Object} rpos
-   */
-  fromYPos(rpos) {
-    let pos = createAbsolutePositionFromRelativePosition(createRelativePositionFromJSON(rpos), this.ytext.doc);
-    if (pos == null || pos.type !== this.ytext)
-      throw new Error("[y-codemirror] The position you want to retrieve was created by a different document");
-    return {
-      pos: pos.index,
-      assoc: pos.assoc
-    };
-  }
-  /**
-   * @param {cmState.SelectionRange} range
-   * @return {YRange}
-   */
-  toYRange(range) {
-    let assoc = range.assoc, yanchor = this.toYPos(range.anchor, assoc), yhead = this.toYPos(range.head, assoc);
-    return new YRange(yanchor, yhead);
-  }
-  /**
-   * @param {YRange} yrange
-   */
-  fromYRange(yrange) {
-    let anchor = this.fromYPos(yrange.yanchor), head = this.fromYPos(yrange.yhead);
-    return anchor.pos === head.pos ? cmState.EditorSelection.cursor(head.pos, head.assoc) : cmState.EditorSelection.range(anchor.pos, head.pos);
-  }
-}, ySyncFacet = cmState.Facet.define({
-  combine(inputs) {
-    return inputs[inputs.length - 1];
-  }
-}), ySyncAnnotation = cmState.Annotation.define(), YSyncPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.view = view, this.conf = view.state.facet(ySyncFacet), this._observer = (event, tr) => {
-      if (tr.origin !== this.conf) {
-        let delta = event.delta, changes = [], pos = 0;
-        for (let i = 0; i < delta.length; i++) {
-          let d = delta[i];
-          d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : pos += d.retain;
-        }
-        view.dispatch({ changes, annotations: [ySyncAnnotation.of(this.conf)] });
-      }
-    }, this._ytext = this.conf.ytext, this._ytext.observe(this._observer);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    if (!update.docChanged || update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.conf)
-      return;
-    let ytext = this.conf.ytext;
-    ytext.doc.transact(() => {
-      let adj = 0;
-      update.changes.iterChanges((fromA, toA, fromB, toB, insert) => {
-        let insertText2 = insert.sliceString(0, insert.length, `
-`);
-        fromA !== toA && ytext.delete(fromA + adj, toA - fromA), insertText2.length > 0 && ytext.insert(fromA + adj, insertText2), adj += insertText2.length - (toA - fromA);
-      });
-    }, this.conf);
-  }
-  destroy() {
-    this._ytext.unobserve(this._observer);
-  }
-}, ySync = cmView.ViewPlugin.fromClass(YSyncPluginValue);
-
-// node_modules/y-codemirror.next/src/y-remote-selections.js
-var cmView2 = __toESM(require("@codemirror/view"), 1), cmState2 = __toESM(require("@codemirror/state"), 1);
-var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
-  ".cm-ySelection": {},
-  ".cm-yLineSelection": {
-    padding: 0,
-    margin: "0px 2px 0px 4px"
-  },
-  ".cm-ySelectionCaret": {
-    position: "relative",
-    borderLeft: "1px solid black",
-    borderRight: "1px solid black",
-    marginLeft: "-1px",
-    marginRight: "-1px",
-    boxSizing: "border-box",
-    display: "inline"
-  },
-  ".cm-ySelectionCaretDot": {
-    borderRadius: "50%",
-    position: "absolute",
-    width: ".4em",
-    height: ".4em",
-    top: "-.2em",
-    left: "-.2em",
-    backgroundColor: "inherit",
-    transition: "transform .3s ease-in-out",
-    boxSizing: "border-box"
-  },
-  ".cm-ySelectionCaret:hover > .cm-ySelectionCaretDot": {
-    transformOrigin: "bottom center",
-    transform: "scale(0)"
-  },
-  ".cm-ySelectionInfo": {
-    position: "absolute",
-    top: "-1.05em",
-    left: "-1px",
-    fontSize: ".75em",
-    fontFamily: "serif",
-    fontStyle: "normal",
-    fontWeight: "normal",
-    lineHeight: "normal",
-    userSelect: "none",
-    color: "white",
-    paddingLeft: "2px",
-    paddingRight: "2px",
-    zIndex: 101,
-    transition: "opacity .3s ease-in-out",
-    backgroundColor: "inherit",
-    // these should be separate
-    opacity: 0,
-    transitionDelay: "0s",
-    whiteSpace: "nowrap"
-  },
-  ".cm-ySelectionCaret:hover > .cm-ySelectionInfo": {
-    opacity: 1,
-    transitionDelay: "0s"
-  }
-}), yRemoteSelectionsAnnotation = cmState2.Annotation.define(), YRemoteCaretWidget = class extends cmView2.WidgetType {
-  /**
-   * @param {string} color
-   * @param {string} name
-   */
-  constructor(color, name) {
-    super(), this.color = color, this.name = name;
-  }
-  toDOM() {
-    return (
-      /** @type {HTMLElement} */
-      element("span", [create5("class", "cm-ySelectionCaret"), create5("style", `background-color: ${this.color}; border-color: ${this.color}`)], [
-        text("\u2060"),
-        element("div", [
-          create5("class", "cm-ySelectionCaretDot")
-        ]),
-        text("\u2060"),
-        element("div", [
-          create5("class", "cm-ySelectionInfo")
-        ], [
-          text(this.name)
-        ]),
-        text("\u2060")
-      ])
-    );
-  }
-  eq(widget) {
-    return widget.color === this.color;
-  }
-  compare(widget) {
-    return widget.color === this.color;
-  }
-  updateDOM() {
-    return !1;
-  }
-  get estimatedHeight() {
-    return -1;
-  }
-  ignoreEvent() {
-    return !0;
-  }
-}, YRemoteSelectionsPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.conf = view.state.facet(ySyncFacet), this._listener = ({ added, updated, removed }, s, t) => {
-      added.concat(updated).concat(removed).findIndex((id2) => id2 !== this.conf.awareness.doc.clientID) >= 0 && view.dispatch({ annotations: [yRemoteSelectionsAnnotation.of([])] });
-    }, this._awareness = this.conf.awareness, this._awareness.on("change", this._listener), this.decorations = cmState2.RangeSet.of([]);
-  }
-  destroy() {
-    this._awareness.off("change", this._listener);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    let ytext = this.conf.ytext, ydoc = (
-      /** @type {Y.Doc} */
-      ytext.doc
-    ), awareness = this.conf.awareness, decorations = [], localAwarenessState = this.conf.awareness.getLocalState();
-    if (localAwarenessState != null) {
-      let hasFocus = update.view.hasFocus && update.view.dom.ownerDocument.hasFocus(), sel = hasFocus ? update.state.selection.main : null, currentAnchor = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.anchor), currentHead = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.head);
-      if (sel != null) {
-        let anchor = createRelativePositionFromTypeIndex(ytext, sel.anchor), head = createRelativePositionFromTypeIndex(ytext, sel.head);
-        (localAwarenessState.cursor == null || !compareRelativePositions(currentAnchor, anchor) || !compareRelativePositions(currentHead, head)) && awareness.setLocalStateField("cursor", {
-          anchor,
-          head
-        });
-      } else localAwarenessState.cursor != null && hasFocus && awareness.setLocalStateField("cursor", null);
-    }
-    awareness.getStates().forEach((state, clientid) => {
-      if (clientid === awareness.doc.clientID)
-        return;
-      let cursor = state.cursor;
-      if (cursor == null || cursor.anchor == null || cursor.head == null)
-        return;
-      let anchor = createAbsolutePositionFromRelativePosition(cursor.anchor, ydoc), head = createAbsolutePositionFromRelativePosition(cursor.head, ydoc);
-      if (anchor == null || head == null || anchor.type !== ytext || head.type !== ytext)
-        return;
-      let { color = "#30bced", name = "Anonymous" } = state.user || {}, colorLight = state.user && state.user.colorLight || color + "33", start = min(anchor.index, head.index), end = max(anchor.index, head.index), startLine = update.view.state.doc.lineAt(start), endLine = update.view.state.doc.lineAt(end);
-      if (startLine.number === endLine.number)
-        decorations.push({
-          from: start,
-          to: end,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        });
-      else {
-        decorations.push({
-          from: start,
-          to: startLine.from + startLine.length,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        }), decorations.push({
-          from: endLine.from,
-          to: end,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        });
-        for (let i = startLine.number + 1; i < endLine.number; i++) {
-          let linePos = update.view.state.doc.line(i).from;
-          decorations.push({
-            from: linePos,
-            to: linePos,
-            value: cmView2.Decoration.line({
-              attributes: { style: `background-color: ${colorLight}`, class: "cm-yLineSelection" }
-            })
-          });
-        }
-      }
-      decorations.push({
-        from: head.index,
-        to: head.index,
-        value: cmView2.Decoration.widget({
-          side: head.index - anchor.index > 0 ? -1 : 1,
-          // the local cursor should be rendered outside the remote selection
-          block: !1,
-          widget: new YRemoteCaretWidget(color, name)
-        })
-      });
-    }), this.decorations = cmView2.Decoration.set(decorations, !0);
-  }
-}, yRemoteSelections = cmView2.ViewPlugin.fromClass(YRemoteSelectionsPluginValue, {
-  decorations: (v) => v.decorations
-});
-
-// node_modules/y-codemirror.next/src/y-undomanager.js
-var cmState3 = __toESM(require("@codemirror/state"), 1), cmView3 = __toESM(require("@codemirror/view"), 1);
-
-// node_modules/lib0/mutex.js
-var createMutex = () => {
-  let token = !0;
-  return (f, g) => {
-    if (token) {
-      token = !1;
-      try {
-        f();
-      } finally {
-        token = !0;
-      }
-    } else g !== void 0 && g();
-  };
-};
-
-// node_modules/y-codemirror.next/src/y-undomanager.js
-var YUndoManagerConfig = class {
-  /**
-   * @param {Y.UndoManager} undoManager
-   */
-  constructor(undoManager) {
-    this.undoManager = undoManager;
-  }
-  /**
-   * @param {any} origin
-   */
-  addTrackedOrigin(origin) {
-    this.undoManager.addTrackedOrigin(origin);
-  }
-  /**
-   * @param {any} origin
-   */
-  removeTrackedOrigin(origin) {
-    this.undoManager.removeTrackedOrigin(origin);
-  }
-  /**
-   * @return {boolean} Whether a change was undone.
-   */
-  undo() {
-    return this.undoManager.undo() != null;
-  }
-  /**
-   * @return {boolean} Whether a change was redone.
-   */
-  redo() {
-    return this.undoManager.redo() != null;
-  }
-}, yUndoManagerFacet = cmState3.Facet.define({
-  combine(inputs) {
-    return inputs[inputs.length - 1];
-  }
-}), yUndoManagerAnnotation = cmState3.Annotation.define(), YUndoManagerPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.view = view, this.conf = view.state.facet(yUndoManagerFacet), this._undoManager = this.conf.undoManager, this.syncConf = view.state.facet(ySyncFacet), this._beforeChangeSelection = null, this._mux = createMutex(), this._onStackItemAdded = ({ stackItem, changedParentTypes }) => {
-      changedParentTypes.has(this.syncConf.ytext) && this._beforeChangeSelection && !stackItem.meta.has(this) && stackItem.meta.set(this, this._beforeChangeSelection);
-    }, this._onStackItemPopped = ({ stackItem }) => {
-      let sel = stackItem.meta.get(this);
-      if (sel) {
-        let selection = this.syncConf.fromYRange(sel);
-        view.dispatch(view.state.update({
-          selection,
-          effects: [cmView3.EditorView.scrollIntoView(selection)]
-        })), this._storeSelection();
-      }
-    }, this._storeSelection = () => {
-      this._beforeChangeSelection = this.syncConf.toYRange(this.view.state.selection.main);
-    }, this._undoManager.on("stack-item-added", this._onStackItemAdded), this._undoManager.on("stack-item-popped", this._onStackItemPopped), this._undoManager.addTrackedOrigin(this.syncConf);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(ySyncAnnotation) !== this.syncConf) && this._storeSelection();
-  }
-  destroy() {
-    this._undoManager.off("stack-item-added", this._onStackItemAdded), this._undoManager.off("stack-item-popped", this._onStackItemPopped), this._undoManager.removeTrackedOrigin(this.syncConf);
-  }
-}, yUndoManager = cmView3.ViewPlugin.fromClass(YUndoManagerPluginValue), undo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).undo() || !0, redo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).redo() || !0;
-var yUndoManagerKeymap = [
-  { key: "Mod-z", run: undo, preventDefault: !0 },
-  { key: "Mod-y", mac: "Mod-Shift-z", run: redo, preventDefault: !0 },
-  { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
-];
-
-// node_modules/y-codemirror.next/src/index.js
-var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
-  let ySyncConfig = new YSyncConfig(ytext, awareness), plugins = [
-    ySyncFacet.of(ySyncConfig),
-    ySync
-  ];
-  return awareness && plugins.push(
-    yRemoteSelectionsTheme,
-    yRemoteSelections
-  ), undoManager !== !1 && plugins.push(
-    yUndoManagerFacet.of(new YUndoManagerConfig(undoManager)),
-    yUndoManager,
-    cmView4.EditorView.domEventHandlers({
-      beforeinput(e, view) {
-        return e.inputType === "historyUndo" ? undo(view) : e.inputType === "historyRedo" ? redo(view) : !1;
-      }
-    })
-  ), plugins;
-};
-
-// src/crdt/live/cm-yjs-bridge.ts
-var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp3 = new import_diff_match_patch3.diff_match_patch();
-function textDiffToChangeSpec(before, after) {
-  if (before === after) return [];
-  let diffs = dmp3.diff_main(before, after);
-  dmp3.diff_cleanupSemantic(diffs);
-  let changes = [], cursor = 0;
-  for (let [op, data] of diffs)
-    op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
-  return changes;
-}
-
-// src/crdt/live/ycollab-binding.ts
-var crdtCompartment = new import_state.Compartment();
-function ycollabExtension() {
-  return crdtCompartment.of([]);
-}
-function makeSyncAnnotationCapture(onCapture) {
-  let captured = !1;
-  return import_view.EditorView.updateListener.of((update) => {
-    if (!captured)
-      for (let tr of update.transactions) {
-        let rawAnnotations = tr.annotations;
-        if (rawAnnotations) {
-          for (let ann of rawAnnotations)
-            if (ann.value instanceof YSyncConfig) {
-              captured = !0, onCapture({ type: ann.type, conf: ann.value });
-              return;
-            }
-        }
-      }
-  });
-}
-function rerouteUndoFilter(router) {
-  return import_state.EditorState.transactionFilter.of((tr) => tr.isUserEvent("undo") ? (queueMicrotask(() => router.undo()), []) : tr.isUserEvent("redo") ? (queueMicrotask(() => router.redo()), []) : tr);
-}
-function handleUndoBeforeInput(inputType, router) {
-  return inputType === "historyUndo" ? (router.undo(), !0) : inputType === "historyRedo" ? (router.redo(), !0) : !1;
-}
-function bindSpec(ytext, awareness) {
-  let undoManager = new UndoManager(ytext, {
-    trackedOrigins: /* @__PURE__ */ new Set()
-  }), capturedAnnotation = null, captureExt = makeSyncAnnotationCapture((captured) => {
-    capturedAnnotation = captured;
-  }), ycollabExt = yCollab(ytext, awareness, { undoManager }), router = {
-    undo: () => undoManager.undo(),
-    redo: () => undoManager.redo()
-  }, beforeInputHandler = import_state.Prec.highest(
-    import_view.EditorView.domEventHandlers({
-      beforeinput(e) {
-        return handleUndoBeforeInput(e.inputType, router) ? (e.preventDefault(), !0) : !1;
-      }
-    })
-  );
-  return {
-    extension: [
-      captureExt,
-      ycollabExt,
-      // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
-      // Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
-      // native history does not also fire on the keyboard path.
-      import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap)),
-      beforeInputHandler,
-      // Layer 3: catch any native-history transaction that beat Layers 1-2.
-      rerouteUndoFilter(router)
-    ],
-    getSyncAnnotation: () => capturedAnnotation
-  };
-}
-function reconcileEditorToYText(currentDoc, ytext) {
-  return textDiffToChangeSpec(currentDoc, ytext.toJSON());
-}
-
-// src/crdt/live/editor-controller.ts
-var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
-  constructor(deps) {
-    this.viewId = `cm-${seq2++}`;
-    this.path = null;
-    /** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
-     *  getYText. Once released, the controller is permanently inert: refresh()
-     *  drops it from the map and mints a fresh one on next refresh. */
-    this.released = !1;
-    /** Monotonic bind counter; a bindTo whose epoch is stale after its await
-     *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
-    this.bindEpoch = 0;
-    this.bindResult = null;
-    this.boundYtext = null;
-    this.driftTimer = null;
-    this.deps = deps;
-  }
-  currentPath() {
-    return this.path;
-  }
-  async bindTo(view, path) {
-    if (this.path === path) return;
-    this.detach(view);
-    let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
-    if (this.released || epoch !== this.bindEpoch) return;
-    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
-    view.dispatch({
-      changes,
-      effects: crdtCompartment.reconfigure(result.extension)
-    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
-  }
-  release(view) {
-    this.released = !0, this.detach(view);
-  }
-  /** Clears the active binding NOW: compartment emptied, refcount released,
-   *  drift timer stopped. Unlike release(), the controller stays usable so
-   *  bindTo can re-bind the same view to a new path. */
-  detach(view) {
-    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
-  }
-  clearDriftTimer() {
-    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
-  }
-  scheduleDriftCheck(view) {
-    var _a;
-    this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
-      this.driftTimer = null, this.runDriftCheck(view);
-    }, (_a = this.deps.driftIntervalMs) != null ? _a : DRIFT_CHECK_INTERVAL_MS);
-  }
-  runDriftCheck(view) {
-    var _a, _b;
-    if (this.released || this.boundYtext === null || this.bindResult === null) return;
-    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
-    if (shown !== void 0 && shown !== this.path) {
-      this.detach(view);
-      return;
-    }
-    let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
-    if (changes.length > 0) {
-      let captured = this.bindResult.getSyncAnnotation();
-      captured !== null && view.dispatch({
-        changes,
-        annotations: [captured.type.of(captured.conf)]
-      });
-    }
-    this.scheduleDriftCheck(view);
-  }
-};
-
-// src/crdt/live/obsidian-internals.ts
-function getEditorViewForLeaf(view) {
+// src/crdt/wiring.ts
+var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
+function createCrdtWiring(deps) {
   var _a;
-  let cm = (_a = view == null ? void 0 : view.editor) == null ? void 0 : _a.cm;
-  return cm && typeof cm.dispatch == "function" ? cm : null;
-}
-function getMarkdownFilePath(view) {
-  var _a;
-  let path = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
-  return typeof path == "string" ? path : null;
-}
-function setPreviewRendered(view, text2) {
-  var _a, _b;
-  let pm = view == null ? void 0 : view.previewMode;
-  if (!(pm != null && pm.renderer) || typeof pm.renderer.set != "function") return !1;
-  try {
-    return pm.renderer.set(text2), (_a = view == null ? void 0 : view.editor) != null && _a.cm || (_b = view.onInternalDataChange) == null || _b.call(view), !0;
-  } catch (e) {
-    return !1;
-  }
-}
-function patchFrontmatterSave(view, onSave) {
-  let v = view;
-  if (typeof v.saveFrontmatter != "function") return null;
-  let original = v.saveFrontmatter.bind(v);
-  return v.saveFrontmatter = (...args2) => {
-    let result = original(...args2);
+  let { noteIdMap, syncEngine } = deps, debounceMs = (_a = deps.strandHealDebounceMs) != null ? _a : DEFAULT_STRAND_HEAL_DEBOUNCE_MS, strandedFlushes = /* @__PURE__ */ new Map(), strandHealTimer = null;
+  async function drainStrandedFlushes() {
+    let pending = new Map(strandedFlushes);
+    strandedFlushes.clear();
     try {
-      typeof v.text == "string" && onSave(v.text);
+      await syncEngine.reconcileNoteIdMapFromManifest();
     } catch (e) {
+      rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
     }
-    return result;
-  }, () => {
-    v.saveFrontmatter = original;
-  };
-}
-
-// src/crdt/live/frontmatter-hook.ts
-var CrdtFrontmatterHook = class {
-  constructor(deps) {
-    this.uninstallers = /* @__PURE__ */ new WeakMap();
-    /** Strong-reference set so detachAll() can iterate all attached views.
-     *  The WeakMap alone is not iterable. */
-    this.attached = /* @__PURE__ */ new Set();
-    this.deps = deps;
+    for (let [id2, content] of pending) {
+      let path = noteIdMap.pathForId(id2);
+      if (!path) {
+        rlog().warn(
+          "crdt",
+          `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retained in Y.Doc`
+        );
+        continue;
+      }
+      deps.isBound(path) || syncEngine.flushFromCrdt(path, content);
+    }
   }
-  attach(view) {
-    if (typeof view != "object" || view === null || this.uninstallers.has(view)) return;
-    let path = this.deps.getPath(view);
-    if (!path) return;
-    let uninstall = patchFrontmatterSave(view, (newText) => {
-      this.deps.getYText(path).then((ytext) => {
-        diffIntoYText(ytext, newText);
-      }).catch(
-        (err) => rlog().error("crdt-frontmatter", `getYText failed for ${path}: ${String(err)}`)
+  function healUnknownNoteId(noteId, content) {
+    strandedFlushes.set(noteId, content), strandHealTimer === null && (strandHealTimer = window.setTimeout(() => {
+      strandHealTimer = null, drainStrandedFlushes();
+    }, debounceMs));
+  }
+  let box = { channel: null }, manager = new CrdtManager({
+    dbPrefix: deps.dbPrefix,
+    onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
+    onFlushToDisk: (noteId, content) => {
+      let path = noteIdMap.pathForId(noteId);
+      return path ? deps.isBound(path) ? Promise.resolve() : syncEngine.flushFromCrdt(path, content) : (healUnknownNoteId(noteId, content), Promise.resolve());
+    },
+    // Adopt-first seed gate: never re-encode content the server already holds.
+    isUnchangedSynced: (noteId, content) => {
+      let path = noteIdMap.pathForId(noteId);
+      return path ? syncEngine.isUnchangedSynced(path, content) : !1;
+    },
+    onPersistError: (noteId, err) => {
+      var _a2;
+      let path = (_a2 = noteIdMap.pathForId(noteId)) != null ? _a2 : noteId;
+      rlog().warn(
+        "crdt",
+        `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
       );
-    });
-    if (!uninstall) {
-      rlog().info("crdt", `frontmatter hook unavailable for ${path}, using disk path`);
-      return;
     }
-    this.uninstallers.set(view, uninstall), this.attached.add(view);
-  }
-  detach(view) {
-    if (typeof view != "object" || view === null) return;
-    let uninstall = this.uninstallers.get(view);
-    uninstall && (uninstall(), this.uninstallers.delete(view), this.attached.delete(view));
-  }
-  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
-  detachAll() {
-    for (let view of this.attached)
-      this.detach(view);
-    this.attached.clear();
-  }
-};
-
-// src/crdt/live/reading-view.ts
-var CrdtReadingView = class {
-  constructor(deps) {
-    this.observers = /* @__PURE__ */ new WeakMap();
-    /** Strong-reference set so detachAll() can iterate all attached views.
-     *  The WeakMap alone is not iterable. */
-    this.attached = /* @__PURE__ */ new Set();
-    this.deps = deps;
-  }
-  async attach(view, path) {
-    if (typeof view != "object" || view === null || this.observers.has(view)) return;
-    this.observers.set(view, () => {
-    }), this.attached.add(view);
-    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
-    if (!ytext) return;
-    let handler = () => {
-      this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
-    };
-    ytext.observe(handler), this.observers.set(view, () => ytext.unobserve(handler));
-  }
-  detach(view) {
-    if (typeof view != "object" || view === null) return;
-    let off = this.observers.get(view);
-    off && (off(), this.observers.delete(view), this.attached.delete(view));
-  }
-  /** Detach all currently attached views. Called by CrdtLiveViews.destroy(). */
-  detachAll() {
-    for (let view of this.attached)
-      this.detach(view);
-    this.attached.clear();
-  }
-};
-
-// src/crdt/live/live-views.ts
-var ViewerRefcount = class {
-  constructor(onLastRelease) {
-    this.viewers = /* @__PURE__ */ new Map();
-    this.onLastRelease = onLastRelease;
-  }
-  bind(path, viewId) {
-    let set2 = this.viewers.get(path);
-    set2 || (set2 = /* @__PURE__ */ new Set(), this.viewers.set(path, set2)), set2.add(viewId);
-  }
-  release(path, viewId) {
-    let set2 = this.viewers.get(path);
-    !set2 || !set2.has(viewId) || (set2.delete(viewId), set2.size === 0 && (this.viewers.delete(path), this.onLastRelease(path)));
-  }
-  isBound(path) {
-    var _a, _b;
-    return ((_b = (_a = this.viewers.get(path)) == null ? void 0 : _a.size) != null ? _b : 0) > 0;
-  }
-  /** Returns all paths that currently have at least one active viewer. */
-  boundPaths() {
-    return [...this.viewers.keys()];
-  }
-}, CrdtLiveViews = class {
-  constructor(deps) {
-    /** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
-    this.awarenessDoc = new Doc();
-    /** Single local-only awareness instance shared across all editor controllers. */
-    this.localAwareness = new Awareness(this.awarenessDoc);
-    /** One EditorController per live CodeMirror EditorView. */
-    this.controllers = /* @__PURE__ */ new Map();
-    this.deps = deps, this.refcount = new ViewerRefcount((path) => {
-      let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
-    }), this.frontmatter = new CrdtFrontmatterHook({
-      getPath: (v) => getMarkdownFilePath(v),
-      getYText: (path) => this.getYText(path)
-    }), this.reading = new CrdtReadingView({
-      getYText: (path) => this.getYText(path),
-      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
-    });
-  }
-  isBound(path) {
-    return this.refcount.isBound(path);
-  }
-  /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
-   *  (minting if needed) the note_id that actually keys the doc (Task 6). */
-  async getYText(path) {
-    let noteId = this.deps.resolveId(path);
-    return (await this.deps.manager.getDoc(noteId)).getText("content");
-  }
-  /** Re-evaluate open markdown leaves: bind each editor's controller to its
-   *  current path; release and drop controllers whose editor is gone.
-   *  Detaches frontmatter + reading hooks for views whose path changed before
-   *  re-attaching, so the idempotency guard does not block the rebind. */
-  refresh() {
-    let seen = /* @__PURE__ */ new Set();
-    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
-      let view = leaf.view;
-      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
-      let path = getMarkdownFilePath(view);
-      if (!path || !path.endsWith(".md")) continue;
-      let cm = getEditorViewForLeaf(view);
-      if (!cm) continue;
-      seen.add(cm);
-      let ctrl = this.controllers.get(cm);
-      ctrl || (ctrl = new EditorController({
-        getYText: (p) => this.getYText(p),
-        awareness: () => this.localAwareness,
-        onBind: (p, id2) => this.refcount.bind(p, id2),
-        onRelease: (p, id2) => this.refcount.release(p, id2),
-        // The MdView owning this cm is stable for the cm's lifetime, but the
-        // FILE it displays is not (Obsidian reuses views across note
-        // switches) — this closure always reports the currently shown file.
-        viewPath: () => getMarkdownFilePath(view)
-      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+  }), channel = new CrdtChannel({
+    manager,
+    send: (docId, frame) => deps.sendCrdt(docId, frame),
+    // An inbound STEP2 that leaves the doc empty is the server's authoritative
+    // "genuinely empty note" signal — materialize the file off the handshake
+    // (not a timer) so a slow content STEP2 can never race a premature empty
+    // file onto disk (#547).
+    onEmptyStep2: (noteId) => {
+      let path = noteIdMap.pathForId(noteId);
+      if (!path) {
+        rlog().warn(
+          "crdt",
+          `onEmptyStep2: no known path for note_id=${noteId} \u2014 skipping materialize`
+        );
+        return;
+      }
+      syncEngine.materializeEmptyDiscovered(path, noteId);
     }
-    for (let [cm, ctrl] of this.controllers)
-      seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
-  }
-  destroy() {
-    for (let [cm, ctrl] of this.controllers)
-      ctrl.release(cm);
-    this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
-    for (let path of this.refcount.boundPaths()) {
-      let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
+  });
+  box.channel = channel;
+  let enrollment = new CrdtEnrollment({
+    startSync: (noteId) => channel.startSync(noteId),
+    resetSync: (noteId) => channel.resetSync(noteId),
+    // After the handshake fires, compact any bloated docs. No-op below the AND
+    // threshold (>=500 KB and >=1000 client-IDs), safe to run on every open.
+    onAfterEnroll: async (noteId) => {
+      await manager.flattenIfBloated(noteId);
     }
+  }), onCrdtMessage = (docId, b64) => {
+    channel.handleFrame(docId, b64);
+  }, onCrdtDocReady = (docId) => {
+    syncEngine.isSyncBlocked() || (syncEngine.ensureNoteIdMapped(docId), enrollment.enroll(docId));
+  }, onCrdtNoteNotFound = (docId) => {
+    syncEngine.isSyncBlocked() || syncEngine.ensureNoteIdMapped(docId);
+  };
+  function dispose() {
+    strandHealTimer !== null && (window.clearTimeout(strandHealTimer), strandHealTimer = null);
   }
-};
-
-// src/crdt/note-id-map.ts
-function isValidPath(path) {
-  return !!path && path !== "null" && path !== "undefined";
-}
-var NoteIdMap = class _NoteIdMap {
-  constructor() {
-    this.byPath = /* @__PURE__ */ new Map();
-    /** Reverse index (note_id -> path), kept in sync by set/delete/rename. */
-    this.byId = /* @__PURE__ */ new Map();
-  }
-  get(path) {
-    var _a;
-    return (_a = this.byPath.get(path)) != null ? _a : null;
-  }
-  /** Resolve `path`'s id, minting + storing a fresh UUIDv7 if this is the
-   *  first time this path has been seen. Centralizes the mint-or-reuse
-   *  pattern (previously inlined separately in pushFile and duplicated for
-   *  the live-editor binding), so a concurrent "first touch" from either
-   *  seam (first save vs. first open) always converges on one id. */
-  getOrMint(path) {
-    if (!isValidPath(path))
-      throw new Error(`NoteIdMap.getOrMint: invalid path ${JSON.stringify(path)}`);
-    let existing = this.get(path);
-    if (existing) return existing;
-    let id2 = uuid7();
-    return this.set(path, id2), id2;
-  }
-  /** Reverse lookup: the path last known to correspond to `id`, or null if
-   *  this device has never learned/minted a mapping for it (e.g. a
-   *  `crdt_doc_ready` announce for a note created on another device that
-   *  hasn't reached this device via a regular sync pull yet). */
-  pathForId(id2) {
-    var _a;
-    return (_a = this.byId.get(id2)) != null ? _a : null;
-  }
-  set(path, id2) {
-    if (!isValidPath(path) || !id2) return;
-    let oldId = this.byPath.get(path);
-    oldId !== void 0 && oldId !== id2 && this.byId.delete(oldId);
-    let oldPath = this.byId.get(id2);
-    oldPath !== void 0 && oldPath !== path && this.byPath.delete(oldPath), this.byPath.set(path, id2), this.byId.set(id2, path);
-  }
-  delete(path) {
-    let id2 = this.byPath.get(path);
-    id2 !== void 0 && this.byId.delete(id2), this.byPath.delete(path);
-  }
-  rename(oldPath, newPath) {
-    let id2 = this.byPath.get(oldPath);
-    if (id2 === void 0) return;
-    let displacedId = this.byPath.get(newPath);
-    displacedId !== void 0 && displacedId !== id2 && this.byId.delete(displacedId), this.byPath.delete(oldPath), this.byPath.set(newPath, id2), this.byId.set(id2, newPath);
-  }
-  /** Drop every mapping. Used on vault change: the map is per-vault identity
-   *  state — carrying ids across vaults routes CRDT frames to another
-   *  vault's notes (plugin #200). Mutates in place so every holder of the
-   *  instance (main, sync engine, live views) sees the wipe. */
-  clear() {
-    this.byPath.clear(), this.byId.clear();
-  }
-  toJSON() {
-    return Object.fromEntries(this.byPath);
-  }
-  static fromJSON(o) {
-    let m = new _NoteIdMap();
-    for (let [p, id2] of Object.entries(o != null ? o : {})) m.set(p, id2);
-    return m;
-  }
-};
-
-// src/crdt/schema.ts
-async function ensureDocSchema(vaultId, storage, dbs) {
-  let markerKey = `engram-crdt-doc-schema/${vaultId}`;
-  if (storage.getItem(markerKey) === "2")
-    return !1;
-  let allDbs = await dbs.list(), prefix = `${vaultId}/`, dbsToWipe = allDbs.filter((db) => {
-    var _a, _b;
-    return (_b = (_a = db.name) == null ? void 0 : _a.startsWith(prefix)) != null ? _b : !1;
-  }).map((db) => db.name);
-  for (let name of dbsToWipe)
-    await dbs.drop(name);
-  return storage.setItem(markerKey, "2"), !0;
+  return {
+    manager,
+    channel,
+    enrollment,
+    onCrdtMessage,
+    onCrdtDocReady,
+    onCrdtNoteNotFound,
+    drainStrandedFlushes,
+    dispose
+  };
 }
 
 // src/diagnostics.ts
@@ -21045,8 +21147,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     this.baseStore = null;
     this.explicitFolders = null;
     this.crdtManager = null;
-    this.crdtChannel = null;
     this.crdtEnrollment = null;
+    /** CRDT data-plane glue (manager/channel/enrollment + id->path callbacks +
+     *  strand-heal), extracted from the inline setupNoteStream block. Rebuilt on
+     *  each channel setup; disposed on teardown/unload to clear its heal timer. */
+    this.crdtWiring = null;
     /** True once onCrdtJoined has fired for the current channel session.
      *  Allows the disconnect handler to KEEP CRDT routing active while offline
      *  (Y.Doc + IndexedDB capture edits locally; reconnect handshake delivers
@@ -21068,8 +21173,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
      *  not on every reconnect — re-fetching the manifest on each network blip adds
      *  load and perturbs in-flight sync timing. Reset on vault change. */
     this.crdtMapReconciled = !1;
-    this.strandedFlushes = /* @__PURE__ */ new Map();
-    this.strandHealTimer = null;
     /** Single-flight guard so a vault switch (or any racing trigger) cannot
      *  stack two SyncPreviewModal instances. A second call while one preview is
      *  open is a silent no-op. See single-flight.ts. */
@@ -21355,40 +21458,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }
     });
   }
-  /** Re-resolve a stranded inbound CRDT note (unknown id -> no disk path) by
-   *  reconciling the noteIdMap from the server manifest, then retrying the
-   *  flush. Debounced so a burst of stranded flushes shares ONE reconcile. This
-   *  self-heals a mid-session map drift (e.g. a diverged/orphaned id) that the
-   *  once-per-connect reconcile cannot catch. */
-  healUnknownNoteId(noteId, content) {
-    this.strandedFlushes.set(noteId, content), this.strandHealTimer === null && (this.strandHealTimer = window.setTimeout(() => {
-      this.strandHealTimer = null, this.drainStrandedFlushes();
-    }, _EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS));
-  }
-  async drainStrandedFlushes() {
-    var _a;
-    let pending = new Map(this.strandedFlushes);
-    this.strandedFlushes.clear();
-    try {
-      await this.syncEngine.reconcileNoteIdMapFromManifest();
-    } catch (e) {
-      rlog().warn("crdt", `strand-heal reconcile failed: ${errMsg(e)}`);
-    }
-    for (let [id2, content] of pending) {
-      let path = this.noteIdMap.pathForId(id2);
-      if (!path) {
-        rlog().warn(
-          "crdt",
-          `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retained in Y.Doc`
-        );
-        continue;
-      }
-      (_a = this.crdtLiveViews) != null && _a.isBound(path) || this.syncEngine.flushFromCrdt(path, content);
-    }
-  }
   onunload() {
-    var _a, _b, _c, _d, _e, _f;
-    this.strandHealTimer !== null && window.clearTimeout(this.strandHealTimer), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a = this.baseStore) == null || _a.prune(), (_b = this.baseStore) == null || _b.save(), (_c = this.syncEngine) == null || _c.destroy(), (_d = this.noteStream) == null || _d.disconnect(), (_e = this.crdtLiveViews) == null || _e.destroy(), this.crdtLiveViews = null, (_f = this.crdtManager) == null || _f.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    var _a, _b, _c, _d, _e, _f, _g;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.syncEngine) == null || _d.destroy(), (_e = this.noteStream) == null || _e.disconnect(), (_f = this.crdtLiveViews) == null || _f.destroy(), this.crdtLiveViews = null, (_g = this.crdtManager) == null || _g.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -21580,11 +21652,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
   }
   setupNoteStream() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     let connectionKey = channelConnectionKey(this.settings);
     if (this.noteStream && connectionKey === this.liveChannelKey)
       return;
-    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtManager) == null || _b.destroy(), this.crdtManager = null, this.crdtChannel = null, (_c = this.crdtEnrollment) == null || _c.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_d = this.noteStream) == null || _d.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -21690,65 +21762,18 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           );
           return;
         }
-        this.crdtManager = new CrdtManager({
-          onUpdate: (docId, update) => {
-            var _a2;
-            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.sendUpdateRaw(docId, update);
-          },
-          onFlushToDisk: (noteId, content) => {
-            var _a2;
-            let path = this.noteIdMap.pathForId(noteId);
-            return path ? (_a2 = this.crdtLiveViews) != null && _a2.isBound(path) ? Promise.resolve() : this.syncEngine.flushFromCrdt(path, content) : (this.healUnknownNoteId(noteId, content), Promise.resolve());
-          },
-          // Adopt-first seed gate: never re-encode content the server
-          // already holds (see CrdtManagerOptions.isUnchangedSynced).
-          isUnchangedSynced: (noteId, content) => {
-            let path = this.noteIdMap.pathForId(noteId);
-            return path ? this.syncEngine.isUnchangedSynced(path, content) : !1;
-          },
-          onPersistError: (noteId, err) => {
-            var _a2;
-            let path = (_a2 = this.noteIdMap.pathForId(noteId)) != null ? _a2 : noteId;
-            rlog().warn(
-              "crdt",
-              `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
-            );
-          }
-        }), this.crdtChannel = new CrdtChannel({
-          manager: this.crdtManager,
-          send: (docId, frame) => channel.sendCrdt(docId, frame),
-          // An inbound STEP2 that leaves the doc empty is the server's
-          // authoritative "genuinely empty note" signal — materialize the
-          // file off the handshake (not a timer) so a slow content STEP2 can
-          // never race a premature empty file onto disk (#547).
-          onEmptyStep2: (noteId) => {
-            let path = this.noteIdMap.pathForId(noteId);
-            if (!path) {
-              rlog().warn(
-                "crdt",
-                `onEmptyStep2: no known path for note_id=${noteId} \u2014 skipping materialize`
-              );
-              return;
-            }
-            this.syncEngine.materializeEmptyDiscovered(path, noteId);
-          }
-        }), this.crdtEnrollment = new CrdtEnrollment({
-          startSync: (noteId) => {
+        let wiring = createCrdtWiring({
+          noteIdMap: this.noteIdMap,
+          syncEngine: this.syncEngine,
+          sendCrdt: (docId, frame) => channel.sendCrdt(docId, frame),
+          // Backed lazily: crdtLiveViews is constructed just below, so this
+          // closure must read the field at call time, not capture a value.
+          isBound: (path) => {
             var _a2, _b2;
-            return (_b2 = (_a2 = this.crdtChannel) == null ? void 0 : _a2.startSync(noteId)) != null ? _b2 : Promise.resolve();
-          },
-          resetSync: (noteId) => {
-            var _a2;
-            return (_a2 = this.crdtChannel) == null ? void 0 : _a2.resetSync(noteId);
-          },
-          // After the handshake fires, compact any bloated docs. This is a
-          // no-op below the AND threshold (≥500 KB and ≥1000 client-IDs),
-          // so it is safe to run on every note open.
-          onAfterEnroll: async (noteId) => {
-            var _a2;
-            await ((_a2 = this.crdtManager) == null ? void 0 : _a2.flattenIfBloated(noteId));
+            return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
           }
-        }), this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+        });
+        this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,
           manager: this.crdtManager,
           enrollment: this.crdtEnrollment,
@@ -21763,15 +21788,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
             var _a2, _b2;
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
           }
-        ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = (docId, b64) => {
-          var _a2;
-          (_a2 = this.crdtChannel) == null || _a2.handleFrame(docId, b64);
-        }, channel.onCrdtNoteNotFound = (docId) => {
-          this.syncEngine.isSyncBlocked() || this.syncEngine.ensureNoteIdMapped(docId);
-        }, channel.onCrdtDocReady = (docId) => {
-          var _a2;
-          this.syncEngine.isSyncBlocked() || (this.syncEngine.ensureNoteIdMapped(docId), (_a2 = this.crdtEnrollment) == null || _a2.enroll(docId));
-        }, channel.onCrdtJoined = () => {
+        ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
@@ -21979,8 +21996,5 @@ Last sync: ${date.toLocaleString()}`;
     }, _EngramSyncPlugin.FALLBACK_POLL_MS), this.registerInterval(this.syncInterval));
   }
 };
-/** Strand-heal debounce: unresolvable inbound flushes (unknown note_id) queue
- *  here (id -> latest content) and a single manifest reconcile + retry drains
- *  them, so a mid-session map drift self-heals without one fetch per frame. */
-_EngramSyncPlugin.STRAND_HEAL_DEBOUNCE_MS = 750, _EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
+_EngramSyncPlugin.FALLBACK_POLL_MS = 300 * 1e3;
 var EngramSyncPlugin = _EngramSyncPlugin;
