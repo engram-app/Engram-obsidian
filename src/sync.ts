@@ -535,6 +535,11 @@ export class SyncEngine {
 	 *  two manifest fetches. */
 	ensureNoteIdMapped(noteId: string): void {
 		if (!this.noteIdMap || !noteId) return;
+		// Intrinsic gate check (not caller-dependent): the reconcile this
+		// triggers ends with sweepPendingOrphans, which can trashFile — never
+		// run that while the sync gate is closed. Callers may also gate for
+		// their own reasons, but safety must not depend on them remembering.
+		if (this.syncBlocked) return;
 		if (this.noteIdMap.pathForId(noteId) !== null) return; // already mapped
 		if (this.idMapReconcileInflight) {
 			this.idMapReconcileQueued = true;
@@ -921,8 +926,15 @@ export class SyncEngine {
 		this.lastSync = "";
 		// Drop the cursor too — it points into the prior vault's ordered feed.
 		this.syncCursor = null;
+		// The note-id map and confirmed set are per-vault identity state.
+		// Carrying them across vaults keys CRDT frames/rooms by another
+		// vault's note ids — the cross-vault flavor of the 2026-07-07
+		// cross-wire class (plugin #200). Wipe both; ids re-learn via the
+		// manifest reconcile + push adoption.
+		this.noteIdMap?.clear();
+		this.clearConfirmedNoteIds();
 		this.syncStateVaultId = current;
-		await this.saveData({ lastSync: "", syncCursor: null });
+		await this.saveData({ lastSync: "", syncCursor: null, noteIds: {} });
 	}
 
 	/** Export sync state for persistence across sessions. */
@@ -3895,6 +3907,12 @@ export class SyncEngine {
 		// cold-start reconcile). Mirrors pushFile's post-response adoption;
 		// set() evicts the stale mint (bijection), confirm unlocks CRDT routing.
 		if (result.id) {
+			// On a server rename, evict the OLD path first (mirror pushFile's
+			// sanitized-rename branch): when result.id also differs from the
+			// pre-request mint (create-race + sanitize together), set() alone
+			// leaves the dead mint dangling on the renamed-away path
+			// (#197 retro-review).
+			if (serverPath) this.noteIdMap?.delete(normalizePath(file.path));
 			const np = normalizePath(serverPath ?? file.path);
 			this.noteIdMap?.set(np, result.id);
 			this.confirmNoteId(result.id);
