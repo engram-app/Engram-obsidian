@@ -878,3 +878,71 @@ describe("teardown: setCrdtManager(null) degrades subsequent edits to legacy", (
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Round 5 (e2e test_34, CI run 28919928915): concurrent materializations into
+// the SAME new folder race ensureFolder's check-then-create. The loser's
+// vault.createFolder rejects "Folder already exists." and flushFromCrdt's
+// catch dropped the note entirely (received=yes materialized=no) until the
+// next pull — past the 30s delivery window. Losing that race must be treated
+// as success (the folder IS there); a real createFolder failure must still
+// surface. Same class: vault.create rejecting "File already exists." when a
+// concurrent path (pull vs WS) created the file between the existence check
+// and the create — degrade to modify instead of dropping the body.
+// ---------------------------------------------------------------------------
+describe("flushFromCrdt survives check-then-create races (round 5, test_34)", () => {
+	test("createFolder losing the concurrent-folder race still materializes the note", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+		// Note1's ensureFolder won; Note2's createFolder rejects.
+		(mockApp.vault.createFolder as ReturnType<typeof mock>)
+			.mockReset()
+			.mockRejectedValue(new Error("Folder already exists."));
+		(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+
+		await engine.flushFromCrdt("RenameFolder34/Note2.md", "# Note 2\nIn old folder");
+
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"RenameFolder34/Note2.md",
+			"# Note 2\nIn old folder",
+		);
+	});
+
+	test("a REAL createFolder failure still fails the write (guard is race-scoped)", async () => {
+		const engine = createEngine();
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(null);
+		(mockApp.vault.createFolder as ReturnType<typeof mock>)
+			.mockReset()
+			.mockRejectedValue(new Error("EACCES: permission denied"));
+		(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
+
+		await engine.flushFromCrdt("Locked/Note.md", "body");
+
+		// flushFromCrdt catches and logs; the point is we must NOT fake a create.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("vault.create rejecting 'File already exists.' degrades to modify with the same content", async () => {
+		const engine = createEngine();
+		const raced = new TFile("E2E/ChannelCatchUp2.md");
+		// Existence check misses (cache raced), create rejects, re-lookup finds it.
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
+			.mockReset()
+			.mockReturnValueOnce(null) // flushFromCrdt's own lookup
+			.mockReturnValue(raced); // re-lookup after the create rejection
+		(mockApp.vault.createFolder as ReturnType<typeof mock>)
+			.mockReset()
+			.mockResolvedValue(undefined);
+		(mockApp.vault.create as ReturnType<typeof mock>)
+			.mockReset()
+			.mockRejectedValue(new Error("File already exists."));
+		const processMock = mockApp.vault.process as ReturnType<typeof mock>;
+		processMock.mockClear();
+
+		await engine.flushFromCrdt("E2E/ChannelCatchUp2.md", "caught-up body");
+
+		// modifyFile prefers vault.process when available.
+		expect(processMock).toHaveBeenCalled();
+		expect(processMock.mock.calls[0][0]).toBe(raced);
+	});
+});
