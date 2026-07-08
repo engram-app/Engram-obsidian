@@ -2851,6 +2851,59 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 
+	test("echo-skip no-op push does not open the recently-pushed suppression window (Engram#944)", async () => {
+		// pushFile's echo hash-skip (local content already matches syncState, e.g.
+		// after a pull) is a no-op — nothing is transmitted to the server. It must
+		// NOT open the same 5s suppression window a real push opens, or a
+		// legitimately-arriving second remote update within that window gets
+		// swallowed as "Echo skip (recently pushed)" (the canvas rapid-double-write
+		// bug, backend e2e test_41_canvas_sync::test_canvas_modify_sync).
+		const engine = createEngine();
+		const path = "Notes/EchoNoop.md";
+		const file = new TFile(path, Date.now());
+
+		// Seed syncState via a pull (no local pushFile call happens here, so
+		// recentlyPushed must still be empty for this path).
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({
+					id: "echo-noop-id",
+					path,
+					title: "EchoNoop",
+					content: "# EchoNoop\n\nSynced content",
+				}),
+			]),
+		);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
+		engine.setLastSync("2026-01-01T00:00:00Z");
+		await engine.pull();
+
+		expect(engine.isRecentlyPushed(path)).toBe(false);
+
+		// Local content matches what was just pulled — pushFile takes the
+		// echo-skip no-op branch.
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# EchoNoop\n\nSynced content");
+		jest.clearAllMocks();
+		const pushed = await (engine as any).pushFile(file);
+
+		expect(pushed).toBe(false);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		// The no-op must NOT have opened the suppression window.
+		expect(engine.isRecentlyPushed(path)).toBe(false);
+
+		// A real remote update arriving right after must be applied, not
+		// echo-skipped.
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path,
+			content: "# EchoNoop\n\nSecond real update",
+			timestamp: Date.now(),
+		});
+
+		expect(getWrittenContent()).toBe("# EchoNoop\n\nSecond real update");
+	});
+
 	test("handleModify during pull queues for post-pull push", async () => {
 		const engine = createEngine({ debounceMs: 10 });
 		const file = new TFile("Notes/DuringPull.md", Date.now());

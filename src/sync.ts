@@ -1783,7 +1783,15 @@ export class SyncEngine {
 			// Keep path suppressed for a cooldown period after push completes.
 			// WebSocket events often arrive after the push finishes, and without this
 			// the echo suppression in handleStreamEvent would miss them.
-			this.markRecentlyPushed(file.path);
+			//
+			// Gated on `success`: only a push that actually transmitted content (a
+			// real POST or a CRDT emit) may open this window. The various no-op
+			// exits (echo hash-skip for notes/attachments, failed pushes caught
+			// above) leave `success` false — nothing reached the server, so there is
+			// no self-echo to suppress. Opening the window on those no-ops used to
+			// let it swallow a legitimately-arriving second remote update within the
+			// cooldown (Engram#944).
+			if (success) this.markRecentlyPushed(file.path);
 			this.emitStatus();
 		}
 		return success;
