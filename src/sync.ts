@@ -426,7 +426,45 @@ export class SyncEngine {
 		this.manifestPathOwners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
+		// Same snapshot, second projection: path -> server content_hash. Feeds
+		// the bind-time convergence check (verifyConvergenceOnOpen) for free —
+		// the manifest already carried the hashes; we were dropping them.
+		this.manifestPathHashes = new Map(
+			manifest.notes
+				.filter((n) => n.content_hash)
+				.map((n) => [normalizePath(n.path), n.content_hash]),
+		);
 		this.manifestOwnersFetchedAt = Date.now();
+	}
+
+	private manifestPathHashes: Map<string, string> | null = null;
+
+	/** Bind-time convergence check (2026-07-07 catch-up gap). Called when a
+	 *  note is opened: compare the server's content_hash for the path (from
+	 *  the cached manifest snapshot, 30s TTL — refreshed here when stale)
+	 *  against the serverHash this client last synced. A mismatch means a
+	 *  delivery was missed (announce lost, STEP2 dropped, offline window):
+	 *  force a fresh CRDT handshake — reset lifts the once-per-session
+	 *  enrollment guard, enroll re-fires STEP1, and the server's STEP2 reply
+	 *  carries exactly the ops we are missing. No-ops for unmapped notes and
+	 *  when ownership is unknowable (no manifest). */
+	async verifyConvergenceOnOpen(path: string): Promise<void> {
+		const normalized = normalizePath(path);
+		const noteId = this.noteIdMap?.get(normalized);
+		if (!noteId || !this.crdtEnrollment) return;
+		// Reuse manifestOwnerOf's refresh discipline (it repopulates both maps).
+		const owner = await this.manifestOwnerOf(normalized);
+		if (owner === undefined) return; // unknowable — never force on no data
+		const serverHash = this.manifestPathHashes?.get(normalized);
+		if (!serverHash) return;
+		const stored = this.syncState.get(normalized);
+		if (stored?.serverHash === serverHash) return; // converged
+		rlog().warn(
+			"pull",
+			`bind-time divergence: forcing re-handshake ${normalized} (have=${stored?.serverHash ?? "none"} server=${serverHash})`,
+		);
+		this.crdtEnrollment.reset(noteId);
+		this.crdtEnrollment.enroll(noteId);
 	}
 
 	/** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -1532,12 +1570,32 @@ export class SyncEngine {
 					rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`);
 					return false;
 				}
-				// Only pass a 5th positional arg when an id is actually known — an
-				// explicit trailing `undefined` still changes Function.arguments.length,
-				// which several existing tests pin exactly via toHaveBeenCalledWith.
-				const resp = noteId
-					? await this.api.pushNote(file.path, content, mtime, existing?.version, noteId)
-					: await this.api.pushNote(file.path, content, mtime, existing?.version);
+				// Only pass trailing positional args when actually known — an explicit
+				// trailing `undefined` still changes Function.arguments.length, which
+				// several existing tests pin exactly via toHaveBeenCalledWith.
+				// base_hash = the server content_hash we last synced (CAS against the
+				// v0.5.642 gate); only the INITIAL push declares it — the conflict-flow
+				// re-pushes below are deliberate overwrites and send none.
+				const baseHash = existing?.serverHash;
+				const resp =
+					baseHash !== undefined
+						? await this.api.pushNote(
+								file.path,
+								content,
+								mtime,
+								existing?.version,
+								noteId ?? undefined,
+								baseHash,
+							)
+						: noteId
+							? await this.api.pushNote(
+									file.path,
+									content,
+									mtime,
+									existing?.version,
+									noteId,
+								)
+							: await this.api.pushNote(file.path, content, mtime, existing?.version);
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
@@ -2989,14 +3047,46 @@ export class SyncEngine {
 				// re-flush suppressed by markRecentlyFlushed.
 				await this.flushFromCrdt(normalized, content);
 			} else {
-				// The note already exists locally and CRDT owns its body, so we never
-				// legacy-write it here.
-				// The note already exists locally and CRDT owns its body; we never legacy-
-				// write here. Re-enroll so a post-reconnect resetAll re-fires STEP1 and the
-				// server replies with any update we missed while disconnected (STEP2) ->
-				// flushFromCrdt. Idempotent while the guard is still set.
+				// The note exists locally and CRDT owns its body for LIVE edits — but
+				// this pull entry is the authoritative safety net. The old behavior
+				// (enroll and return, never comparing) meant a missed crdt_doc_ready
+				// announce was missed FOREVER: enrollment is once-per-session, so
+				// nothing ever backfilled the content (2026-07-07: "Obsidian never
+				// got any updates"). When the hashes prove we are behind, write the
+				// body we are already holding; markRecentlyFlushed suppresses the
+				// echo and the converged serverHash keeps dedupe quiet. The later
+				// idempotent STEP2 re-flush is suppressed by the same window.
 				if (noteId) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+				const stored = this.syncState.get(normalized);
+				if (change.content_hash && stored?.serverHash !== change.content_hash) {
+					if (this.isLiveBound(normalized)) {
+						// An open, bound editor is the sole CRDT writer for the note —
+						// writing disk under it would fight the binding. Deliver the
+						// missed ops through a fresh handshake instead: reset lifts the
+						// once-per-session enrollment guard, enroll re-fires STEP1.
+						rlog().warn(
+							"pull",
+							`CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`,
+						);
+						if (noteId && this.crdtEnrollment) {
+							this.crdtEnrollment.reset(noteId);
+							this.crdtEnrollment.enroll(noteId);
+						}
+					} else {
+						rlog().warn(
+							"pull",
+							`CRDT catch-up: pull backfilling diverged note ${change.path}`,
+						);
+						await this.flushFromCrdt(normalized, content);
+						this.syncState.set(normalized, {
+							hash: fnv1a(content),
+							version: change.version,
+							serverHash: change.content_hash,
+						});
+					}
+				} else {
+					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+				}
 			}
 			return false;
 		}

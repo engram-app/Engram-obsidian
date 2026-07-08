@@ -1142,9 +1142,9 @@ var EngramApi = class _EngramApi {
    *  server adopts as the note's primary key on first create (note_id-keyed
    *  CRDT rework, Task 5). Harmless to send for an existing note: the server
    *  already has an id and ignores it. */
-  async pushNote(path, content, mtime, version, clientId) {
+  async pushNote(path, content, mtime, version, clientId, baseHash) {
     let body = { path, content, mtime };
-    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId);
+    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId), baseHash !== void 0 && (body.base_hash = baseHash);
     try {
       return (await this.request("POST", "/notes", body)).json;
     } catch (e) {
@@ -5213,6 +5213,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  ever clean it. Swept by the next reconcile against a fresh manifest:
      *  absent from the manifest + unclaimed by the local map -> trash then. */
     this.pendingOrphanSweep = /* @__PURE__ */ new Set();
+    this.manifestPathHashes = null;
     this.idMapReconcileInflight = null;
     this.idMapReconcileQueued = !1;
     /** note_ids the SERVER is known to already have a note row for — learned
@@ -5332,7 +5333,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   cacheManifestOwners(manifest) {
     this.manifestPathOwners = new Map(
       manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.id])
+    ), this.manifestPathHashes = new Map(
+      manifest.notes.filter((n) => n.content_hash).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.content_hash])
     ), this.manifestOwnersFetchedAt = Date.now();
+  }
+  /** Bind-time convergence check (2026-07-07 catch-up gap). Called when a
+   *  note is opened: compare the server's content_hash for the path (from
+   *  the cached manifest snapshot, 30s TTL — refreshed here when stale)
+   *  against the serverHash this client last synced. A mismatch means a
+   *  delivery was missed (announce lost, STEP2 dropped, offline window):
+   *  force a fresh CRDT handshake — reset lifts the once-per-session
+   *  enrollment guard, enroll re-fires STEP1, and the server's STEP2 reply
+   *  carries exactly the ops we are missing. No-ops for unmapped notes and
+   *  when ownership is unknowable (no manifest). */
+  async verifyConvergenceOnOpen(path) {
+    var _a, _b, _c;
+    let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized);
+    if (!noteId || !this.crdtEnrollment || await this.manifestOwnerOf(normalized) === void 0) return;
+    let serverHash = (_b = this.manifestPathHashes) == null ? void 0 : _b.get(normalized);
+    if (!serverHash) return;
+    let stored = this.syncState.get(normalized);
+    (stored == null ? void 0 : stored.serverHash) !== serverHash && (rlog().warn(
+      "pull",
+      `bind-time divergence: forcing re-handshake ${normalized} (have=${(_c = stored == null ? void 0 : stored.serverHash) != null ? _c : "none"} server=${serverHash})`
+    ), this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId));
   }
   /** Trash files whose refused id-keyed-move turned out to be a genuine
    *  rename after all: the path is absent from the (fresh) manifest and no
@@ -5869,7 +5893,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
-        let resp = noteId ? await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version, noteId) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
+        let baseHash = existing == null ? void 0 : existing.serverHash, resp = baseHash !== void 0 ? await this.api.pushNote(
+          file.path,
+          content,
+          mtime,
+          existing == null ? void 0 : existing.version,
+          noteId != null ? noteId : void 0,
+          baseHash
+        ) : noteId ? await this.api.pushNote(
+          file.path,
+          content,
+          mtime,
+          existing == null ? void 0 : existing.version,
+          noteId
+        ) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
           let serverNote = resp.server_note;
           devLog().log(
@@ -6701,7 +6738,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (this.crdt && normalized.endsWith(".md")) {
       let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
-      return this.app.vault.getFileByPath(normalized) ? (noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`)) : (noteId && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content)), !1;
+      if (!this.app.vault.getFileByPath(normalized))
+        noteId && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+      else {
+        noteId && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
+        let stored = this.syncState.get(normalized);
+        change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash ? this.isLiveBound(normalized) ? (rlog().warn(
+          "pull",
+          `CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`
+        ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId))) : (rlog().warn(
+          "pull",
+          `CRDT catch-up: pull backfilling diverged note ${change.path}`
+        ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+          hash: fnv1a(content),
+          version: change.version,
+          serverHash: change.content_hash
+        })) : rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+      }
+      return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
@@ -21148,10 +21202,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           ), new import_obsidian25.Notice("Engram sync: sync failed");
         });
       }
-    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", () => {
-      var _a2;
-      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
-    })), this.registerEvent(
+    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(
+      this.app.workspace.on("file-open", (file) => {
+        var _a2;
+        (_a2 = this.crdtLiveViews) == null || _a2.refresh(), (file == null ? void 0 : file.extension) === "md" && !this.syncEngine.isSyncBlocked() && this.syncEngine.verifyConvergenceOnOpen(file.path);
+      })
+    ), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
