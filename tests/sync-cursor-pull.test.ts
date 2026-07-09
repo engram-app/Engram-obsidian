@@ -420,6 +420,30 @@ describe("SyncEngine pullViaCursor", () => {
 		// Loop still completed and advanced the cursor to the tip.
 		expect(engine.getSyncCursor()).toBe(encodeCursor(e3.seq, e3.id));
 	});
+
+	test("a null-path feed entry (folder marker) neither throws nor stalls cursor advancement", async () => {
+		// Folder-marker rows leak into /sync/changes with a null path (markers
+		// carry no path_ciphertext server-side). Pre-#216 they THREW
+		// `null.startsWith` inside applyChange's shouldIgnore, rlogging an error
+		// on every pull. Regression pin (#216 review, issue #217): the entry is
+		// skipped quietly (resolves false, no throw) — real applySyncChange here,
+		// NOT a spy — and the cursor still advances to the page tip so the
+		// watermark keeps moving.
+		const marker = { ...noteEntry(1, "marker.md"), path: null } as unknown as SyncChange;
+		getSyncChanges.mockResolvedValueOnce({
+			changes: [marker],
+			next_cursor: null,
+			has_more: false,
+		});
+
+		const engine = createEngine();
+		await expect(engine.applySyncChange(marker)).resolves.toBe(false);
+
+		const applied = await (engine as any).pullViaCursor(undefined);
+
+		expect(applied).toBe(0);
+		expect(engine.getSyncCursor()).toBe(encodeCursor(1, marker.id));
+	});
 });
 
 describe("SyncEngine bootstrap (§F reconcile + genesis pull)", () => {

@@ -6029,7 +6029,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
         if (!noteId && this.noteIdMap) {
-          if (this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(file.path)))
+          if (this.shouldDeferMint(file.path))
             return rlog().info(
               "push",
               `Mint refused (engine-flushed file, id relocated away): ${file.path}`
@@ -6342,6 +6342,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.recentlyFlushed.delete(path);
     }, ECHO_COOLDOWN_MS);
     this.recentlyFlushed.set(path, timer);
+  }
+  /** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
+   *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
+   *  must honor identical ownership invariants
+   *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
+   *  never-synced local note". A file this engine itself recently flushed to
+   *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
+   *  only writes server-known content. If its id binding is gone, a
+   *  concurrent relocation/tombstone evicted it (moveIfIdRelocated re-keys
+   *  the map + drops the syncState baseline BEFORE trashing the old file,
+   *  and the push runs inside that window). Minting here REST-creates the
+   *  renamed-away old path server-side under a fresh id — a live row no
+   *  tombstone will ever remove; every device then re-materializes it
+   *  forever. Defer instead: skip the push (not fail) — the relocation/pull
+   *  owns the path's fate, and the next reconcile/fullSync retries once it
+   *  lands.
+   *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
+   *  delayed past it escapes; debounce is 500ms, fine. */
+  shouldDeferMint(path) {
+    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(path));
   }
   // --- Pull: Engram → local vault ---
   /** Pull remote changes and apply to vault. */
@@ -7289,8 +7309,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
       var _a2, _b2;
       if (chunk.length === 0) return "ok";
-      let entries = chunk;
-      chunk = [], chunkBytes = 0;
+      let entries = [];
+      for (let e of chunk) {
+        if (this.shouldDeferMint((0, import_obsidian21.normalizePath)(e.file.path))) {
+          done++, rlog().info(
+            "push",
+            `Mint refused (engine-flushed file, id relocated away): ${e.file.path}`
+          ), this.logEntry("skip", e.file.path, "skipped", void 0, "mint-deferred");
+          continue;
+        }
+        entries.push(e);
+      }
+      if (chunk = [], chunkBytes = 0, entries.length === 0) return "ok";
       for (let e of entries) this.pushing.add(e.file.path);
       try {
         let resp = await this.api.pushNotesBatch(
