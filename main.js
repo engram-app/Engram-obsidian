@@ -7063,7 +7063,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 version: change.version
               });
             } else
-              this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+              this.crdtRehandshakeAttempts.set(key, {
+                hash: change.content_hash,
+                attempts
+              });
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(

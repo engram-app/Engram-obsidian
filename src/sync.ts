@@ -3553,7 +3553,9 @@ export class SyncEngine {
 						const key = noteId ?? normalized;
 						const prevAttempt = this.crdtRehandshakeAttempts.get(key);
 						const attempts =
-							prevAttempt?.hash === change.content_hash ? prevAttempt.attempts + 1 : 1;
+							prevAttempt?.hash === change.content_hash
+								? prevAttempt.attempts + 1
+								: 1;
 						rlog().warn(
 							"pull",
 							`CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`,
@@ -3584,7 +3586,10 @@ export class SyncEngine {
 						} else {
 							// Keep serverHash UNrecorded so the next poll re-handshakes again if the
 							// ops still have not landed — retry, do not assume delivery.
-							this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+							this.crdtRehandshakeAttempts.set(key, {
+								hash: change.content_hash,
+								attempts,
+							});
 						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
