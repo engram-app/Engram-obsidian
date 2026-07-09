@@ -1659,20 +1659,9 @@ export class SyncEngine {
 				// than minting a second one.
 				let noteId = this.noteIdMap?.get(file.path) ?? null;
 				if (!noteId && this.noteIdMap) {
-					// MINT REFUSAL (issue #972, e2e test_34): a mint means "brand-new,
-					// never-synced local note". A file this engine itself recently
-					// flushed to disk (flushFromCrdt) can never be that — the engine
-					// only writes server-known content. If its id binding is gone, a
-					// concurrent relocation/tombstone evicted it (moveIfIdRelocated
-					// re-keys the map + drops the syncState baseline BEFORE trashing
-					// the old file, and this debounced flush-echo push runs inside
-					// that window). Minting here REST-creates the renamed-away old
-					// path server-side under a fresh id — a live row no tombstone
-					// will ever remove; every device then re-materializes it forever.
+					// MINT REFUSAL (issue #972, e2e test_34) — see shouldDeferMint.
 					// Skip the push: the relocation/pull owns this path's fate.
-					// ponytail: recentlyFlushed's 5s cooldown is the guard's window —
-					// a push delayed past it escapes; debounce is 500ms, fine.
-					if (this.recentlyFlushed.has(normalizePath(file.path))) {
+					if (this.shouldDeferMint(file.path)) {
 						rlog().info(
 							"push",
 							`Mint refused (engine-flushed file, id relocated away): ${file.path}`,
@@ -2252,6 +2241,31 @@ export class SyncEngine {
 	 *  never swallows a genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
 		this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+	}
+
+	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
+	 *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
+	 *  must honor identical ownership invariants
+	 *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
+	 *  never-synced local note". A file this engine itself recently flushed to
+	 *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
+	 *  only writes server-known content. If its id binding is gone, a
+	 *  concurrent relocation/tombstone evicted it (moveIfIdRelocated re-keys
+	 *  the map + drops the syncState baseline BEFORE trashing the old file,
+	 *  and the push runs inside that window). Minting here REST-creates the
+	 *  renamed-away old path server-side under a fresh id — a live row no
+	 *  tombstone will ever remove; every device then re-materializes it
+	 *  forever. Defer instead: skip the push (not fail) — the relocation/pull
+	 *  owns the path's fate, and the next reconcile/fullSync retries once it
+	 *  lands.
+	 *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
+	 *  delayed past it escapes; debounce is 500ms, fine. */
+	private shouldDeferMint(path: string): boolean {
+		return (
+			!!this.noteIdMap &&
+			!this.noteIdMap.get(path) &&
+			this.recentlyFlushed.has(normalizePath(path))
+		);
 	}
 
 	// --- Pull: Engram → local vault ---
@@ -4129,9 +4143,25 @@ export class SyncEngine {
 		// Sends the accumulated chunk. Returns "ok" | "unsupported" | "transport".
 		const flushChunk = async (): Promise<"ok" | "unsupported" | "transport"> => {
 			if (chunk.length === 0) return "ok";
-			const entries = chunk;
+			// Mint refusal (issue #217): same seam as pushFile's — an
+			// engine-flushed path whose id was relocated away must not mint here
+			// either. Drop it from the batch (skip, not fail); see shouldDeferMint.
+			const entries: Entry[] = [];
+			for (const e of chunk) {
+				if (this.shouldDeferMint(normalizePath(e.file.path))) {
+					done++;
+					rlog().info(
+						"push",
+						`Mint refused (engine-flushed file, id relocated away): ${e.file.path}`,
+					);
+					this.logEntry("skip", e.file.path, "skipped", undefined, "mint-deferred");
+					continue;
+				}
+				entries.push(e);
+			}
 			chunk = [];
 			chunkBytes = 0;
+			if (entries.length === 0) return "ok";
 
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
