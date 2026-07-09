@@ -265,6 +265,37 @@ describe("wipeRemote self-echo suppression", () => {
 		expect(order).toContain("removeDoc");
 	});
 
+	test("remote-applied trash does NOT push a DELETE back to the server (CI find)", async () => {
+		// B applies A's delete (trashFile) → Obsidian fires vault.on('delete') →
+		// handleDelete previously re-pushed api.deleteNote(path). Path-keyed and
+		// CAS-less, that echo-push kills a note recreated at the path in between
+		// (wipe→re-push on A) — test_86's settle assert caught it on CI.
+		const engine = createEngine();
+		const file = new TFile("Notes/FromRemote.md");
+		mockApp.vault.getFileByPath.mockReturnValueOnce(file);
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/FromRemote.md",
+			timestamp: 1709345678,
+			device_id: "device-other",
+		});
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+
+		// Obsidian's vault 'delete' event for that trash lands in handleDelete.
+		await engine.handleDelete(file);
+
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("a genuine user-initiated delete still pushes to the server", async () => {
+		const engine = createEngine();
+		const file = new TFile("Notes/UserDeleted.md");
+
+		await engine.handleDelete(file);
+
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/UserDeleted.md");
+	});
+
 	test("wipeRemote clears server bindings so the re-push mints fresh", async () => {
 		const noteIdMap = identityNoteIdMap("Notes/Keep.md");
 		const engine = createEngine(noteIdMap);

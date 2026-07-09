@@ -5159,6 +5159,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  echo suppression, so this set is the only thing standing between a
      *  remote wipe and the local files it is about to re-upload. */
     this.wipedRemote = /* @__PURE__ */ new Map();
+    /** Paths whose local trash APPLIED a remote change (WS delete, pull
+     *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
+     *  trash fires must not push a DELETE back to the server: the server
+     *  already knows, and the path-keyed CAS-less delete would kill a note
+     *  recreated at the same path in between (wipe→re-push, delete→recreate).
+     *  Found by test_86's settle assert: B's echo-push landed after A's
+     *  replace-remote re-upload and tombstoned the fresh note. */
+    this.remotelyDeleted = /* @__PURE__ */ new Map();
     /** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
      *  Distinct from recentlyPushed (WS echo suppression after a push): only the
      *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
@@ -5490,7 +5498,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let p of [...this.pendingOrphanSweep]) {
       if (this.pendingOrphanSweep.delete(p), (_a = this.manifestPathOwners) != null && _a.has(p) || (_b = this.noteIdMap) != null && _b.get(p)) continue;
       let file = this.app.vault.getFileByPath(p);
-      file && (this.syncState.delete(p), (_c = this.baseStore) == null || _c.delete(p), await this.app.fileManager.trashFile(file), rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`));
+      file && (this.syncState.delete(p), (_c = this.baseStore) == null || _c.delete(p), await this.trashRemotelyDeleted(file), rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`));
     }
   }
   async reconcileNoteIdMapFromManifest() {
@@ -5878,7 +5886,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleDelete short-circuited \u2014 gate closed");
       return;
@@ -5887,12 +5895,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path));
+    if (isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
+      this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
+      return;
+    }
     try {
-      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
+      isBinary ? await this.api.deleteAttachment(file.path) : await this.api.deleteNote(file.path), this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(crdtNoteId)), (_g = this.crdtEnrollment) == null || _g.reset(crdtNoteId));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(crdtNoteId)), (_g = this.crdtEnrollment) == null || _g.reset(crdtNoteId));
+        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -5900,7 +5911,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         action: "delete",
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
-        vaultId: (_h = this.settings.vaultId) != null ? _h : void 0
+        vaultId: (_j = this.settings.vaultId) != null ? _j : void 0
       }), this.maybeGoOffline(e);
     }
   }
@@ -6357,6 +6368,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }, ms);
     map3.set(path, timer);
   }
+  /** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
+   *  tombstone, relocation/orphan/bootstrap cleanup). Marks the path first so
+   *  the vault 'delete' event this trash fires skips the server push in
+   *  handleDelete — every sync-applied deletion must route through here, or
+   *  its echo-push can tombstone a note recreated at the path since. */
+  async trashRemotelyDeleted(file) {
+    this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
+  }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {
     this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
@@ -6506,7 +6525,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       for (let i = 0; i < syncable.length; i++) {
         let file = syncable[i];
         try {
-          await this.app.fileManager.trashFile(file), this.logEntry("delete", file.path, "ok", void 0, "wipe");
+          await this.trashRemotelyDeleted(file), this.logEntry("delete", file.path, "ok", void 0, "wipe");
         } catch (e) {
           wipeFailed++;
           let msg = errMsg(e);
@@ -6718,7 +6737,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
           return;
         }
-        await this.app.fileManager.trashFile(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
+        await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
       }
       if (normalized.endsWith(".md")) {
         let crdtNoteId = (_i = (_h = this.noteIdMap) == null ? void 0 : _h.get(normalized)) != null ? _i : null;
@@ -6823,7 +6842,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         let content = await this.app.vault.cachedRead(oldFile);
         try {
-          await this.app.fileManager.trashFile(oldFile);
+          await this.trashRemotelyDeleted(oldFile);
         } catch (e) {
         }
         this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(newPath)) ? rlog().info(
@@ -6897,7 +6916,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (!serverPaths.has(np))
         if (this.syncState.has(np))
           try {
-            await this.app.fileManager.trashFile(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Bootstrap: server-deleted \u2192 trashed ${file.path}`);
+            await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Bootstrap: server-deleted \u2192 trashed ${file.path}`);
           } catch (e) {
             rlog().error(
               "pull",
@@ -6983,7 +7002,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
           return !1;
         }
-        return await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0;
+        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0;
       }
       return !1;
     }
@@ -7180,7 +7199,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
     if (change.deleted) {
       let existing2 = this.app.vault.getFileByPath(normalized);
-      return existing2 ? (await this.app.fileManager.trashFile(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
+      return existing2 ? (await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
     }
     let resolvedBase64 = contentBase64 != null ? contentBase64 : (await this.api.getAttachment(change.path)).content_base64, buffer = base64ToArrayBuffer(resolvedBase64), existing = this.app.vault.getFileByPath(normalized), hash = fnv1a(resolvedBase64);
     if (existing) {
@@ -8020,7 +8039,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.recentlyFlushed.clear();
     for (let timer of this.wipedRemote.values())
       window.clearTimeout(timer);
-    this.wipedRemote.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.wipedRemote.clear();
+    for (let timer of this.remotelyDeleted.values())
+      window.clearTimeout(timer);
+    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;

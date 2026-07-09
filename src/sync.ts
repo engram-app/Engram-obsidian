@@ -272,6 +272,14 @@ export class SyncEngine {
 	 *  echo suppression, so this set is the only thing standing between a
 	 *  remote wipe and the local files it is about to re-upload. */
 	private wipedRemote: Map<string, number> = new Map();
+	/** Paths whose local trash APPLIED a remote change (WS delete, pull
+	 *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
+	 *  trash fires must not push a DELETE back to the server: the server
+	 *  already knows, and the path-keyed CAS-less delete would kill a note
+	 *  recreated at the same path in between (wipe→re-push, delete→recreate).
+	 *  Found by test_86's settle assert: B's echo-push landed after A's
+	 *  replace-remote re-upload and tombstoned the fresh note. */
+	private remotelyDeleted: Map<string, number> = new Map();
 	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
 	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
 	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
@@ -519,7 +527,7 @@ export class SyncEngine {
 			if (!file) continue;
 			this.syncState.delete(p);
 			this.baseStore?.delete(p);
-			await this.app.fileManager.trashFile(file);
+			await this.trashRemotelyDeleted(file);
 			rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`);
 		}
 	}
@@ -1287,6 +1295,22 @@ export class SyncEngine {
 		// a later create at the same path whose content hashes the same, so the
 		// recreated file's push is skipped and it never reaches the server.
 		this.syncState.delete(normalizePath(file.path));
+
+		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
+		// the server already knows. Never push the DELETE back — path-keyed and
+		// CAS-less, it lands after the origin device recreates the path
+		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
+		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
+		// teardown the push path would have done and stop.
+		if (this.remotelyDeleted.has(file.path)) {
+			this.remotelyDeleted.delete(file.path);
+			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
+			if (file.path.endsWith(".md") && crdtNoteId) {
+				await this.crdt?.removeDoc(crdtNoteId);
+				this.crdtEnrollment?.reset(crdtNoteId);
+			}
+			return;
+		}
 
 		try {
 			if (isBinary) {
@@ -2195,6 +2219,16 @@ export class SyncEngine {
 		map.set(path, timer);
 	}
 
+	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
+	 *  tombstone, relocation/orphan/bootstrap cleanup). Marks the path first so
+	 *  the vault 'delete' event this trash fires skips the server push in
+	 *  handleDelete — every sync-applied deletion must route through here, or
+	 *  its echo-push can tombstone a note recreated at the path since. */
+	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
+		this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS);
+		await this.app.fileManager.trashFile(file);
+	}
+
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
 	private markRecentlyPushed(path: string): void {
 		this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
@@ -2444,7 +2478,7 @@ export class SyncEngine {
 			for (let i = 0; i < syncable.length; i++) {
 				const file = syncable[i]!;
 				try {
-					await this.app.fileManager.trashFile(file);
+					await this.trashRemotelyDeleted(file);
 					this.logEntry("delete", file.path, "ok", undefined, "wipe");
 				} catch (e) {
 					wipeFailed++;
@@ -2821,7 +2855,7 @@ export class SyncEngine {
 					void this.pull();
 					return;
 				}
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
@@ -3097,7 +3131,7 @@ export class SyncEngine {
 				// file still exists at its old location.
 				const content = await this.app.vault.cachedRead(oldFile);
 				try {
-					await this.app.fileManager.trashFile(oldFile);
+					await this.trashRemotelyDeleted(oldFile);
 				} catch {
 					// Already gone — the concurrent tombstone won the race.
 				}
@@ -3241,7 +3275,7 @@ export class SyncEngine {
 				// run (clearing it would reclassify the file as offline-created and
 				// resurrect it on the next push). Log + carry on.
 				try {
-					await this.app.fileManager.trashFile(file);
+					await this.trashRemotelyDeleted(file);
 					this.syncState.delete(np);
 					this.baseStore?.delete(np);
 					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
@@ -3399,7 +3433,7 @@ export class SyncEngine {
 					}
 					return false;
 				}
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
@@ -3777,7 +3811,7 @@ export class SyncEngine {
 		if (change.deleted) {
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				rlog().info("pull", `Attachment deleted: ${change.path}`);
@@ -5315,6 +5349,10 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.wipedRemote.clear();
+		for (const timer of this.remotelyDeleted.values()) {
+			window.clearTimeout(timer);
+		}
+		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();
