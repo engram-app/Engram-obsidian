@@ -1416,7 +1416,7 @@ function errMsg(e) {
 }
 
 // src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4;
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
@@ -1452,6 +1452,29 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      * Reset to null on every joinChannel() call (each (re)connect issues a new join).
      */
     this.crdtJoinMsgRef = null;
+    /**
+     * Reason from the most recent crdt: join REJECTION in the session that just
+     * ended (null if that session's crdt join succeeded, was never attempted, or
+     * hasn't replied yet). A rejected crdt join does not by itself force a
+     * reconnect — the sync topic can still be healthy — but if the WHOLE socket
+     * then closes (e.g. a server-side abuse defense, or any other drop), the
+     * next reconnect should back off rather than retry on the flat graceful-drop
+     * jitter: retrying immediately just re-triggers the same rejection before
+     * the backend's rate-limit bucket drains, producing a tight open/reject/
+     * close loop (the prod alert-noise "CRDT channel-join retry loop" — one
+     * user's plugin looping join -> rate_limited -> immediate retry for
+     * ~15 min windows). Reset to null on every joinChannel() (fresh join,
+     * fresh chance) and set only by a
+     * genuine join-ref-matching error reply — a per-message crdt_msg error
+     * (different ref) must NOT set this.
+     */
+    this.crdtJoinFailedReason = null;
+    /** Backoff (ms) for the reconnect that follows a join-class failure. Distinct
+     *  from `reconnectMs` (which only grows on the "closed before ever opening"
+     *  path) because `reconnectMs` resets to 1000 on every successful open —
+     *  and a join-class failure by definition happens AFTER a successful open.
+     *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
+    this.joinFailureBackoffMs = 1e3;
     /** Current connection id, minted fresh per physical socket. */
     this.connId = null;
     this.authProvider = null;
@@ -1535,10 +1558,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
   }
   async connect() {
-    this.ws || (this.reconnectMs = 1e3, await this.openSocket());
+    this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, rlog().info("channel", "Channel disconnected");
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
   }
   /** Call when the app returns to the foreground (mobile resume). Mobile OSes
    *  suspend the socket while backgrounded; readyState can still report OPEN on a
@@ -1639,7 +1662,20 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         "channel",
         `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
       ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe && this.authProbe().catch(() => {
-      }), opened) {
+      }), opened && this.crdtJoinFailedReason !== null) {
+        let floor2 = this.crdtJoinFailedReason === "rate_limited" ? RATE_LIMITED_JOIN_FLOOR_MS : 1e3;
+        this.joinFailureBackoffMs = Math.min(
+          Math.max(this.joinFailureBackoffMs * 2, floor2),
+          this.maxReconnectMs
+        );
+        let delay = this.joinFailureBackoffMs + Math.random() * this.joinFailureBackoffMs * 0.5;
+        rlog().info(
+          "channel",
+          `crdt: join rejected (${this.crdtJoinFailedReason}) \u2014 backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`
+        ), this.reconnectTimer = window.setTimeout(() => {
+          this.openSocket();
+        }, delay);
+      } else if (opened) {
         let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
@@ -1655,7 +1691,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     };
   }
   joinChannel() {
-    this.crdtJoinMsgRef = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
+    this.crdtJoinMsgRef = null, this.crdtJoinFailedReason = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
     let crdtT = this.crdtTopic;
     if (crdtT) {
       let msgRef = String(++this.ref);
@@ -1705,7 +1741,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         } else if (topic === this.userTopic) {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
-        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
+        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, this.joinFailureBackoffMs = 1e3, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
       else if (status === "error") {
         let response = payload.response;
         if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
@@ -1720,7 +1756,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           `Channel join error on ${topic}: ${JSON.stringify(payload)}`
         ), topic === this.crdtTopic) {
           let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
-          ref === this.crdtJoinMsgRef ? (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2) : rlog().warn(
+          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2)) : rlog().warn(
             "channel",
             `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
           );
@@ -6020,7 +6056,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-        if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), file.extension === "md" && rlog().info(
+        if (!noteId && this.noteIdMap) {
+          if (this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(file.path)))
+            return rlog().info(
+              "push",
+              `Mint refused (engine-flushed file, id relocated away): ${file.path}`
+            ), !1;
+          noteId = uuid7(), this.noteIdMap.set(file.path, noteId);
+        }
+        if (file.extension === "md" && rlog().info(
           "push",
           `route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         ), this.crdt && noteId && this.isNoteConfirmed(noteId) && ((_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) == null || _g)) {
@@ -6809,6 +6853,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
+    if (!c.path) return !1;
     if (c.deleted)
       (_a = this.noteIdMap) == null || _a.delete(c.path);
     else {

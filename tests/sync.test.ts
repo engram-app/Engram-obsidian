@@ -465,6 +465,39 @@ describe("SyncEngine.pull", () => {
 		expect(engine.isUnchangedSynced(path, content)).toBe(true);
 	});
 
+	test("push refuses to mint for an engine-flushed path whose id was relocated away (issue #972)", async () => {
+		// e2e test_34 resurrection: the engine materializes a received note
+		// (flushFromCrdt), which arms a debounced self-push. A folder rename
+		// then relocates the note's id away (moveIfIdRelocated re-keys the map
+		// and drops the syncState baseline BEFORE trashing the old file). When
+		// the in-flight push finally resolves the path's id, the binding is
+		// gone — minting a fresh id here REST-creates the old path server-side
+		// as a live note no tombstone will ever remove.
+		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		engine.setNoteIdMap(noteIdMap);
+		const oldPath = "E2E/RenameCleanup34/Cleanup.md";
+		const newPath = "E2E/RenamedCleanup34/Cleanup.md";
+		const content = "# Cleanup Test\nShould be removed at old path";
+
+		// Receiver learns the true id, then the engine flushes the body to disk.
+		noteIdMap.set(oldPath, "id-true");
+		await engine.flushFromCrdt(oldPath, content);
+
+		// Concurrent folder-rename relocation: map re-keyed + baseline evicted
+		// (exactly what moveIfIdRelocated does before trashing the old file).
+		noteIdMap.rename(oldPath, newPath);
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.delete(oldPath);
+
+		// The armed self-push now runs against the still-on-disk old file.
+		const file = new TFile(oldPath);
+		mockApp.vault.cachedRead.mockResolvedValue(content);
+		await (engine as unknown as { pushFile(f: TFile): Promise<boolean> }).pushFile(file);
+
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		expect(noteIdMap.get(oldPath)).toBeNull(); // no fresh mint
+	});
+
 	test("a CRDT-delivered note is trashed (not resurrected) when the server tombstones it", async () => {
 		const engine = createEngine();
 		engine.setSyncCursor("CUR-0");

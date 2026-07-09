@@ -1635,6 +1635,26 @@ export class SyncEngine {
 				// than minting a second one.
 				let noteId = this.noteIdMap?.get(file.path) ?? null;
 				if (!noteId && this.noteIdMap) {
+					// MINT REFUSAL (issue #972, e2e test_34): a mint means "brand-new,
+					// never-synced local note". A file this engine itself recently
+					// flushed to disk (flushFromCrdt) can never be that — the engine
+					// only writes server-known content. If its id binding is gone, a
+					// concurrent relocation/tombstone evicted it (moveIfIdRelocated
+					// re-keys the map + drops the syncState baseline BEFORE trashing
+					// the old file, and this debounced flush-echo push runs inside
+					// that window). Minting here REST-creates the renamed-away old
+					// path server-side under a fresh id — a live row no tombstone
+					// will ever remove; every device then re-materializes it forever.
+					// Skip the push: the relocation/pull owns this path's fate.
+					// ponytail: recentlyFlushed's 5s cooldown is the guard's window —
+					// a push delayed past it escapes; debounce is 500ms, fine.
+					if (this.recentlyFlushed.has(normalizePath(file.path))) {
+						rlog().info(
+							"push",
+							`Mint refused (engine-flushed file, id relocated away): ${file.path}`,
+						);
+						return false;
+					}
 					noteId = uuid7();
 					this.noteIdMap.set(file.path, noteId);
 				}
@@ -3127,6 +3147,12 @@ export class SyncEngine {
 			};
 			return this.applyAttachmentChange(ac);
 		}
+		// Folder-marker rows leak into the /sync/changes feed with a null path
+		// (markers carry no path_ciphertext server-side). They are unappliable
+		// client-side and previously THREW inside applyChange's shouldIgnore
+		// (`null.startsWith`), landing an rlog error ("Skipped note null") on
+		// every pull. Skip them quietly.
+		if (!c.path) return false;
 		// note_id-keyed CRDT rework (Task 5): learn this note's stable id from the
 		// merged feed (the only pull path whose entries carry `id` — the legacy
 		// GET /notes/changes NoteChange shape does not). A tombstone clears the
