@@ -6028,7 +6028,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-        if (!noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(file.path, noteId)), file.extension === "md" && rlog().info(
+        if (!noteId && this.noteIdMap) {
+          if (this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(file.path)))
+            return rlog().info(
+              "push",
+              `Mint refused (engine-flushed file, id relocated away): ${file.path}`
+            ), !1;
+          noteId = uuid7(), this.noteIdMap.set(file.path, noteId);
+        }
+        if (file.extension === "md" && rlog().info(
           "push",
           `route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         ), this.crdt && noteId && this.isNoteConfirmed(noteId) && ((_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) == null || _g)) {
@@ -6800,6 +6808,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
+    if (!c.path) return !1;
     if (c.deleted)
       (_a = this.noteIdMap) == null || _a.delete(c.path);
     else {
