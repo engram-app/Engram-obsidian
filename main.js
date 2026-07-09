@@ -1753,6 +1753,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         timestamp: Date.now(),
         kind: (_i = p.kind) != null ? _i : "note",
         id: p.id,
+        device_id: p.device_id,
         content: p.content,
         content_hash: p.content_hash,
         title: p.title,
@@ -5196,6 +5197,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  for IndexedDB namespacing; the CRDT doc itself is keyed by the note's bare
      *  note_id, matching the backend's note_id lookup. */
     this.crdt = null;
+    /** This install's opaque device id (main.ts mints + persists it; the API
+     *  client sends it as X-Device-Id on every REST call). The server stamps
+     *  it into `note_changed` delete broadcasts (#970) so we can drop our own
+     *  fanout echoes — the generic class fix behind the wipeRemote path
+     *  marking below. Null in tests/older callers: the drop is then skipped. */
+    this.deviceId = null;
     /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
      *  main.ts (persisted in data.json); wired here so pushFile can mint/send
      *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -5373,6 +5380,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtManager(mgr) {
     this.crdt = mgr;
+  }
+  setDeviceId(id2) {
+    this.deviceId = id2;
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
@@ -6642,6 +6652,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (event.event_type === "delete") {
       let normalized = (0, import_obsidian21.normalizePath)(event.path);
+      if (this.deviceId && event.device_id === this.deviceId) {
+        rlog().info("ws", `Echo skip (own device): ${event.path}`);
+        return;
+      }
       if (this.wipedRemote.has(normalized)) {
         rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
         return;
@@ -21423,7 +21437,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b;
       return (_b = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b : !1;
-    }), this.syncEngine.setNoteIdMap(this.noteIdMap);
+    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId);
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;

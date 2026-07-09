@@ -160,6 +160,37 @@ describe("wipeRemote self-echo suppression", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(other);
 	});
 
+	test("delete event carrying our OWN device_id is dropped (#970)", async () => {
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+
+		mockApp.vault.getFileByPath.mockReturnValueOnce(new TFile("Notes/Mine.md"));
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Mine.md",
+			timestamp: 1709345678,
+			device_id: "device-self",
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("delete event from a FOREIGN device still applies (#970)", async () => {
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+
+		const file = new TFile("Notes/Theirs.md");
+		mockApp.vault.getFileByPath.mockReturnValueOnce(file);
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Theirs.md",
+			timestamp: 1709345678,
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
 	test("wipeRemote clears server bindings so the re-push mints fresh", async () => {
 		const noteIdMap = identityNoteIdMap("Notes/Keep.md");
 		const engine = createEngine(noteIdMap);

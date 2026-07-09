@@ -358,6 +358,17 @@ export class SyncEngine {
 		this.crdt = mgr;
 	}
 
+	/** This install's opaque device id (main.ts mints + persists it; the API
+	 *  client sends it as X-Device-Id on every REST call). The server stamps
+	 *  it into `note_changed` delete broadcasts (#970) so we can drop our own
+	 *  fanout echoes — the generic class fix behind the wipeRemote path
+	 *  marking below. Null in tests/older callers: the drop is then skipped. */
+	private deviceId: string | null = null;
+
+	setDeviceId(id: string | null): void {
+		this.deviceId = id;
+	}
+
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
 	 *  main.ts (persisted in data.json); wired here so pushFile can mint/send
 	 *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -2731,10 +2742,21 @@ export class SyncEngine {
 
 		if (event.event_type === "delete") {
 			const normalized = normalizePath(event.path);
+			// Origin-attributed self-echo (#970): the server stamps the REST
+			// caller's X-Device-Id into delete broadcasts. A delete WE caused
+			// must never be re-applied to our own vault. Upserts keep their
+			// existing suppression (pushing/recentlyPushed/hash-skip) — their
+			// echoes also drive id-relocation, so they are not dropped here.
+			if (this.deviceId && event.device_id === this.deviceId) {
+				rlog().info("ws", `Echo skip (own device): ${event.path}`);
+				return;
+			}
 			// Self-echo of a replace-remote wipe: WE deleted this path on the
 			// server moments ago (wipeRemote) and are about to re-upload it.
 			// The general delete-exemption from echo suppression must not let
 			// our own wipe come back and trash the vault (2026-07-08 incident).
+			// Kept alongside the device_id drop above — pre-#970 backends
+			// (self-host updates on its own cadence) send no device_id.
 			if (this.wipedRemote.has(normalized)) {
 				rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
 				return;

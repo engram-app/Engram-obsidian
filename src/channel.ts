@@ -658,6 +658,7 @@ export class NoteChannel {
 				timestamp: Date.now(),
 				kind: (p.kind as "note" | "attachment") ?? "note",
 				id: p.id as string | undefined,
+				device_id: p.device_id as string | undefined,
 				content: p.content as string | undefined,
 				content_hash: p.content_hash as string | undefined,
 				title: p.title as string | undefined,
