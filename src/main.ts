@@ -324,6 +324,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// persisted map, not an empty one.
 		this.syncEngine.setNoteIdMap(this.noteIdMap);
 
+		// Own device id (minted in loadSettings, sent as X-Device-Id by the API
+		// client) — lets the engine drop server fanout echoes of its own REST
+		// deletes (#970).
+		this.syncEngine.setDeviceId(this.deviceId);
+
+		// wipeRemote destroys Y.Docs for files that stay open on disk — detach
+		// all live editor bindings first so none spans the teardown. Rebind
+		// happens via the existing file-open/leaf/layout refresh events.
+		this.syncEngine.setCrdtEditorDetach(() => this.crdtLiveViews?.detachAll());
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
