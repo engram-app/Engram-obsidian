@@ -856,6 +856,73 @@ describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () =
 	});
 });
 
+// ---------------------------------------------------------------------------
+// Mint-refusal guard in the batch path (issue #217 — same seam as PR #216 /
+// backend #972): pushFile refuses to mint an id for an engine-flushed
+// (recentlyFlushed) path whose id binding is gone — a relocation owns that
+// path's fate, and minting REST-creates the renamed-away old path server-side
+// under a fresh id forever. flushChunk in pushNotesViaBatch mints at the same
+// seam and must route through the same guard: the deferred path is SKIPPED
+// from the batch (not failed) — the next reconcile/fullSync retries it once
+// relocation lands. docs/context/crdt-batch-push-duplication.md: pushFile and
+// pushNotesViaBatch must honor identical ownership invariants.
+// ---------------------------------------------------------------------------
+
+describe("batch push routes mints through the relocation guard (issue #217)", () => {
+	test("an engine-flushed path with no id is skipped — no mint, not in the pushed batch, not failed", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [] });
+
+		// The engine itself flushed this path to disk (flushFromCrdt marks it
+		// recentlyFlushed) and a concurrent relocation evicted its id binding —
+		// noteIdMap has no entry, exactly the pushFile #972 window.
+		(engine as unknown as { markRecentlyFlushed(p: string): void }).markRecentlyFlushed(
+			"old/Note.md",
+		);
+
+		const file = new TFile("old/Note.md");
+		const res = await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(batch).not.toHaveBeenCalled(); // never entered the pushed batch
+		expect(noteIdMap.get("old/Note.md")).toBeNull(); // no fresh mint
+		expect(res).toEqual({ pushed: 0, failed: 0 }); // skipped, not failed
+	});
+
+	test("a genuinely-new path NOT flushed by the engine still mints and pushes normally", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "new/Fresh.md", status: "ok" }] });
+
+		const file = new TFile("new/Fresh.md");
+		const res = await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(batch).toHaveBeenCalledTimes(1);
+		const sent = batch.mock.calls[0][0] as Array<{ path: string; id?: string }>;
+		expect(sent).toHaveLength(1);
+		expect(sent[0]?.path).toBe("new/Fresh.md");
+		// Minted a client id and sent it, mirroring pushFile's clean-create path.
+		expect(sent[0]?.id).toBe(noteIdMap.get("new/Fresh.md") as string);
+		expect(res).toEqual({ pushed: 1, failed: 0 });
+	});
+});
+
 describe("teardown: setCrdtManager(null) degrades subsequent edits to legacy", () => {
 	test("after teardown clears the crdt manager, handleModify routes to pushNote", async () => {
 		const engine = createEngine();
