@@ -191,6 +191,80 @@ describe("wipeRemote self-echo suppression", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
 	});
 
+	test("foreign-attributed delete for a wiped path STILL applies (review F2)", async () => {
+		// Device B legitimately deletes a path A just wiped: the event carries
+		// B's device_id, so it is provably not A's echo — suppressing it would
+		// resurrect the note on A's next push.
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		manifestWith(["Notes/Keep.md"]);
+		await priv(engine).wipeRemote();
+
+		const file = new TFile("Notes/Keep.md");
+		mockApp.vault.getFileByPath.mockReturnValueOnce(file);
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Keep.md",
+			timestamp: 1709345678,
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
+	test("bindings are cleared even when the REST delete rejects (review F1)", async () => {
+		// A client-side timeout can mask a delete that actually landed. Retained
+		// bindings would crdt-skip/hash-skip the re-push and the tombstone pull
+		// would trash the local file — clear them regardless of REST outcome.
+		const noteIdMap = identityNoteIdMap("Notes/Keep.md");
+		const engine = createEngine(noteIdMap);
+		priv(engine).syncState.set("Notes/Keep.md", {
+			hash: 1,
+			mtime: 1,
+			serverHash: "h",
+			version: 1,
+		});
+		manifestWith(["Notes/Keep.md"]);
+		(mockApi.deleteNote as jest.Mock).mockRejectedValueOnce(new Error("timeout"));
+
+		await priv(engine).wipeRemote();
+
+		expect(priv(engine).syncState.get("Notes/Keep.md")).toBeUndefined();
+		expect(noteIdMap.get("Notes/Keep.md")).toBeNull();
+	});
+
+	test("canvas noteIdMap entries are cleared too, not just .md (review F4)", async () => {
+		const noteIdMap = identityNoteIdMap("Boards/Plan.canvas");
+		const engine = createEngine(noteIdMap);
+		manifestWith(["Boards/Plan.canvas"]);
+
+		await priv(engine).wipeRemote();
+
+		expect(noteIdMap.get("Boards/Plan.canvas")).toBeNull();
+	});
+
+	test("editor bindings are detached BEFORE any doc teardown (review F3)", async () => {
+		const noteIdMap = identityNoteIdMap("Notes/Open.md");
+		const engine = createEngine(noteIdMap);
+		const order: string[] = [];
+		const crdt = {
+			removeDoc: mock(async () => {
+				order.push("removeDoc");
+			}),
+			applyLocalEdit: mock(async () => true),
+		};
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEditorDetach(() => {
+			order.push("detach");
+		});
+		manifestWith(["Notes/Open.md"]);
+
+		await priv(engine).wipeRemote();
+
+		expect(order[0]).toBe("detach");
+		expect(order).toContain("removeDoc");
+	});
+
 	test("wipeRemote clears server bindings so the re-push mints fresh", async () => {
 		const noteIdMap = identityNoteIdMap("Notes/Keep.md");
 		const engine = createEngine(noteIdMap);

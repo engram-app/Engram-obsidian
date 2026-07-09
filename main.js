@@ -5062,7 +5062,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 6e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -5203,6 +5203,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  fanout echoes — the generic class fix behind the wipeRemote path
      *  marking below. Null in tests/older callers: the drop is then skipped. */
     this.deviceId = null;
+    /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
+     *  main.ts). wipeRemote destroys Y.Docs whose files stay on disk and may
+     *  be OPEN — unlike the WS-delete path, no trashFile closes the view, so
+     *  a still-attached binding would write keystrokes into a destroyed doc
+     *  (the never-span-a-load class, crdt-editor-bind-race-pollution.md).
+     *  Bindings re-establish via the normal refresh events; meanwhile edits
+     *  flow through handleModify as plain pushes. */
+    this.crdtEditorDetach = null;
     /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
      *  main.ts (persisted in data.json); wired here so pushFile can mint/send
      *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -5383,6 +5391,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setDeviceId(id2) {
     this.deviceId = id2;
+  }
+  setCrdtEditorDetach(fn) {
+    this.crdtEditorDetach = fn;
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
@@ -6292,14 +6303,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       new import_obsidian21.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
     }
   }
-  /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
-  markRecentlyPushed(path) {
-    let existing = this.recentlyPushed.get(path);
+  /** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
+   *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+  markWithTtl(map3, path, ms) {
+    let existing = map3.get(path);
     existing && window.clearTimeout(existing);
     let timer = window.setTimeout(() => {
-      this.recentlyPushed.delete(path);
-    }, ECHO_COOLDOWN_MS);
-    this.recentlyPushed.set(path, timer);
+      map3.delete(path);
+    }, ms);
+    map3.set(path, timer);
+  }
+  /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
+  markRecentlyPushed(path) {
+    this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
   }
   /** Check if a path was recently pushed (for echo suppression). */
   isRecentlyPushed(path) {
@@ -6310,23 +6326,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the HTTP response. Kept on error too: a client-side timeout can mask a
    *  delete that actually landed, and the TTL bounds the false-positive. */
   markWipedRemote(path) {
-    let existing = this.wipedRemote.get(path);
-    existing && window.clearTimeout(existing);
-    let timer = window.setTimeout(() => {
-      this.wipedRemote.delete(path);
-    }, WIPE_ECHO_COOLDOWN_MS);
-    this.wipedRemote.set(path, timer);
+    this.markWithTtl(this.wipedRemote, path, WIPE_ECHO_COOLDOWN_MS);
   }
   /** Suppress the handleModify echo of a flushFromCrdt disk write for
    *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
    *  never swallows a genuine local edit. */
   markRecentlyFlushed(path) {
-    let existing = this.recentlyFlushed.get(path);
-    existing && window.clearTimeout(existing);
-    let timer = window.setTimeout(() => {
-      this.recentlyFlushed.delete(path);
-    }, ECHO_COOLDOWN_MS);
-    this.recentlyFlushed.set(path, timer);
+    this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
   }
   // --- Pull: Engram → local vault ---
   /** Pull remote changes and apply to vault. */
@@ -6656,7 +6662,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().info("ws", `Echo skip (own device): ${event.path}`);
         return;
       }
-      if (this.wipedRemote.has(normalized)) {
+      let foreignAttributed = !!event.device_id && event.device_id !== this.deviceId;
+      if (this.wipedRemote.has(normalized) && !foreignAttributed) {
         rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
         return;
       }
@@ -7651,7 +7658,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  gate. Failures on individual deletes are logged, not thrown, so the
    *  re-upload still runs. */
   async wipeRemote() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     let manifest = await this.api.getManifest();
     if (!manifest) {
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
@@ -7663,19 +7670,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`
     );
     let done = 0;
-    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 });
+    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 }), (_b = this.crdtEditorDetach) == null || _b.call(this);
     for (let path of notePaths) {
       let normalized = (0, import_obsidian21.normalizePath)(path);
-      this.markWipedRemote(normalized);
+      this.markWipedRemote(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized);
+      let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+      (_f = this.noteIdMap) == null || _f.delete(normalized), noteId && normalized.endsWith(".md") && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(noteId)), (_h = this.crdtEnrollment) == null || _h.reset(noteId));
       try {
-        if (await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote"), this.syncState.delete(normalized), (_b = this.baseStore) == null || _b.delete(normalized), normalized.endsWith(".md")) {
-          let noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(normalized)) != null ? _d : null;
-          (_e = this.noteIdMap) == null || _e.delete(normalized), noteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(noteId)), (_g = this.crdtEnrollment) == null || _g.reset(noteId));
-        }
+        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-      done++, (_h = this.onSyncProgress) == null || _h.call(this, {
+      done++, (_i = this.onSyncProgress) == null || _i.call(this, {
         phase: "deleting",
         current: done,
         total,
@@ -7685,13 +7691,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     for (let path of attachmentPaths) {
       let normalized = (0, import_obsidian21.normalizePath)(path);
-      this.markWipedRemote(normalized);
+      this.markWipedRemote(normalized), this.syncState.delete(normalized);
       try {
-        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote"), this.syncState.delete(normalized);
+        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
       } catch (e) {
         this.logEntry("delete", path, "error", errMsg(e));
       }
-      done++, (_i = this.onSyncProgress) == null || _i.call(this, {
+      done++, (_j = this.onSyncProgress) == null || _j.call(this, {
         phase: "deleting",
         current: done,
         total,
@@ -7966,7 +7972,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.recentlyPushed.clear();
     for (let timer of this.recentlyFlushed.values())
       window.clearTimeout(timer);
-    this.recentlyFlushed.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.recentlyFlushed.clear();
+    for (let timer of this.wipedRemote.values())
+      window.clearTimeout(timer);
+    this.wipedRemote.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
@@ -15533,6 +15542,14 @@ var ViewerRefcount = class {
     for (let [cm, ctrl] of this.controllers)
       seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
   }
+  /** Release + drop every editor controller WITHOUT tearing down awareness or
+   *  hooks — so no binding spans a Y.Doc teardown (wipeRemote destroys docs
+   *  whose files stay open). The next refresh() re-binds current views with
+   *  fresh controllers. */
+  detachAll() {
+    for (let [cm, ctrl] of this.controllers)
+      ctrl.release(cm), this.controllers.delete(cm);
+  }
   destroy() {
     for (let [cm, ctrl] of this.controllers)
       ctrl.release(cm);
@@ -21437,7 +21454,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b;
       return (_b = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b : !1;
-    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId);
+    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtEditorDetach(() => {
+      var _a2;
+      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.detachAll();
+    });
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
