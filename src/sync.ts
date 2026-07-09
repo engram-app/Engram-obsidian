@@ -1794,6 +1794,21 @@ export class SyncEngine {
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
+					// Delete-wins: the server refused this create because the path was
+					// deleted on another device within the window (identical content —
+					// a stale re-push of the note we still hold). Converge by trashing
+					// our local copy instead of re-pushing (which would resurrect it).
+					// trashRemotelyDeleted marks the path so the trash's own delete
+					// event doesn't echo-push.
+					if (resp.reason === "recently_deleted") {
+						rlog().info(
+							"push",
+							`recently_deleted — trashing local ${file.path} to honor remote delete`,
+						);
+						await this.trashRemotelyDeleted(file);
+						return true;
+					}
+
 					const serverNote = resp.server_note;
 					devLog().log(
 						"push",
@@ -4214,6 +4229,23 @@ export class SyncEngine {
 						this.pushing.delete(e.file.path);
 						const ok = await this.pushFile(e.file, true);
 						if (ok) pushed++;
+					} else if (
+						(r.errors as { reason?: string } | undefined)?.reason === "recently_deleted"
+					) {
+						// Delete-wins (batch path): server refused this create because the
+						// path was deleted on another device within the window. Converge by
+						// trashing our local copy instead of retrying — not a failure.
+						rlog().info(
+							"push",
+							`recently_deleted — trashing local ${e.file.path} to honor remote delete`,
+						);
+						await this.trashRemotelyDeleted(e.file);
+						this.logEntry(
+							"push",
+							e.file.path,
+							"skipped",
+							"recently_deleted — honored remote delete",
+						);
 					} else {
 						failed++;
 						const msg = JSON.stringify(r.errors ?? "batch error");

@@ -307,6 +307,23 @@ describe("SyncEngine.handleModify", () => {
 		// Should only push once
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
+
+	test("recently_deleted refusal trashes the local file and does not re-push", async () => {
+		const engine = createEngine({ debounceMs: 10 });
+		const file = new TFile("Folder/Note.md", Date.now());
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
+		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
+			conflict: true,
+			reason: "recently_deleted",
+		});
+
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 60));
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+		// Converged — no merge/re-push loop.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("SyncEngine.handleDelete", () => {

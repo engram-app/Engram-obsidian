@@ -6116,6 +6116,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           noteId
         ) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
+          if (resp.reason === "recently_deleted")
+            return rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${file.path} to honor remote delete`
+            ), await this.trashRemotelyDeleted(file), !0;
           let serverNote = resp.server_note;
           devLog().log(
             "push",
@@ -7387,7 +7392,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     if (this.batchPushUnsupported) return null;
     let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
-      var _a2, _b2;
+      var _a2, _b2, _c2;
       if (chunk.length === 0) return "ok";
       let entries = [];
       for (let e of chunk) {
@@ -7426,9 +7431,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.recordBatchPushOk(e.file, e.content, e.hash, r), pushed++, this.logEntry("push", e.file.path, "ok");
           else if (r.status === "conflict")
             this.pushing.delete(e.file.path), await this.pushFile(e.file, !0) && pushed++;
+          else if (((_a2 = r.errors) == null ? void 0 : _a2.reason) === "recently_deleted")
+            rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${e.file.path} to honor remote delete`
+            ), await this.trashRemotelyDeleted(e.file), this.logEntry(
+              "push",
+              e.file.path,
+              "skipped",
+              "recently_deleted \u2014 honored remote delete"
+            );
           else {
             failed++;
-            let msg = JSON.stringify((_a2 = r.errors) != null ? _a2 : "batch error");
+            let msg = JSON.stringify((_b2 = r.errors) != null ? _b2 : "batch error");
             this.issues.record({
               path: e.file.path,
               kind: "note",
@@ -7456,7 +7471,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             kind: "note",
             mtime: e.file.stat.mtime / 1e3,
             timestamp: Date.now(),
-            vaultId: (_b2 = this.settings.vaultId) != null ? _b2 : void 0
+            vaultId: (_c2 = this.settings.vaultId) != null ? _c2 : void 0
           });
         return this.maybeGoOffline(err), "transport";
       } finally {
