@@ -267,6 +267,72 @@ describe("NoteChannel vault_deleted event", () => {
 	});
 });
 
+describe("NoteChannel folders.batch event", () => {
+	test("fires onFoldersChanged for folders.batch create", async () => {
+		const onFoldersChanged = mock();
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		channel.onFoldersChanged = onFoldersChanged;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:42:7",
+			"folders.batch",
+			{ op: "create", folder: "Projects/New" },
+		]);
+
+		expect(onFoldersChanged).toHaveBeenCalledTimes(1);
+		channel.disconnect();
+	});
+
+	test("fires onFoldersChanged for folders.batch delete/move too", async () => {
+		const onFoldersChanged = mock();
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		channel.onFoldersChanged = onFoldersChanged;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:42:7",
+			"folders.batch",
+			{ op: "delete", ids: ["a"] },
+		]);
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:42:7",
+			"folders.batch",
+			{ op: "move", ids: ["a"], target_parent_id: "root" },
+		]);
+
+		expect(onFoldersChanged).toHaveBeenCalledTimes(2);
+		channel.disconnect();
+	});
+
+	test("does not fire onEvent for folders.batch (separate callback)", async () => {
+		const onEvent = mock();
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");
+		channel.onEvent = onEvent;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:42:7",
+			"folders.batch",
+			{ op: "create", folder: "X" },
+		]);
+
+		expect(onEvent).not.toHaveBeenCalled();
+		channel.disconnect();
+	});
+});
+
 describe("NoteChannel updateConfig with vaultId", () => {
 	test("updateConfig accepts vaultId parameter", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "42", "7");

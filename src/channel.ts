@@ -140,6 +140,9 @@ export class NoteChannel {
 	onEvent: ((event: NoteStreamEvent) => void) | null = null;
 	onStatusChange: ((connected: boolean) => void) | null = null;
 	onVaultDeleted: (() => void) | null = null;
+	/** Folder markers changed on the server (create/delete/move from the web
+	 *  app). Payload is advisory only — the handler re-polls /folders/explicit. */
+	onFoldersChanged: (() => void) | null = null;
 	/** Surfaces the user's current plan/entitlements from the best-effort
 	 *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
 	 *  broadcasts). Never gates the plugin's connected state. */
@@ -695,6 +698,12 @@ export class NoteChannel {
 		if (event === "vault_deleted") {
 			rlog().info("channel", "Received vault_deleted event");
 			this.onVaultDeleted?.();
+			return;
+		}
+
+		if (event === "folders.batch") {
+			rlog().info("channel", "Folder markers changed on server");
+			this.onFoldersChanged?.();
 			return;
 		}
 

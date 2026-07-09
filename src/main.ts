@@ -1489,6 +1489,12 @@ export default class EngramSyncPlugin extends Plugin {
 					this.noteStream?.disconnect();
 				};
 
+				channel.onFoldersChanged = () => {
+					this.syncEngine.resyncFolders().catch((e) => {
+						rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
+					});
+				};
+
 				channel.onPlanState = (raw) => {
 					const parsed = parsePlanState(raw, Date.now());
 					// Defer off the channel's synchronous message-handler tick:

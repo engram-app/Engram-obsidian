@@ -3989,6 +3989,14 @@ export class SyncEngine {
 		}
 	}
 
+	/** Live-sync entry for a server-side folder-marker change (folders.batch
+	 *  channel event). Re-polls /folders/explicit and materializes new empty
+	 *  folders immediately instead of waiting for the next pull. */
+	async resyncFolders(): Promise<void> {
+		if (this.syncBlocked) return;
+		await this.syncExplicitFolders();
+	}
+
 	/** Pull the server's explicit empty-folder markers, persist them, and
 	 *  materialize each on disk. Skips ignored paths (so we never recreate
 	 *  .obsidian/, .trash/, .git/, or user-ignored folders). Failures are
