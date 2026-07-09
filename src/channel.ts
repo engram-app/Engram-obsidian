@@ -442,6 +442,12 @@ export class NoteChannel {
 		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
+			// crdtJoined must not survive the socket: if the crdt: ack landed but
+			// the sync-topic ack never did, `connected` is still false and
+			// setConnected(false) is a transition-gated no-op — leaving a stale
+			// crdtJoined that lets sendCrdt bypass the join-ack contract on the
+			// next socket and skips re-firing onCrdtJoined (#191).
+			this.crdtJoined = false;
 			this.setConnected(false);
 
 			// Real browsers always pass a CloseEvent here; some lightweight test

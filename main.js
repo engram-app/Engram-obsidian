@@ -1656,7 +1656,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
     }, this.ws.onclose = (evt) => {
       var _a2, _b2, _c2, _d2;
-      this.clearTimers(), this.ws = null, this.setConnected(!1);
+      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
       let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
       if (rlog().info(
         "channel",
