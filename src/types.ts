@@ -205,6 +205,12 @@ export interface NoteStreamEvent {
 	path: string;
 	timestamp: number;
 	kind?: "note" | "attachment";
+	/** Opaque device identity of the REST caller that caused this change
+	 *  (server-stamped from the X-Device-Id header, #970). Lets a device drop
+	 *  its own fanout echo — REST changes have no socket to exclude
+	 *  server-side, which is how the 2026-07-08 replace-remote wipe applied
+	 *  its own delete echoes locally. */
+	device_id?: string;
 	/** The note's stable note_id, carried by the server's `note_changed` /
 	 *  `notes.batch` upsert broadcasts. Since CRDT rooms are keyed by note_id
 	 *  (not path), a device that has never seen this note needs the id from the

@@ -183,6 +183,15 @@ function countFolders(paths: Iterable<string>): number {
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
+/** How long (ms) after wipeRemote deletes a path to suppress the server's
+ *  fanout echo of that delete. Much longer than ECHO_COOLDOWN_MS: a large
+ *  vault's wipe + re-upload runs for minutes and echoes queue behind it, and
+ *  against pre-#970 backends (no device_id on broadcasts) this TTL is the
+ *  ONLY thing standing between a late echo and trashFile. Cheap to hold long:
+ *  deletes attributed to a FOREIGN device bypass the suppression entirely, so
+ *  on #970 backends a long TTL cannot swallow another device's real delete. */
+const WIPE_ECHO_COOLDOWN_MS = 10 * 60_000;
+
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -256,6 +265,21 @@ export class SyncEngine {
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
+	/** Paths whose remote copy THIS device just deleted via wipeRemote (the
+	 *  replace-remote sync). The server fans our own deletes back with no
+	 *  origin attribution; applying them trashed the entire local vault
+	 *  mid-replace (2026-07-08 incident). Deletes are otherwise exempt from
+	 *  echo suppression, so this set is the only thing standing between a
+	 *  remote wipe and the local files it is about to re-upload. */
+	private wipedRemote: Map<string, number> = new Map();
+	/** Paths whose local trash APPLIED a remote change (WS delete, pull
+	 *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
+	 *  trash fires must not push a DELETE back to the server: the server
+	 *  already knows, and the path-keyed CAS-less delete would kill a note
+	 *  recreated at the same path in between (wipe→re-push, delete→recreate).
+	 *  Found by test_86's settle assert: B's echo-push landed after A's
+	 *  replace-remote re-upload and tombstoned the fresh note. */
+	private remotelyDeleted: Map<string, number> = new Map();
 	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
 	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
 	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
@@ -344,6 +368,30 @@ export class SyncEngine {
 
 	setCrdtManager(mgr: CrdtManager | null): void {
 		this.crdt = mgr;
+	}
+
+	/** This install's opaque device id (main.ts mints + persists it; the API
+	 *  client sends it as X-Device-Id on every REST call). The server stamps
+	 *  it into `note_changed` delete broadcasts (#970) so we can drop our own
+	 *  fanout echoes — the generic class fix behind the wipeRemote path
+	 *  marking below. Null in tests/older callers: the drop is then skipped. */
+	private deviceId: string | null = null;
+
+	setDeviceId(id: string | null): void {
+		this.deviceId = id;
+	}
+
+	/** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
+	 *  main.ts). wipeRemote destroys Y.Docs whose files stay on disk and may
+	 *  be OPEN — unlike the WS-delete path, no trashFile closes the view, so
+	 *  a still-attached binding would write keystrokes into a destroyed doc
+	 *  (the never-span-a-load class, crdt-editor-bind-race-pollution.md).
+	 *  Bindings re-establish via the normal refresh events; meanwhile edits
+	 *  flow through handleModify as plain pushes. */
+	private crdtEditorDetach: (() => void) | null = null;
+
+	setCrdtEditorDetach(fn: (() => void) | null): void {
+		this.crdtEditorDetach = fn;
 	}
 
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
@@ -479,7 +527,7 @@ export class SyncEngine {
 			if (!file) continue;
 			this.syncState.delete(p);
 			this.baseStore?.delete(p);
-			await this.app.fileManager.trashFile(file);
+			await this.trashRemotelyDeleted(file);
 			rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`);
 		}
 	}
@@ -1248,6 +1296,22 @@ export class SyncEngine {
 		// recreated file's push is skipped and it never reaches the server.
 		this.syncState.delete(normalizePath(file.path));
 
+		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
+		// the server already knows. Never push the DELETE back — path-keyed and
+		// CAS-less, it lands after the origin device recreates the path
+		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
+		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
+		// teardown the push path would have done and stop.
+		if (this.remotelyDeleted.has(file.path)) {
+			this.remotelyDeleted.delete(file.path);
+			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
+			if (file.path.endsWith(".md") && crdtNoteId) {
+				await this.crdt?.removeDoc(crdtNoteId);
+				this.crdtEnrollment?.reset(crdtNoteId);
+			}
+			return;
+		}
+
 		try {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path);
@@ -1595,6 +1659,15 @@ export class SyncEngine {
 				// than minting a second one.
 				let noteId = this.noteIdMap?.get(file.path) ?? null;
 				if (!noteId && this.noteIdMap) {
+					// MINT REFUSAL (issue #972, e2e test_34) — see shouldDeferMint.
+					// Skip the push: the relocation/pull owns this path's fate.
+					if (this.shouldDeferMint(file.path)) {
+						rlog().info(
+							"push",
+							`Mint refused (engine-flushed file, id relocated away): ${file.path}`,
+						);
+						return false;
+					}
 					noteId = uuid7();
 					this.noteIdMap.set(file.path, noteId);
 				}
@@ -2124,14 +2197,30 @@ export class SyncEngine {
 		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
-	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
-	private markRecentlyPushed(path: string): void {
-		const existing = this.recentlyPushed.get(path);
+	/** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
+	 *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
+		const existing = map.get(path);
 		if (existing) window.clearTimeout(existing);
 		const timer = window.setTimeout(() => {
-			this.recentlyPushed.delete(path);
-		}, ECHO_COOLDOWN_MS);
-		this.recentlyPushed.set(path, timer);
+			map.delete(path);
+		}, ms);
+		map.set(path, timer);
+	}
+
+	/** Trash a file whose deletion was decided REMOTELY (WS delete event, pull
+	 *  tombstone, relocation/orphan/bootstrap cleanup). Marks the path first so
+	 *  the vault 'delete' event this trash fires skips the server push in
+	 *  handleDelete — every sync-applied deletion must route through here, or
+	 *  its echo-push can tombstone a note recreated at the path since. */
+	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
+		this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS);
+		await this.app.fileManager.trashFile(file);
+	}
+
+	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
+	private markRecentlyPushed(path: string): void {
+		this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
 	}
 
 	/** Check if a path was recently pushed (for echo suppression). */
@@ -2139,16 +2228,44 @@ export class SyncEngine {
 		return this.recentlyPushed.has(path);
 	}
 
+	/** Suppress the stream echo of a wipeRemote delete for this path. Marked
+	 *  BEFORE the REST delete is issued — the fanout can arrive faster than
+	 *  the HTTP response. Kept on error too: a client-side timeout can mask a
+	 *  delete that actually landed, and the TTL bounds the false-positive. */
+	private markWipedRemote(path: string): void {
+		this.markWithTtl(this.wipedRemote, path, WIPE_ECHO_COOLDOWN_MS);
+	}
+
 	/** Suppress the handleModify echo of a flushFromCrdt disk write for
 	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
 	 *  never swallows a genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
-		const existing = this.recentlyFlushed.get(path);
-		if (existing) window.clearTimeout(existing);
-		const timer = window.setTimeout(() => {
-			this.recentlyFlushed.delete(path);
-		}, ECHO_COOLDOWN_MS);
-		this.recentlyFlushed.set(path, timer);
+		this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+	}
+
+	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
+	 *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
+	 *  must honor identical ownership invariants
+	 *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
+	 *  never-synced local note". A file this engine itself recently flushed to
+	 *  disk (flushFromCrdt → recentlyFlushed) can never be that — the engine
+	 *  only writes server-known content. If its id binding is gone, a
+	 *  concurrent relocation/tombstone evicted it (moveIfIdRelocated re-keys
+	 *  the map + drops the syncState baseline BEFORE trashing the old file,
+	 *  and the push runs inside that window). Minting here REST-creates the
+	 *  renamed-away old path server-side under a fresh id — a live row no
+	 *  tombstone will ever remove; every device then re-materializes it
+	 *  forever. Defer instead: skip the push (not fail) — the relocation/pull
+	 *  owns the path's fate, and the next reconcile/fullSync retries once it
+	 *  lands.
+	 *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
+	 *  delayed past it escapes; debounce is 500ms, fine. */
+	private shouldDeferMint(path: string): boolean {
+		return (
+			!!this.noteIdMap &&
+			!this.noteIdMap.get(path) &&
+			this.recentlyFlushed.has(normalizePath(path))
+		);
 	}
 
 	// --- Pull: Engram → local vault ---
@@ -2375,7 +2492,7 @@ export class SyncEngine {
 			for (let i = 0; i < syncable.length; i++) {
 				const file = syncable[i]!;
 				try {
-					await this.app.fileManager.trashFile(file);
+					await this.trashRemotelyDeleted(file);
 					this.logEntry("delete", file.path, "ok", undefined, "wipe");
 				} catch (e) {
 					wipeFailed++;
@@ -2706,6 +2823,29 @@ export class SyncEngine {
 
 		if (event.event_type === "delete") {
 			const normalized = normalizePath(event.path);
+			// Origin-attributed self-echo (#970): the server stamps the REST
+			// caller's X-Device-Id into delete broadcasts. A delete WE caused
+			// must never be re-applied to our own vault. Upserts keep their
+			// existing suppression (pushing/recentlyPushed/hash-skip) — their
+			// echoes also drive id-relocation, so they are not dropped here.
+			if (this.deviceId && event.device_id === this.deviceId) {
+				rlog().info("ws", `Echo skip (own device): ${event.path}`);
+				return;
+			}
+			// Self-echo of a replace-remote wipe: WE deleted this path on the
+			// server moments ago (wipeRemote) and are about to re-upload it.
+			// The general delete-exemption from echo suppression must not let
+			// our own wipe come back and trash the vault (2026-07-08 incident).
+			// Kept alongside the device_id drop above — pre-#970 backends
+			// (self-host updates on its own cadence) send no device_id.
+			// A delete ATTRIBUTED to another device is provably not our echo:
+			// it bypasses the wipe guard, or B's real concurrent delete would
+			// be swallowed for the whole TTL and resurrected by our re-push.
+			const foreignAttributed = !!event.device_id && event.device_id !== this.deviceId;
+			if (this.wipedRemote.has(normalized) && !foreignAttributed) {
+				rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
+				return;
+			}
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
 				// A WS delete is unordered and can be a STALE echo — e.g. of our own
@@ -2729,7 +2869,7 @@ export class SyncEngine {
 					void this.pull();
 					return;
 				}
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
@@ -3005,7 +3145,7 @@ export class SyncEngine {
 				// file still exists at its old location.
 				const content = await this.app.vault.cachedRead(oldFile);
 				try {
-					await this.app.fileManager.trashFile(oldFile);
+					await this.trashRemotelyDeleted(oldFile);
 				} catch {
 					// Already gone — the concurrent tombstone won the race.
 				}
@@ -3055,6 +3195,12 @@ export class SyncEngine {
 			};
 			return this.applyAttachmentChange(ac);
 		}
+		// Folder-marker rows leak into the /sync/changes feed with a null path
+		// (markers carry no path_ciphertext server-side). They are unappliable
+		// client-side and previously THREW inside applyChange's shouldIgnore
+		// (`null.startsWith`), landing an rlog error ("Skipped note null") on
+		// every pull. Skip them quietly.
+		if (!c.path) return false;
 		// note_id-keyed CRDT rework (Task 5): learn this note's stable id from the
 		// merged feed (the only pull path whose entries carry `id` — the legacy
 		// GET /notes/changes NoteChange shape does not). A tombstone clears the
@@ -3143,7 +3289,7 @@ export class SyncEngine {
 				// run (clearing it would reclassify the file as offline-created and
 				// resurrect it on the next push). Log + carry on.
 				try {
-					await this.app.fileManager.trashFile(file);
+					await this.trashRemotelyDeleted(file);
 					this.syncState.delete(np);
 					this.baseStore?.delete(np);
 					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
@@ -3301,7 +3447,7 @@ export class SyncEngine {
 					}
 					return false;
 				}
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
@@ -3679,7 +3825,7 @@ export class SyncEngine {
 		if (change.deleted) {
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				await this.app.fileManager.trashFile(existing);
+				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				rlog().info("pull", `Attachment deleted: ${change.path}`);
@@ -3997,9 +4143,25 @@ export class SyncEngine {
 		// Sends the accumulated chunk. Returns "ok" | "unsupported" | "transport".
 		const flushChunk = async (): Promise<"ok" | "unsupported" | "transport"> => {
 			if (chunk.length === 0) return "ok";
-			const entries = chunk;
+			// Mint refusal (issue #217): same seam as pushFile's — an
+			// engine-flushed path whose id was relocated away must not mint here
+			// either. Drop it from the batch (skip, not fail); see shouldDeferMint.
+			const entries: Entry[] = [];
+			for (const e of chunk) {
+				if (this.shouldDeferMint(normalizePath(e.file.path))) {
+					done++;
+					rlog().info(
+						"push",
+						`Mint refused (engine-flushed file, id relocated away): ${e.file.path}`,
+					);
+					this.logEntry("skip", e.file.path, "skipped", undefined, "mint-deferred");
+					continue;
+				}
+				entries.push(e);
+			}
 			chunk = [];
 			chunkBytes = 0;
+			if (entries.length === 0) return "ok";
 
 			for (const e of entries) this.pushing.add(e.file.path);
 			try {
@@ -4732,7 +4894,35 @@ export class SyncEngine {
 		let done = 0;
 		this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
 
+		// Detach every live editor binding BEFORE any Y.Doc teardown below.
+		// The wiped files stay on disk (nothing trashes them, so no view ever
+		// closes) and a binding spanning removeDoc would write into a
+		// destroyed doc. Rebind happens via the normal refresh events.
+		this.crdtEditorDetach?.();
+
 		for (const path of notePaths) {
+			const normalized = normalizePath(path);
+			// Mark BEFORE the delete — the fanout echo can beat the response.
+			this.markWipedRemote(normalized);
+			// Forget the note's server bindings UNCONDITIONALLY, not just on
+			// REST success: a client-side timeout can mask a delete that landed
+			// server-side, and retained bindings would crdt-skip/hash-skip the
+			// re-push while the tombstone pull trashes the local file. If the
+			// delete truly failed, the note is still live on the server and the
+			// path-keyed re-push upserts it — convergent either way. A retained
+			// serverHash would hash-skip every "unchanged" note (silent remote
+			// loss) and a retained note_id points at a tombstone (dead CRDT
+			// room, note_not_found join spam). The noteIdMap clear covers ALL
+			// manifest notes (.canvas included); Y.Doc teardown is md-only,
+			// same as the stream delete branch.
+			this.syncState.delete(normalized);
+			this.baseStore?.delete(normalized);
+			const noteId = this.noteIdMap?.get(normalized) ?? null;
+			this.noteIdMap?.delete(normalized);
+			if (noteId && normalized.endsWith(".md")) {
+				await this.crdt?.removeDoc(noteId);
+				this.crdtEnrollment?.reset(noteId);
+			}
 			try {
 				await this.api.deleteNote(path);
 				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
@@ -4749,6 +4939,9 @@ export class SyncEngine {
 			});
 		}
 		for (const path of attachmentPaths) {
+			const normalized = normalizePath(path);
+			this.markWipedRemote(normalized);
+			this.syncState.delete(normalized);
 			try {
 				await this.api.deleteAttachment(path);
 				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
@@ -5178,6 +5371,18 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.recentlyFlushed.clear();
+		// NOTE: a reload mid-replace-remote starts the NEW engine with an empty
+		// wipedRemote while old wipe echoes may still be in flight; on #970
+		// backends the device_id drop still covers them, on older backends the
+		// residual risk window is accepted (mid-wipe reloads are rare).
+		for (const timer of this.wipedRemote.values()) {
+			window.clearTimeout(timer);
+		}
+		this.wipedRemote.clear();
+		for (const timer of this.remotelyDeleted.values()) {
+			window.clearTimeout(timer);
+		}
+		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();

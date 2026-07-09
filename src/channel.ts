@@ -38,6 +38,12 @@ export const RECONNECT_JITTER_DEFAULT_MS = 5_000;
  *  floor rather than silently disabling jitter. */
 export const RECONNECT_JITTER_MAX_MS = 60_000;
 
+/** Floor for the reconnect backoff that follows a crdt: join rejected with an
+ *  explicit "rate_limited" reason (see `joinFailureBackoffMs` below) — the
+ *  server told us to slow down, so the first backed-off reconnect jumps
+ *  straight to this floor instead of the generic 1s start. */
+export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
+
 export function clampReconnectJitter(raw: unknown): number | null {
 	if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
 	return Math.min(raw, RECONNECT_JITTER_MAX_MS);
@@ -93,6 +99,29 @@ export class NoteChannel {
 	 * Reset to null on every joinChannel() call (each (re)connect issues a new join).
 	 */
 	private crdtJoinMsgRef: string | null = null;
+	/**
+	 * Reason from the most recent crdt: join REJECTION in the session that just
+	 * ended (null if that session's crdt join succeeded, was never attempted, or
+	 * hasn't replied yet). A rejected crdt join does not by itself force a
+	 * reconnect — the sync topic can still be healthy — but if the WHOLE socket
+	 * then closes (e.g. a server-side abuse defense, or any other drop), the
+	 * next reconnect should back off rather than retry on the flat graceful-drop
+	 * jitter: retrying immediately just re-triggers the same rejection before
+	 * the backend's rate-limit bucket drains, producing a tight open/reject/
+	 * close loop (the prod alert-noise "CRDT channel-join retry loop" — one
+	 * user's plugin looping join -> rate_limited -> immediate retry for
+	 * ~15 min windows). Reset to null on every joinChannel() (fresh join,
+	 * fresh chance) and set only by a
+	 * genuine join-ref-matching error reply — a per-message crdt_msg error
+	 * (different ref) must NOT set this.
+	 */
+	private crdtJoinFailedReason: string | null = null;
+	/** Backoff (ms) for the reconnect that follows a join-class failure. Distinct
+	 *  from `reconnectMs` (which only grows on the "closed before ever opening"
+	 *  path) because `reconnectMs` resets to 1000 on every successful open —
+	 *  and a join-class failure by definition happens AFTER a successful open.
+	 *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
+	private joinFailureBackoffMs = 1000;
 	private baseUrl: string;
 	private apiKey: string;
 	private userId: string;
@@ -234,6 +263,7 @@ export class NoteChannel {
 	async connect(): Promise<void> {
 		if (this.ws) return;
 		this.reconnectMs = 1000;
+		this.joinFailureBackoffMs = 1000;
 		await this.openSocket();
 	}
 
@@ -253,6 +283,8 @@ export class NoteChannel {
 		// Drop the cached server window so a later connect to a different backend
 		// that advertises none falls back to the default floor, not a stale value.
 		this.reconnectJitterMaxMs = null;
+		this.crdtJoinFailedReason = null;
+		this.joinFailureBackoffMs = 1000;
 		rlog().info("channel", "Channel disconnected");
 	}
 
@@ -442,7 +474,32 @@ export class NoteChannel {
 				void this.authProbe().catch(() => {});
 			}
 
-			if (opened) {
+			if (opened && this.crdtJoinFailedReason !== null) {
+				// Join-class failure: the crdt: topic join was REJECTED in the
+				// session that just ended (e.g. "rate_limited"). Retrying on the flat
+				// graceful-drop jitter below just re-triggers the same rejection
+				// before the backend's limiter bucket drains — a server that closes
+				// the socket right after rejecting the join produces a tight
+				// open/reject/close loop (the alert-noise CRDT-join burst). Back off
+				// exponentially instead, capped at maxReconnectMs; an explicit
+				// "rate_limited" reason gets a higher floor since the server
+				// explicitly asked us to slow down.
+				const floor =
+					this.crdtJoinFailedReason === "rate_limited"
+						? RATE_LIMITED_JOIN_FLOOR_MS
+						: 1000;
+				this.joinFailureBackoffMs = Math.min(
+					Math.max(this.joinFailureBackoffMs * 2, floor),
+					this.maxReconnectMs,
+				);
+				const delay =
+					this.joinFailureBackoffMs + Math.random() * this.joinFailureBackoffMs * 0.5;
+				rlog().info(
+					"channel",
+					`crdt: join rejected (${this.crdtJoinFailedReason}) — backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`,
+				);
+				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+			} else if (opened) {
 				// A live connection dropped (graceful drain or a mid-session network
 				// drop). Full-jitter the FIRST reconnect across random(0, window) so a
 				// drained fleet doesn't stampede the freshly-booted node. If THIS
@@ -470,6 +527,8 @@ export class NoteChannel {
 	private joinChannel(): void {
 		// Reset crdtJoinMsgRef on every (re)connect so a new join issues a fresh ref.
 		this.crdtJoinMsgRef = null;
+		// Fresh join, fresh chance: this session hasn't failed (yet).
+		this.crdtJoinFailedReason = null;
 		this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]);
 		// Best-effort: join the per-user topic to receive plan/entitlement state.
 		// Uses a distinct join ref so replies are attributable, and an older
@@ -565,6 +624,8 @@ export class NoteChannel {
 					// callback. Until this fires, all markdown saves use the legacy
 					// pushNote path (graceful degradation against pre-CRDT backends).
 					this.crdtJoined = true;
+					// Health restored: forget any backoff built up by prior rejections.
+					this.joinFailureBackoffMs = 1000;
 					rlog().info("channel", `Joined ${topic} — CRDT routing active`);
 					this.onCrdtJoined?.();
 				}
@@ -602,6 +663,10 @@ export class NoteChannel {
 						typeof response?.reason === "string" ? response.reason : undefined;
 					const min = typeof response?.min === "number" ? response.min : undefined;
 					if (ref === this.crdtJoinMsgRef) {
+						// Remember the rejection for THIS session so a subsequent whole-
+						// socket close backs off instead of retrying on the flat jitter —
+						// see joinFailureBackoffMs/crdtJoinFailedReason JSDoc above.
+						this.crdtJoinFailedReason = reason ?? "unknown";
 						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
 						// routing was previously active (the T4 folded finding: a REJOIN
 						// error while crdtEverJoined=true would otherwise leave routing
@@ -658,6 +723,7 @@ export class NoteChannel {
 				timestamp: Date.now(),
 				kind: (p.kind as "note" | "attachment") ?? "note",
 				id: p.id as string | undefined,
+				device_id: p.device_id as string | undefined,
 				content: p.content as string | undefined,
 				content_hash: p.content_hash as string | undefined,
 				title: p.title as string | undefined,
