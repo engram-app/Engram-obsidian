@@ -408,7 +408,7 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
-	test("applyChange materializes a not-yet-local markdown note AND enrolls it (discovery)", async () => {
+	test("applyChange materializes a not-yet-local markdown note but does NOT enroll it (lazy discovery)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -437,14 +437,15 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// Materialized from the payload we already hold, AND enrolled for live edits.
+		// Materialized from the payload we already hold. Lazy enrollment: the cold
+		// discovered note is NOT enrolled (no live room until it is opened/edited).
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalled();
 		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");
 	});
 
-	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
+	test("applyChange does NOT re-enroll an existing cold markdown note (lazy reconnect catch-up)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -452,10 +453,9 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/have.md", "Notes/have.md");
 		engine.setNoteIdMap(noteIdMap);
-		// The note already exists locally → CRDT owns its body (no legacy write),
-		// but we still re-enroll so a post-reconnect resetAll re-fires the STEP1
-		// handshake and pulls any update made while disconnected (idempotent
-		// otherwise). See test_48 oauth reconnect catch-up.
+		// The note already exists locally. Lazy enrollment: a cold (not live-bound)
+		// note is NOT enrolled on catch-up — the pull backfills its body via the
+		// room-free path, and a room is opened only when the note is opened/edited.
 		const existingFile = new TFile("Notes/have.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
 
@@ -471,9 +471,9 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// No legacy disk write (CRDT owns the body), but it IS re-enrolled.
+		// No legacy disk write (CRDT owns the body), and no enroll (lazy: cold note).
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/have.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
@@ -567,10 +567,13 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		noteIdMap.set("note.md", "id-note");
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
+		// Lazy enrollment: CRDT routing requires a live-bound note. Drive pushFile
+		// directly (past handleModify's editor-owned early-return) to prove the new
+		// manager is the one that receives the edit.
+		engine.setLiveBoundCheck(() => true);
 
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		expect(newApplyLocalEdit).toHaveBeenCalledTimes(1);
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -644,10 +647,12 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 		noteIdMap.set("note.md", "id-note");
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
+		// Lazy enrollment: CRDT routing requires a live-bound note. Drive pushFile
+		// directly (past handleModify's editor-owned early-return).
+		engine.setLiveBoundCheck(() => true);
 
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		// CRDT path active — pushNote must not be called
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -716,10 +721,12 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		noteIdMap.set("note.md", "id-note");
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
+		// Lazy enrollment: CRDT routing requires a live-bound note. Drive pushFile
+		// directly (past handleModify's editor-owned early-return).
+		engine.setLiveBoundCheck(() => true);
 
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		// CRDT path active — applyLocalEdit called, pushNote NOT called
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);

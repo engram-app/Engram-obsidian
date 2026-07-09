@@ -35,7 +35,7 @@ import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
 import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
-import { SyncEngine, reconcileColdStart } from "./sync";
+import { SyncEngine } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import { SyncProgressModal, describePlannedWork, plannedPhases } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
@@ -756,57 +756,12 @@ export default class EngramSyncPlugin extends Plugin {
 				}
 			}
 
-			// Task 7C: Cold-start reconcile — diff on-disk content into the CRDT
-			// doc for any markdown file that changed while the app was closed
-			// (external editor, another sync app, OS). Runs after readiness is
-			// set so the resulting applyLocalEdit fires normally through the CRDT
-			// route. Only runs when registered and the sync gate is open so that
-			// content is never transmitted before the user picks a direction.
-			// Lazy enrollment skips cold-start reconcile entirely: it seeds drift
-			// into the Y.Doc via applyLocalEdit for EVERY drifted file, bypassing
-			// the live-bound push gate (the cold-note CRDT seeding lazy avoids).
-			// The regular REST fullSync below reconciles cold-note drift instead.
-			if (gateOpen && this.crdtManager && !this.settings.lazyEnrollment) {
-				const markdownFiles = this.app.vault.getMarkdownFiles();
-				for (const file of markdownFiles) {
-					const crdt = this.crdtManager;
-					// Resolve-or-mint the note_id up front — reconcileColdStart (Task 6)
-					// routes every CRDT call by id, not path.
-					const noteId = this.noteIdMap.getOrMint(file.path);
-					this.app.vault
-						.cachedRead(file)
-						.then((diskContent) =>
-							reconcileColdStart(
-								{
-									path: file.path,
-									noteId,
-									diskContent,
-								},
-								{
-									applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
-									getText: crdt.getText.bind(crdt),
-									projectedText: crdt.projectedText.bind(crdt),
-									// Guarantee the STEP1/STEP2 adoption for drifted notes even
-									// when the adopt-first seed gate skips the local write.
-									enroll: (id) => this.crdtEnrollment?.enroll(id),
-								},
-								() => {
-									rlog().warn(
-										"crdt",
-										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
-									);
-								},
-							),
-						)
-						.catch((e) => {
-							rlog().warn(
-								"crdt",
-								`reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`,
-							);
-						});
-				}
-			}
-
+			// Cold-note drift (a markdown file changed while the app was closed:
+			// external editor, another sync app, OS) is reconciled by the regular
+			// REST fullSync below, NOT by seeding it into a CRDT room. Lazy
+			// enrollment only opens a room for editor-open notes, so seeding cold
+			// drift into the Y.Doc would bypass the live-bound push gate and risk a
+			// duplicate CRDT lineage. Convergent REST push/pull handles it instead.
 			if (gateOpen) {
 				// User has already accepted a direction for this fingerprint —
 				// run an incremental sync without showing the modal.

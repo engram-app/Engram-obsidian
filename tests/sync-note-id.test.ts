@@ -473,6 +473,11 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		// Lazy enrollment: CRDT routing requires a live-bound note. Hold it live-
+		// bound throughout so this test isolates the ONE lever it is about — the
+		// confirmed flag. Drive pushFile directly (an internal caller, past
+		// handleModify's editor-owned early-return for live-bound notes).
+		engine.setLiveBoundCheck(() => true);
 
 		// Confirm id-conf for known.md via a pull.
 		await engine.applySyncChange({
@@ -488,11 +493,12 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 			version: 1,
 		} as any);
 
-		// Control: while confirmed + CRDT live, an edit routes through CRDT.
+		// Control: while confirmed + CRDT live + live-bound, an edit routes CRDT.
+		// Distinct disk content avoids the echo-hash gate short-circuiting the push.
 		applyLocalEdit.mockClear();
 		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
-		engine.handleModify(new TFile("known.md"));
-		await flush();
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# K\nbody v1");
+		await (engine as any).pushFile(new TFile("known.md"));
 		expect(applyLocalEdit).toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 
@@ -507,8 +513,7 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		applyLocalEdit.mockClear();
 		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
 		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("body v2");
-		engine.handleModify(new TFile("known.md"));
-		await flush();
+		await (engine as any).pushFile(new TFile("known.md"));
 		expect(mockApi.pushNote).toHaveBeenCalled();
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
@@ -1420,6 +1425,11 @@ describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		// Lazy enrollment: CRDT routing now additionally requires the note to be
+		// live-bound (editor-open). This guard-rail drives pushFile directly (an
+		// internal caller, past handleModify's editor-owned early-return), so mark
+		// it live-bound to exercise the CRDT push branch.
+		engine.setLiveBoundCheck(() => true);
 
 		await engine.applySyncChange({
 			id: "id-real-edit",
@@ -1461,6 +1471,9 @@ describe("a successful CRDT push updates the echo-hash baseline (final review IM
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		// Lazy enrollment: CRDT push routing requires a live-bound note. This test
+		// drives pushFile directly (internal caller), so mark it live-bound.
+		engine.setLiveBoundCheck(() => true);
 
 		// Discovery establishes the last-FLUSHED baseline.
 		const original = "# Revert Test\nOriginal content.";

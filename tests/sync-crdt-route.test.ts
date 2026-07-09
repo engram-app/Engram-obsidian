@@ -196,47 +196,16 @@ beforeEach(() => {
 });
 
 describe("SyncEngine handleModify with CrdtManager", () => {
-	test("markdown modify calls applyLocalEdit, NOT pushNote", async () => {
-		// Pre-seed a deterministic note_id so the CRDT call args are assertable —
-		// routeModify (Task 6) keys the frame by note_id, not path.
+	test("a confirmed but NOT live-bound note routes to REST, not CRDT (lazy enrollment)", async () => {
+		// Correctness hinge of lazy enrollment (now always on): the CRDT push gate
+		// keys on isNoteConfirmed, and every pulled note is confirmed. Without also
+		// gating on live-bound, a cold confirmed note that is edited routes through
+		// applyLocalEdit on a history-less Y.Doc and seeds a DUPLICATE lineage
+		// (#846/#161 class). A not-live-bound note must fall through to convergent
+		// REST instead — a live room is opened only when the note is opened.
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
 		const engine = createEngine(noteIdMap);
-		// applyLocalEdit must return true so pushFile treats the edit as consumed
-		// and does NOT fall through to pushNote (handshake-gate fix: routeModify
-		// now forwards applyLocalEdit's boolean, so a void/falsy mock falls through).
-		const applyLocalEdit = mock(async () => true);
-		const mockCrdt = { applyLocalEdit } as any;
-		engine.setCrdtManager(mockCrdt);
-		// rest-first fix: only a server-confirmed note routes through CRDT.
-		markConfirmed(engine, "id-note");
-
-		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
-
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
-		expect(mockApi.pushNote).not.toHaveBeenCalled();
-	});
-
-	test("lazyEnrollment: a confirmed but NOT live-bound note routes to REST, not CRDT", async () => {
-		// Correctness hinge of lazy enrollment: the CRDT push gate keys on
-		// isNoteConfirmed, and every pulled note is confirmed. Without also
-		// gating on live-bound, a cold confirmed note that is edited routes
-		// through applyLocalEdit on a history-less Y.Doc and seeds a DUPLICATE
-		// lineage (#846/#161 class). Under lazy, a not-live-bound note must fall
-		// through to convergent REST instead.
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("note.md", "id-note");
-		const engine = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
-			mock().mockResolvedValue(undefined),
-		);
-		engine.setReady();
-		engine.setNoteIdMap(noteIdMap);
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		markConfirmed(engine, "id-note");
@@ -285,26 +254,6 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
-
-	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("Canvases/overview.md", "id-overview");
-		const engine = createEngine(noteIdMap);
-		// applyLocalEdit must return true so pushFile treats the edit as consumed
-		// and does not fall through to pushNote (handshake-gate fix).
-		const applyLocalEdit = mock(async () => true);
-		engine.setCrdtManager({ applyLocalEdit } as any);
-		// rest-first fix: only a server-confirmed note routes through CRDT.
-		markConfirmed(engine, "id-overview");
-
-		const file = new TFile("Canvases/overview.md");
-		engine.handleModify(file);
-		await flush();
-
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-overview", "body");
-		expect(mockApi.pushNote).not.toHaveBeenCalled();
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -321,15 +270,15 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll } as any);
-		// rest-first fix: this test exercises the DECLINED-inside-CRDT-block
-		// behavior (routeModify itself returns false), which requires the note
-		// to have entered the CRDT gate in the first place — confirm it.
+		// The declined-inside-CRDT-block path is only reached for a note that
+		// entered the CRDT gate: confirmed AND (lazy enrollment) live-bound. Drive
+		// pushFile directly, past handleModify's editor-owned early-return.
 		markConfirmed(engine, "id-note");
+		engine.setLiveBoundCheck(() => true);
 
 		// Default cachedRead returns "body" (well under MAX_CRDT_NOTE_BYTES).
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
+		await (engine as any).pushFile(file);
 
 		// Legacy push must fire.
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
@@ -339,11 +288,17 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 	});
 
 	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {
-		const engine = createEngine();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("big.md", "id-big");
+		const engine = createEngine(noteIdMap);
 		const applyLocalEdit = mock(async () => false);
 		const enroll = mock((_path: string) => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll } as any);
+		// Enter the CRDT gate (confirmed + live-bound) so the SIZE gate — not the
+		// lazy live-bound gate — is what declines the note. Drive pushFile directly.
+		markConfirmed(engine, "id-big");
+		engine.setLiveBoundCheck(() => true);
 
 		// Stub cachedRead to return a 5 MB string (> 4 MB cap).
 		const hugeMd = "x".repeat(5 * 1024 * 1024);
@@ -351,8 +306,7 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(hugeMd);
 
 		const file = new TFile("big.md");
-		engine.handleModify(file);
-		await flush();
+		await (engine as any).pushFile(file);
 
 		// Legacy push fires (size gate is in routeModify, which returns false for oversized).
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
@@ -388,7 +342,7 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
-	test("after flushFromCrdt creates a file, the create echo no-ops at the diff layer", async () => {
+	test("after flushFromCrdt creates a file, the create echo no-ops (hash-suppressed)", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/discovered.md", "id-discovered");
 		const engine = createEngine(noteIdMap);
@@ -400,22 +354,25 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		// production by applySyncChange before flushFromCrdt runs.
 		markConfirmed(engine, "id-discovered");
 
-		await engine.flushFromCrdt("Notes/discovered.md", "from CRDT");
+		const body = "from CRDT";
+		await engine.flushFromCrdt("Notes/discovered.md", body);
 
-		// The vault.create fires a 'create' event routed through handleModify. For
-		// CRDT-managed markdown we deliberately do NOT drop it on the recentlyFlushed
-		// time-window (that also dropped real edits made right after discovery —
-		// the round-trip/concurrent-edit bug). The echo instead flows to routeModify
-		// → applyLocalEdit, where diffIntoYText sees identical content and produces
-		// zero ops, so nothing re-transmits (no-op suppression, e2e tests/crdt).
+		// The vault.create fires a 'create' event routed through handleModify →
+		// pushFile. pushFile's echo-hash gate (hoisted ABOVE the CRDT/REST branches)
+		// sees the on-disk content still hashes to the last-flushed baseline that
+		// flushFromCrdt just recorded, so it short-circuits: nothing is diffed into
+		// the Y.Doc and nothing is REST-pushed. This is what stops the self-
+		// materialize echo from re-transmitting (e2e test_37 content-loss).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(body);
 		const created = new TFile("Notes/discovered.md");
 		engine.handleModify(created);
 		await flush();
 
-		expect(applyLocalEdit).toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("after flushFromCrdt, a handleModify echo no-ops at the diff layer", async () => {
+	test("after flushFromCrdt, a handleModify echo no-ops (hash-suppressed)", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
 		const engine = createEngine(noteIdMap);
@@ -428,16 +385,19 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(mockFile);
 
 		// Flush to disk from remote CRDT update
-		await engine.flushFromCrdt("note.md", "remote content");
+		const body = "remote content";
+		await engine.flushFromCrdt("note.md", body);
 
-		// The vault.modify above fires handleModify. For CRDT-managed markdown the
-		// echo is NOT dropped on the recentlyFlushed time-window (which also dropped
-		// real edits within the window); it flows to routeModify → applyLocalEdit,
-		// where diffIntoYText no-ops on identical content so nothing re-transmits.
+		// The vault.modify above fires handleModify → pushFile. The on-disk content
+		// still hashes to the baseline flushFromCrdt recorded, so pushFile's echo-
+		// hash gate short-circuits before any CRDT diff or REST push — nothing re-
+		// transmits.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(body);
 		engine.handleModify(mockFile);
 		await flush();
 
-		expect(applyLocalEdit).toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
 	test("a genuine local edit after a push is NOT dropped by the cooldown", async () => {
@@ -645,11 +605,14 @@ describe("offline CRDT capture — queue behaviour", () => {
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		// rest-first fix: only a server-confirmed note routes through CRDT.
+		// Lazy enrollment: it must also be live-bound. Drive pushFile directly
+		// (past handleModify's editor-owned early-return) so the CRDT-consumed
+		// path is what returns before the enqueue.
 		markConfirmed(engine, "id-note");
+		engine.setLiveBoundCheck(() => true);
 
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
+		await (engine as any).pushFile(file);
 
 		expect(engine.queue.size).toBe(0);
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -707,13 +670,15 @@ describe("offline CRDT capture — queue behaviour", () => {
 		const engine = createEngine(noteIdMap);
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
-		// rest-first fix: only a server-confirmed note routes through CRDT.
+		// rest-first fix: only a server-confirmed note routes through CRDT. Lazy
+		// enrollment: it must also be live-bound. Drive pushFile directly (past
+		// handleModify's editor-owned early-return).
 		markConfirmed(engine, "id-note");
+		engine.setLiveBoundCheck(() => true);
 
 		// Consume a markdown edit via CRDT (queue must stay empty).
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
+		await (engine as any).pushFile(file);
 
 		expect(engine.queue.size).toBe(0);
 
@@ -774,7 +739,7 @@ describe("REST-first fix: new-note gate confirms via REST before CRDT", () => {
 		);
 	});
 
-	test("after the REST push confirms the note, a subsequent edit routes through CRDT (not REST again)", async () => {
+	test("after the REST push confirms a COLD note, a subsequent edit still routes REST (lazy: confirmation alone does not open a room)", async () => {
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
@@ -791,14 +756,17 @@ describe("REST-first fix: new-note gate confirms via REST before CRDT", () => {
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 
 		// Second edit (genuinely different content, so echo suppression doesn't
-		// short-circuit it): now confirmed → must route through CRDT, not REST.
+		// short-circuit it). Under lazy enrollment the note is confirmed but NOT
+		// live-bound (never opened in the editor), so it must STILL route REST — a
+		// live CRDT room is opened only on editor-open, not on confirmation. This
+		// is the lazy correctness hinge: without it, a cold confirmed edit would
+		// seed a duplicate Y.Doc lineage (#846/#161).
 		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("edited body");
 		engine.handleModify(file);
 		await flush();
 
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith(noteIdMap.get("brand-new.md"), "edited body");
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -830,22 +798,19 @@ describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () =
 		const engine = createEngine(noteIdMap);
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
-		// rest-first fix: only a server-confirmed note routes through CRDT.
+		// A note is CRDT-owned when it is confirmed AND (lazy enrollment) live-
+		// bound — its live editor binding already streams edits over the socket.
 		markConfirmed(engine, "id-note");
+		engine.setLiveBoundCheck(() => true);
 
 		// Clean batch mock: resolve OK so a stray call registers a call (and does
 		// not flip batchPushUnsupported via the shared 404-reject default).
 		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
 		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
 
-		// Live edit: routed through CRDT, delivered over the socket.
+		// Manual sync's batch push must NOT re-send a note the live socket already
+		// delivers — re-POSTing the body would duplicate it in the CRDT room.
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-
-		// Manual sync's batch push must NOT re-send the note the socket already
-		// delivered.
 		await (
 			engine as unknown as {
 				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;

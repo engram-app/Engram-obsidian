@@ -1726,7 +1726,7 @@ export class SyncEngine {
 					// through CRDT. A confirmed-but-cold note has no handshaked Y.Doc
 					// this session, so applyLocalEdit would seed a DUPLICATE lineage
 					// (#846/#161); route it to convergent REST instead.
-					(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
+					this.isLiveBound(normalizePath(file.path))
 				) {
 					const consumed = await routeModify(
 						{
@@ -3508,12 +3508,11 @@ export class SyncEngine {
 			// and can be missed if we weren't subscribed when the other device opened
 			// the room). An already-local note is left to its existing CRDT routing.
 			if (!this.app.vault.getFileByPath(normalized)) {
-				// Lazy enrollment: do NOT open a room for a cold discovered note.
-				// The /changes payload already carries the body (flushFromCrdt below
-				// writes it room-free), so skipping the STEP1 keeps a large vault
-				// from opening a room per note on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+				// Lazy enrollment: a cold discovered note gets NO room. The /changes
+				// payload already carries the body (flushFromCrdt below writes it
+				// room-free), so we never STEP1 here — a large vault does not open a
+				// room per note on connect. A room opens only on editor-open.
+				rlog().info("pull", `CRDT discovery: materializing new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
 				// pulls-then-checks (e.g. triggerFullSync) sees the file immediately.
@@ -3541,8 +3540,8 @@ export class SyncEngine {
 				// Lazy enrollment: a cold (not live-bound) note stays room-free.
 				// Divergence is still handled below — a clean local file backfills
 				// via REST (flushFromCrdt), a live-bound one re-handshakes — but we
-				// do not eagerly STEP1 every CRDT note in the vault on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
+				// never eagerly STEP1 a CRDT note here; a room opens only on
+				// editor-open.
 				const stored = this.syncState.get(normalized);
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
@@ -4348,7 +4347,7 @@ export class SyncEngine {
 				// Lazy enrollment: a cold note is not CRDT-owned this session, so it
 				// must reach REST here (mirror the pushFile gate) rather than being
 				// skipped as socket-delivered — nothing would deliver it.
-				(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
+				this.isLiveBound(normalizePath(file.path))
 			) {
 				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");

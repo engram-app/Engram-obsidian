@@ -3129,7 +3129,6 @@ var DEFAULT_SETTINGS = {
   diagnosticsEnabled: !1,
   conflictResolution: "auto",
   enableCrdt: !0,
-  lazyEnrollment: !1,
   vaultId: null,
   clientId: "",
   planState: null,
@@ -5063,26 +5062,6 @@ async function routeModify(file, crdt, maxBytes) {
   let content = await file.readContent();
   return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.noteId, content);
 }
-async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_NOTE_BYTES) {
-  var _a;
-  if (exceedsCrdtNoteLimit(file.diskContent, maxBytes))
-    return;
-  let current;
-  try {
-    current = await crdt.projectedText(file.noteId);
-  } catch (e) {
-    onCorruption();
-    return;
-  }
-  if (current !== file.diskContent) {
-    try {
-      await crdt.applyLocalEdit(file.noteId, file.diskContent);
-    } catch (e) {
-      rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
-    }
-    (_a = crdt.enroll) == null || _a.call(crdt, file.noteId);
-  }
-}
 function isHttpStatus(e, status) {
   return typeof e == "object" && e !== null && e.status === status;
 }
@@ -6089,7 +6068,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         // through CRDT. A confirmed-but-cold note has no handshaked Y.Doc
         // this session, so applyLocalEdit would seed a DUPLICATE lineage
         // (#846/#161); route it to convergent REST instead.
-        (!this.settings.lazyEnrollment || this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)))) {
+        this.isLiveBound((0, import_obsidian21.normalizePath)(file.path))) {
           if (await routeModify(
             {
               isMarkdown: file.extension === "md",
@@ -7006,7 +6985,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -7044,9 +7023,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.crdt && normalized.endsWith(".md")) {
       let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && !this.settings.lazyEnrollment && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        rlog().info("pull", `CRDT discovery: materializing new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && !this.settings.lazyEnrollment && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -7056,7 +7034,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`
             ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
               this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_f = stored == null ? void 0 : stored.hash) != null ? _f : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
                 hash: localHash,
                 serverHash: change.content_hash,
@@ -7106,14 +7084,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_i = this.baseStore) == null ? void 0 : _i.get(normalized);
+        let pullBase = (_g = this.baseStore) == null ? void 0 : _g.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_h = this.baseStore) == null || _h.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -7164,7 +7142,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_k = this.baseStore) == null || _k.set(
+            }), change.version != null && ((_i = this.baseStore) == null || _i.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -7186,7 +7164,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_l = this.baseStore) == null || _l.set(
+            }), change.version != null && ((_j = this.baseStore) == null || _j.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -7209,12 +7187,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_m = this.baseStore) == null || _m.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -7233,7 +7211,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_m = this.baseStore) == null || _m.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -7477,7 +7455,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (this.crdt && noteId && this.isNoteConfirmed(noteId) && ((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) == null || _d) && file.stat.size <= MAX_CRDT_NOTE_BYTES && // Lazy enrollment: a cold note is not CRDT-owned this session, so it
       // must reach REST here (mirror the pushFile gate) rather than being
       // skipped as socket-delivered — nothing would deliver it.
-      (!this.settings.lazyEnrollment || this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)))) {
+      this.isLiveBound((0, import_obsidian21.normalizePath)(file.path))) {
         done++, this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
         continue;
       }
@@ -21777,43 +21755,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           } catch (e) {
             rlog().warn("crdt", `cold-start map reconcile failed: ${errMsg(e)}`);
           }
-        if (gateOpen && this.crdtManager && !this.settings.lazyEnrollment) {
-          let markdownFiles = this.app.vault.getMarkdownFiles();
-          for (let file of markdownFiles) {
-            let crdt = this.crdtManager, noteId = this.noteIdMap.getOrMint(file.path);
-            this.app.vault.cachedRead(file).then(
-              (diskContent) => reconcileColdStart(
-                {
-                  path: file.path,
-                  noteId,
-                  diskContent
-                },
-                {
-                  applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
-                  getText: crdt.getText.bind(crdt),
-                  projectedText: crdt.projectedText.bind(crdt),
-                  // Guarantee the STEP1/STEP2 adoption for drifted notes even
-                  // when the adopt-first seed gate skips the local write.
-                  enroll: (id2) => {
-                    var _a3;
-                    return (_a3 = this.crdtEnrollment) == null ? void 0 : _a3.enroll(id2);
-                  }
-                },
-                () => {
-                  rlog().warn(
-                    "crdt",
-                    `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
-                  );
-                }
-              )
-            ).catch((e) => {
-              rlog().warn(
-                "crdt",
-                `reconcileColdStart: failed to read ${file.path}: ${errMsg(e)}`
-              );
-            });
-          }
-        }
         if (gateOpen)
           try {
             let { pulled, pushed } = await this.syncEngine.fullSync();

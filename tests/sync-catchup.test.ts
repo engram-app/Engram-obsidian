@@ -217,8 +217,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			"authoritative body the announce never delivered",
 		);
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		// Enrollment still fires (live routing unaffected).
-		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Lazy enrollment: a cold (not live-bound) note is backfilled via the pull
+		// but is NOT enrolled — no live room is opened until the note is edited.
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
@@ -431,33 +432,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(onConflict).not.toHaveBeenCalled();
 	});
 
-	test("lazyEnrollment: a cold diverged CRDT note backfills via REST but is NOT enrolled", async () => {
-		const { engine, enroll } = crdtEngine({ lazyEnrollment: true });
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		// Cold: not live-bound (default). Local is clean, only the server moved.
-		engine.importSyncState({
-			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "authoritative server body",
-			content_hash: "new-hash",
-			version: 2,
-			mtime: 50,
-		} as any);
-
-		// The body still materializes via the room-free REST pull path...
-		expect(mockApp.vault.modify).toHaveBeenCalledWith(localFile, "authoritative server body");
-		// ...but under lazy enrollment the cold note is NOT enrolled (no STEP1),
-		// so a large vault does not open a room per note on connect. (With lazy
-		// OFF, the sibling test above asserts enroll IS called.)
-		expect(enroll).not.toHaveBeenCalled();
-	});
-
 	test("converged hashes: no disk write (CRDT stays the single live writer)", async () => {
 		const { engine, enroll } = crdtEngine();
 		const localFile = new TFile("owned.md");
@@ -477,7 +451,8 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 
 		expect(mockApp.vault.process).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Lazy enrollment: a converged cold note is not enrolled (no live room).
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
 
