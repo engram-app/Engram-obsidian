@@ -5054,7 +5054,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -5317,6 +5317,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  move/resurrect the row, not CRDT (which the channel drops for a note the
      *  server sees as absent). Routing it CRDT would silently strand the rename. */
     this.confirmedNoteIds = /* @__PURE__ */ new Set();
+    /** Per-note re-handshake attempt tracking for the live-bound catch-up path,
+     *  keyed by note_id. `hash` is the server content_hash being retried; a new
+     *  hash starts a fresh episode. Bounds the re-handshake (see
+     *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
+     *  dropped handshake is still retried before we record convergence. */
+    this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -7043,16 +7049,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         noteId && !this.settings.lazyEnrollment && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
-          if (this.isLiveBound(normalized))
-            rlog().warn(
+          if (this.isLiveBound(normalized)) {
+            let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
+            if (rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`
-            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), this.syncState.set(normalized, {
-              hash: (_h = stored == null ? void 0 : stored.hash) != null ? _h : 0,
-              serverHash: change.content_hash,
-              version: change.version
-            });
-          else {
+              `CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`
+            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
+              this.crdtRehandshakeAttempts.delete(key);
+              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              this.syncState.set(normalized, {
+                hash: localHash,
+                serverHash: change.content_hash,
+                version: change.version
+              });
+            } else
+              this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+          } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
               "pull",

@@ -58,6 +58,13 @@ import type {
  *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
 export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
+/** Max forced re-handshakes for a live-bound note that stays diverged against
+ *  the SAME server hash, before we record convergence and stop. Bounds the
+ *  re-handshake so a genuinely-stuck note cannot loop forever (the 2026-07-09
+ *  storm), while still RETRYING a dropped STEP1/STEP2 handshake a few times
+ *  rather than treating one fire-and-forget attempt as delivered. */
+export const CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -630,6 +637,13 @@ export class SyncEngine {
 	 *  move/resurrect the row, not CRDT (which the channel drops for a note the
 	 *  server sees as absent). Routing it CRDT would silently strand the rename. */
 	private confirmedNoteIds: Set<string> = new Set();
+
+	/** Per-note re-handshake attempt tracking for the live-bound catch-up path,
+	 *  keyed by note_id. `hash` is the server content_hash being retried; a new
+	 *  hash starts a fresh episode. Bounds the re-handshake (see
+	 *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
+	 *  dropped handshake is still retried before we record convergence. */
+	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
 	private isNoteConfirmed(noteId: string | null): boolean {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
@@ -3536,29 +3550,42 @@ export class SyncEngine {
 						// writing disk under it would fight the binding. Deliver the
 						// missed ops through a fresh handshake instead: reset lifts the
 						// once-per-session enrollment guard, enroll re-fires STEP1.
+						const key = noteId ?? normalized;
+						const prevAttempt = this.crdtRehandshakeAttempts.get(key);
+						const attempts =
+							prevAttempt?.hash === change.content_hash ? prevAttempt.attempts + 1 : 1;
 						rlog().warn(
 							"pull",
-							`CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`,
+							`CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`,
 						);
 						if (noteId && this.crdtEnrollment) {
 							this.crdtEnrollment.reset(noteId);
 							this.crdtEnrollment.enroll(noteId);
 						}
-						// Record the server hash we just reacted to so the next poll
-						// recognizes convergence. Without this, serverHash never advanced
-						// and the divergence check stayed true forever, re-handshaking the
-						// same note every ~5min indefinitely — the engine of the 2026-07-09
-						// reconnect storm → DB pool exhaustion loop. We did NOT write disk
-						// (the open editor owns the body), so preserve the local `hash`;
-						// only advance serverHash/version to the state we have now handled.
-						// `hash` is required: keep the prior baseline, or 0 (unknown) for a
-						// never-synced open note — 0 reads as "local diverged" later, which
-						// conservatively routes to the conflict flow rather than overwriting.
-						this.syncState.set(normalized, {
-							hash: stored?.hash ?? 0,
-							serverHash: change.content_hash,
-							version: change.version,
-						});
+						if (attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
+							// Bounded give-up: record convergence so the poll STOPS re-handshaking.
+							// Advancing serverHash breaks the old every-5min-forever loop (the
+							// 2026-07-09 storm engine); the attempt cap first RETRIES a possibly-
+							// dropped STEP1/STEP2 a few times so a lost handshake is not silently
+							// treated as delivered. We did NOT write disk (the editor owns the
+							// body), so record the REAL local content hash — NOT a 0 sentinel, which
+							// a later cold-note check would misread as a local divergence and
+							// spuriously route to the conflict flow.
+							this.crdtRehandshakeAttempts.delete(key);
+							const boundFile = this.app.vault.getFileByPath(normalized);
+							const localHash =
+								stored?.hash ??
+								(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+							this.syncState.set(normalized, {
+								hash: localHash,
+								serverHash: change.content_hash,
+								version: change.version,
+							});
+						} else {
+							// Keep serverHash UNrecorded so the next poll re-handshakes again if the
+							// ops still have not landed — retry, do not assume delivery.
+							this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
 						// LOCAL content also moved off the last-synced hash, both

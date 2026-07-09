@@ -304,14 +304,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
 	});
 
-	test("live-bound divergence converges: re-handshake fires ONCE, not every poll (2026-07-09 loop fix)", async () => {
+	test("live-bound divergence: bounded re-handshake retries then converges (2026-07-09 loop fix)", async () => {
 		const { engine, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
 		engine.setLiveBoundCheck((p: string) => p === "owned.md");
 		engine.importSyncState({
-			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
 		});
 
 		const change = {
@@ -323,19 +323,42 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any;
 
-		// First poll: divergence detected → one forced re-handshake, and the
-		// server hash we reacted to is recorded.
-		await engine.applyChange(change);
-		expect(reset).toHaveBeenCalledTimes(1);
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		// We did NOT write disk (editor owns it), so the local hash is preserved.
-		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(1);
+		// Poll repeatedly with the SAME server hash (delivery never lands).
+		for (let i = 0; i < 5; i++) await engine.applyChange(change);
 
-		// Second poll, same server hash: now converged. The bug was that
-		// serverHash never advanced, so this re-handshaked forever every ~5min,
-		// driving the reconnect storm → DB pool exhaustion. It must NOT re-fire.
-		await engine.applyChange(change);
-		expect(reset).toHaveBeenCalledTimes(1);
+		// Re-handshake RETRIES a possibly-dropped STEP1/STEP2, but is BOUNDED to
+		// MAX attempts — not the old infinite every-5min loop that drove the
+		// storm. After the cap it records convergence and stops re-firing.
+		expect(reset).toHaveBeenCalledTimes(3);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+		// Editor owns the body (no disk write) → the real local hash is preserved.
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(7);
+	});
+
+	test("live-bound converge with no prior baseline records the REAL local hash, not a poisoning 0", async () => {
+		const { engine } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("actual disk content");
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		// NO importSyncState → stored is undefined for owned.md.
+
+		const change = {
+			path: "owned.md",
+			action: "upsert",
+			content: "x",
+			content_hash: "h",
+			version: 2,
+			mtime: 1,
+		} as any;
+		for (let i = 0; i < 3; i++) await engine.applyChange(change);
+
+		// A 0 sentinel here would later read as `fnv1a(local) !== 0` = local
+		// diverged, spuriously routing a note the user only VIEWED to the
+		// conflict flow. Record the real disk hash instead.
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a("actual disk content"));
+		expect(engine.exportSyncState()["owned.md"]?.hash).not.toBe(0);
 	});
 
 	test("lazyEnrollment: a cold diverged CRDT note backfills via REST but is NOT enrolled", async () => {
