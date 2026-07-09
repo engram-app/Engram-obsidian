@@ -361,6 +361,76 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.hash).not.toBe(0);
 	});
 
+	test("bounded re-handshake resets its attempt count when the server hash changes (new episode)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 7, version: 1, serverHash: "h0" } });
+
+		// Two polls at hash h1 (attempts 1,2 — under the cap, not yet recorded).
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1);
+		await engine.applyChange(c1);
+		expect(reset).toHaveBeenCalledTimes(2);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0");
+
+		// Server hash CHANGES (delivery progressed / a new remote edit): a fresh
+		// episode, so the count resets to 1 — it must NOT immediately give up and
+		// record convergence just because the total re-handshakes crossed the cap.
+		await engine.applyChange({ ...c1, content_hash: "h2", version: 3 });
+		expect(reset).toHaveBeenCalledTimes(3);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0");
+	});
+
+	test("no spurious conflict: a VIEWED-then-cold note with the real hash recorded does NOT hit the conflict flow (#2 outcome)", async () => {
+		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("viewed content");
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
+
+		// Phase 1: note OPEN (live-bound), no prior baseline, diverges → after the
+		// retry cap it records the REAL local hash, not a 0 sentinel.
+		let live = true;
+		engine.setLiveBoundCheck((p: string) => live && p === "owned.md");
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "x",
+			content_hash: "h",
+			version: 2,
+			mtime: 1,
+		} as any;
+		for (let i = 0; i < 3; i++) await engine.applyChange(c1);
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a("viewed content"));
+
+		// Phase 2: user CLOSES the editor (note cold); a later poll brings a new
+		// server hash while local disk is UNCHANGED. With a 0 sentinel this
+		// false-positived as localDiverged → conflict. With the real hash it sees
+		// local is clean → plain backfill, no conflict dialog / copy.
+		live = false;
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "h2",
+			version: 3,
+			mtime: 2,
+		} as any);
+		expect(onConflict).not.toHaveBeenCalled();
+	});
+
 	test("lazyEnrollment: a cold diverged CRDT note backfills via REST but is NOT enrolled", async () => {
 		const { engine, enroll } = crdtEngine({ lazyEnrollment: true });
 		const localFile = new TFile("owned.md");
