@@ -304,6 +304,40 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
 	});
 
+	test("live-bound divergence converges: re-handshake fires ONCE, not every poll (2026-07-09 loop fix)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		const change = {
+			path: "owned.md",
+			action: "upsert",
+			content: "diverged body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any;
+
+		// First poll: divergence detected → one forced re-handshake, and the
+		// server hash we reacted to is recorded.
+		await engine.applyChange(change);
+		expect(reset).toHaveBeenCalledTimes(1);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+		// We did NOT write disk (editor owns it), so the local hash is preserved.
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(1);
+
+		// Second poll, same server hash: now converged. The bug was that
+		// serverHash never advanced, so this re-handshaked forever every ~5min,
+		// driving the reconnect storm → DB pool exhaustion. It must NOT re-fire.
+		await engine.applyChange(change);
+		expect(reset).toHaveBeenCalledTimes(1);
+	});
+
 	test("converged hashes: no disk write (CRDT stays the single live writer)", async () => {
 		const { engine, enroll } = crdtEngine();
 		const localFile = new TFile("owned.md");

@@ -3531,6 +3531,21 @@ export class SyncEngine {
 							this.crdtEnrollment.reset(noteId);
 							this.crdtEnrollment.enroll(noteId);
 						}
+						// Record the server hash we just reacted to so the next poll
+						// recognizes convergence. Without this, serverHash never advanced
+						// and the divergence check stayed true forever, re-handshaking the
+						// same note every ~5min indefinitely — the engine of the 2026-07-09
+						// reconnect storm → DB pool exhaustion loop. We did NOT write disk
+						// (the open editor owns the body), so preserve the local `hash`;
+						// only advance serverHash/version to the state we have now handled.
+						// `hash` is required: keep the prior baseline, or 0 (unknown) for a
+						// never-synced open note — 0 reads as "local diverged" later, which
+						// conservatively routes to the conflict flow rather than overwriting.
+						this.syncState.set(normalized, {
+							hash: stored?.hash ?? 0,
+							serverHash: change.content_hash,
+							version: change.version,
+						});
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
 						// LOCAL content also moved off the last-synced hash, both
