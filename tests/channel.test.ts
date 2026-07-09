@@ -3,7 +3,7 @@
  */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
-import { NoteChannel } from "../src/channel";
+import { NoteChannel, connectRetryDelayMs } from "../src/channel";
 
 // Capture WebSocket constructor calls
 let lastWsUrl: string | null = null;
@@ -264,6 +264,20 @@ describe("NoteChannel vault_deleted event", () => {
 
 		expect(onEvent).not.toHaveBeenCalled();
 		channel.disconnect();
+	});
+});
+
+describe("connectRetryDelayMs", () => {
+	test("exponential from 2s for early attempts", () => {
+		expect(connectRetryDelayMs(0)).toBe(2000);
+		expect(connectRetryDelayMs(1)).toBe(4000);
+		expect(connectRetryDelayMs(4)).toBe(32_000);
+	});
+
+	test("caps at 60s and never stops growing attempts from overflowing", () => {
+		expect(connectRetryDelayMs(5)).toBe(60_000);
+		expect(connectRetryDelayMs(100)).toBe(60_000);
+		expect(connectRetryDelayMs(10_000)).toBe(60_000);
 	});
 });
 

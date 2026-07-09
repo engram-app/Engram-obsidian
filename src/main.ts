@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { NoteChannel } from "./channel";
+import { NoteChannel, connectRetryDelayMs } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
 import { LimitExceededError } from "./limit-error";
@@ -1347,9 +1347,6 @@ export default class EngramSyncPlugin extends Plugin {
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
 	private connectChannel(attempt = 0, epoch = this.channelEpoch): void {
-		const maxAttempts = 5;
-		const baseDelay = 2000;
-
 		rlog().info(
 			"channel",
 			`connectChannel(attempt=${attempt}) — apiKeyLen=${this.settings.apiKey?.length ?? 0} refreshTokenLen=${this.settings.refreshToken?.length ?? 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${this.authProvider?.constructor.name ?? "none"} vaultId=${this.settings.vaultId ?? "null"}`,
@@ -1672,14 +1669,17 @@ export default class EngramSyncPlugin extends Plugin {
 			.catch((e) => {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error("Engram Sync: failed to fetch user id for channel", e);
-				rlog().error(
-					"channel",
-					`getMe() failed (attempt ${attempt + 1}/${maxAttempts}): ${errMsg(e)}`,
-				);
+				rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`);
 
-				if (attempt < maxAttempts - 1 && epoch === this.channelEpoch) {
-					const delay = baseDelay * 2 ** attempt;
-					window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
+				// Retry forever (capped exponential backoff) — a finite attempt cap
+				// left live sync permanently dead after a >30s backend outage, with
+				// no recovery until plugin reload. Only a newer setupNoteStream()
+				// (epoch bump) may abandon the loop.
+				if (epoch === this.channelEpoch) {
+					window.setTimeout(
+						() => this.connectChannel(attempt + 1, epoch),
+						connectRetryDelayMs(attempt),
+					);
 				}
 			});
 	}

@@ -44,6 +44,15 @@ export const RECONNECT_JITTER_MAX_MS = 60_000;
  *  straight to this floor instead of the generic 1s start. */
 export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
 
+/** Delay before the next connectChannel() preflight retry: exponential from
+ *  2s, capped at 60s, retried indefinitely. A finite attempt cap here left
+ *  live sync permanently dead after any backend outage longer than ~30s
+ *  (getMe() preflight exhausted → no reconnect until plugin reload), while
+ *  REST recovered on its own. */
+export function connectRetryDelayMs(attempt: number, baseMs = 2000): number {
+	return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+}
+
 export function clampReconnectJitter(raw: unknown): number | null {
 	if (typeof raw !== "number" || !Number.isFinite(raw) || raw <= 0) return null;
 	return Math.min(raw, RECONNECT_JITTER_MAX_MS);

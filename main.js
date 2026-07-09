@@ -1417,6 +1417,9 @@ function errMsg(e) {
 
 // src/channel.ts
 var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+function connectRetryDelayMs(attempt, baseMs = 2e3) {
+  return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+}
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
@@ -22183,13 +22186,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         );
       channel.connect();
     }).catch((e) => {
-      if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(
-        "channel",
-        `getMe() failed (attempt ${attempt + 1}/5): ${errMsg(e)}`
-      ), attempt < 4 && epoch === this.channelEpoch) {
-        let delay = 2e3 * 2 ** attempt;
-        window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
-      }
+      console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`), epoch === this.channelEpoch && window.setTimeout(
+        () => this.connectChannel(attempt + 1, epoch),
+        connectRetryDelayMs(attempt)
+      );
     });
   }
   /** Dispatch a user's SyncChoice to the appropriate engine method.
