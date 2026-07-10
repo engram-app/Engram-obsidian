@@ -4215,6 +4215,21 @@ export class SyncEngine {
 	 *  404/405 so later bulk syncs skip the probe entirely. */
 	private batchPushUnsupported = false;
 
+	// Version gate: latched OFF the first time an /updates call 404/405s (a
+	// pre-Phase-1 backend). While off, CRDT notes fall back to the whole-doc
+	// base_hash push, exactly as before this feature. Mirrors batchPushUnsupported.
+	private crdtOpsUnsupported = false;
+
+	private crdtOpsAvailable(): boolean {
+		return this.settings.enableCrdt === true && !this.crdtOpsUnsupported;
+	}
+
+	private markCrdtOpsUnsupported(status: number): void {
+		if (status === 404 || status === 405) {
+			this.crdtOpsUnsupported = true;
+		}
+	}
+
 	/** Bulk-push note files via POST /notes/batch in chunks of 100.
 	 *
 	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
