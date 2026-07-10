@@ -22,12 +22,12 @@ export interface CrdtChannelOptions {
 	onEmptyStep2?: (noteId: string) => void;
 }
 
-function toB64(bytes: Uint8Array): string {
+export function toB64(bytes: Uint8Array): string {
 	// Avoid spread-into-String.fromCharCode which stack-overflows on large updates.
 	return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
 }
 
-function fromB64(b64: string): Uint8Array {
+export function fromB64(b64: string): Uint8Array {
 	return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
