@@ -649,6 +649,39 @@ export class SyncEngine {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
 
+	// Single source of truth for "this note converges via CRDT ops, not the
+	// whole-doc push". Previously duplicated inline in pushFile and
+	// pushNotesViaBatch; both now call this.
+	//
+	// Under lazy enrollment a confirmed-but-cold note has no handshaked Y.Doc
+	// this session, so routing it through applyLocalEdit would seed a DUPLICATE
+	// lineage (#846/#161); a cold note must instead reach convergent REST (in
+	// pushFile) and must NOT be skipped as socket-delivered in the batch seam
+	// (nothing would deliver it) — hence the live-bound requirement here.
+	private isCrdtManaged(path: string, noteId: string | null): boolean {
+		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
+		// shared clauses live in one place and can't drift between the two.
+		return this.isCrdtManagedOffline(path, noteId) && (this.crdtLive?.() ?? true);
+	}
+
+	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
+	// note WOULD converge via CRDT ops if the crdt: channel were joined right
+	// now (Task 5, single authority). pushFile/pushNotesViaBatch use this to
+	// decide whether a channel-down note still owes its body to CRDT ops rather
+	// than the legacy whole-doc base_hash push. When it does, the edit is
+	// persisted as a content-free, crdt-tagged durable queue entry and delivered
+	// by runFlushQueue's noteId-keyed /updates branch (the old in-memory
+	// debounced flush was retired in Phase 2b) — the crdt-live check is applied
+	// separately by the caller to pick channel-op vs durable-REST transport.
+	private isCrdtManagedOffline(path: string, noteId: string | null): boolean {
+		return (
+			!!this.crdt &&
+			!!noteId &&
+			this.isNoteConfirmed(noteId) &&
+			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
+		);
+	}
+
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
@@ -984,6 +1017,34 @@ export class SyncEngine {
 		this.ready = true;
 		devLog().log("lifecycle", "setReady — event handlers enabled");
 		rlog().info("lifecycle", "Engine ready — event handlers enabled");
+		// One-shot capability probe: latch ops off before the first edit if this
+		// is a pre-Phase-1 backend, so we stay on the legacy whole-doc path
+		// instead of 404ing on the first CRDT flush.
+		void this.probeCrdtOps();
+	}
+
+	/** One-shot capability probe: a pre-Phase-1 backend 404s /vault/heads, so we
+	 *  latch ops off before the first edit and stay on the legacy whole-doc path. */
+	async probeCrdtOps(): Promise<void> {
+		if (!this.settings.enableCrdt) return;
+		try {
+			await this.api.getVaultHeads();
+			// Conclusive: the route answered, ops are supported.
+			this.crdtOpsProbed = true;
+		} catch (e) {
+			const status = (e as { status?: number })?.status;
+			// Only a definitive 404/405 conclusively proves the route is absent.
+			// Any other failure (5xx, or a status-less network error) is
+			// INCONCLUSIVE: leaving crdtOpsProbed=false keeps ops unavailable this
+			// session so channel-down edits take the legacy whole-doc path. Marking
+			// probed here would make a later /updates 404 (against a route-less
+			// backend) look like "note gone" in runFlushQueue and silently drop the
+			// edit.
+			if (status === 404 || status === 405) {
+				this.markCrdtOpsUnsupported(status);
+				this.crdtOpsProbed = true;
+			}
+		}
 	}
 
 	setSyncBlocked(blocked: boolean): void {
@@ -1701,32 +1762,41 @@ export class SyncEngine {
 				// CRDT path: route markdown saves through CrdtManager when wired,
 				// a note_id is known (#915-style gate: no id, no CRDT room to key
 				// the frame by — REST fallback owns it), the note is CONFIRMED
-				// server-known, AND the crdt: topic is actually joined. The confirmed
-				// check exists because the backend's CRDT channel requires the note
-				// row to already exist (note_in_vault?) and silently DROPS a crdt_msg
-				// for an unknown note_id — it can no longer bootstrap a note from a
-				// bare wire doc_id (no path on the frame). A brand-new / never-synced
-				// note must therefore take the REST path below first (which creates
-				// the row and adopts the client-minted id, confirming it on success);
-				// only then do its edits route through CRDT. diffIntoYText produces
-				// minimal ops; the Y.Doc update listener forwards the diff to the
-				// server via CrdtChannel, keyed by noteId so the doc_id on the wire
-				// matches the backend's bare note_id. No full-document POST, no
-				// version field — the CRDT update IS the transmission. The crdtLive()
-				// level check guards against a stale manager latch (set, but channel
-				// dead-but-set after an auth swap): if not joined, fall through to the
-				// durable REST path so the write isn't silently dropped (#915). Unset
-				// → live.
+				// server-known. The confirmed check exists because the backend's
+				// CRDT channel requires the note row to already exist (note_in_vault?)
+				// and silently DROPS a crdt_msg for an unknown note_id — it can no
+				// longer bootstrap a note from a bare wire doc_id (no path on the
+				// frame). A brand-new / never-synced note must therefore take the
+				// REST path below first (which creates the row and adopts the
+				// client-minted id, confirming it on success); only then do its
+				// edits route through CRDT. diffIntoYText produces minimal ops.
+				//
+				// Transport (Task 5, single authority): once the edit is consumed
+				// into the Y.Doc, a LIVE crdt: channel already carries it (the Y.Doc
+				// update listener forwards the diff via CrdtChannel, keyed by
+				// noteId) — no full-document POST, no version field, no base_hash.
+				// When the channel is NOT joined (crdtLive() false — a stale manager
+				// latch, e.g. dead-but-set after an auth swap, or a genuine
+				// disconnect) but the backend supports CRDT ops
+				// (crdtOpsAvailable()), the edit is still durable in the local
+				// Y.Doc — persist a durable crdt-tagged queue entry (delivered by
+				// runFlushQueue's noteId-keyed /updates branch) instead of falling
+				// through to the whole-doc base_hash push (#203, e2e test_83/test_85).
+				// Only when ops are unsupported (pre-Phase-1 backend) does a down
+				// channel fall through to the legacy REST path, exactly as before
+				// this feature.
+				//
+				// `crdtLive` here is a PRE-AWAIT snapshot, used ONLY to decide
+				// whether this branch is even entered (below). It can go stale
+				// during the awaited `routeModify` seed if the channel drops
+				// mid-seed — see the post-await `crdtLiveNow` re-check (Task 5)
+				// that actually decides live-vs-durable-queue.
+				const crdtLive = this.crdtLive?.() ?? true;
 				if (
 					this.crdt &&
 					noteId &&
-					this.isNoteConfirmed(noteId) &&
-					(this.crdtLive?.() ?? true) &&
-					// Lazy enrollment: only a live-bound (editor-open) note routes
-					// through CRDT. A confirmed-but-cold note has no handshaked Y.Doc
-					// this session, so applyLocalEdit would seed a DUPLICATE lineage
-					// (#846/#161); route it to convergent REST instead.
-					(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
+					this.isCrdtManagedOffline(file.path, noteId) &&
+					(crdtLive || this.crdtOpsAvailable())
 				) {
 					const consumed = await routeModify(
 						{
@@ -1755,6 +1825,34 @@ export class SyncEngine {
 						// note already enrolled via active-leaf-change is unaffected.
 						this.crdtEnrollment?.enroll(noteId);
 						success = true;
+						// Task 5 (TOCTOU fix): re-check liveness AFTER the awaited seed
+						// above. The channel can drop DURING routeModify — a stale
+						// pre-await `crdtLive` snapshot would leave the edit on a dead
+						// socket believing the live channel already carried it, when it
+						// never did.
+						const crdtLiveNow = this.crdtLive?.() ?? true;
+						if (!crdtLiveNow) {
+							// Channel down (or dropped mid-seed), ops available: the edit
+							// is already durable in the local Y.Doc (IndexedDB-persisted).
+							// Persist a content-free crdt-tagged queue entry — durable
+							// across plugin unload and retried by runFlushQueue until
+							// delivered — instead of the retired in-memory-only debounce
+							// timer, which lost the edit on unload and never retried a
+							// failed flush.
+							await this.enqueueCrdtEdit(file, noteId);
+							// Deliver now if REST is reachable; durable + retried
+							// otherwise (queue survives unload, next flush picks it up).
+							void this.flushQueue();
+							devLog().log(
+								"push",
+								`crdt edit queued durably (channel down): ${file.path}`,
+							);
+							rlog().info(
+								"push",
+								`CRDT edit queued durably (channel down): ${file.path}`,
+							);
+							return true;
+						}
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
 						return true;
@@ -4215,6 +4313,46 @@ export class SyncEngine {
 	 *  404/405 so later bulk syncs skip the probe entirely. */
 	private batchPushUnsupported = false;
 
+	// Version gate: latched OFF the first time an /updates call 404/405s (a
+	// pre-Phase-1 backend). While off, CRDT notes fall back to the whole-doc
+	// base_hash push, exactly as before this feature. Mirrors batchPushUnsupported.
+	private crdtOpsUnsupported = false;
+
+	// Capability comes SOLELY from the probe (Phase 2b remediation): ops are
+	// treated unavailable until getVaultHeads has actually confirmed them, so
+	// a channel-down edit that races the probe takes the durable legacy path
+	// instead of assuming ops work.
+	private crdtOpsProbed = false;
+
+	private crdtOpsAvailable(): boolean {
+		return this.settings.enableCrdt === true && this.crdtOpsProbed && !this.crdtOpsUnsupported;
+	}
+
+	private markCrdtOpsUnsupported(status: number): void {
+		if (status === 404 || status === 405) {
+			this.crdtOpsUnsupported = true;
+		}
+	}
+
+	/** Persist a content-free, crdt-tagged upsert to the durable queue. Both
+	 *  channel-down seams (pushFile and pushNotesViaBatch) must produce an
+	 *  IDENTICAL entry so runFlushQueue's noteId-keyed /updates branch delivers
+	 *  them the same way — keep the two producers in lockstep here rather than
+	 *  duplicating the object literal, so a new field can't be added to one seam
+	 *  and forgotten on the other. */
+	private async enqueueCrdtEdit(file: TFile, noteId: string): Promise<void> {
+		await this.enqueueChange({
+			path: file.path,
+			action: "upsert",
+			noteId,
+			crdt: true,
+			mtime: file.stat.mtime / 1000,
+			timestamp: Date.now(),
+			kind: "note",
+			vaultId: this.settings.vaultId ?? undefined,
+		});
+	}
+
 	/** Bulk-push note files via POST /notes/batch in chunks of 100.
 	 *
 	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
@@ -4407,20 +4545,50 @@ export class SyncEngine {
 			// >10 MB → 413 too_large path below. stat.size is the on-disk UTF-8 byte
 			// count, the same measure routeModify caps on.
 			const noteId = this.noteIdMap?.get(file.path) ?? null;
-			if (
-				this.crdt &&
-				noteId &&
-				this.isNoteConfirmed(noteId) &&
-				(this.crdtLive?.() ?? true) &&
-				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
-				// Lazy enrollment: a cold note is not CRDT-owned this session, so it
-				// must reach REST here (mirror the pushFile gate) rather than being
-				// skipped as socket-delivered — nothing would deliver it.
-				(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
-			) {
+			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
 				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
 				continue;
+			}
+			// Task 5: a cold-but-managed note (channel down, so isCrdtManaged above
+			// is false) still owes its body to CRDT ops when the backend supports
+			// them — batch-pushing its full content here would duplicate the write
+			// the durable REST /updates flush is about to make. Unlike pushFile,
+			// this loop never touched the Y.Doc for this file, so it must SEED it
+			// first (mirrors pushFile's routeModify call) — skipping straight to a
+			// scheduled/queued flush without seeding was the batch-unseeded
+			// data-loss finding: the flush would have delivered stale/empty
+			// content. The queue entry is durable, NOT delivered — never counted
+			// toward `pushed`, and logged as queued rather than a completed skip.
+			if (
+				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
+				noteId &&
+				this.crdt &&
+				this.crdtOpsAvailable() &&
+				this.isCrdtManagedOffline(file.path, noteId)
+			) {
+				const content = await this.app.vault.cachedRead(file);
+				const consumed = await routeModify(
+					{
+						isMarkdown: file.extension === "md",
+						noteId,
+						readContent: async () => content,
+					},
+					this.crdt,
+					MAX_CRDT_NOTE_BYTES,
+				);
+				// Only queue CRDT delivery when routeModify actually seeded the
+				// Y.Doc. A declined seed (e.g. a non-markdown .canvas note, or an
+				// empty doc awaiting STEP2) left the Y.Doc empty — enqueuing a
+				// crdt entry anyway would POST an EMPTY update and skip the REST
+				// push, silently losing the edit. On decline, fall through to the
+				// normal batch push below (mirrors pushFile's `if (consumed)`).
+				if (consumed) {
+					done++;
+					await this.enqueueCrdtEdit(file, noteId);
+					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
+					continue;
+				}
 			}
 			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
 				oversized.push(file);
@@ -4500,6 +4668,15 @@ export class SyncEngine {
 			}
 			onProgress?.(done, failed);
 		}
+
+		// Deliver any channel-down CRDT entries the loop just enqueued (Task 5).
+		// Mirrors pushFile's `void this.flushQueue()` right after its own
+		// enqueueChange — without this, a durably-queued entry sat undelivered
+		// until an unrelated trigger (manual "Retry Failed", or a later
+		// single-file edit) drained the queue. Single call after the loop, not
+		// per-note: flushQueue is single-flight (flushInFlight guard), so one
+		// call drains everything and a redundant call is a no-op.
+		void this.flushQueue();
 
 		return { pushed, failed };
 	}
@@ -5181,6 +5358,66 @@ export class SyncEngine {
 		this.emitStatus();
 	}
 
+	/** Record a terminal (non-retryable) flush failure in the Sync Center and
+	 *  dequeue the entry so it doesn't retry forever. Shared verbatim by both
+	 *  runFlushQueue terminal paths (the crdt /updates branch and the legacy
+	 *  note/attachment catch) so a change to how terminal failures surface can't
+	 *  drift between them. */
+	private async recordTerminalIssue(
+		entry: QueueEntry,
+		classified: ReturnType<typeof categorizeError>,
+	): Promise<void> {
+		const now = Date.now();
+		this.issues.record({
+			path: entry.path,
+			kind: entry.kind ?? "note",
+			category: classified.category,
+			status: classified.status,
+			message: classified.message,
+			upgradeUrl: classified.upgradeUrl,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		if (issueDisposition(classified.category) === "informational") {
+			this.attachmentLimitedThisBatch += 1;
+		} else {
+			this.failuresThisBatch += 1;
+			this.firstFailureMessageThisBatch ??= classified.message;
+		}
+		await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+	}
+
+	/** Decide the fate of a queue entry whose flush just failed, and act on it.
+	 *  Both runFlushQueue failure paths route here so they can't drift. Terminal
+	 *  errors (413, auth, plan-limit) park immediately; transient errors (network,
+	 *  5xx) bump a PERSISTED attempt count and park only once they exhaust
+	 *  RETRY_CAP — previously both paths hardcoded attempts=1, so a persistently-
+	 *  failing entry retried forever and never surfaced as parked. Returns "retry"
+	 *  (re-queued with the bumped count; caller stops this flush pass) or "parked"
+	 *  (issue recorded + dequeued; caller keeps flushing the rest). */
+	private async handleFlushFailure(entry: QueueEntry, e: unknown): Promise<"parked" | "retry"> {
+		const classified = categorizeError(e);
+		const attempts = (entry.attempts ?? 0) + 1;
+		if (shouldRetryAfterFailure(classified, attempts)) {
+			// Transient and under the cap: persist the bumped count (survives
+			// reload) and stop this pass. Deliberately records NO issue — a
+			// transient blip stays silent until it exhausts its retries.
+			await this.queue.enqueue({ ...entry, attempts });
+			this.maybeGoOffline(e);
+			return "retry";
+		}
+		// Terminal, or transient past RETRY_CAP. A crdt entry's content lives in
+		// the durable Y.Doc (keyed by noteId, not in this content-free entry), so
+		// re-enroll it to re-drive delivery over the CRDT channel — the edit is
+		// never lost even though REST couldn't carry it (e.g. a 413 too-large
+		// /updates that the channel handshake can still merge). Then record a Sync
+		// Center issue + dequeue so it stops looping.
+		if (entry.crdt && entry.noteId) this.crdtEnrollment?.enroll(entry.noteId);
+		await this.recordTerminalIssue(entry, classified);
+		return "parked";
+	}
+
 	/** Flip to offline ONLY when the failure indicates true connection loss
 	 *  (no HTTP response). A per-file HTTP status error is that file's problem,
 	 *  surfaced in the Sync Center — it must not report the whole plugin as
@@ -5356,12 +5593,67 @@ export class SyncEngine {
 					}
 					await this.api.pushAttachment(entry.path, base64, mimeType!, mtime!);
 				} else {
+					// Durable CRDT delivery: a channel-down CRDT edit persisted a
+					// crdt-tagged entry. Deliver via noteId-keyed /updates ops when
+					// available — the Y.Doc is durable in IndexedDB so re-encoding on
+					// retry is lossless. MUST encode by noteId, never by path (the
+					// manager keys docs by noteId).
+					if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
+						try {
+							const update = await this.crdt.encodeStateAsUpdate(entry.noteId);
+							await this.api.postUpdate(entry.noteId, update);
+							await this.queue.dequeue(
+								entry.path,
+								entry.vaultId ?? this.settings.vaultId ?? undefined,
+							);
+							this.issues.clear(entry.path);
+							flushed++;
+						} catch (e) {
+							if (isHttpStatus(e, 404) || isHttpStatus(e, 410)) {
+								// Per-note: the note is gone server-side. Drop the entry
+								// — this is NOT a capability signal (capability comes
+								// only from the getVaultHeads probe).
+								await this.queue.dequeue(
+									entry.path,
+									entry.vaultId ?? this.settings.vaultId ?? undefined,
+								);
+								this.issues.clear(entry.path);
+								flushed++;
+							} else if ((await this.handleFlushFailure(entry, e)) === "retry") {
+								// Transient, under RETRY_CAP: re-queued with a bumped count;
+								// parked (issue + dequeue) once retries exhaust. Stop this pass.
+								break;
+							}
+						}
+						continue;
+					}
+
+					if (entry.crdt && !this.crdtOpsAvailable()) {
+						// Ops unavailable (old backend / probe latched off): fall
+						// through to the legacy whole-doc push below. Clear the stale
+						// serverHash first — prior CRDT-ops flushes advanced the
+						// server body without recording a new serverHash, so the old
+						// CAS base would 409. A no-base push overwrites deliberately.
+						const key = normalizePath(entry.path);
+						const existing = this.syncState.get(key);
+						if (existing?.serverHash !== undefined) {
+							this.syncState.set(key, { ...existing, serverHash: undefined });
+						}
+					}
+
 					// Note upsert — legacy entries have content; new entries are content-free
 					let content = entry.content;
 					let mtime = entry.mtime;
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
+							// The file is gone (deleted, or renamed away during the offline
+							// window). A crdt entry's edit still lives in the durable Y.Doc
+							// (keyed by noteId, not this stale path), so re-enroll to deliver
+							// it over the CRDT channel instead of silently dropping it; a
+							// non-crdt entry has nothing left to send.
+							if (entry.crdt && entry.noteId)
+								this.crdtEnrollment?.enroll(entry.noteId);
 							await this.queue.dequeue(
 								entry.path,
 								entry.vaultId ?? this.settings.vaultId ?? undefined,
@@ -5445,40 +5737,9 @@ export class SyncEngine {
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
-				const classified = categorizeError(e);
-				if (!shouldRetryAfterFailure(classified, 1)) {
-					// Terminal error (402, 413, auth, etc.) — record the issue,
-					// dequeue this entry so it doesn't retry, and keep flushing.
-					// Mirrors the pushFile terminal path so these surface in Sync Center.
-					const now = Date.now();
-					this.issues.record({
-						path: entry.path,
-						kind: entry.kind ?? "note",
-						category: classified.category,
-						status: classified.status,
-						message: classified.message,
-						upgradeUrl: classified.upgradeUrl,
-						firstFailedAt: now,
-						lastFailedAt: now,
-						attempts: 1,
-					});
-					if (issueDisposition(classified.category) === "informational") {
-						this.attachmentLimitedThisBatch += 1;
-					} else {
-						this.failuresThisBatch += 1;
-						this.firstFailureMessageThisBatch ??= classified.message;
-					}
-					await this.queue.dequeue(
-						entry.path,
-						entry.vaultId ?? this.settings.vaultId ?? undefined,
-					);
-					continue;
-				}
-				// Non-terminal: stop this flush pass. Only flip offline if it's a
-				// real connection loss — a server error on one entry must not
-				// report the whole plugin as disconnected.
-				this.maybeGoOffline(e);
-				break;
+				// Terminal or retries-exhausted parks (issue + dequeue) and keeps
+				// flushing; a transient under RETRY_CAP re-queues and stops this pass.
+				if ((await this.handleFlushFailure(entry, e)) === "retry") break;
 			}
 		}
 
