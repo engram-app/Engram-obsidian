@@ -1043,3 +1043,62 @@ describe("flushFromCrdt survives check-then-create races (round 5, test_34)", ()
 		expect(processMock.mock.calls[0][0]).toBe(raced);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// isCrdtManaged: shared predicate extracted from pushFile / pushNotesViaBatch
+// (Phase 2 Task 3). Pins the truth table both inline seams relied on.
+// ---------------------------------------------------------------------------
+
+describe("isCrdtManaged", () => {
+	function asPredicate(engine: SyncEngine): (path: string, noteId: string | null) => boolean {
+		return (
+			engine as unknown as {
+				isCrdtManaged(path: string, noteId: string | null): boolean;
+			}
+		).isCrdtManaged.bind(engine);
+	}
+
+	test("confirmed + live + eager (no lazy enrollment) → true", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => true);
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(true);
+	});
+
+	test("channel down (crdtLive false) → false", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => false);
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+	});
+
+	test("unconfirmed note_id → false", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		engine.setCrdtLiveCheck(() => true);
+		// not confirmed
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+	});
+
+	test("lazy enrollment + not live-bound → false", async () => {
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
+			mock().mockResolvedValue(undefined),
+		);
+		engine.setReady();
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => true);
+		// isLiveBound defaults to () => false
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+	});
+});

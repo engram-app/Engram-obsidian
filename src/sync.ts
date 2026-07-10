@@ -649,6 +649,19 @@ export class SyncEngine {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
 
+	// Single source of truth for "this note converges via CRDT ops, not the
+	// whole-doc push". Previously duplicated inline in pushFile and
+	// pushNotesViaBatch; both now call this.
+	private isCrdtManaged(path: string, noteId: string | null): boolean {
+		return (
+			!!this.crdt &&
+			!!noteId &&
+			this.isNoteConfirmed(noteId) &&
+			(this.crdtLive?.() ?? true) &&
+			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
+		);
+	}
+
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
@@ -1717,17 +1730,7 @@ export class SyncEngine {
 				// dead-but-set after an auth swap): if not joined, fall through to the
 				// durable REST path so the write isn't silently dropped (#915). Unset
 				// → live.
-				if (
-					this.crdt &&
-					noteId &&
-					this.isNoteConfirmed(noteId) &&
-					(this.crdtLive?.() ?? true) &&
-					// Lazy enrollment: only a live-bound (editor-open) note routes
-					// through CRDT. A confirmed-but-cold note has no handshaked Y.Doc
-					// this session, so applyLocalEdit would seed a DUPLICATE lineage
-					// (#846/#161); route it to convergent REST instead.
-					(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
-				) {
+				if (this.crdt && noteId && this.isCrdtManaged(file.path, noteId)) {
 					const consumed = await routeModify(
 						{
 							isMarkdown: file.extension === "md",
@@ -4422,17 +4425,7 @@ export class SyncEngine {
 			// >10 MB → 413 too_large path below. stat.size is the on-disk UTF-8 byte
 			// count, the same measure routeModify caps on.
 			const noteId = this.noteIdMap?.get(file.path) ?? null;
-			if (
-				this.crdt &&
-				noteId &&
-				this.isNoteConfirmed(noteId) &&
-				(this.crdtLive?.() ?? true) &&
-				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
-				// Lazy enrollment: a cold note is not CRDT-owned this session, so it
-				// must reach REST here (mirror the pushFile gate) rather than being
-				// skipped as socket-delivered — nothing would deliver it.
-				(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
-			) {
+			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
 				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
 				continue;
