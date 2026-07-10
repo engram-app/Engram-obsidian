@@ -670,6 +670,7 @@ describe("CRDT-managed rename materializes the new path when enroll() no-ops (#1
 		// per-session no-op for an id already enrolled. Without a direct
 		// materialize, New.md is never written: received=yes materialized=no.
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-relocate");
 		engine.setNoteIdMap(noteIdMap);
@@ -721,6 +722,7 @@ describe("CRDT-managed rename materializes the new path when enroll() no-ops (#1
 		// Materializing here would risk writing an empty/partial file (#547
 		// class) — this must stay on the existing STEP2->onFlushToDisk path.
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
@@ -817,6 +819,7 @@ describe("moveIfIdRelocated materializes the new path from ON-DISK content direc
 		// disk-content path must no-op (oldFile null) and defer entirely to the
 		// existing isSynced-gated materializeRelocated backstop, unchanged.
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-no-disk");
 		engine.setNoteIdMap(noteIdMap);
@@ -865,6 +868,7 @@ describe("moveIfIdRelocated survives the old file vanishing MID-FLIGHT (round 4,
 	// materialize, no file. received=yes materialized=no, 30s timeout.
 	test("trashFile rejecting (concurrent tombstone won the race) must not drop the materialize", async () => {
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-race-trash");
 		engine.setNoteIdMap(noteIdMap);
@@ -918,6 +922,7 @@ describe("moveIfIdRelocated survives the old file vanishing MID-FLIGHT (round 4,
 
 	test("cachedRead rejecting (file gone before the read) falls through to the isSynced backstop", async () => {
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-race-read");
 		engine.setNoteIdMap(noteIdMap);
@@ -1305,6 +1310,21 @@ describe("moveIfIdRelocated's disk-content flush must be create-only (final revi
 		noteIdMap.set("Old.md", "id-race-overwrite");
 		engine.setNoteIdMap(noteIdMap);
 		manifestWith([{ id: "id-race-overwrite", path: "New.md" }]);
+		// Truly-lazy: this cold (not editor-open) rename also flows through
+		// applyChange's hash-only fetch after moveIfIdRelocated. getNote returns the
+		// CURRENT server content — which is exactly what the concurrent flush already
+		// landed at New.md — so flushFromCrdt idempotency-skips and does not overwrite
+		// either. (In prod the fetch converges; only the mock could diverge.)
+		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
+			path: "New.md",
+			title: "New",
+			content: "# newer content the concurrent flush already wrote",
+			content_hash: "h-new",
+			folder: "",
+			tags: [],
+			mtime: 2,
+			version: 2,
+		});
 
 		const oldFile = new TFile("Old.md");
 		const newFile = new TFile("New.md");
@@ -1519,6 +1539,7 @@ describe("resetForVaultChange clears the relocation-guard's per-vault state (fin
 		// stale-gate a genuine relocation for an unrelated "id-x" in the new
 		// vault.
 		const engine = createEngine();
+		engine.setLiveBoundCheck(() => true); // truly-lazy: CRDT-managed rename handling is the live-bound path
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-vault-switch");
 		engine.setNoteIdMap(noteIdMap);

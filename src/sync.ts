@@ -2930,9 +2930,19 @@ export class SyncEngine {
 				} else if (
 					this.crdt &&
 					event.path.endsWith(".md") &&
+					this.isLiveBound(normalizePath(event.path)) &&
 					(event.id ?? this.noteIdMap?.get(event.path))
 				) {
-					// C1: CRDT owns markdown content for this session — the crdt: topic
+					// LAZY ENROLLMENT: only a LIVE-BOUND note (open in the editor) rides
+					// the CRDT room here. A cold note gets no room — it falls to the
+					// legacy applyChange path below, which materializes the body AND
+					// records serverHash from the broadcast's content+hash together (a
+					// correct CAS base), so the note's own later edit pushes cleanly with
+					// no 409. Enrolling a cold note instead left it in a half-bound state
+					// where the room's stale Y.Doc fought the REST content and the base
+					// oscillated (e2e test_83; review finding, 2026-07-09).
+					//
+					// C1: for a live-bound note CRDT owns the body — the crdt: topic
 					// delivers updates via CrdtChannel/flushFromCrdt. The legacy
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
@@ -3527,6 +3537,21 @@ export class SyncEngine {
 				// edits; its later STEP2 (identical content) is a harmless idempotent
 				// re-flush suppressed by markRecentlyFlushed.
 				await this.flushFromCrdt(normalized, content);
+				// Record the CAS base from the SAME authoritative payload we just
+				// materialized (content + content_hash together — no HMAC-opacity
+				// guess). Without this a freshly-discovered cold note has serverHash
+				// undefined, so its own later edit pushes with NO base_hash → no CAS →
+				// an ignorant push silently overwrites a server edit it never saw (e2e
+				// test_85, exposed when lazy enrollment stopped routing cold notes
+				// through the room's seed). serverHash means "server content this device
+				// converged to", and we DID converge to it here.
+				if (change.content_hash) {
+					this.syncState.set(normalized, {
+						hash: fnv1a(content),
+						version: change.version,
+						serverHash: change.content_hash,
+					});
+				}
 			} else {
 				// The note exists locally and CRDT owns its body for LIVE edits — but
 				// this pull entry is the authoritative safety net. The old behavior

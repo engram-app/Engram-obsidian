@@ -6770,7 +6770,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_n = event.id) != null ? _n : (_m = this.noteIdMap) != null && _m.get(event.path))) {
+        } else if (this.crdt && event.path.endsWith(".md") && this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_n = event.id) != null ? _n : (_m = this.noteIdMap) != null && _m.get(event.path))) {
           let noteId = (_p = event.id) != null ? _p : (_o = this.noteIdMap) == null ? void 0 : _o.get(event.path), canonicalPath = (_r = (_q = this.noteIdMap) == null ? void 0 : _q.pathForId(noteId)) != null ? _r : null;
           if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
             rlog().info(
@@ -7023,7 +7023,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.crdt && normalized.endsWith(".md")) {
       let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
       if (!this.app.vault.getFileByPath(normalized))
-        rlog().info("pull", `CRDT discovery: materializing new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        rlog().info("pull", `CRDT discovery: materializing new note ${change.path}`), await this.flushFromCrdt(normalized, content), change.content_hash && this.syncState.set(normalized, {
+          hash: fnv1a(content),
+          version: change.version,
+          serverHash: change.content_hash
+        });
       else {
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)

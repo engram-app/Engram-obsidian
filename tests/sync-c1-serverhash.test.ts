@@ -62,6 +62,11 @@ function createEngine(): SyncEngine {
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setReady();
+	// Truly-lazy enrollment: only a LIVE-BOUND note takes handleStreamEvent's C1
+	// room branch (the one that seeds the CAS base). A cold note materializes via
+	// applyChange instead. These tests are specifically about the C1 branch seed,
+	// so bind the note. (Cold-note serverHash seeding is covered in sync-catchup.)
+	engine.setLiveBoundCheck(() => true);
 	return engine;
 }
 

@@ -157,8 +157,10 @@ beforeEach(resetMocks);
 // ---------------------------------------------------------------------------
 
 describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
-	test("upsert with inline content does NOT call vault.create/modify when CRDT active (markdown)", async () => {
+	test("upsert with inline content does NOT call vault.create/modify when CRDT active (markdown, live-bound)", async () => {
 		const engine = createEngine();
+		// Truly-lazy: the C1 room skip owns the body only for a LIVE-BOUND note.
+		engine.setLiveBoundCheck(() => true);
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 
@@ -185,8 +187,10 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
-	test("upsert for markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
+	test("upsert for a LIVE-BOUND markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
 		const engine = createEngine();
+		// Truly-lazy: enroll happens only for a live-bound (editor-open) note.
+		engine.setLiveBoundCheck(() => true);
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		const enroll = mock((_p: string) => {});
@@ -217,20 +221,22 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
 	});
 
-	test("brand-new markdown upsert enrolls via the broadcast's note_id (never-seen, no local mapping)", async () => {
+	test("brand-new markdown upsert materializes cold WITHOUT enrolling (truly-lazy: never-seen note is not editor-open)", async () => {
+		// A never-seen note arriving live is NOT open in an editor, so under truly-
+		// lazy enrollment it holds no CRDT room: it must materialize via applyChange
+		// (the carried body written to disk) and must NOT enroll — a room opens only
+		// when the user opens the note. (Previously this device enrolled on receive,
+		// the half-bound state whose room fought the REST content: e2e test_83.)
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
-		const noteIdMap = new NoteIdMap();
-		engine.setNoteIdMap(noteIdMap);
+		engine.setNoteIdMap(new NoteIdMap());
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			path: "Notes/brand-new.md",
 			timestamp: Date.now(),
-			// The server's note_changed broadcast carries the note_id; this device
-			// has never seen the note, so the id can ONLY come from the broadcast.
 			id: "id-brand-new",
 			content: "# hi",
 			title: "brand-new",
@@ -241,11 +247,9 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			version: 1,
 		});
 
-		// CRDT owns the body → no legacy disk-write; the id is learned from the
-		// broadcast and enrolled by so the crdt: room delivers the body.
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(enroll).toHaveBeenCalledWith("id-brand-new");
-		expect(noteIdMap.get("Notes/brand-new.md")).toBe("id-brand-new");
+		// Materialized via applyChange (body on disk), and NO room opened.
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("markdown upsert with NO resolvable note_id materializes via legacy apply (not silently dropped)", async () => {
@@ -301,8 +305,10 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(enroll).not.toHaveBeenCalled();
 	});
 
-	test("upsert hash-only (no inline content) does NOT call getNote/vault.create when CRDT active (markdown)", async () => {
+	test("upsert hash-only (no inline content) does NOT call getNote/vault.create when CRDT active (markdown, live-bound)", async () => {
 		const engine = createEngine();
+		// Truly-lazy: the room owns the body (no fetch) only for a live-bound note.
+		engine.setLiveBoundCheck(() => true);
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 
 		await engine.handleStreamEvent({
