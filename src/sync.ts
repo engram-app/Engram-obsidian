@@ -5504,6 +5504,54 @@ export class SyncEngine {
 					}
 					await this.api.pushAttachment(entry.path, base64, mimeType!, mtime!);
 				} else {
+					// Durable CRDT delivery: a channel-down CRDT edit persisted a
+					// crdt-tagged entry. Deliver via noteId-keyed /updates ops when
+					// available — the Y.Doc is durable in IndexedDB so re-encoding on
+					// retry is lossless. MUST encode by noteId, never by path (the
+					// manager keys docs by noteId).
+					if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
+						try {
+							const update = await this.crdt.encodeStateAsUpdate(entry.noteId);
+							await this.api.postUpdate(entry.noteId, update);
+							await this.queue.dequeue(
+								entry.path,
+								entry.vaultId ?? this.settings.vaultId ?? undefined,
+							);
+							this.issues.clear(entry.path);
+							flushed++;
+						} catch (e) {
+							if (isHttpStatus(e, 404) || isHttpStatus(e, 410)) {
+								// Per-note: the note is gone server-side. Drop the entry
+								// — this is NOT a capability signal (capability comes
+								// only from the getVaultHeads probe).
+								await this.queue.dequeue(
+									entry.path,
+									entry.vaultId ?? this.settings.vaultId ?? undefined,
+								);
+								this.issues.clear(entry.path);
+								flushed++;
+							} else {
+								// Transient: stop this flush pass and retry next time.
+								this.maybeGoOffline(e);
+								break;
+							}
+						}
+						continue;
+					}
+
+					if (entry.crdt && !this.crdtOpsAvailable()) {
+						// Ops unavailable (old backend / probe latched off): fall
+						// through to the legacy whole-doc push below. Clear the stale
+						// serverHash first — prior CRDT-ops flushes advanced the
+						// server body without recording a new serverHash, so the old
+						// CAS base would 409. A no-base push overwrites deliberately.
+						const key = normalizePath(entry.path);
+						const existing = this.syncState.get(key);
+						if (existing?.serverHash !== undefined) {
+							this.syncState.set(key, { ...existing, serverHash: undefined });
+						}
+					}
+
 					// Note upsert — legacy entries have content; new entries are content-free
 					let content = entry.content;
 					let mtime = entry.mtime;

@@ -4,9 +4,11 @@
  * stays on for other statuses; requires settings.enableCrdt.
  */
 import { describe, expect, mock, test } from "bun:test";
+import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
+import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import type { CrdtManager } from "../src/crdt/manager";
+import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -352,5 +354,163 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 		await (e as any).pushFile(new TFile("p.md"));
 
 		expect(sawBaseHash).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: runFlushQueue delivers a durable `crdt`-tagged queue entry via
+// noteId-keyed /updates ops. The original bug encoded the Y.Doc by PATH while
+// docs are keyed by NOTEID, posting an empty doc — hidden previously because
+// delivery tests mocked encodeStateAsUpdate. The round-trip test below uses a
+// REAL CrdtManager end to end: no mocked encode.
+// ---------------------------------------------------------------------------
+
+describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => {
+	test("durable crdt queue entry delivers the SEEDED note content via postUpdate (noteId-keyed, real CrdtManager)", async () => {
+		const posted: { noteId: string; update: Uint8Array }[] = [];
+		const api = {
+			postUpdate: async (noteId: string, update: Uint8Array) => {
+				posted.push({ noteId, update });
+				return { head: "h" };
+			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const realCrdt = new CrdtManager({
+			dbPrefix: "flush-roundtrip",
+			onUpdate: () => {},
+			onFlushToDisk: async () => {},
+		});
+		const e = engine({ enableCrdt: true, api, crdt: realCrdt });
+
+		// Seed the note's Y.Doc BY NOTEID (never by path) — this is exactly what
+		// a path/noteId key mismatch would fail to reproduce.
+		await realCrdt.applyLocalEdit("id-1", "# T\n\nseeded body");
+
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		const flushed = await e.flushQueue();
+
+		expect(flushed).toBe(1);
+		expect(e.queue.size).toBe(0);
+		expect(posted.length).toBe(1);
+		expect(posted[0].noteId).toBe("id-1");
+
+		// Apply the delivered update to a FRESH doc: it must reproduce the
+		// seeded body. A path/noteId key bug or an unseeded doc fails this.
+		const reader = new Y.Doc();
+		Y.applyUpdate(reader, posted[0].update);
+		expect(reader.getText("content").toString()).toContain("seeded body");
+
+		await realCrdt.destroy();
+	});
+
+	test("a per-note 404 from postUpdate drops the entry as note-gone, without latching capability off", async () => {
+		let postUpdateCalled = false;
+		const api = {
+			postUpdate: async () => {
+				postUpdateCalled = true;
+				const err: any = new Error("not found");
+				err.status = 404;
+				throw err;
+			},
+			// The file is present on disk, so a bug that skipped the crdt branch
+			// and fell through to the legacy path would call pushNote instead of
+			// hitting the "file missing" shortcut — fail loudly if that happens.
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const testFile = new TFile("T.md");
+		const localApp = {
+			...mockApp,
+			vault: {
+				...mockApp.vault,
+				getFileByPath: mock().mockImplementation((p: string) =>
+					p === "T.md" ? testFile : null,
+				),
+			},
+		};
+		const e = new SyncEngine(
+			localApp as any,
+			api as unknown as EngramApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setCrdtManager(crdt as unknown as CrdtManager);
+		e.setReady();
+
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		const flushed = await e.flushQueue();
+
+		expect(postUpdateCalled).toBe(true);
+		expect(flushed).toBe(1);
+		expect(e.queue.size).toBe(0);
+		// A per-note 404 is NOT a capability signal — only probeCrdtOps latches.
+		expect((e as any).crdtOpsAvailable()).toBe(true);
+	});
+
+	test("crdt entry with ops unavailable clears the stale serverHash then falls through to the legacy push", async () => {
+		let pushNoteArgs: any[] = [];
+		const testFile = new TFile("T.md");
+		const localApp = {
+			...mockApp,
+			vault: {
+				...mockApp.vault,
+				getFileByPath: mock().mockImplementation((p: string) =>
+					p === "T.md" ? testFile : null,
+				),
+				cachedRead: mock().mockResolvedValue("legacy content"),
+			},
+		};
+		const api = {
+			pushNote: async (...args: any[]) => {
+				pushNoteArgs = args;
+				return { note: {}, chunks_indexed: 1 };
+			},
+			postUpdate: async () => {
+				throw new Error("must not call postUpdate when ops are unavailable");
+			},
+		};
+		const e = new SyncEngine(
+			localApp as any,
+			api as unknown as EngramApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setReady();
+		(e as any).markCrdtOpsUnsupported(404); // ops unavailable (old backend)
+		e.importSyncState({ "T.md": { hash: 1, version: 1, serverHash: "stale-hash" } });
+
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+		});
+		const flushed = await e.flushQueue();
+
+		expect(flushed).toBe(1);
+		// The stale serverHash was cleared before the legacy push — a no-base
+		// push overwrites deliberately instead of 409ing against the CAS base
+		// that CRDT-ops delivery already advanced past.
+		expect(pushNoteArgs[5]).toBeUndefined();
+		expect(pushNoteArgs[1]).toBe("legacy content");
 	});
 });
