@@ -762,7 +762,11 @@ export default class EngramSyncPlugin extends Plugin {
 			// set so the resulting applyLocalEdit fires normally through the CRDT
 			// route. Only runs when registered and the sync gate is open so that
 			// content is never transmitted before the user picks a direction.
-			if (gateOpen && this.crdtManager) {
+			// Lazy enrollment skips cold-start reconcile entirely: it seeds drift
+			// into the Y.Doc via applyLocalEdit for EVERY drifted file, bypassing
+			// the live-bound push gate (the cold-note CRDT seeding lazy avoids).
+			// The regular REST fullSync below reconciles cold-note drift instead.
+			if (gateOpen && this.crdtManager && !this.settings.lazyEnrollment) {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;

@@ -220,6 +220,36 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	test("lazyEnrollment: a confirmed but NOT live-bound note routes to REST, not CRDT", async () => {
+		// Correctness hinge of lazy enrollment: the CRDT push gate keys on
+		// isNoteConfirmed, and every pulled note is confirmed. Without also
+		// gating on live-bound, a cold confirmed note that is edited routes
+		// through applyLocalEdit on a history-less Y.Doc and seeds a DUPLICATE
+		// lineage (#846/#161 class). Under lazy, a not-live-bound note must fall
+		// through to convergent REST instead.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
+			mock().mockResolvedValue(undefined),
+		);
+		engine.setReady();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		// NOT live-bound (default isLiveBound === false).
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalled();
+	});
+
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => true);

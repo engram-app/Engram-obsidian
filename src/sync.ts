@@ -58,6 +58,13 @@ import type {
  *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
 export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
+/** Max forced re-handshakes for a live-bound note that stays diverged against
+ *  the SAME server hash, before we record convergence and stop. Bounds the
+ *  re-handshake so a genuinely-stuck note cannot loop forever (the 2026-07-09
+ *  storm), while still RETRYING a dropped STEP1/STEP2 handshake a few times
+ *  rather than treating one fire-and-forget attempt as delivered. */
+export const CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -630,6 +637,13 @@ export class SyncEngine {
 	 *  move/resurrect the row, not CRDT (which the channel drops for a note the
 	 *  server sees as absent). Routing it CRDT would silently strand the rename. */
 	private confirmedNoteIds: Set<string> = new Set();
+
+	/** Per-note re-handshake attempt tracking for the live-bound catch-up path,
+	 *  keyed by note_id. `hash` is the server content_hash being retried; a new
+	 *  hash starts a fresh episode. Bounds the re-handshake (see
+	 *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
+	 *  dropped handshake is still retried before we record convergence. */
+	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
 	private isNoteConfirmed(noteId: string | null): boolean {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
@@ -1707,7 +1721,12 @@ export class SyncEngine {
 					this.crdt &&
 					noteId &&
 					this.isNoteConfirmed(noteId) &&
-					(this.crdtLive?.() ?? true)
+					(this.crdtLive?.() ?? true) &&
+					// Lazy enrollment: only a live-bound (editor-open) note routes
+					// through CRDT. A confirmed-but-cold note has no handshaked Y.Doc
+					// this session, so applyLocalEdit would seed a DUPLICATE lineage
+					// (#846/#161); route it to convergent REST instead.
+					(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
 				) {
 					const consumed = await routeModify(
 						{
@@ -3504,7 +3523,11 @@ export class SyncEngine {
 			// and can be missed if we weren't subscribed when the other device opened
 			// the room). An already-local note is left to its existing CRDT routing.
 			if (!this.app.vault.getFileByPath(normalized)) {
-				if (noteId) this.crdtEnrollment?.enroll(noteId);
+				// Lazy enrollment: do NOT open a room for a cold discovered note.
+				// The /changes payload already carries the body (flushFromCrdt below
+				// writes it room-free), so skipping the STEP1 keeps a large vault
+				// from opening a room per note on connect.
+				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
@@ -3530,7 +3553,11 @@ export class SyncEngine {
 				// body we are already holding; markRecentlyFlushed suppresses the
 				// echo and the converged serverHash keeps dedupe quiet. The later
 				// idempotent STEP2 re-flush is suppressed by the same window.
-				if (noteId) this.crdtEnrollment?.enroll(noteId);
+				// Lazy enrollment: a cold (not live-bound) note stays room-free.
+				// Divergence is still handled below — a clean local file backfills
+				// via REST (flushFromCrdt), a live-bound one re-handshakes — but we
+				// do not eagerly STEP1 every CRDT note in the vault on connect.
+				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
@@ -3538,13 +3565,46 @@ export class SyncEngine {
 						// writing disk under it would fight the binding. Deliver the
 						// missed ops through a fresh handshake instead: reset lifts the
 						// once-per-session enrollment guard, enroll re-fires STEP1.
+						const key = noteId ?? normalized;
+						const prevAttempt = this.crdtRehandshakeAttempts.get(key);
+						const attempts =
+							prevAttempt?.hash === change.content_hash
+								? prevAttempt.attempts + 1
+								: 1;
 						rlog().warn(
 							"pull",
-							`CRDT catch-up: diverged + live-bound, forcing re-handshake ${change.path}`,
+							`CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`,
 						);
 						if (noteId && this.crdtEnrollment) {
 							this.crdtEnrollment.reset(noteId);
 							this.crdtEnrollment.enroll(noteId);
+						}
+						if (attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
+							// Bounded give-up: record convergence so the poll STOPS re-handshaking.
+							// Advancing serverHash breaks the old every-5min-forever loop (the
+							// 2026-07-09 storm engine); the attempt cap first RETRIES a possibly-
+							// dropped STEP1/STEP2 a few times so a lost handshake is not silently
+							// treated as delivered. We did NOT write disk (the editor owns the
+							// body), so record the REAL local content hash — NOT a 0 sentinel, which
+							// a later cold-note check would misread as a local divergence and
+							// spuriously route to the conflict flow.
+							this.crdtRehandshakeAttempts.delete(key);
+							const boundFile = this.app.vault.getFileByPath(normalized);
+							const localHash =
+								stored?.hash ??
+								(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+							this.syncState.set(normalized, {
+								hash: localHash,
+								serverHash: change.content_hash,
+								version: change.version,
+							});
+						} else {
+							// Keep serverHash UNrecorded so the next poll re-handshakes again if the
+							// ops still have not landed — retry, do not assume delivery.
+							this.crdtRehandshakeAttempts.set(key, {
+								hash: change.content_hash,
+								attempts,
+							});
 						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
@@ -4344,7 +4404,11 @@ export class SyncEngine {
 				noteId &&
 				this.isNoteConfirmed(noteId) &&
 				(this.crdtLive?.() ?? true) &&
-				file.stat.size <= MAX_CRDT_NOTE_BYTES
+				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
+				// Lazy enrollment: a cold note is not CRDT-owned this session, so it
+				// must reach REST here (mirror the pushFile gate) rather than being
+				// skipped as socket-delivered — nothing would deliver it.
+				(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(file.path)))
 			) {
 				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
