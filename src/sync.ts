@@ -652,6 +652,12 @@ export class SyncEngine {
 	// Single source of truth for "this note converges via CRDT ops, not the
 	// whole-doc push". Previously duplicated inline in pushFile and
 	// pushNotesViaBatch; both now call this.
+	//
+	// Under lazy enrollment a confirmed-but-cold note has no handshaked Y.Doc
+	// this session, so routing it through applyLocalEdit would seed a DUPLICATE
+	// lineage (#846/#161); a cold note must instead reach convergent REST (in
+	// pushFile) and must NOT be skipped as socket-delivered in the batch seam
+	// (nothing would deliver it) — hence the live-bound requirement here.
 	private isCrdtManaged(path: string, noteId: string | null): boolean {
 		return (
 			!!this.crdt &&
