@@ -520,6 +520,10 @@ export interface BatchUpsertResponse {
 /** 409 conflict response from the server when expected_version mismatches. */
 export interface VersionConflictResponse {
 	conflict: true;
+	/** Present when the 409 is a delete-wins refusal (backend: a create at a
+	 *  path deleted within the window with identical content). No server_note
+	 *  accompanies it — the client converges by trashing its local copy. */
+	reason?: "recently_deleted";
 	server_note: {
 		id: string;
 		path: string;

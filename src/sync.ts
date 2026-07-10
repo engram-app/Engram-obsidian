@@ -1813,6 +1813,21 @@ export class SyncEngine {
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
+					// Delete-wins: the server refused this create because the path was
+					// deleted on another device within the window (identical content —
+					// a stale re-push of the note we still hold). Converge by trashing
+					// our local copy instead of re-pushing (which would resurrect it).
+					// trashRemotelyDeleted marks the path so the trash's own delete
+					// event doesn't echo-push.
+					if (resp.reason === "recently_deleted") {
+						rlog().info(
+							"push",
+							`recently_deleted — trashing local ${file.path} to honor remote delete`,
+						);
+						await this.trashRemotelyDeleted(file);
+						return true;
+					}
+
 					const serverNote = resp.server_note;
 					devLog().log(
 						"push",
@@ -4049,6 +4064,14 @@ export class SyncEngine {
 		}
 	}
 
+	/** Live-sync entry for a server-side folder-marker change (folders.batch
+	 *  channel event). Re-polls /folders/explicit and materializes new empty
+	 *  folders immediately instead of waiting for the next pull. */
+	async resyncFolders(): Promise<void> {
+		if (this.syncBlocked) return;
+		await this.syncExplicitFolders();
+	}
+
 	/** Pull the server's explicit empty-folder markers, persist them, and
 	 *  materialize each on disk. Skips ignored paths (so we never recreate
 	 *  .obsidian/, .trash/, .git/, or user-ignored folders). Failures are
@@ -4065,7 +4088,35 @@ export class SyncEngine {
 			return;
 		}
 
+		// A folder we previously tracked that the server no longer lists was
+		// deleted on another device (web). Trash it locally so the delete
+		// propagates. Guarded — only an EMPTY folder still on disk (a note may
+		// have since landed inside it) and never an ignored path
+		// (.obsidian/, .trash/, …).
+		const kept = new Set(names);
+		const removed = this.explicitFolders
+			.all()
+			.filter((prev) => !kept.has(prev) && !this.shouldIgnore(prev));
+
+		// Drop the tracked set to the server's list BEFORE trashing any folder.
+		// trashFile dispatches Obsidian's vault "delete" event, which routes to
+		// handleFolderDelete; if the folder were still tracked there it would echo
+		// a real DELETE /folders back to the server (the folder-level twin of the
+		// wipeRemote echo). Removing it from the set first makes
+		// handleFolderDelete's membership guard suppress the echo — and covers the
+		// "user deleted all folders → []" case without a special guard.
 		await this.explicitFolders.replaceAll(names);
+
+		for (const prev of removed) {
+			const existing = this.app.vault.getAbstractFileByPath(prev);
+			if (!(existing instanceof TFolder)) continue;
+			if (existing.children.length > 0) continue;
+			try {
+				await this.app.fileManager.trashFile(existing);
+			} catch (e) {
+				devLog().log("pull", `trash removed folder(${prev}) failed: ${errMsg(e)}`);
+			}
+		}
 
 		for (const name of names) {
 			if (this.shouldIgnore(name)) continue;
@@ -4266,6 +4317,23 @@ export class SyncEngine {
 						this.pushing.delete(e.file.path);
 						const ok = await this.pushFile(e.file, true);
 						if (ok) pushed++;
+					} else if (
+						(r.errors as { reason?: string } | undefined)?.reason === "recently_deleted"
+					) {
+						// Delete-wins (batch path): server refused this create because the
+						// path was deleted on another device within the window. Converge by
+						// trashing our local copy instead of retrying — not a failure.
+						rlog().info(
+							"push",
+							`recently_deleted — trashing local ${e.file.path} to honor remote delete`,
+						);
+						await this.trashRemotelyDeleted(e.file);
+						this.logEntry(
+							"push",
+							e.file.path,
+							"skipped",
+							"recently_deleted — honored remote delete",
+						);
 					} else {
 						failed++;
 						const msg = JSON.stringify(r.errors ?? "batch error");
@@ -4946,8 +5014,24 @@ export class SyncEngine {
 			return;
 		}
 
-		const notePaths = manifest.notes.map((n) => n.path);
-		const attachmentPaths = manifest.attachments.map((a) => a.path);
+		// Only wipe true remote EXTRAS — notes/attachments absent from the local
+		// vault. A file that exists locally is about to be re-uploaded; deleting
+		// it first tombstones its path, and the backend delete-wins guard then
+		// refuses the same-path re-push as `recently_deleted` (permanent 404 —
+		// the e2e test_86 regression). Leaving it lets the follow-up force-push
+		// update it in place (id retained → CRDT room preserved, no tombstone).
+		const localPaths = new Set(
+			this.app.vault
+				.getFiles()
+				.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
+				.map((f) => normalizePath(f.path)),
+		);
+		const notePaths = manifest.notes
+			.map((n) => n.path)
+			.filter((p) => !localPaths.has(normalizePath(p)));
+		const attachmentPaths = manifest.attachments
+			.map((a) => a.path)
+			.filter((p) => !localPaths.has(normalizePath(p)));
 		const total = notePaths.length + attachmentPaths.length;
 
 		rlog().info(
