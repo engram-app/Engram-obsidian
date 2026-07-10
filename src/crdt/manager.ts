@@ -56,7 +56,7 @@ export interface CrdtManagerOptions {
 	 * SyncEngine can write the new content to disk (echo-suppressed: the edit
 	 * came from the server, so it must NOT be re-sent).
 	 */
-	onFlushToDisk: (path: string, content: string) => Promise<void>;
+	onFlushToDisk: (noteId: string, content: string) => Promise<void>;
 	/**
 	 * Called when IndexedDB persistence fails (e.g. iOS quota exceeded).
 	 * Sync continues in-memory + over the WS; only local durability is
@@ -69,11 +69,12 @@ export interface CrdtManagerOptions {
 	 * continues over the WS but offline durability degrades. Real-device
 	 * testing (iOS + Android) is required before GA.
 	 */
-	onPersistError?: (path: string, err: unknown) => void;
+	onPersistError?: (noteId: string, err: unknown) => void;
 	/**
 	 * Adopt-first seed gate (backend #846 lineage doubling). Returns true when
-	 * `content` is byte-identical to the last content synced for `path` (the
-	 * SyncEngine's per-path hash). A history-less doc must NOT seed such
+	 * `content` is byte-identical to the last content synced for that note (the
+	 * SyncEngine's per-path hash, resolved from `noteId`). A history-less doc
+	 * must NOT seed such
 	 * content: the server already holds it on its own Yjs lineage, and a
 	 * client re-encoding it produces concurrent "same text" ops Yjs cannot
 	 * dedup — the note body doubles once the two lineages union. Instead the
@@ -128,21 +129,21 @@ export class CrdtManager {
 	// ---------------------------------------------------------------------------
 
 	/**
-	 * Mark `path` as having completed its server handshake (STEP2 received).
+	 * Mark `noteId` as having completed its server handshake (STEP2 received).
 	 * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
 	 * to the doc. Idempotent — safe to call on every inbound frame.
 	 */
-	markSynced(path: string): void {
-		this.synced.add(this.docId(path));
+	markSynced(noteId: string): void {
+		this.synced.add(this.docId(noteId));
 	}
 
 	/**
-	 * Returns true if `path`'s handshake has completed this session (i.e.
+	 * Returns true if `noteId`'s handshake has completed this session (i.e.
 	 * `markSynced` has been called for it). Used by `applyLocalEdit` to guard
 	 * seeding of empty docs.
 	 */
-	isSynced(path: string): boolean {
-		return this.synced.has(this.docId(path));
+	isSynced(noteId: string): boolean {
+		return this.synced.has(this.docId(noteId));
 	}
 
 	/**
