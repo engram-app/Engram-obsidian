@@ -4644,6 +4644,15 @@ export class SyncEngine {
 			onProgress?.(done, failed);
 		}
 
+		// Deliver any channel-down CRDT entries the loop just enqueued (Task 5).
+		// Mirrors pushFile's `void this.flushQueue()` right after its own
+		// enqueueChange — without this, a durably-queued entry sat undelivered
+		// until an unrelated trigger (manual "Retry Failed", or a later
+		// single-file edit) drained the queue. Single call after the loop, not
+		// per-note: flushQueue is single-flight (flushInFlight guard), so one
+		// call drains everything and a redundant call is a no-op.
+		void this.flushQueue();
+
 		return { pushed, failed };
 	}
 

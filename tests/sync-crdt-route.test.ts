@@ -942,6 +942,48 @@ describe("batch push durably queues a channel-down CRDT note (seeded, not falsel
 });
 
 // ---------------------------------------------------------------------------
+// Delivery-latency gap: pushFile calls `void this.flushQueue()` right after
+// enqueueing a channel-down crdt entry (line ~1844), but pushNotesViaBatch's
+// identical seed-then-enqueue branch above did not — the durable entry was
+// correct (no data loss) but sat undelivered until an unrelated trigger
+// (manual "Retry Failed", or a later single-file channel-down edit) drained
+// it. Fix: flush once after the batch loop completes, mirroring pushFile.
+// ---------------------------------------------------------------------------
+
+describe("batch push flushes the queue after a channel-down CRDT note is enqueued", () => {
+	test("a channel-down CRDT note pushed via pushNotesViaBatch triggers a flushQueue call", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => false); // channel down, REST still reachable
+
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
+
+		// Spy on the single-flight flush wrapper instead of exercising real
+		// delivery — this pins the missing CALL, not the (already-covered)
+		// queue-entry shape from the test above.
+		const flushSpy = mock(() => Promise.resolve(0));
+		engine.flushQueue = flushSpy;
+
+		const file = new TFile("note.md");
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(flushSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Mint-refusal guard in the batch path (issue #217 — same seam as PR #216 /
 // backend #972): pushFile refuses to mint an id for an engine-flushed
 // (recentlyFlushed) path whose id binding is gone — a relocation owns that
