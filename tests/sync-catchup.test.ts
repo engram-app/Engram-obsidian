@@ -304,6 +304,160 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
 	});
 
+	test("live-bound divergence: bounded re-handshake retries then converges (2026-07-09 loop fix)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
+		});
+
+		const change = {
+			path: "owned.md",
+			action: "upsert",
+			content: "diverged body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any;
+
+		// Poll repeatedly with the SAME server hash (delivery never lands).
+		for (let i = 0; i < 5; i++) await engine.applyChange(change);
+
+		// Re-handshake RETRIES a possibly-dropped STEP1/STEP2, but is BOUNDED to
+		// MAX attempts — not the old infinite every-5min loop that drove the
+		// storm. After the cap it records convergence and stops re-firing.
+		expect(reset).toHaveBeenCalledTimes(3);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+		// Editor owns the body (no disk write) → the real local hash is preserved.
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(7);
+	});
+
+	test("live-bound converge with no prior baseline records the REAL local hash, not a poisoning 0", async () => {
+		const { engine } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("actual disk content");
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		// NO importSyncState → stored is undefined for owned.md.
+
+		const change = {
+			path: "owned.md",
+			action: "upsert",
+			content: "x",
+			content_hash: "h",
+			version: 2,
+			mtime: 1,
+		} as any;
+		for (let i = 0; i < 3; i++) await engine.applyChange(change);
+
+		// A 0 sentinel here would later read as `fnv1a(local) !== 0` = local
+		// diverged, spuriously routing a note the user only VIEWED to the
+		// conflict flow. Record the real disk hash instead.
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a("actual disk content"));
+		expect(engine.exportSyncState()["owned.md"]?.hash).not.toBe(0);
+	});
+
+	test("bounded re-handshake resets its attempt count when the server hash changes (new episode)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 7, version: 1, serverHash: "h0" } });
+
+		// Two polls at hash h1 (attempts 1,2 — under the cap, not yet recorded).
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1);
+		await engine.applyChange(c1);
+		expect(reset).toHaveBeenCalledTimes(2);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0");
+
+		// Server hash CHANGES (delivery progressed / a new remote edit): a fresh
+		// episode, so the count resets to 1 — it must NOT immediately give up and
+		// record convergence just because the total re-handshakes crossed the cap.
+		await engine.applyChange({ ...c1, content_hash: "h2", version: 3 });
+		expect(reset).toHaveBeenCalledTimes(3);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("h0");
+	});
+
+	test("no spurious conflict: a VIEWED-then-cold note with the real hash recorded does NOT hit the conflict flow (#2 outcome)", async () => {
+		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("viewed content");
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
+
+		// Phase 1: note OPEN (live-bound), no prior baseline, diverges → after the
+		// retry cap it records the REAL local hash, not a 0 sentinel.
+		let live = true;
+		engine.setLiveBoundCheck((p: string) => live && p === "owned.md");
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "x",
+			content_hash: "h",
+			version: 2,
+			mtime: 1,
+		} as any;
+		for (let i = 0; i < 3; i++) await engine.applyChange(c1);
+		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a("viewed content"));
+
+		// Phase 2: user CLOSES the editor (note cold); a later poll brings a new
+		// server hash while local disk is UNCHANGED. With a 0 sentinel this
+		// false-positived as localDiverged → conflict. With the real hash it sees
+		// local is clean → plain backfill, no conflict dialog / copy.
+		live = false;
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "h2",
+			version: 3,
+			mtime: 2,
+		} as any);
+		expect(onConflict).not.toHaveBeenCalled();
+	});
+
+	test("lazyEnrollment: a cold diverged CRDT note backfills via REST but is NOT enrolled", async () => {
+		const { engine, enroll } = crdtEngine({ lazyEnrollment: true });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Cold: not live-bound (default). Local is clean, only the server moved.
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "authoritative server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// The body still materializes via the room-free REST pull path...
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(localFile, "authoritative server body");
+		// ...but under lazy enrollment the cold note is NOT enrolled (no STEP1),
+		// so a large vault does not open a room per note on connect. (With lazy
+		// OFF, the sibling test above asserts enroll IS called.)
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
 	test("converged hashes: no disk write (CRDT stays the single live writer)", async () => {
 		const { engine, enroll } = crdtEngine();
 		const localFile = new TFile("owned.md");

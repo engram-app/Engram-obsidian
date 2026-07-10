@@ -11,9 +11,11 @@
  *   1. a WS delete for a path wipeRemote itself just deleted is SKIPPED
  *      (never trashFile) — it is our own echo, not a remote intent;
  *   2. the suppression is scoped: deletes for other paths still apply;
- *   3. wipeRemote clears the path's server bindings (syncState, noteIdMap,
- *      CRDT doc + enrollment) so the follow-up pushAll re-mints every file
- *      as new instead of hash-skipping "unchanged" notes into remote loss.
+ *   3. for a wiped EXTRA, wipeRemote clears the path's server bindings
+ *      (syncState, noteIdMap, CRDT doc + enrollment) so the follow-up pushAll
+ *      re-mints it as new instead of hash-skipping an "unchanged" note into
+ *      remote loss. (Notes present locally are no longer wiped — they are
+ *      force-pushed in place; see the "preserves locally-present notes" test.)
  */
 
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
@@ -96,6 +98,7 @@ function identityNoteIdMap(...paths: string[]): NoteIdMap {
 beforeEach(() => {
 	jest.clearAllMocks();
 	mockApp.vault.getFileByPath.mockReset().mockReturnValue(null);
+	mockApp.vault.getFiles.mockReset().mockReturnValue([]);
 	(mockApi.getManifest as jest.Mock).mockReset().mockResolvedValue(null);
 	(mockApi.deleteNote as jest.Mock).mockReset().mockResolvedValue({ deleted: true, path: "" });
 });
@@ -321,5 +324,31 @@ describe("wipeRemote self-echo suppression", () => {
 		expect(noteIdMap.get("Notes/Keep.md")).toBeNull();
 		expect(crdt.removeDoc).toHaveBeenCalledWith("Notes/Keep.md");
 		expect(enrollment.reset).toHaveBeenCalledWith("Notes/Keep.md");
+	});
+});
+
+describe("wipeRemote preserves locally-present notes (delete-wins regression)", () => {
+	// Root cause of e2e test_86 breaking on the delete-wins branch: replaceRemote
+	// deleted EVERY remote note (incl. ones about to be re-uploaded), then the
+	// backend delete-wins tombstone refused the same-path re-push as
+	// `recently_deleted` → the note stayed 404. A note present locally must NOT
+	// be deleted during the wipe — the follow-up force-push updates it in place
+	// (no tombstone → guard never fires, CRDT room preserved). Only true remote
+	// extras (absent locally) get wiped.
+	test("deletes only remote-only extras; keeps notes present in the local vault", async () => {
+		const idMap = identityNoteIdMap("Notes/Keep.md");
+		const engine = createEngine(idMap);
+		manifestWith(["Notes/Keep.md", "Notes/RemoteOnly.md"]);
+		// Keep.md exists locally; RemoteOnly.md does not.
+		mockApp.vault.getFiles.mockReturnValue([new TFile("Notes/Keep.md")]);
+
+		await priv(engine).wipeRemote();
+
+		// The remote-only extra is deleted.
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/RemoteOnly.md");
+		// A note that exists locally is NOT deleted (would tombstone the path).
+		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("Notes/Keep.md");
+		// Its id binding is retained so the re-push updates by id in place.
+		expect(idMap.get("Notes/Keep.md")).toBe("Notes/Keep.md");
 	});
 });

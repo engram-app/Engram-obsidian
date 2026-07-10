@@ -28,6 +28,15 @@ export interface EngramSyncSettings {
 	 *  plugin never joins the `crdt:` topic and routes every save through the legacy
 	 *  path — behaving exactly like a non-CRDT build. */
 	enableCrdt: boolean;
+	/** Lazy CRDT room enrollment. OFF by default. When true, the plugin only
+	 *  opens a live CRDT room for a note that is open in the editor (live-bound);
+	 *  cold notes sync via the REST pull feed (receive) and convergent REST push
+	 *  (send) instead of holding a room. This makes sync cost track active editing
+	 *  rather than vault size, so a large vault no longer opens hundreds of rooms
+	 *  on connect (the 2026-07-09 reconnect-storm amplifier). Correctness hinge:
+	 *  when on, CRDT push is additionally gated on live-bound so a confirmed but
+	 *  never-handshaked cold note does not seed a duplicate CRDT lineage. */
+	lazyEnrollment: boolean;
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -97,6 +106,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	diagnosticsEnabled: false,
 	conflictResolution: "auto",
 	enableCrdt: true,
+	lazyEnrollment: false,
 	vaultId: null,
 	clientId: "",
 	planState: null,
@@ -249,6 +259,15 @@ export interface QueueEntry {
 	kind?: "note" | "attachment";
 	/** Vault ID for dedup isolation. */
 	vaultId?: string;
+	/** Set on a channel-down CRDT edit: deliver via /updates ops (encode the
+	 *  note's Y.Doc by noteId), falling back to the legacy push only when ops
+	 *  are unavailable. */
+	noteId?: string;
+	crdt?: boolean;
+	/** Transient-failure retry count, persisted so a permanently-failing entry
+	 *  is parked after RETRY_CAP attempts instead of retrying forever across
+	 *  reloads. Absent = never failed. */
+	attempts?: number;
 }
 
 /** Request body for POST /search */
@@ -402,6 +421,10 @@ export interface FileSyncState {
 	/** Last server content_hash seen for this path (opaque HMAC, from push
 	 *  responses / changes pages / broadcasts). Never computed locally. */
 	serverHash?: string;
+	/** Last CRDT head marker (sha256(state_vector) url-b64) synced for this
+	 *  path via cold-receive. Separate namespace from serverHash (which is the
+	 *  /changes content_hash). Absent = never cold-synced. */
+	crdtHead?: string;
 }
 
 /** A single entry in the sync log ring buffer. */
@@ -510,6 +533,10 @@ export interface BatchUpsertResponse {
 /** 409 conflict response from the server when expected_version mismatches. */
 export interface VersionConflictResponse {
 	conflict: true;
+	/** Present when the 409 is a delete-wins refusal (backend: a create at a
+	 *  path deleted within the window with identical content). No server_note
+	 *  accompanies it — the client converges by trashing its local copy. */
+	reason?: "recently_deleted";
 	server_note: {
 		id: string;
 		path: string;
