@@ -215,6 +215,89 @@ describe("SyncEngine.handleFolderDelete", () => {
 });
 
 // ---------------------------------------------------------------------------
+// resyncFolders removal reconcile — a folder deleted on another device (web)
+// must be trashed locally, not just dropped from the tracked set.
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine.resyncFolders removal reconcile", () => {
+	test("trashes an explicit folder the server no longer lists", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Keep");
+		await explicit.add("Gone");
+
+		// Server now lists only Keep — Gone was deleted on another device.
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["Keep"]);
+
+		const gone = new TFolder("Gone", []);
+		const keep = new TFolder("Keep", []);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? gone : p === "Keep" ? keep : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(gone);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalledWith(keep);
+		expect(explicit.has("Gone")).toBe(false);
+	});
+
+	test("does NOT echo a DELETE /folders when the trash fires the vault delete event mid-reconcile", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Gone");
+
+		// Server dropped Gone; it exists on disk as an empty folder.
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce([]);
+		const gone = new TFolder("Gone", []);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? gone : null,
+		);
+
+		// Obsidian dispatches vault.on("delete") while trashFile runs; that routes
+		// to handleFolderDelete. If Gone is still in the explicit set at that
+		// moment it echoes a real DELETE /folders to the server (the folder-level
+		// twin of the test_86 wipe echo). The reconcile must drop Gone from the
+		// set BEFORE trashing so the echo is suppressed.
+		(mockApp.fileManager.trashFile as jest.Mock).mockImplementationOnce(async () => {
+			await engine.handleFolderDelete(gone);
+		});
+
+		await engine.resyncFolders();
+
+		expect(mockApi.deleteFolder).not.toHaveBeenCalled();
+	});
+
+	test("does NOT trash a server-removed folder that still holds children", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Busy");
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce([]);
+
+		const busy = new TFolder("Busy", [new TFile("Busy/note.md")]);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Busy" ? busy : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("never trashes an ignored folder even if it drops off the list", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add(".obsidian/snippets");
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce([]);
+
+		const ignored = new TFolder(".obsidian/snippets", []);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === ".obsidian/snippets" ? ignored : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // seedEmptyFolders — first-sync seeding of folders the server can't derive
 // ---------------------------------------------------------------------------
 //

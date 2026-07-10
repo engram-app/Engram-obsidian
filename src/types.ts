@@ -259,6 +259,15 @@ export interface QueueEntry {
 	kind?: "note" | "attachment";
 	/** Vault ID for dedup isolation. */
 	vaultId?: string;
+	/** Set on a channel-down CRDT edit: deliver via /updates ops (encode the
+	 *  note's Y.Doc by noteId), falling back to the legacy push only when ops
+	 *  are unavailable. */
+	noteId?: string;
+	crdt?: boolean;
+	/** Transient-failure retry count, persisted so a permanently-failing entry
+	 *  is parked after RETRY_CAP attempts instead of retrying forever across
+	 *  reloads. Absent = never failed. */
+	attempts?: number;
 }
 
 /** Request body for POST /search */
@@ -412,6 +421,10 @@ export interface FileSyncState {
 	/** Last server content_hash seen for this path (opaque HMAC, from push
 	 *  responses / changes pages / broadcasts). Never computed locally. */
 	serverHash?: string;
+	/** Last CRDT head marker (sha256(state_vector) url-b64) synced for this
+	 *  path via cold-receive. Separate namespace from serverHash (which is the
+	 *  /changes content_hash). Absent = never cold-synced. */
+	crdtHead?: string;
 }
 
 /** A single entry in the sync log ring buffer. */
@@ -520,6 +533,10 @@ export interface BatchUpsertResponse {
 /** 409 conflict response from the server when expected_version mismatches. */
 export interface VersionConflictResponse {
 	conflict: true;
+	/** Present when the 409 is a delete-wins refusal (backend: a create at a
+	 *  path deleted within the window with identical content). No server_note
+	 *  accompanies it — the client converges by trashing its local copy. */
+	reason?: "recently_deleted";
 	server_note: {
 		id: string;
 		path: string;

@@ -5,6 +5,7 @@ import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "../src/api";
 import type { AuthProvider } from "../src/auth";
+import { toB64 } from "../src/crdt/channel";
 import { LimitExceededError } from "../src/limit-error";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance
@@ -916,6 +917,59 @@ describe("EngramApi", () => {
 			await expect(api.getMe()).rejects.toMatchObject({ status: 401 });
 			expect(mockRequestUrl).toHaveBeenCalledTimes(2);
 			expect(invalidate).toHaveBeenCalledTimes(1);
+		});
+	});
+
+	describe("crdt ops transport", () => {
+		test("postUpdate posts base64 update bytes and returns the head", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { head: "h1" } } as any);
+			const res = await api.postUpdate("note-1", new Uint8Array([1, 2, 3]));
+			expect(res.head).toBe("h1");
+			const opts = mockRequestUrl.mock.calls[0]![0] as any;
+			expect(opts.method).toBe("POST");
+			expect(opts.url).toContain("/notes/note-1/updates");
+			const body = JSON.parse(opts.body);
+			expect(typeof body.update).toBe("string"); // base64
+			expect(body.update).toBe(toB64(new Uint8Array([1, 2, 3])));
+		});
+
+		test("getVaultHeads returns the note->head map", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { heads: { a: "h1", b: "h2" } },
+			} as any);
+			const res = await api.getVaultHeads();
+			expect(res.heads).toEqual({ a: "h1", b: "h2" });
+			const opts = mockRequestUrl.mock.calls[0]![0] as any;
+			expect(opts.method).toBe("GET");
+			expect(opts.url).toContain("/vault/heads");
+		});
+
+		test("getUpdates decodes the base64 delta and returns head", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { update: btoa("\x01\x02"), head: "h3" },
+			} as any);
+			const res = await api.getUpdates("note-1", "sv-b64");
+			expect(res.update).toBeInstanceOf(Uint8Array);
+			expect(Array.from(res.update)).toEqual([1, 2]);
+			expect(res.head).toBe("h3");
+			const opts = mockRequestUrl.mock.calls[0]![0] as any;
+			expect(opts.method).toBe("GET");
+			expect(opts.url).toContain("/notes/note-1/updates");
+			expect(opts.url).toContain("since=sv-b64");
+		});
+
+		test("getUpdates omits the since param when not provided", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { update: btoa(""), head: "h4" },
+			} as any);
+			await api.getUpdates("note-1");
+			const opts = mockRequestUrl.mock.calls[0]![0] as any;
+			expect(opts.url).toContain("/notes/note-1/updates");
+			expect(opts.url).not.toContain("since=");
+			expect(opts.url).not.toContain("?");
 		});
 	});
 });

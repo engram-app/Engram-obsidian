@@ -1417,6 +1417,9 @@ function errMsg(e) {
 
 // src/channel.ts
 var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+function connectRetryDelayMs(attempt, baseMs = 2e3) {
+  return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+}
 function clampReconnectJitter(raw) {
   return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
 }
@@ -1484,6 +1487,9 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     this.onEvent = null;
     this.onStatusChange = null;
     this.onVaultDeleted = null;
+    /** Folder markers changed on the server (create/delete/move from the web
+     *  app). Payload is advisory only — the handler re-polls /folders/explicit. */
+    this.onFoldersChanged = null;
     /** Surfaces the user's current plan/entitlements from the best-effort
      *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
      *  broadcasts). Never gates the plugin's connected state. */
@@ -1719,7 +1725,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -1772,14 +1778,18 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       rlog().info("channel", "Received vault_deleted event"), (_f = this.onVaultDeleted) == null || _f.call(this);
       return;
     }
+    if (event === "folders.batch") {
+      rlog().info("channel", "Folder markers changed on server"), (_g = this.onFoldersChanged) == null || _g.call(this);
+      return;
+    }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_g = this.onCrdtMessage) == null || _g.call(this, docId, b64));
+      docId && b64 && ((_h = this.onCrdtMessage) == null || _h.call(this, docId, b64));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_h = this.onCrdtDocReady) == null || _h.call(this, docId));
+      docId && ((_i = this.onCrdtDocReady) == null || _i.call(this, docId));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -1787,7 +1797,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_i = p.kind) != null ? _i : "note",
+        kind: (_j = p.kind) != null ? _j : "note",
         id: p.id,
         device_id: p.device_id,
         content: p.content,
@@ -1799,10 +1809,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_j = this.onEvent) == null || _j.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_k = this.onEvent) == null || _k.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_k = payload.notes) != null ? _k : [];
+      let notes = (_l = payload.notes) != null ? _l : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -1819,7 +1829,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_l = this.onEvent) == null || _l.call(this, streamEvent);
+        (_m = this.onEvent) == null || _m.call(this, streamEvent);
       }
     }
   }
@@ -6117,6 +6127,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           noteId
         ) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
         if ("conflict" in resp) {
+          if (resp.reason === "recently_deleted")
+            return rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${file.path} to honor remote delete`
+            ), await this.trashRemotelyDeleted(file), !0;
           let serverNote = resp.server_note;
           devLog().log(
             "push",
@@ -7327,6 +7342,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
   }
+  /** Live-sync entry for a server-side folder-marker change (folders.batch
+   *  channel event). Re-polls /folders/explicit and materializes new empty
+   *  folders immediately instead of waiting for the next pull. */
+  async resyncFolders() {
+    this.syncBlocked || await this.syncExplicitFolders();
+  }
   /** Pull the server's explicit empty-folder markers, persist them, and
    *  materialize each on disk. Skips ignored paths (so we never recreate
    *  .obsidian/, .trash/, .git/, or user-ignored folders). Failures are
@@ -7341,7 +7362,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`), rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
       return;
     }
+    let kept = new Set(names), removed = this.explicitFolders.all().filter((prev) => !kept.has(prev) && !this.shouldIgnore(prev));
     await this.explicitFolders.replaceAll(names);
+    for (let prev of removed) {
+      let existing = this.app.vault.getAbstractFileByPath(prev);
+      if (existing instanceof import_obsidian21.TFolder && !(existing.children.length > 0))
+        try {
+          await this.app.fileManager.trashFile(existing);
+        } catch (e) {
+          devLog().log("pull", `trash removed folder(${prev}) failed: ${errMsg(e)}`);
+        }
+    }
     for (let name of names)
       if (!this.shouldIgnore(name))
         try {
@@ -7395,7 +7426,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     if (this.batchPushUnsupported) return null;
     let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
-      var _a2, _b2;
+      var _a2, _b2, _c2;
       if (chunk.length === 0) return "ok";
       let entries = [];
       for (let e of chunk) {
@@ -7434,9 +7465,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.recordBatchPushOk(e.file, e.content, e.hash, r), pushed++, this.logEntry("push", e.file.path, "ok");
           else if (r.status === "conflict")
             this.pushing.delete(e.file.path), await this.pushFile(e.file, !0) && pushed++;
+          else if (((_a2 = r.errors) == null ? void 0 : _a2.reason) === "recently_deleted")
+            rlog().info(
+              "push",
+              `recently_deleted \u2014 trashing local ${e.file.path} to honor remote delete`
+            ), await this.trashRemotelyDeleted(e.file), this.logEntry(
+              "push",
+              e.file.path,
+              "skipped",
+              "recently_deleted \u2014 honored remote delete"
+            );
           else {
             failed++;
-            let msg = JSON.stringify((_a2 = r.errors) != null ? _a2 : "batch error");
+            let msg = JSON.stringify((_b2 = r.errors) != null ? _b2 : "batch error");
             this.issues.record({
               path: e.file.path,
               kind: "note",
@@ -7464,7 +7505,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             kind: "note",
             mtime: e.file.stat.mtime / 1e3,
             timestamp: Date.now(),
-            vaultId: (_b2 = this.settings.vaultId) != null ? _b2 : void 0
+            vaultId: (_c2 = this.settings.vaultId) != null ? _c2 : void 0
           });
         return this.maybeGoOffline(err), "transport";
       } finally {
@@ -7785,7 +7826,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let notePaths = manifest.notes.map((n) => n.path), attachmentPaths = manifest.attachments.map((a) => a.path), total = notePaths.length + attachmentPaths.length;
+    let localPaths = new Set(
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
+    ), notePaths = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), attachmentPaths = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), total = notePaths.length + attachmentPaths.length;
     rlog().info(
       "push",
       `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`
@@ -22121,6 +22164,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }, channel.onVaultDeleted = () => {
         var _a2;
         new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+      }, channel.onFoldersChanged = () => {
+        this.syncEngine.resyncFolders().catch((e) => {
+          rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
+        });
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
@@ -22193,13 +22240,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         );
       channel.connect();
     }).catch((e) => {
-      if (console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error(
-        "channel",
-        `getMe() failed (attempt ${attempt + 1}/5): ${errMsg(e)}`
-      ), attempt < 4 && epoch === this.channelEpoch) {
-        let delay = 2e3 * 2 ** attempt;
-        window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
-      }
+      console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`), epoch === this.channelEpoch && window.setTimeout(
+        () => this.connectChannel(attempt + 1, epoch),
+        connectRetryDelayMs(attempt)
+      );
     });
   }
   /** Dispatch a user's SyncChoice to the appropriate engine method.

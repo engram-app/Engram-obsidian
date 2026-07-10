@@ -189,6 +189,33 @@ describe("OfflineQueue persistence", () => {
 		await q.dequeue("a.md");
 		await q.clear();
 	});
+
+	test("QueueEntry preserves noteId + crdt tag through persist/load", async () => {
+		const q = new OfflineQueue(0);
+		let saved: QueueEntry[] = [];
+		q.onPersist(async (e) => {
+			saved = e;
+		});
+		await q.enqueue({
+			path: "A.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		// persistDelayMs=0 still schedules via a real setTimeout(0) — yield to
+		// the event loop so the debounced persist actually fires before we
+		// assert on `saved`.
+		await new Promise((resolve) => setTimeout(resolve, 10));
+		expect(saved).toHaveLength(1);
+
+		const q2 = new OfflineQueue(0);
+		q2.load(saved);
+		const [e] = q2.all();
+		expect(e.noteId).toBe("id-1");
+		expect(e.crdt).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
