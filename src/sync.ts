@@ -2600,6 +2600,13 @@ export class SyncEngine {
 				);
 			}
 
+			// Phase 3a: piggyback cold-receive on the completed pull so closed
+			// CRDT notes converge in the background. Best-effort — a failure here
+			// must never fail the pull.
+			await this.coldReceive().catch((e) => {
+				devLog().log("crdt", `coldReceive threw (ignored) — ${errMsg(e)}`);
+			});
+
 			return applied;
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary

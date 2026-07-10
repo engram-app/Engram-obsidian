@@ -146,7 +146,10 @@ describe("coldReceive", () => {
 			getVaultHeads: async () => ({ heads: opts.heads }),
 			getUpdates:
 				opts.getUpdates ??
-				(async (_id: string, _since?: string) => ({ update: new Uint8Array([1]), head: "SRV" })),
+				(async (_id: string, _since?: string) => ({
+					update: new Uint8Array([1]),
+					head: "SRV",
+				})),
 		};
 		const crdt = {
 			encodeStateVector: async (id: string) => {
@@ -279,5 +282,29 @@ describe("coldReceive", () => {
 		await e.coldReceive();
 		expect(applyResolved).toBe(true);
 		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+	});
+});
+
+describe("pull() drives coldReceive", () => {
+	test("pull() invokes coldReceive when ops are available", async () => {
+		const e = engine({
+			enableCrdt: true,
+			api: { ...mockApi, getVaultHeads: async () => ({ heads: {} }) },
+		});
+		markProbed(e);
+		const spy = mock(async () => 0);
+		(e as any).coldReceive = spy;
+		await e.pull();
+		expect(spy).toHaveBeenCalled();
+	});
+
+	test("a coldReceive rejection does not fail pull()", async () => {
+		const e = engine({ enableCrdt: true });
+		markProbed(e);
+		(e as any).coldReceive = mock(async () => {
+			throw new Error("cold boom");
+		});
+		// pull() must resolve (not reject) despite coldReceive throwing.
+		await expect(e.pull()).resolves.toBeDefined();
 	});
 });
