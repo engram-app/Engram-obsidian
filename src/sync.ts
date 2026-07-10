@@ -1168,6 +1168,16 @@ export class SyncEngine {
 		}
 	}
 
+	private getCrdtHead(path: string): string | undefined {
+		return this.syncState.get(normalizePath(path))?.crdtHead;
+	}
+
+	private setCrdtHead(path: string, head: string): void {
+		const key = normalizePath(path);
+		const existing = this.syncState.get(key);
+		this.syncState.set(key, { ...(existing ?? { hash: 0 }), crdtHead: head });
+	}
+
 	/** Import legacy hash-only format (migration from old plugin versions). */
 	importHashes(data: Record<string, number>): void {
 		for (const [path, hash] of Object.entries(data)) {
