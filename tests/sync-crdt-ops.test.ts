@@ -19,6 +19,14 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
 }
 
+/** Mark the one-shot capability probe as already complete, for tests that
+ *  exercise post-probe latch behavior directly without driving a real
+ *  getVaultHeads round-trip (Phase 2b: crdtOpsAvailable() now requires
+ *  crdtOpsProbed, not just an unlatched crdtOpsUnsupported). */
+function markProbed(engine: SyncEngine): void {
+	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
+}
+
 // Minimal mock api/app — mirrors tests/sync-crdt-route.test.ts's harness.
 // Only the fields SyncEngine's constructor/setup touches are needed here
 // since these tests never drive a real sync cycle.
@@ -104,30 +112,34 @@ function engine(opts?: {
 }
 
 describe("crdtOpsAvailable latch", () => {
-	test("is available when enableCrdt and not latched", () => {
+	test("is available when enableCrdt, probed, and not latched", () => {
 		const e = engine();
+		markProbed(e);
 		expect((e as any).crdtOpsAvailable()).toBe(true);
 	});
 
 	test("latches off on a 404/405 from an updates call", () => {
 		const e = engine();
+		markProbed(e);
 		(e as any).markCrdtOpsUnsupported(404);
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 
 	test("stays available on other statuses", () => {
 		const e = engine();
+		markProbed(e);
 		(e as any).markCrdtOpsUnsupported(500);
 		expect((e as any).crdtOpsAvailable()).toBe(true);
 	});
 
 	test("405 also latches off", () => {
 		const e = engine();
+		markProbed(e);
 		(e as any).markCrdtOpsUnsupported(405);
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 
-	test("unavailable when enableCrdt is false, even unlatched", () => {
+	test("unavailable when enableCrdt is false, even unlatched and probed", () => {
 		const e = new SyncEngine(
 			mockApp,
 			mockApi,
@@ -135,6 +147,7 @@ describe("crdtOpsAvailable latch", () => {
 			mock().mockResolvedValue(undefined),
 		);
 		e.setReady();
+		markProbed(e);
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 });
@@ -171,6 +184,69 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 		const e = engine({ enableCrdt: false, api });
 		await (e as any).probeCrdtOps();
 		expect(called).toBe(false);
+	});
+
+	// Phase 2b remediation: capability comes SOLELY from the probe. Ops must
+	// read unavailable while the probe is in flight, not just after a failure.
+	test("ops are unavailable until the probe completes, then available on success", async () => {
+		let resolveHeads: (v: unknown) => void = () => {};
+		const api = {
+			getVaultHeads: () =>
+				new Promise((r) => {
+					resolveHeads = r;
+				}),
+		};
+		const e = engine({ enableCrdt: true, api });
+		expect((e as any).crdtOpsAvailable()).toBe(false); // not probed yet
+		const p = e.probeCrdtOps();
+		resolveHeads({ heads: {} });
+		await p;
+		expect((e as any).crdtOpsAvailable()).toBe(true);
+	});
+});
+
+// Probe-race close (final review carryover): a channel-down edit on a CRDT
+// note made BEFORE the one-shot capability probe has resolved must not be
+// treated as ops-available (crdtOpsProbed still false at that point). It has
+// to take the durable legacy whole-doc push, exactly like a confirmed
+// pre-Phase-1 backend, so it is never queued as a `crdt:true` entry the
+// engine has no confirmed way to deliver.
+describe("probe race: an edit before the probe resolves is never stranded", () => {
+	test("a channel-down edit made while the probe is still pending takes the legacy base_hash path, not the durable ops queue", async () => {
+		let pushNoteCalled = false;
+		let baseHashArg: string | undefined;
+		const api = {
+			// Never resolves within the test — models a probe that is still in
+			// flight when the edit happens.
+			getVaultHeads: () => new Promise(() => {}),
+			pushNote: async (...args: any[]) => {
+				pushNoteCalled = true;
+				baseHashArg = args[5];
+				return { note: {}, chunks_indexed: 1 };
+			},
+			postUpdate: async () => {
+				throw new Error("must not flush via REST /updates before the probe resolves");
+			},
+		} as unknown as EngramApi;
+		const crdt = {
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+			applyLocalEdit: async () => true,
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		expect((e as any).crdtOpsAvailable()).toBe(false); // probe still pending
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down too
+		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
+
+		await (e as any).pushFile(new TFile("p.md"));
+
+		expect(pushNoteCalled).toBe(true);
+		expect(baseHashArg).toBeDefined();
+		const queued = e.queue.all().find((q) => q.path === "p.md");
+		expect(queued).toBeUndefined(); // never durably queued as an ops entry
 	});
 });
 

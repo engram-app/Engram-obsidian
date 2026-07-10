@@ -1034,6 +1034,8 @@ export class SyncEngine {
 		} catch (e) {
 			const status = (e as { status?: number })?.status;
 			if (status !== undefined) this.markCrdtOpsUnsupported(status);
+		} finally {
+			this.crdtOpsProbed = true;
 		}
 	}
 
@@ -4317,8 +4319,14 @@ export class SyncEngine {
 	// base_hash push, exactly as before this feature. Mirrors batchPushUnsupported.
 	private crdtOpsUnsupported = false;
 
+	// Capability comes SOLELY from the probe (Phase 2b remediation): ops are
+	// treated unavailable until getVaultHeads has actually confirmed them, so
+	// a channel-down edit that races the probe takes the durable legacy path
+	// instead of assuming ops work.
+	private crdtOpsProbed = false;
+
 	private crdtOpsAvailable(): boolean {
-		return this.settings.enableCrdt === true && !this.crdtOpsUnsupported;
+		return this.settings.enableCrdt === true && this.crdtOpsProbed && !this.crdtOpsUnsupported;
 	}
 
 	private markCrdtOpsUnsupported(status: number): void {
