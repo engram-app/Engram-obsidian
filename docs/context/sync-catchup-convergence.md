@@ -70,7 +70,7 @@ push. e2e test_84/test_85 (backend #962) pin the incident chain permanently.
 ## References
 
 - `docs/context/crdt-editor-bind-race-pollution.md` (PR #194)
-- engram-workspace `docs/context/identity-as-crdt-decision.md` (the architecture this serves)
-- engram-workspace `docs/context/testing-surface-audit-2026-07-07.md` (pull-masking was finding #1)
+- `../engram-workspace/docs/context/identity-as-crdt-decision.md` (the architecture this serves)
+- `../engram-workspace/docs/context/testing-surface-audit-2026-07-07.md` (pull-masking was finding #1)
 - Plugin issues #203 (CRDT-frame leg: serverHash lags checkpoint — errs toward false conflict, open), #206 (flush-loop dequeue clobber, open), #210 (resurrection forensics)
 - Backend e2e `test_84_create_race.py` / `test_85_missed_delivery_no_deletion.py` (backend #962)

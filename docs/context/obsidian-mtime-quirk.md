@@ -1,5 +1,7 @@
 # Obsidian mtime Quirk
 
+_Last verified: 2026-04-03_
+
 ## The Problem
 
 `vault.modify()` sets the file's mtime to "now" — not the mtime you'd expect from the content source. This means you **cannot** use mtime comparison to decide whether to apply a remote change to an existing file.

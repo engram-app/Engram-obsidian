@@ -6,7 +6,7 @@ _Last verified: 2026-07-07_
 Fixed (PR #194, v1.11.21)
 
 ## What This Is
-Root-cause record of a cross-file content-pollution bug in the CRDT live-editor binding (`src/crdt/live/editor-controller.ts`): switching files in Obsidian copied one note's full content into another, server-side, with a proven-clean noteIdMap (jq bijection check). Distinct from the round-1 wrong-mint/cross-wire map class (see the workspace doc `docs/context/crdt-wrong-mint-cross-file-overwrite.md`, PR #193).
+Root-cause record of a cross-file content-pollution bug in the CRDT live-editor binding (`src/crdt/live/editor-controller.ts`): switching files in Obsidian copied one note's full content into another, server-side, with a proven-clean noteIdMap (jq bijection check). Distinct from the round-1 wrong-mint/cross-wire map class (see the workspace doc `../engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`, PR #193).
 
 ## Mechanism
 `EditorController.bindTo(view, newPath)` awaited `getYText(newPath)` with the OLD note's ySync binding still attached to the reused CM6 EditorView. Obsidian reuses editor views across note switches; during the await gap, Obsidian's `loadFileInternal`/`setViewData` replaces the entire editor document with the NEW file's content. The still-attached old ySync treats that as a local edit and applies it to the OLD note's Y.Text, which syncs up as that note's content.
@@ -36,5 +36,5 @@ Any binding between a reused editor surface and per-document state must be torn 
 - `src/crdt/live/editor-controller.ts` — the fixed code
 - `tests/crdt-editor-controller.test.ts` — structural-invariant tests
 - Plugin PR #194 (fix, v1.11.21); PR #193 (round-1 wrong-mint class)
-- Workspace doc: `engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`
+- Workspace doc: `../engram-workspace/docs/context/crdt-wrong-mint-cross-file-overwrite.md`
 - Relay reference: relay/Relay/src/main.ts ~1355-1505
