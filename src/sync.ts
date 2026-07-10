@@ -5531,9 +5531,40 @@ export class SyncEngine {
 								this.issues.clear(entry.path);
 								flushed++;
 							} else {
-								// Transient: stop this flush pass and retry next time.
-								this.maybeGoOffline(e);
-								break;
+								const classified = categorizeError(e);
+								if (!shouldRetryAfterFailure(classified, 1)) {
+									// Terminal error (402, 413, auth, etc.) — record the
+									// issue, dequeue this entry so it doesn't silently
+									// retry forever, and keep flushing. Mirrors the
+									// legacy note-upsert terminal path below so these
+									// surface in Sync Center.
+									const now = Date.now();
+									this.issues.record({
+										path: entry.path,
+										kind: entry.kind ?? "note",
+										category: classified.category,
+										status: classified.status,
+										message: classified.message,
+										upgradeUrl: classified.upgradeUrl,
+										firstFailedAt: now,
+										lastFailedAt: now,
+										attempts: 1,
+									});
+									if (issueDisposition(classified.category) === "informational") {
+										this.attachmentLimitedThisBatch += 1;
+									} else {
+										this.failuresThisBatch += 1;
+										this.firstFailureMessageThisBatch ??= classified.message;
+									}
+									await this.queue.dequeue(
+										entry.path,
+										entry.vaultId ?? this.settings.vaultId ?? undefined,
+									);
+								} else {
+									// Transient: stop this flush pass and retry next time.
+									this.maybeGoOffline(e);
+									break;
+								}
 							}
 						}
 						continue;

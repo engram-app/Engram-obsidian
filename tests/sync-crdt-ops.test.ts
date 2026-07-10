@@ -513,4 +513,63 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		expect(pushNoteArgs[5]).toBeUndefined();
 		expect(pushNoteArgs[1]).toBe("legacy content");
 	});
+
+	test("a TERMINAL postUpdate error (413 too-large) records a Sync Center issue and dequeues, instead of retrying forever", async () => {
+		const api = {
+			postUpdate: async () => {
+				const err: any = new Error("too large");
+				err.status = 413;
+				throw err;
+			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const e = engine({ enableCrdt: true, api, crdt });
+
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		await e.flushQueue();
+
+		// Dequeued — must not silently retry forever on every future flush.
+		expect(e.queue.size).toBe(0);
+		// Recorded as a Sync Center issue instead of vanishing silently.
+		const issue = e.issues.all().find((i) => i.path === "T.md");
+		expect(issue).toBeDefined();
+		expect(issue?.category).toBe("too_large");
+	});
+
+	test("a TRANSIENT postUpdate error (network) leaves the entry queued for retry", async () => {
+		const api = {
+			postUpdate: async () => {
+				throw new Error("network down"); // no .status → categorized as network/transient
+			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const e = engine({ enableCrdt: true, api, crdt });
+
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		await e.flushQueue();
+
+		// Still queued — transient failures must retry, not vanish.
+		expect(e.queue.size).toBe(1);
+		expect(e.issues.all().find((i) => i.path === "T.md")).toBeUndefined();
+	});
 });
