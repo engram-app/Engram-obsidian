@@ -421,6 +421,10 @@ export interface FileSyncState {
 	/** Last server content_hash seen for this path (opaque HMAC, from push
 	 *  responses / changes pages / broadcasts). Never computed locally. */
 	serverHash?: string;
+	/** Last CRDT head marker (sha256(state_vector) url-b64) synced for this
+	 *  path via cold-receive. Separate namespace from serverHash (which is the
+	 *  /changes content_hash). Absent = never cold-synced. */
+	crdtHead?: string;
 }
 
 /** A single entry in the sync log ring buffer. */
