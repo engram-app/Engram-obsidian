@@ -667,10 +667,12 @@ export class SyncEngine {
 	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
 	// note WOULD converge via CRDT ops if the crdt: channel were joined right
 	// now (Task 5, single authority). pushFile/pushNotesViaBatch use this to
-	// decide whether a channel-down note still owes its body to CRDT ops (via
-	// the debounced REST /updates flush) rather than the legacy whole-doc
-	// base_hash push — the crdt-live check is applied separately by the caller
-	// to pick channel-op vs REST-flush transport.
+	// decide whether a channel-down note still owes its body to CRDT ops rather
+	// than the legacy whole-doc base_hash push. When it does, the edit is
+	// persisted as a content-free, crdt-tagged durable queue entry and delivered
+	// by runFlushQueue's noteId-keyed /updates branch (the old in-memory
+	// debounced flush was retired in Phase 2b) — the crdt-live check is applied
+	// separately by the caller to pick channel-op vs durable-REST transport.
 	private isCrdtManagedOffline(path: string, noteId: string | null): boolean {
 		return (
 			!!this.crdt &&
@@ -1027,11 +1029,21 @@ export class SyncEngine {
 		if (!this.settings.enableCrdt) return;
 		try {
 			await this.api.getVaultHeads();
+			// Conclusive: the route answered, ops are supported.
+			this.crdtOpsProbed = true;
 		} catch (e) {
 			const status = (e as { status?: number })?.status;
-			if (status !== undefined) this.markCrdtOpsUnsupported(status);
-		} finally {
-			this.crdtOpsProbed = true;
+			// Only a definitive 404/405 conclusively proves the route is absent.
+			// Any other failure (5xx, or a status-less network error) is
+			// INCONCLUSIVE: leaving crdtOpsProbed=false keeps ops unavailable this
+			// session so channel-down edits take the legacy whole-doc path. Marking
+			// probed here would make a later /updates 404 (against a route-less
+			// backend) look like "note gone" in runFlushQueue and silently drop the
+			// edit.
+			if (status === 404 || status === 405) {
+				this.markCrdtOpsUnsupported(status);
+				this.crdtOpsProbed = true;
+			}
 		}
 	}
 
@@ -1827,16 +1839,7 @@ export class SyncEngine {
 							// delivered — instead of the retired in-memory-only debounce
 							// timer, which lost the edit on unload and never retried a
 							// failed flush.
-							await this.enqueueChange({
-								path: file.path,
-								action: "upsert",
-								noteId,
-								crdt: true,
-								mtime: file.stat.mtime / 1000,
-								timestamp: Date.now(),
-								kind: "note",
-								vaultId: this.settings.vaultId ?? undefined,
-							});
+							await this.enqueueCrdtEdit(file, noteId);
 							// Deliver now if REST is reachable; durable + retried
 							// otherwise (queue survives unload, next flush picks it up).
 							void this.flushQueue();
@@ -4331,6 +4334,25 @@ export class SyncEngine {
 		}
 	}
 
+	/** Persist a content-free, crdt-tagged upsert to the durable queue. Both
+	 *  channel-down seams (pushFile and pushNotesViaBatch) must produce an
+	 *  IDENTICAL entry so runFlushQueue's noteId-keyed /updates branch delivers
+	 *  them the same way — keep the two producers in lockstep here rather than
+	 *  duplicating the object literal, so a new field can't be added to one seam
+	 *  and forgotten on the other. */
+	private async enqueueCrdtEdit(file: TFile, noteId: string): Promise<void> {
+		await this.enqueueChange({
+			path: file.path,
+			action: "upsert",
+			noteId,
+			crdt: true,
+			mtime: file.stat.mtime / 1000,
+			timestamp: Date.now(),
+			kind: "note",
+			vaultId: this.settings.vaultId ?? undefined,
+		});
+	}
+
 	/** Bulk-push note files via POST /notes/batch in chunks of 100.
 	 *
 	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
@@ -4545,9 +4567,8 @@ export class SyncEngine {
 				this.crdtOpsAvailable() &&
 				this.isCrdtManagedOffline(file.path, noteId)
 			) {
-				done++;
 				const content = await this.app.vault.cachedRead(file);
-				await routeModify(
+				const consumed = await routeModify(
 					{
 						isMarkdown: file.extension === "md",
 						noteId,
@@ -4556,18 +4577,18 @@ export class SyncEngine {
 					this.crdt,
 					MAX_CRDT_NOTE_BYTES,
 				);
-				await this.enqueueChange({
-					path: file.path,
-					action: "upsert",
-					noteId,
-					crdt: true,
-					mtime: file.stat.mtime / 1000,
-					timestamp: Date.now(),
-					kind: "note",
-					vaultId: this.settings.vaultId ?? undefined,
-				});
-				this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
-				continue;
+				// Only queue CRDT delivery when routeModify actually seeded the
+				// Y.Doc. A declined seed (e.g. a non-markdown .canvas note, or an
+				// empty doc awaiting STEP2) left the Y.Doc empty — enqueuing a
+				// crdt entry anyway would POST an EMPTY update and skip the REST
+				// push, silently losing the edit. On decline, fall through to the
+				// normal batch push below (mirrors pushFile's `if (consumed)`).
+				if (consumed) {
+					done++;
+					await this.enqueueCrdtEdit(file, noteId);
+					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
+					continue;
+				}
 			}
 			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
 				oversized.push(file);
@@ -5337,6 +5358,36 @@ export class SyncEngine {
 		this.emitStatus();
 	}
 
+	/** Record a terminal (non-retryable) flush failure in the Sync Center and
+	 *  dequeue the entry so it doesn't retry forever. Shared verbatim by both
+	 *  runFlushQueue terminal paths (the crdt /updates branch and the legacy
+	 *  note/attachment catch) so a change to how terminal failures surface can't
+	 *  drift between them. */
+	private async recordTerminalIssue(
+		entry: QueueEntry,
+		classified: ReturnType<typeof categorizeError>,
+	): Promise<void> {
+		const now = Date.now();
+		this.issues.record({
+			path: entry.path,
+			kind: entry.kind ?? "note",
+			category: classified.category,
+			status: classified.status,
+			message: classified.message,
+			upgradeUrl: classified.upgradeUrl,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		if (issueDisposition(classified.category) === "informational") {
+			this.attachmentLimitedThisBatch += 1;
+		} else {
+			this.failuresThisBatch += 1;
+			this.firstFailureMessageThisBatch ??= classified.message;
+		}
+		await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+	}
+
 	/** Flip to offline ONLY when the failure indicates true connection loss
 	 *  (no HTTP response). A per-file HTTP status error is that file's problem,
 	 *  surfaced in the Sync Center — it must not report the whole plugin as
@@ -5543,31 +5594,8 @@ export class SyncEngine {
 								if (!shouldRetryAfterFailure(classified, 1)) {
 									// Terminal error (402, 413, auth, etc.) — record the
 									// issue, dequeue this entry so it doesn't silently
-									// retry forever, and keep flushing. Mirrors the
-									// legacy note-upsert terminal path below so these
-									// surface in Sync Center.
-									const now = Date.now();
-									this.issues.record({
-										path: entry.path,
-										kind: entry.kind ?? "note",
-										category: classified.category,
-										status: classified.status,
-										message: classified.message,
-										upgradeUrl: classified.upgradeUrl,
-										firstFailedAt: now,
-										lastFailedAt: now,
-										attempts: 1,
-									});
-									if (issueDisposition(classified.category) === "informational") {
-										this.attachmentLimitedThisBatch += 1;
-									} else {
-										this.failuresThisBatch += 1;
-										this.firstFailureMessageThisBatch ??= classified.message;
-									}
-									await this.queue.dequeue(
-										entry.path,
-										entry.vaultId ?? this.settings.vaultId ?? undefined,
-									);
+									// retry forever, and keep flushing.
+									await this.recordTerminalIssue(entry, classified);
 								} else {
 									// Transient: stop this flush pass and retry next time.
 									this.maybeGoOffline(e);
@@ -5684,29 +5712,7 @@ export class SyncEngine {
 				if (!shouldRetryAfterFailure(classified, 1)) {
 					// Terminal error (402, 413, auth, etc.) — record the issue,
 					// dequeue this entry so it doesn't retry, and keep flushing.
-					// Mirrors the pushFile terminal path so these surface in Sync Center.
-					const now = Date.now();
-					this.issues.record({
-						path: entry.path,
-						kind: entry.kind ?? "note",
-						category: classified.category,
-						status: classified.status,
-						message: classified.message,
-						upgradeUrl: classified.upgradeUrl,
-						firstFailedAt: now,
-						lastFailedAt: now,
-						attempts: 1,
-					});
-					if (issueDisposition(classified.category) === "informational") {
-						this.attachmentLimitedThisBatch += 1;
-					} else {
-						this.failuresThisBatch += 1;
-						this.firstFailureMessageThisBatch ??= classified.message;
-					}
-					await this.queue.dequeue(
-						entry.path,
-						entry.vaultId ?? this.settings.vaultId ?? undefined,
-					);
+					await this.recordTerminalIssue(entry, classified);
 					continue;
 				}
 				// Non-terminal: stop this flush pass. Only flip offline if it's a

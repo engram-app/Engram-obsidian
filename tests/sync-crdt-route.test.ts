@@ -181,6 +181,14 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
 }
 
+/** Mark the one-shot capability probe as already complete, for tests that
+ *  exercise post-probe latch behavior directly without driving a real
+ *  getVaultHeads round-trip (Phase 2b: crdtOpsAvailable() now requires
+ *  crdtOpsProbed, not just an unlatched crdtOpsUnsupported). */
+function markProbed(engine: SyncEngine): void {
+	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
+}
+
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
@@ -902,6 +910,7 @@ describe("batch push durably queues a channel-down CRDT note (seeded, not falsel
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
 		const engine = createEngine(noteIdMap);
+		markProbed(engine);
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		markConfirmed(engine, "id-note");

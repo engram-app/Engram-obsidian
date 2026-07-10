@@ -275,6 +275,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 			encodeStateAsUpdate: async () => new Uint8Array([9, 9, 9]),
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -312,6 +313,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 			encodeStateAsUpdate: async () => new Uint8Array([1]),
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -372,6 +374,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);
 		e.setReady();
+		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -426,6 +429,7 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 			encodeStateAsUpdate: async () => new Uint8Array([1]),
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("T.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -470,6 +474,7 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 			applyLocalEdit: async () => true,
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -563,6 +568,7 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 			onFlushToDisk: async () => {},
 		});
 		const e = engine({ enableCrdt: true, api, crdt: realCrdt });
+		markProbed(e);
 
 		// Seed the note's Y.Doc BY NOTEID (never by path) — this is exactly what
 		// a path/noteId key mismatch would fail to reproduce.
@@ -627,6 +633,7 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);
 		e.setReady();
+		markProbed(e);
 
 		await e.queue.enqueue({
 			path: "T.md",
@@ -707,6 +714,7 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		};
 		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 
 		await e.queue.enqueue({
 			path: "T.md",
@@ -737,6 +745,7 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		};
 		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
 		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
 
 		await e.queue.enqueue({
 			path: "T.md",
