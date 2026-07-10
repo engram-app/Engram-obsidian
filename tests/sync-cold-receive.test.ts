@@ -228,6 +228,26 @@ describe("coldReceive", () => {
 		expect(called).toBe(false);
 	});
 
+	test("a getVaultHeads failure returns 0 without throwing (best-effort)", async () => {
+		const api = {
+			getVaultHeads: async () => {
+				throw new Error("heads endpoint down");
+			},
+			getUpdates: async () => {
+				throw new Error("must not reach getUpdates when heads failed");
+			},
+		};
+		const e = engine({ enableCrdt: true, api });
+		markProbed(e);
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		e.setLiveBoundCheck(() => false);
+		// Must resolve to 0, never reject — a heads outage cannot break the pull.
+		await expect(e.coldReceive()).resolves.toBe(0);
+	});
+
 	test("a per-note getUpdates failure does not abort the loop or advance that head", async () => {
 		const map = new NoteIdMap();
 		map.set("a.md", "id-a");
