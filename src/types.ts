@@ -259,6 +259,11 @@ export interface QueueEntry {
 	kind?: "note" | "attachment";
 	/** Vault ID for dedup isolation. */
 	vaultId?: string;
+	/** Set on a channel-down CRDT edit: deliver via /updates ops (encode the
+	 *  note's Y.Doc by noteId), falling back to the legacy push only when ops
+	 *  are unavailable. */
+	noteId?: string;
+	crdt?: boolean;
 }
 
 /** Request body for POST /search */
