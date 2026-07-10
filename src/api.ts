@@ -402,7 +402,8 @@ export class EngramApi {
 	}
 
 	/** Pull the delta since `since` (a base64 state vector), or the full state
-	 *  if omitted. */
+	 *  if omitted. Phase 3 (cold-note head-index pull). Intentionally unconsumed
+	 *  in Phase 2/2b. */
 	async getUpdates(
 		noteId: string,
 		since?: string,

@@ -659,13 +659,9 @@ export class SyncEngine {
 	// pushFile) and must NOT be skipped as socket-delivered in the batch seam
 	// (nothing would deliver it) — hence the live-bound requirement here.
 	private isCrdtManaged(path: string, noteId: string | null): boolean {
-		return (
-			!!this.crdt &&
-			!!noteId &&
-			this.isNoteConfirmed(noteId) &&
-			(this.crdtLive?.() ?? true) &&
-			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
-		);
+		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
+		// shared clauses live in one place and can't drift between the two.
+		return this.isCrdtManagedOffline(path, noteId) && (this.crdtLive?.() ?? true);
 	}
 
 	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
