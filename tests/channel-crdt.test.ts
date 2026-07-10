@@ -793,3 +793,75 @@ describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () =>
 		channel.disconnect();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// #191: crdtJoined must reset on UNCLEAN close.
+// If the crdt: join ack lands but the sync-topic ack never does, `connected`
+// is still false, so onclose's setConnected(false) is a transition-gated
+// no-op — crdtJoined must not survive the socket via that hole.
+// ---------------------------------------------------------------------------
+
+describe("crdtJoined resets on unclean close (#191)", () => {
+	test("crdt ack without sync ack, then unclean close: crdt gate closes", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		// Only the crdt: join is acked; the sync-topic ack never lands.
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+		expect(channel.isCrdtConnected()).toBe(true);
+		expect(channel.isConnected()).toBe(false);
+
+		// Unclean close (network drop) — real browsers pass a CloseEvent.
+		lastWsInstance.onclose?.({ code: 1006, reason: "", wasClean: false });
+
+		// The join-ack contract must be re-established on the next socket:
+		// a stale crdtJoined lets sendCrdt claim success with no socket
+		// (send() silently drops frames when the ws is not OPEN).
+		expect(channel.isCrdtConnected()).toBe(false);
+		expect(channel.sendCrdt("v1/note.md", "dGVzdA==")).toBe(false);
+
+		channel.disconnect();
+	});
+
+	test("onCrdtJoined re-fires after an unclean close and rejoin", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const joined = mock();
+		channel.onCrdtJoined = joined;
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+		expect(joined).toHaveBeenCalledTimes(1);
+
+		// Unclean close, then a new socket joins and the server acks again.
+		lastWsInstance.onclose?.({ code: 1006, reason: "", wasClean: false });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+		simulateMessage(lastWsInstance, [
+			"3",
+			"2",
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: {} },
+		]);
+
+		// A stale crdtJoined makes the join-ack handler's !crdtJoined guard
+		// skip this second fire, leaving main.ts unwired on the new session.
+		expect(joined).toHaveBeenCalledTimes(2);
+
+		channel.disconnect();
+	});
+});

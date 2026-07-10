@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { NoteChannel } from "./channel";
+import { NoteChannel, connectRetryDelayMs } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { errMsg } from "./error-util";
 import { LimitExceededError } from "./limit-error";
@@ -762,7 +762,11 @@ export default class EngramSyncPlugin extends Plugin {
 			// set so the resulting applyLocalEdit fires normally through the CRDT
 			// route. Only runs when registered and the sync gate is open so that
 			// content is never transmitted before the user picks a direction.
-			if (gateOpen && this.crdtManager) {
+			// Lazy enrollment skips cold-start reconcile entirely: it seeds drift
+			// into the Y.Doc via applyLocalEdit for EVERY drifted file, bypassing
+			// the live-bound push gate (the cold-note CRDT seeding lazy avoids).
+			// The regular REST fullSync below reconciles cold-note drift instead.
+			if (gateOpen && this.crdtManager && !this.settings.lazyEnrollment) {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;
@@ -1347,9 +1351,6 @@ export default class EngramSyncPlugin extends Plugin {
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
 	private connectChannel(attempt = 0, epoch = this.channelEpoch): void {
-		const maxAttempts = 5;
-		const baseDelay = 2000;
-
 		rlog().info(
 			"channel",
 			`connectChannel(attempt=${attempt}) — apiKeyLen=${this.settings.apiKey?.length ?? 0} refreshTokenLen=${this.settings.refreshToken?.length ?? 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${this.authProvider?.constructor.name ?? "none"} vaultId=${this.settings.vaultId ?? "null"}`,
@@ -1487,6 +1488,12 @@ export default class EngramSyncPlugin extends Plugin {
 					// Use savePluginData instead of saveSettings to avoid triggering re-registration
 					void this.savePluginData(this.syncEngine.getLastSync());
 					this.noteStream?.disconnect();
+				};
+
+				channel.onFoldersChanged = () => {
+					this.syncEngine.resyncFolders().catch((e) => {
+						rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
+					});
 				};
 
 				channel.onPlanState = (raw) => {
@@ -1666,14 +1673,17 @@ export default class EngramSyncPlugin extends Plugin {
 			.catch((e) => {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error("Engram Sync: failed to fetch user id for channel", e);
-				rlog().error(
-					"channel",
-					`getMe() failed (attempt ${attempt + 1}/${maxAttempts}): ${errMsg(e)}`,
-				);
+				rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`);
 
-				if (attempt < maxAttempts - 1 && epoch === this.channelEpoch) {
-					const delay = baseDelay * 2 ** attempt;
-					window.setTimeout(() => this.connectChannel(attempt + 1, epoch), delay);
+				// Retry forever (capped exponential backoff) — a finite attempt cap
+				// left live sync permanently dead after a >30s backend outage, with
+				// no recovery until plugin reload. Only a newer setupNoteStream()
+				// (epoch bump) may abandon the loop.
+				if (epoch === this.channelEpoch) {
+					window.setTimeout(
+						() => this.connectChannel(attempt + 1, epoch),
+						connectRetryDelayMs(attempt),
+					);
 				}
 			});
 	}

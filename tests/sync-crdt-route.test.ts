@@ -181,6 +181,14 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
 }
 
+/** Mark the one-shot capability probe as already complete, for tests that
+ *  exercise post-probe latch behavior directly without driving a real
+ *  getVaultHeads round-trip (Phase 2b: crdtOpsAvailable() now requires
+ *  crdtOpsProbed, not just an unlatched crdtOpsUnsupported). */
+function markProbed(engine: SyncEngine): void {
+	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
+}
+
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
@@ -218,6 +226,36 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("lazyEnrollment: a confirmed but NOT live-bound note routes to REST, not CRDT", async () => {
+		// Correctness hinge of lazy enrollment: the CRDT push gate keys on
+		// isNoteConfirmed, and every pulled note is confirmed. Without also
+		// gating on live-bound, a cold confirmed note that is edited routes
+		// through applyLocalEdit on a history-less Y.Doc and seeds a DUPLICATE
+		// lineage (#846/#161 class). Under lazy, a not-live-bound note must fall
+		// through to convergent REST instead.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
+			mock().mockResolvedValue(undefined),
+		);
+		engine.setReady();
+		engine.setNoteIdMap(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		// NOT live-bound (default isLiveBound === false).
+
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
 
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
@@ -857,6 +895,104 @@ describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () =
 });
 
 // ---------------------------------------------------------------------------
+// Task 3 (Phase 2b remediation): a channel-down CRDT note hit by
+// pushNotesViaBatch must be SEEDED (mirrors pushFile's routeModify call —
+// this loop never otherwise touches the Y.Doc) and durably queued via the
+// same crdt-tagged offline queue entry pushFile uses, NOT reported as a
+// completed/delivered batch push. Closes the batch-unseeded + batch-false-done
+// findings: previously this branch only scheduled the now-retired in-memory
+// flush timer, with no seed at all — a later flush would have delivered
+// stale/empty content, or nothing (lost on unload).
+// ---------------------------------------------------------------------------
+
+describe("batch push durably queues a channel-down CRDT note (seeded, not falsely delivered)", () => {
+	test("a channel-down CRDT note is seeded then durably queued, not sent via the batch endpoint, and not counted as delivered", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		markProbed(engine);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => false); // channel down — isCrdtManaged is false,
+		// but isCrdtManagedOffline is true: the note still owes its body to CRDT ops.
+
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
+
+		const file = new TFile("note.md");
+		const res = await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		// Seeded via routeModify -> applyLocalEdit, mirroring pushFile — the
+		// batch-unseeded data-loss finding.
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+
+		// Never sent over the batch REST endpoint — the durable queue owns delivery.
+		expect(batch).not.toHaveBeenCalled();
+
+		// Durably persisted (crdt-tagged, noteId-keyed) instead of falsely
+		// reported delivered.
+		const queued = engine.queue.all().find((q) => q.path === "note.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe("id-note");
+
+		// The batch-false-done finding: a queued-not-delivered entry must never
+		// count toward `pushed`.
+		expect(res?.pushed).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Delivery-latency gap: pushFile calls `void this.flushQueue()` right after
+// enqueueing a channel-down crdt entry (line ~1844), but pushNotesViaBatch's
+// identical seed-then-enqueue branch above did not — the durable entry was
+// correct (no data loss) but sat undelivered until an unrelated trigger
+// (manual "Retry Failed", or a later single-file channel-down edit) drained
+// it. Fix: flush once after the batch loop completes, mirroring pushFile.
+// ---------------------------------------------------------------------------
+
+describe("batch push flushes the queue after a channel-down CRDT note is enqueued", () => {
+	test("a channel-down CRDT note pushed via pushNotesViaBatch triggers a flushQueue call", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => false); // channel down, REST still reachable
+
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
+
+		// Spy on the single-flight flush wrapper instead of exercising real
+		// delivery — this pins the missing CALL, not the (already-covered)
+		// queue-entry shape from the test above.
+		const flushSpy = mock(() => Promise.resolve(0));
+		engine.flushQueue = flushSpy;
+
+		const file = new TFile("note.md");
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		expect(flushSpy).toHaveBeenCalledTimes(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Mint-refusal guard in the batch path (issue #217 — same seam as PR #216 /
 // backend #972): pushFile refuses to mint an id for an engine-flushed
 // (recentlyFlushed) path whose id binding is gone — a relocation owns that
@@ -1011,5 +1147,64 @@ describe("flushFromCrdt survives check-then-create races (round 5, test_34)", ()
 		// modifyFile prefers vault.process when available.
 		expect(processMock).toHaveBeenCalled();
 		expect(processMock.mock.calls[0][0]).toBe(raced);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// isCrdtManaged: shared predicate extracted from pushFile / pushNotesViaBatch
+// (Phase 2 Task 3). Pins the truth table both inline seams relied on.
+// ---------------------------------------------------------------------------
+
+describe("isCrdtManaged", () => {
+	function asPredicate(engine: SyncEngine): (path: string, noteId: string | null) => boolean {
+		return (
+			engine as unknown as {
+				isCrdtManaged(path: string, noteId: string | null): boolean;
+			}
+		).isCrdtManaged.bind(engine);
+	}
+
+	test("confirmed + live + eager (no lazy enrollment) → true", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => true);
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(true);
+	});
+
+	test("channel down (crdtLive false) → false", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => false);
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+	});
+
+	test("unconfirmed note_id → false", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		engine.setCrdtLiveCheck(() => true);
+		// not confirmed
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+	});
+
+	test("lazy enrollment + not live-bound → false", async () => {
+		const engine = new SyncEngine(
+			mockApp,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
+			mock().mockResolvedValue(undefined),
+		);
+		engine.setReady();
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		engine.setCrdtLiveCheck(() => true);
+		// isLiveBound defaults to () => false
+
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
 	});
 });
