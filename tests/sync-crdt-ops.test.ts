@@ -5,6 +5,7 @@
  */
 import { describe, expect, mock, test } from "bun:test";
 import type { EngramApi } from "../src/api";
+import type { CrdtManager } from "../src/crdt/manager";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -76,13 +77,18 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
-function engine(): SyncEngine {
+function engine(opts?: {
+	enableCrdt?: boolean;
+	api?: Partial<EngramApi>;
+	crdt?: Partial<CrdtManager>;
+}): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
-		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		(opts?.api ?? mockApi) as unknown as EngramApi,
+		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: opts?.enableCrdt ?? true },
 		mock().mockResolvedValue(undefined),
 	);
+	if (opts?.crdt) e.setCrdtManager(opts.crdt as unknown as CrdtManager);
 	e.setReady();
 	return e;
 }
@@ -119,6 +125,39 @@ describe("crdtOpsAvailable latch", () => {
 			mock().mockResolvedValue(undefined),
 		);
 		e.setReady();
+		expect((e as any).crdtOpsAvailable()).toBe(false);
+	});
+});
+
+describe("channel-down CRDT flush via REST /updates", () => {
+	test("flushCrdtState posts the encoded Y.Doc state and never sends plaintext", async () => {
+		const posted: Array<{ noteId: string; update: Uint8Array }> = [];
+		const api = {
+			postUpdate: async (noteId: string, update: Uint8Array) => {
+				posted.push({ noteId, update });
+				return { head: "h" };
+			},
+			pushNote: async () => {
+				throw new Error("must not whole-doc push a CRDT note");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([9, 9, 9]) };
+		const e = engine({ enableCrdt: true, api, crdt });
+		await (e as any).flushCrdtState("p.md", "id-1");
+		expect(posted).toEqual([{ noteId: "id-1", update: new Uint8Array([9, 9, 9]) }]);
+	});
+
+	test("flushCrdtState latches ops-unsupported on a 404", async () => {
+		const api = {
+			postUpdate: async () => {
+				const err: any = new Error("not found");
+				err.status = 404;
+				throw err;
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const e = engine({ enableCrdt: true, api, crdt });
+		await (e as any).flushCrdtState("p.md", "id-1");
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 });

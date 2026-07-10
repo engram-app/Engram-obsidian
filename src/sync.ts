@@ -4239,6 +4239,37 @@ export class SyncEngine {
 		}
 	}
 
+	/** Per-note debounce timers for the channel-down REST `/updates` flush. */
+	private crdtFlushTimers: Map<string, number> = new Map();
+
+	/** A CRDT note was edited while the channel is down: the edit is already in
+	 *  the local Y.Doc (IndexedDB-persisted). Debounce-flush the note's full
+	 *  encoded state to the server via REST /updates (idempotent, lossless merge). */
+	scheduleCrdtFlush(path: string, noteId: string): void {
+		const key = normalizePath(path);
+		const existing = this.crdtFlushTimers.get(key);
+		if (existing !== undefined) clearTimeout(existing);
+		const t = window.setTimeout(() => {
+			this.crdtFlushTimers.delete(key);
+			void this.flushCrdtState(path, noteId);
+		}, this.settings.debounceMs);
+		this.crdtFlushTimers.set(key, t);
+	}
+
+	private async flushCrdtState(path: string, noteId: string): Promise<void> {
+		if (!this.crdtOpsAvailable() || !this.crdt) return;
+		try {
+			const update = await this.crdt.encodeStateAsUpdate(normalizePath(path));
+			await this.api.postUpdate(noteId, update);
+		} catch (e) {
+			const status = (e as { status?: number })?.status;
+			if (status !== undefined) this.markCrdtOpsUnsupported(status);
+			// On any flush failure the note stays in the offline path; the next
+			// reconnect (channel STEP1) or a later flush re-converges it. No data is
+			// lost — the edit is durable in the local Y.Doc.
+		}
+	}
+
 	/** Bulk-push note files via POST /notes/batch in chunks of 100.
 	 *
 	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
