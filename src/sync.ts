@@ -668,6 +668,22 @@ export class SyncEngine {
 		);
 	}
 
+	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
+	// note WOULD converge via CRDT ops if the crdt: channel were joined right
+	// now (Task 5, single authority). pushFile/pushNotesViaBatch use this to
+	// decide whether a channel-down note still owes its body to CRDT ops (via
+	// the debounced REST /updates flush) rather than the legacy whole-doc
+	// base_hash push — the crdt-live check is applied separately by the caller
+	// to pick channel-op vs REST-flush transport.
+	private isCrdtManagedOffline(path: string, noteId: string | null): boolean {
+		return (
+			!!this.crdt &&
+			!!noteId &&
+			this.isNoteConfirmed(noteId) &&
+			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
+		);
+	}
+
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
@@ -1720,23 +1736,35 @@ export class SyncEngine {
 				// CRDT path: route markdown saves through CrdtManager when wired,
 				// a note_id is known (#915-style gate: no id, no CRDT room to key
 				// the frame by — REST fallback owns it), the note is CONFIRMED
-				// server-known, AND the crdt: topic is actually joined. The confirmed
-				// check exists because the backend's CRDT channel requires the note
-				// row to already exist (note_in_vault?) and silently DROPS a crdt_msg
-				// for an unknown note_id — it can no longer bootstrap a note from a
-				// bare wire doc_id (no path on the frame). A brand-new / never-synced
-				// note must therefore take the REST path below first (which creates
-				// the row and adopts the client-minted id, confirming it on success);
-				// only then do its edits route through CRDT. diffIntoYText produces
-				// minimal ops; the Y.Doc update listener forwards the diff to the
-				// server via CrdtChannel, keyed by noteId so the doc_id on the wire
-				// matches the backend's bare note_id. No full-document POST, no
-				// version field — the CRDT update IS the transmission. The crdtLive()
-				// level check guards against a stale manager latch (set, but channel
-				// dead-but-set after an auth swap): if not joined, fall through to the
-				// durable REST path so the write isn't silently dropped (#915). Unset
-				// → live.
-				if (this.crdt && noteId && this.isCrdtManaged(file.path, noteId)) {
+				// server-known. The confirmed check exists because the backend's
+				// CRDT channel requires the note row to already exist (note_in_vault?)
+				// and silently DROPS a crdt_msg for an unknown note_id — it can no
+				// longer bootstrap a note from a bare wire doc_id (no path on the
+				// frame). A brand-new / never-synced note must therefore take the
+				// REST path below first (which creates the row and adopts the
+				// client-minted id, confirming it on success); only then do its
+				// edits route through CRDT. diffIntoYText produces minimal ops.
+				//
+				// Transport (Task 5, single authority): once the edit is consumed
+				// into the Y.Doc, a LIVE crdt: channel already carries it (the Y.Doc
+				// update listener forwards the diff via CrdtChannel, keyed by
+				// noteId) — no full-document POST, no version field, no base_hash.
+				// When the channel is NOT joined (crdtLive() false — a stale manager
+				// latch, e.g. dead-but-set after an auth swap, or a genuine
+				// disconnect) but the backend supports CRDT ops
+				// (crdtOpsAvailable()), the edit is still durable in the local
+				// Y.Doc — debounce-flush it to the server via REST /updates
+				// (scheduleCrdtFlush) instead of falling through to the whole-doc
+				// base_hash push (#203, e2e test_83/test_85). Only when ops are
+				// unsupported (pre-Phase-1 backend) does a down channel fall
+				// through to the legacy REST path, exactly as before this feature.
+				const crdtLive = this.crdtLive?.() ?? true;
+				if (
+					this.crdt &&
+					noteId &&
+					this.isCrdtManagedOffline(file.path, noteId) &&
+					(crdtLive || this.crdtOpsAvailable())
+				) {
 					const consumed = await routeModify(
 						{
 							isMarkdown: file.extension === "md",
@@ -1764,6 +1792,20 @@ export class SyncEngine {
 						// note already enrolled via active-leaf-change is unaffected.
 						this.crdtEnrollment?.enroll(noteId);
 						success = true;
+						if (!crdtLive) {
+							// Channel down, ops available: converge via the debounced
+							// REST /updates flush instead of the whole-doc push.
+							this.scheduleCrdtFlush(file.path, noteId);
+							devLog().log(
+								"push",
+								`crdt flush scheduled (channel down): ${file.path}`,
+							);
+							rlog().info(
+								"push",
+								`CRDT flush scheduled (channel down): ${file.path}`,
+							);
+							return true;
+						}
 						devLog().log("push", `crdt ok: ${file.path}`);
 						rlog().info("push", `CRDT push ok: ${file.path}`);
 						return true;
@@ -4464,6 +4506,23 @@ export class SyncEngine {
 			const noteId = this.noteIdMap?.get(file.path) ?? null;
 			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
 				done++;
+				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
+				continue;
+			}
+			// Task 5: a cold-but-managed note (channel down, so isCrdtManaged above
+			// is false) still owes its body to CRDT ops when the backend supports
+			// them — batch-pushing its full content here would duplicate the write
+			// the debounced REST /updates flush is about to make. Schedule the
+			// flush and skip it from the batch instead of silently letting it fall
+			// through to a whole-doc push with no CAS base.
+			if (
+				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
+				noteId &&
+				this.crdtOpsAvailable() &&
+				this.isCrdtManagedOffline(file.path, noteId)
+			) {
+				done++;
+				this.scheduleCrdtFlush(file.path, noteId);
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
 				continue;
 			}

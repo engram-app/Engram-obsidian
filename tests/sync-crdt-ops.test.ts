@@ -4,10 +4,18 @@
  * stays on for other statuses; requires settings.enableCrdt.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import type { CrdtManager } from "../src/crdt/manager";
+import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+
+/** Mark a note_id as server-confirmed — same pattern as
+ *  tests/sync-crdt-route.test.ts / tests/sync-crdt-gate.test.ts. */
+function markConfirmed(engine: SyncEngine, noteId: string): void {
+	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+}
 
 // Minimal mock api/app — mirrors tests/sync-crdt-route.test.ts's harness.
 // Only the fields SyncEngine's constructor/setup touches are needed here
@@ -159,5 +167,65 @@ describe("channel-down CRDT flush via REST /updates", () => {
 		const e = engine({ enableCrdt: true, api, crdt });
 		await (e as any).flushCrdtState("p.md", "id-1");
 		expect((e as any).crdtOpsAvailable()).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 5: CRDT-managed notes bypass the whole-doc base_hash push. Live channel
+// → the edit already went out as a channel op (unchanged pre-Task-5 behavior).
+// Channel down + ops available → scheduleCrdtFlush, no base_hash body built.
+// Non-CRDT / ops-unavailable notes keep sending base_hash unchanged.
+// ---------------------------------------------------------------------------
+
+describe("CRDT notes bypass the whole-doc base_hash push", () => {
+	test("a CRDT-managed note with ops available never calls pushNote (channel down → scheduled flush)", async () => {
+		let pushNoteCalled = false;
+		let flushedNoteId: string | null = null;
+		const api = {
+			pushNote: async () => {
+				pushNoteCalled = true;
+				return { note: {}, chunks_indexed: 1 };
+			},
+			postUpdate: async (noteId: string) => {
+				flushedNoteId = noteId;
+				return { head: "h" };
+			},
+		};
+		const crdt = {
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+			applyLocalEdit: async () => true,
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down — would have whole-doc pushed before
+
+		const result = await (e as any).pushFile(new TFile("p.md"));
+
+		expect(result).toBe(true);
+		expect(pushNoteCalled).toBe(false); // routed to CRDT flush, not whole-doc push
+
+		// The flush is debounced (debounceMs: 1) — let the timer fire and confirm
+		// it actually posts the encoded Y.Doc state via REST /updates.
+		await new Promise((r) => setTimeout(r, 20));
+		expect(flushedNoteId).toBe("id-1");
+	});
+
+	test("a NON-CRDT note still sends base_hash (unchanged)", async () => {
+		let sawBaseHash = false;
+		const api = {
+			pushNote: async (...args: any[]) => {
+				if (args[5] !== undefined) sawBaseHash = true;
+				return { note: {}, chunks_indexed: 1 };
+			},
+		};
+		const e = engine({ enableCrdt: false, api }); // enableCrdt false → legacy path
+		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
+
+		await (e as any).pushFile(new TFile("p.md"));
+
+		expect(sawBaseHash).toBe(true);
 	});
 });
