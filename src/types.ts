@@ -264,6 +264,10 @@ export interface QueueEntry {
 	 *  are unavailable. */
 	noteId?: string;
 	crdt?: boolean;
+	/** Transient-failure retry count, persisted so a permanently-failing entry
+	 *  is parked after RETRY_CAP attempts instead of retrying forever across
+	 *  reloads. Absent = never failed. */
+	attempts?: number;
 }
 
 /** Request body for POST /search */

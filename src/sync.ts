@@ -5388,6 +5388,36 @@ export class SyncEngine {
 		await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
 	}
 
+	/** Decide the fate of a queue entry whose flush just failed, and act on it.
+	 *  Both runFlushQueue failure paths route here so they can't drift. Terminal
+	 *  errors (413, auth, plan-limit) park immediately; transient errors (network,
+	 *  5xx) bump a PERSISTED attempt count and park only once they exhaust
+	 *  RETRY_CAP — previously both paths hardcoded attempts=1, so a persistently-
+	 *  failing entry retried forever and never surfaced as parked. Returns "retry"
+	 *  (re-queued with the bumped count; caller stops this flush pass) or "parked"
+	 *  (issue recorded + dequeued; caller keeps flushing the rest). */
+	private async handleFlushFailure(entry: QueueEntry, e: unknown): Promise<"parked" | "retry"> {
+		const classified = categorizeError(e);
+		const attempts = (entry.attempts ?? 0) + 1;
+		if (shouldRetryAfterFailure(classified, attempts)) {
+			// Transient and under the cap: persist the bumped count (survives
+			// reload) and stop this pass. Deliberately records NO issue — a
+			// transient blip stays silent until it exhausts its retries.
+			await this.queue.enqueue({ ...entry, attempts });
+			this.maybeGoOffline(e);
+			return "retry";
+		}
+		// Terminal, or transient past RETRY_CAP. A crdt entry's content lives in
+		// the durable Y.Doc (keyed by noteId, not in this content-free entry), so
+		// re-enroll it to re-drive delivery over the CRDT channel — the edit is
+		// never lost even though REST couldn't carry it (e.g. a 413 too-large
+		// /updates that the channel handshake can still merge). Then record a Sync
+		// Center issue + dequeue so it stops looping.
+		if (entry.crdt && entry.noteId) this.crdtEnrollment?.enroll(entry.noteId);
+		await this.recordTerminalIssue(entry, classified);
+		return "parked";
+	}
+
 	/** Flip to offline ONLY when the failure indicates true connection loss
 	 *  (no HTTP response). A per-file HTTP status error is that file's problem,
 	 *  surfaced in the Sync Center — it must not report the whole plugin as
@@ -5589,18 +5619,10 @@ export class SyncEngine {
 								);
 								this.issues.clear(entry.path);
 								flushed++;
-							} else {
-								const classified = categorizeError(e);
-								if (!shouldRetryAfterFailure(classified, 1)) {
-									// Terminal error (402, 413, auth, etc.) — record the
-									// issue, dequeue this entry so it doesn't silently
-									// retry forever, and keep flushing.
-									await this.recordTerminalIssue(entry, classified);
-								} else {
-									// Transient: stop this flush pass and retry next time.
-									this.maybeGoOffline(e);
-									break;
-								}
+							} else if ((await this.handleFlushFailure(entry, e)) === "retry") {
+								// Transient, under RETRY_CAP: re-queued with a bumped count;
+								// parked (issue + dequeue) once retries exhaust. Stop this pass.
+								break;
 							}
 						}
 						continue;
@@ -5625,6 +5647,13 @@ export class SyncEngine {
 					if (content === undefined) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
+							// The file is gone (deleted, or renamed away during the offline
+							// window). A crdt entry's edit still lives in the durable Y.Doc
+							// (keyed by noteId, not this stale path), so re-enroll to deliver
+							// it over the CRDT channel instead of silently dropping it; a
+							// non-crdt entry has nothing left to send.
+							if (entry.crdt && entry.noteId)
+								this.crdtEnrollment?.enroll(entry.noteId);
 							await this.queue.dequeue(
 								entry.path,
 								entry.vaultId ?? this.settings.vaultId ?? undefined,
@@ -5708,18 +5737,9 @@ export class SyncEngine {
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
-				const classified = categorizeError(e);
-				if (!shouldRetryAfterFailure(classified, 1)) {
-					// Terminal error (402, 413, auth, etc.) — record the issue,
-					// dequeue this entry so it doesn't retry, and keep flushing.
-					await this.recordTerminalIssue(entry, classified);
-					continue;
-				}
-				// Non-terminal: stop this flush pass. Only flip offline if it's a
-				// real connection loss — a server error on one entry must not
-				// report the whole plugin as disconnected.
-				this.maybeGoOffline(e);
-				break;
+				// Terminal or retries-exhausted parks (issue + dequeue) and keeps
+				// flushing; a transient under RETRY_CAP re-queues and stops this pass.
+				if ((await this.handleFlushFailure(entry, e)) === "retry") break;
 			}
 		}
 

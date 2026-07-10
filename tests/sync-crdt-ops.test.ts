@@ -761,4 +761,111 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		expect(e.queue.size).toBe(1);
 		expect(e.issues.all().find((i) => i.path === "T.md")).toBeUndefined();
 	});
+
+	test("a persistently transient postUpdate error is parked after RETRY_CAP attempts, not retried forever", async () => {
+		const api = {
+			postUpdate: async () => {
+				throw new Error("network down"); // transient, no .status
+			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+
+		// RETRY_CAP is 5: the first 4 passes re-queue the entry (silent) with a
+		// persisted, bumped attempt count; the 5th exhausts the cap and parks it.
+		for (let i = 0; i < 4; i++) {
+			await (e as any).runFlushQueue();
+			expect(e.queue.size).toBe(1); // still queued for retry
+			expect(e.issues.all()).toHaveLength(0); // silent while retrying
+			expect(e.queue.all()[0].attempts).toBe(i + 1); // count persisted on the entry
+		}
+		await (e as any).runFlushQueue();
+		expect(e.queue.size).toBe(0); // parked: no longer retried
+		expect(e.issues.all().find((i) => i.path === "T.md")).toBeDefined();
+	});
+
+	test("a TERMINAL postUpdate error (413) re-enrolls the note so the CRDT channel can still converge, then parks", async () => {
+		const api = {
+			postUpdate: async () => {
+				const err: any = new Error("too large");
+				err.status = 413;
+				throw err;
+			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
+		};
+		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const enroll = mock();
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		await e.flushQueue();
+
+		// The Y.Doc (keyed by noteId) still holds the edit, so re-enrolling
+		// re-drives delivery over the CRDT channel: a too-large /updates is not a
+		// silent loss.
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(e.queue.size).toBe(0); // parked (dequeued)
+		const issue = e.issues.all().find((i) => i.path === "T.md");
+		expect(issue?.category).toBe("too_large");
+	});
+
+	test("a crdt entry whose file was renamed away (ops unavailable, legacy fallback) re-enrolls for channel convergence instead of silently dropping", async () => {
+		const api = {
+			pushNote: async () => {
+				throw new Error("must not legacy-push a vanished file");
+			},
+			postUpdate: async () => {
+				throw new Error("ops unavailable, must not postUpdate");
+			},
+		};
+		const localApp = {
+			...mockApp,
+			vault: { ...mockApp.vault, getFileByPath: mock().mockReturnValue(null) },
+		};
+		const enroll = mock();
+		const e = new SyncEngine(
+			localApp as any,
+			api as unknown as EngramApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setReady();
+		(e as any).markCrdtOpsUnsupported(404); // ops unavailable: legacy fallback path
+		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
+		// Content-free crdt entry; its file is no longer on disk (renamed away).
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+		});
+		const flushed = await e.flushQueue();
+
+		expect(enroll).toHaveBeenCalledWith("id-1"); // Y.Doc retained: channel delivers
+		expect(e.queue.size).toBe(0); // dequeued (not looping)
+		expect(flushed).toBe(1);
+	});
 });
