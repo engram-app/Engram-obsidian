@@ -215,6 +215,64 @@ describe("SyncEngine.handleFolderDelete", () => {
 });
 
 // ---------------------------------------------------------------------------
+// resyncFolders removal reconcile — a folder deleted on another device (web)
+// must be trashed locally, not just dropped from the tracked set.
+// ---------------------------------------------------------------------------
+
+describe("SyncEngine.resyncFolders removal reconcile", () => {
+	test("trashes an explicit folder the server no longer lists", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Keep");
+		await explicit.add("Gone");
+
+		// Server now lists only Keep — Gone was deleted on another device.
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce(["Keep"]);
+
+		const gone = new TFolder("Gone", []);
+		const keep = new TFolder("Keep", []);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Gone" ? gone : p === "Keep" ? keep : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(gone);
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalledWith(keep);
+		expect(explicit.has("Gone")).toBe(false);
+	});
+
+	test("does NOT trash a server-removed folder that still holds children", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add("Busy");
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce([]);
+
+		const busy = new TFolder("Busy", [new TFile("Busy/note.md")]);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "Busy" ? busy : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("never trashes an ignored folder even if it drops off the list", async () => {
+		const { engine, explicit } = await createEngine();
+		await explicit.add(".obsidian/snippets");
+		(mockApi.listExplicitFolders as jest.Mock).mockResolvedValueOnce([]);
+
+		const ignored = new TFolder(".obsidian/snippets", []);
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === ".obsidian/snippets" ? ignored : null,
+		);
+
+		await engine.resyncFolders();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // seedEmptyFolders — first-sync seeding of folders the server can't derive
 // ---------------------------------------------------------------------------
 //

@@ -7338,6 +7338,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       devLog().log("pull", `listExplicitFolders failed: ${errMsg(e)}`), rlog().warn("pull", `listExplicitFolders failed: ${errMsg(e)}`);
       return;
     }
+    let kept = new Set(names);
+    for (let prev of this.explicitFolders.all()) {
+      if (kept.has(prev) || this.shouldIgnore(prev)) continue;
+      let existing = this.app.vault.getAbstractFileByPath(prev);
+      if (existing instanceof import_obsidian21.TFolder && !(existing.children.length > 0))
+        try {
+          await this.app.fileManager.trashFile(existing);
+        } catch (e) {
+          devLog().log("pull", `trash removed folder(${prev}) failed: ${errMsg(e)}`);
+        }
+    }
     await this.explicitFolders.replaceAll(names);
     for (let name of names)
       if (!this.shouldIgnore(name))

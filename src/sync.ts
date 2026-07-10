@@ -4028,6 +4028,26 @@ export class SyncEngine {
 			return;
 		}
 
+		// Reconcile removals BEFORE replaceAll overwrites the tracked set: a
+		// folder we previously tracked that the server no longer lists was
+		// deleted on another device (web). Trash it locally so the delete
+		// propagates. Guarded — only an EMPTY folder still on disk (a note may
+		// have since landed inside it) and never an ignored path
+		// (.obsidian/, .trash/, …).
+		const kept = new Set(names);
+		for (const prev of this.explicitFolders.all()) {
+			if (kept.has(prev)) continue;
+			if (this.shouldIgnore(prev)) continue;
+			const existing = this.app.vault.getAbstractFileByPath(prev);
+			if (!(existing instanceof TFolder)) continue;
+			if (existing.children.length > 0) continue;
+			try {
+				await this.app.fileManager.trashFile(existing);
+			} catch (e) {
+				devLog().log("pull", `trash removed folder(${prev}) failed: ${errMsg(e)}`);
+			}
+		}
+
 		await this.explicitFolders.replaceAll(names);
 
 		for (const name of names) {
