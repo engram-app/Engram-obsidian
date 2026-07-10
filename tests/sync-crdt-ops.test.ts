@@ -174,8 +174,16 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 	});
 });
 
-describe("channel-down CRDT flush via REST /updates", () => {
-	test("flushCrdtState posts the encoded Y.Doc state and never sends plaintext", async () => {
+// The in-memory `scheduleCrdtFlush`/`flushCrdtState`/`crdtFlushTimers` debounce
+// was retired (Task 3, Phase 2b remediation) in favor of routing every
+// channel-down CRDT edit through the DURABLE offline queue: pushFile seeds the
+// Y.Doc via routeModify then persists a content-free `crdt: true` + `noteId`
+// queue entry (survives plugin unload) that runFlushQueue delivers via
+// noteId-keyed /updates ops (Task 2). The tests below exercise that full
+// pushFile -> durable queue -> runFlushQueue chain in place of the old
+// in-memory-timer tests.
+describe("channel-down CRDT edit routes through the durable queue via REST /updates", () => {
+	test("pushFile durably queues the edit, then the auto-triggered flush posts the encoded Y.Doc state and never sends plaintext", async () => {
 		const posted: Array<{ noteId: string; update: Uint8Array }> = [];
 		const api = {
 			postUpdate: async (noteId: string, update: Uint8Array) => {
@@ -183,38 +191,76 @@ describe("channel-down CRDT flush via REST /updates", () => {
 				return { head: "h" };
 			},
 			pushNote: async () => {
-				throw new Error("must not whole-doc push a CRDT note");
+				throw new Error("must not whole-doc push a channel-down CRDT note");
 			},
 		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([9, 9, 9]) };
+		const crdt = {
+			applyLocalEdit: async () => true,
+			encodeStateAsUpdate: async () => new Uint8Array([9, 9, 9]),
+		};
 		const e = engine({ enableCrdt: true, api, crdt });
-		await (e as any).flushCrdtState("p.md", "id-1");
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down
+
+		const result = await (e as any).pushFile(new TFile("p.md"));
+		expect(result).toBe(true);
+
+		// Persisted immediately as a durable crdt-tagged entry (survives unload
+		// even before delivery) — never merely an in-memory timer.
+		const queued = e.queue.all().find((q) => q.path === "p.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe("id-1");
+
+		// pushFile also fires an immediate flush attempt; give it a tick.
+		await new Promise((r) => setTimeout(r, 20));
 		expect(posted).toEqual([{ noteId: "id-1", update: new Uint8Array([9, 9, 9]) }]);
+		expect(e.queue.size).toBe(0);
 	});
 
-	test("flushCrdtState latches ops-unsupported on a 404", async () => {
+	test("a per-note 404 on the auto-triggered flush drops the entry as note-gone, without latching capability off", async () => {
 		const api = {
 			postUpdate: async () => {
 				const err: any = new Error("not found");
 				err.status = 404;
 				throw err;
 			},
+			pushNote: async () => {
+				throw new Error("must not legacy-push a crdt entry when ops are available");
+			},
 		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
+		const crdt = {
+			applyLocalEdit: async () => true,
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+		};
 		const e = engine({ enableCrdt: true, api, crdt });
-		await (e as any).flushCrdtState("p.md", "id-1");
-		expect((e as any).crdtOpsAvailable()).toBe(false);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down
+
+		await (e as any).pushFile(new TFile("p.md"));
+		await new Promise((r) => setTimeout(r, 20));
+
+		// Global Constraint: a per-note postUpdate 404 means "that note is gone",
+		// NEVER a capability signal — only the getVaultHeads probe may latch
+		// crdtOpsUnsupported.
+		expect(e.queue.size).toBe(0);
+		expect((e as any).crdtOpsAvailable()).toBe(true);
 	});
 
-	// Probe-race stranding (final review Minor-1): a CRDT note edited while the
-	// channel is down schedules a flush WITHOUT a legacy push (pushFile routed
-	// it to scheduleCrdtFlush because ops looked available at edit time). If
-	// the capability probe latches crdtOpsUnsupported before the debounced
-	// flush timer fires, flushCrdtState must NOT just early-return — that
-	// silently strands the edit (durable in the local Y.Doc, never delivered
-	// this session). It must re-drive delivery via the legacy whole-doc push.
-	test("ops latch off mid-flush (probe fires before the timer) delivers via legacy push, not silently dropped", async () => {
+	// Probe-race stranding (final review Minor-1, carried over from the retired
+	// scheduleCrdtFlush test): a CRDT note edited while the channel is down is
+	// durably queued while ops still look available. If the capability probe
+	// latches crdtOpsUnsupported AFTER the entry is queued but BEFORE it is
+	// delivered, the next flush must NOT strand it — it must re-drive delivery
+	// via the legacy whole-doc push (runFlushQueue's ops-unavailable fallback).
+	test("ops latch off after a channel-down edit is durably queued: the next flush delivers via legacy push, not silently stranded", async () => {
 		let pushNoteCalled = false;
+		let pushNoteArgs: any[] = [];
 		const testFile = new TFile("p.md");
 		const localApp = {
 			...mockApp,
@@ -223,15 +269,19 @@ describe("channel-down CRDT flush via REST /updates", () => {
 				getFileByPath: mock().mockImplementation((p: string) =>
 					p === "p.md" ? testFile : null,
 				),
+				cachedRead: mock().mockResolvedValue("body"),
 			},
 		};
 		const api = {
-			pushNote: async () => {
+			pushNote: async (...args: any[]) => {
 				pushNoteCalled = true;
+				pushNoteArgs = args;
 				return { note: {}, chunks_indexed: 1 };
 			},
+			// The auto-triggered first attempt fails transiently (no HTTP status)
+			// — leaves the entry queued without touching capability at all.
 			postUpdate: async () => {
-				throw new Error("must not call postUpdate once ops are latched unsupported");
+				throw new Error("network down");
 			},
 		};
 		const crdt = {
@@ -250,30 +300,83 @@ describe("channel-down CRDT flush via REST /updates", () => {
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
 		markConfirmed(e, "id-1");
-		e.setCrdtLiveCheck(() => false); // channel down — schedules a flush, no immediate push
+		e.setCrdtLiveCheck(() => false); // channel down
 
 		const result = await (e as any).pushFile(testFile);
 		expect(result).toBe(true);
-		expect(pushNoteCalled).toBe(false); // scheduled, not pushed yet
+		await new Promise((r) => setTimeout(r, 20)); // let the auto-triggered flush fail transiently
 
-		// Capability probe latches ops-unsupported BEFORE the debounced flush fires.
+		expect(pushNoteCalled).toBe(false); // still queued, not stranded to legacy yet
+		expect(e.queue.size).toBe(1);
+
+		// Capability probe latches ops-unsupported (e.g. a pre-Phase-1 backend
+		// discovered mid-session) AFTER the edit was already durably queued.
 		(e as any).markCrdtOpsUnsupported(404);
 
-		await new Promise((r) => setTimeout(r, 20));
+		const flushed = await e.flushQueue();
 
+		expect(flushed).toBe(1);
 		expect(pushNoteCalled).toBe(true); // delivered via legacy path, not dropped
+		expect(pushNoteArgs[1]).toBe("body");
+		expect(e.queue.size).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 5 (folded into Task 3, same pushFile branch): a stale PRE-AWAIT
+// `crdtLive` snapshot must not decide live-vs-durable-queue. The channel can
+// drop DURING the awaited `routeModify` seed; pushFile must re-check liveness
+// AFTER the seed (`crdtLiveNow`) to decide whether the edit is already carried
+// live or must be durably queued.
+// ---------------------------------------------------------------------------
+
+describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () => {
+	test("a channel drop DURING routeModify routes the edit to the durable queue, not the dead live path", async () => {
+		let live = true;
+		const api = {
+			postUpdate: async () => ({ head: "h" }),
+			pushNote: async () => {
+				throw new Error("must not whole-doc push a CRDT note");
+			},
+		};
+		const crdt = {
+			// The channel drops WHILE the seed is in flight — simulates a
+			// disconnect that lands between the pre-await crdtLive snapshot and
+			// the post-await decision.
+			applyLocalEdit: async () => {
+				live = false;
+				return true;
+			},
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("T.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => live); // live=true at branch entry
+
+		const result = await (e as any).pushFile(new TFile("T.md"));
+
+		expect(result).toBe(true);
+		// Because crdtLive is re-checked AFTER the await, the edit is enqueued
+		// durably instead of being (wrongly) treated as already delivered by a
+		// live channel that no longer exists.
+		const queued = e.queue.all().find((q) => q.path === "T.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe("id-1");
 	});
 });
 
 // ---------------------------------------------------------------------------
 // Task 5: CRDT-managed notes bypass the whole-doc base_hash push. Live channel
 // → the edit already went out as a channel op (unchanged pre-Task-5 behavior).
-// Channel down + ops available → scheduleCrdtFlush, no base_hash body built.
+// Channel down + ops available → durably queued (Task 3), no base_hash body built.
 // Non-CRDT / ops-unavailable notes keep sending base_hash unchanged.
 // ---------------------------------------------------------------------------
 
 describe("CRDT notes bypass the whole-doc base_hash push", () => {
-	test("a CRDT-managed note with ops available never calls pushNote (channel down → scheduled flush)", async () => {
+	test("a CRDT-managed note with ops available never calls pushNote (channel down → durably queued)", async () => {
 		let pushNoteCalled = false;
 		let flushedNoteId: string | null = null;
 		const api = {
@@ -300,10 +403,11 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 		const result = await (e as any).pushFile(new TFile("p.md"));
 
 		expect(result).toBe(true);
-		expect(pushNoteCalled).toBe(false); // routed to CRDT flush, not whole-doc push
+		expect(pushNoteCalled).toBe(false); // routed to the durable crdt queue, not whole-doc push
 
-		// The flush is debounced (debounceMs: 1) — let the timer fire and confirm
-		// it actually posts the encoded Y.Doc state via REST /updates.
+		// The durable entry is delivered by the auto-triggered flush — give it a
+		// tick and confirm it actually posts the encoded Y.Doc state via REST
+		// /updates.
 		await new Promise((r) => setTimeout(r, 20));
 		expect(flushedNoteId).toBe("id-1");
 	});

@@ -1769,11 +1769,18 @@ export class SyncEngine {
 				// latch, e.g. dead-but-set after an auth swap, or a genuine
 				// disconnect) but the backend supports CRDT ops
 				// (crdtOpsAvailable()), the edit is still durable in the local
-				// Y.Doc — debounce-flush it to the server via REST /updates
-				// (scheduleCrdtFlush) instead of falling through to the whole-doc
-				// base_hash push (#203, e2e test_83/test_85). Only when ops are
-				// unsupported (pre-Phase-1 backend) does a down channel fall
-				// through to the legacy REST path, exactly as before this feature.
+				// Y.Doc — persist a durable crdt-tagged queue entry (delivered by
+				// runFlushQueue's noteId-keyed /updates branch) instead of falling
+				// through to the whole-doc base_hash push (#203, e2e test_83/test_85).
+				// Only when ops are unsupported (pre-Phase-1 backend) does a down
+				// channel fall through to the legacy REST path, exactly as before
+				// this feature.
+				//
+				// `crdtLive` here is a PRE-AWAIT snapshot, used ONLY to decide
+				// whether this branch is even entered (below). It can go stale
+				// during the awaited `routeModify` seed if the channel drops
+				// mid-seed — see the post-await `crdtLiveNow` re-check (Task 5)
+				// that actually decides live-vs-durable-queue.
 				const crdtLive = this.crdtLive?.() ?? true;
 				if (
 					this.crdt &&
@@ -1808,17 +1815,40 @@ export class SyncEngine {
 						// note already enrolled via active-leaf-change is unaffected.
 						this.crdtEnrollment?.enroll(noteId);
 						success = true;
-						if (!crdtLive) {
-							// Channel down, ops available: converge via the debounced
-							// REST /updates flush instead of the whole-doc push.
-							this.scheduleCrdtFlush(file.path, noteId);
+						// Task 5 (TOCTOU fix): re-check liveness AFTER the awaited seed
+						// above. The channel can drop DURING routeModify — a stale
+						// pre-await `crdtLive` snapshot would leave the edit on a dead
+						// socket believing the live channel already carried it, when it
+						// never did.
+						const crdtLiveNow = this.crdtLive?.() ?? true;
+						if (!crdtLiveNow) {
+							// Channel down (or dropped mid-seed), ops available: the edit
+							// is already durable in the local Y.Doc (IndexedDB-persisted).
+							// Persist a content-free crdt-tagged queue entry — durable
+							// across plugin unload and retried by runFlushQueue until
+							// delivered — instead of the retired in-memory-only debounce
+							// timer, which lost the edit on unload and never retried a
+							// failed flush.
+							await this.enqueueChange({
+								path: file.path,
+								action: "upsert",
+								noteId,
+								crdt: true,
+								mtime: file.stat.mtime / 1000,
+								timestamp: Date.now(),
+								kind: "note",
+								vaultId: this.settings.vaultId ?? undefined,
+							});
+							// Deliver now if REST is reachable; durable + retried
+							// otherwise (queue survives unload, next flush picks it up).
+							void this.flushQueue();
 							devLog().log(
 								"push",
-								`crdt flush scheduled (channel down): ${file.path}`,
+								`crdt edit queued durably (channel down): ${file.path}`,
 							);
 							rlog().info(
 								"push",
-								`CRDT flush scheduled (channel down): ${file.path}`,
+								`CRDT edit queued durably (channel down): ${file.path}`,
 							);
 							return true;
 						}
@@ -4297,65 +4327,6 @@ export class SyncEngine {
 		}
 	}
 
-	/** Per-note debounce timers for the channel-down REST `/updates` flush. */
-	private crdtFlushTimers: Map<string, number> = new Map();
-
-	/** A CRDT note was edited while the channel is down: the edit is already in
-	 *  the local Y.Doc (IndexedDB-persisted). Debounce-flush the note's full
-	 *  encoded state to the server via REST /updates (idempotent, lossless merge). */
-	scheduleCrdtFlush(path: string, noteId: string): void {
-		const key = normalizePath(path);
-		const existing = this.crdtFlushTimers.get(key);
-		if (existing !== undefined) window.clearTimeout(existing);
-		const t = window.setTimeout(() => {
-			this.crdtFlushTimers.delete(key);
-			void this.flushCrdtState(path, noteId);
-		}, this.settings.debounceMs);
-		this.crdtFlushTimers.set(key, t);
-	}
-
-	private async flushCrdtState(path: string, noteId: string): Promise<void> {
-		if (!this.crdt) return;
-		// Probe-race stranding (final review Minor-1): the flush was scheduled
-		// while ops looked available, but the capability probe latched them off
-		// (crdtOpsUnsupported) before this timer fired — e.g. a pre-Phase-1
-		// backend that 404s /updates. The edit is durable in the local Y.Doc but
-		// was never sent (pushFile's CRDT branch routed it here instead of the
-		// legacy push). Re-drive delivery via pushFile: with ops now
-		// unavailable its CRDT-branch condition is false by construction, so it
-		// falls through to the legacy base_hash push. force=true bypasses the
-		// echo-hash skip (this content's hash was already recorded as the CRDT
-		// baseline on the original edit). If the file no longer exists locally
-		// (renamed/deleted since scheduling), queue it instead of dropping it.
-		if (this.crdtOpsUnsupported && this.settings.enableCrdt) {
-			const file = this.app.vault.getFileByPath(normalizePath(path));
-			if (file) {
-				await this.pushFile(file, true);
-			} else {
-				await this.enqueueChange({
-					path,
-					action: "upsert",
-					kind: "note",
-					mtime: Date.now() / 1000,
-					timestamp: Date.now(),
-					vaultId: this.settings.vaultId ?? undefined,
-				});
-			}
-			return;
-		}
-		if (!this.crdtOpsAvailable()) return;
-		try {
-			const update = await this.crdt.encodeStateAsUpdate(normalizePath(path));
-			await this.api.postUpdate(noteId, update);
-		} catch (e) {
-			const status = (e as { status?: number })?.status;
-			if (status !== undefined) this.markCrdtOpsUnsupported(status);
-			// On any flush failure the note stays in the offline path; the next
-			// reconnect (channel STEP1) or a later flush re-converges it. No data is
-			// lost — the edit is durable in the local Y.Doc.
-		}
-	}
-
 	/** Bulk-push note files via POST /notes/batch in chunks of 100.
 	 *
 	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
@@ -4556,18 +4527,42 @@ export class SyncEngine {
 			// Task 5: a cold-but-managed note (channel down, so isCrdtManaged above
 			// is false) still owes its body to CRDT ops when the backend supports
 			// them — batch-pushing its full content here would duplicate the write
-			// the debounced REST /updates flush is about to make. Schedule the
-			// flush and skip it from the batch instead of silently letting it fall
-			// through to a whole-doc push with no CAS base.
+			// the durable REST /updates flush is about to make. Unlike pushFile,
+			// this loop never touched the Y.Doc for this file, so it must SEED it
+			// first (mirrors pushFile's routeModify call) — skipping straight to a
+			// scheduled/queued flush without seeding was the batch-unseeded
+			// data-loss finding: the flush would have delivered stale/empty
+			// content. The queue entry is durable, NOT delivered — never counted
+			// toward `pushed`, and logged as queued rather than a completed skip.
 			if (
 				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
 				noteId &&
+				this.crdt &&
 				this.crdtOpsAvailable() &&
 				this.isCrdtManagedOffline(file.path, noteId)
 			) {
 				done++;
-				this.scheduleCrdtFlush(file.path, noteId);
-				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
+				const content = await this.app.vault.cachedRead(file);
+				await routeModify(
+					{
+						isMarkdown: file.extension === "md",
+						noteId,
+						readContent: async () => content,
+					},
+					this.crdt,
+					MAX_CRDT_NOTE_BYTES,
+				);
+				await this.enqueueChange({
+					path: file.path,
+					action: "upsert",
+					noteId,
+					crdt: true,
+					mtime: file.stat.mtime / 1000,
+					timestamp: Date.now(),
+					kind: "note",
+					vaultId: this.settings.vaultId ?? undefined,
+				});
+				this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
 				continue;
 			}
 			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
@@ -5738,10 +5733,6 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.debounceTimers.clear();
-		for (const timer of this.crdtFlushTimers.values()) {
-			window.clearTimeout(timer);
-		}
-		this.crdtFlushTimers.clear();
 		for (const timer of this.recentlyPushed.values()) {
 			window.clearTimeout(timer);
 		}

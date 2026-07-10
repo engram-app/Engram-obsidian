@@ -887,6 +887,61 @@ describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () =
 });
 
 // ---------------------------------------------------------------------------
+// Task 3 (Phase 2b remediation): a channel-down CRDT note hit by
+// pushNotesViaBatch must be SEEDED (mirrors pushFile's routeModify call —
+// this loop never otherwise touches the Y.Doc) and durably queued via the
+// same crdt-tagged offline queue entry pushFile uses, NOT reported as a
+// completed/delivered batch push. Closes the batch-unseeded + batch-false-done
+// findings: previously this branch only scheduled the now-retired in-memory
+// flush timer, with no seed at all — a later flush would have delivered
+// stale/empty content, or nothing (lost on unload).
+// ---------------------------------------------------------------------------
+
+describe("batch push durably queues a channel-down CRDT note (seeded, not falsely delivered)", () => {
+	test("a channel-down CRDT note is seeded then durably queued, not sent via the batch endpoint, and not counted as delivered", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => false); // channel down — isCrdtManaged is false,
+		// but isCrdtManagedOffline is true: the note still owes its body to CRDT ops.
+
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
+
+		const file = new TFile("note.md");
+		const res = await (
+			engine as unknown as {
+				pushNotesViaBatch: (
+					f: TFile[],
+					force: boolean,
+				) => Promise<{ pushed: number; failed: number } | null>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		// Seeded via routeModify -> applyLocalEdit, mirroring pushFile — the
+		// batch-unseeded data-loss finding.
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+
+		// Never sent over the batch REST endpoint — the durable queue owns delivery.
+		expect(batch).not.toHaveBeenCalled();
+
+		// Durably persisted (crdt-tagged, noteId-keyed) instead of falsely
+		// reported delivered.
+		const queued = engine.queue.all().find((q) => q.path === "note.md");
+		expect(queued?.crdt).toBe(true);
+		expect(queued?.noteId).toBe("id-note");
+
+		// The batch-false-done finding: a queued-not-delivered entry must never
+		// count toward `pushed`.
+		expect(res?.pushed).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Mint-refusal guard in the batch path (issue #217 — same seam as PR #216 /
 // backend #972): pushFile refuses to mint an id for an engine-flushed
 // (recentlyFlushed) path whose id binding is gone — a relocation owns that
