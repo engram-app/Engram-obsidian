@@ -7827,7 +7827,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let notePaths = manifest.notes.map((n) => n.path), attachmentPaths = manifest.attachments.map((a) => a.path), total = notePaths.length + attachmentPaths.length;
+    let localPaths = new Set(
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
+    ), notePaths = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), attachmentPaths = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), total = notePaths.length + attachmentPaths.length;
     rlog().info(
       "push",
       `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`

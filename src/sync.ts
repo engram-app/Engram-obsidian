@@ -5006,8 +5006,24 @@ export class SyncEngine {
 			return;
 		}
 
-		const notePaths = manifest.notes.map((n) => n.path);
-		const attachmentPaths = manifest.attachments.map((a) => a.path);
+		// Only wipe true remote EXTRAS — notes/attachments absent from the local
+		// vault. A file that exists locally is about to be re-uploaded; deleting
+		// it first tombstones its path, and the backend delete-wins guard then
+		// refuses the same-path re-push as `recently_deleted` (permanent 404 —
+		// the e2e test_86 regression). Leaving it lets the follow-up force-push
+		// update it in place (id retained → CRDT room preserved, no tombstone).
+		const localPaths = new Set(
+			this.app.vault
+				.getFiles()
+				.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
+				.map((f) => normalizePath(f.path)),
+		);
+		const notePaths = manifest.notes
+			.map((n) => n.path)
+			.filter((p) => !localPaths.has(normalizePath(p)));
+		const attachmentPaths = manifest.attachments
+			.map((a) => a.path)
+			.filter((p) => !localPaths.has(normalizePath(p)));
 		const total = notePaths.length + attachmentPaths.length;
 
 		rlog().info(

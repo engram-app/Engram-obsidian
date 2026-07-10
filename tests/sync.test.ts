@@ -3609,7 +3609,7 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 		expect(mockApi.deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("replace mode (replaceRemote:true): wipes ALL remote first, then uploads local", async () => {
+	test("replace mode (replaceRemote:true): wipes remote EXTRAS, preserves locally-present notes, then uploads local", async () => {
 		const engine = createEngine();
 		const local = [new TFile("kept.md", Date.now())];
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
@@ -3625,14 +3625,16 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 
 		await engine.pushAll({ replaceRemote: true });
 
-		// Every remote file is deleted up front — including the shared one
-		// (which is then re-uploaded), proving a literal wipe rather than a
-		// selective extras-prune.
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("kept.md");
+		// The shared note (present locally) is NOT deleted: deleting it would
+		// tombstone its path and the backend delete-wins guard would then refuse
+		// the same-path re-push as `recently_deleted` (permanent loss — the
+		// test_86 regression). It is force-pushed in place instead.
+		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("kept.md");
+		// Only true remote extras (absent locally) are wiped.
 		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-a.md");
 		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-b.md");
 		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("old.png");
-		// Local was re-uploaded after the wipe.
+		// Local was re-uploaded (server ends an exact mirror of local either way).
 		expect(mockApi.pushNote).toHaveBeenCalled();
 	});
 
