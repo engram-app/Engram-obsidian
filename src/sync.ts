@@ -4,6 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
+import { toB64 } from "./crdt/channel";
 import type { CrdtManager } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import { uuid7 } from "./crdt/uuid7";
@@ -2469,6 +2470,47 @@ export class SyncEngine {
 			content_hash: note.content_hash ?? change.content_hash,
 			version: note.version ?? change.version,
 		};
+	}
+
+	/** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
+	 *  Diffs the server head-index against the persisted per-note crdtHead and,
+	 *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
+	 *  flush via applyRemoteUpdate). Best-effort: inert on pre-Phase-1 backends,
+	 *  isolates per-note failures, and never throws. Returns notes converged. */
+	async coldReceive(): Promise<number> {
+		if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return 0;
+		let heads: Record<string, string>;
+		try {
+			({ heads } = await this.api.getVaultHeads());
+		} catch (e) {
+			devLog().log("crdt", `coldReceive: getVaultHeads failed — ${errMsg(e)}`);
+			return 0;
+		}
+		let converged = 0;
+		for (const [noteId, serverHead] of Object.entries(heads)) {
+			const path = this.noteIdMap?.pathForId(noteId) ?? null;
+			if (!path) continue; // not locally known — first-discovery is pull()'s job
+			if (!this.isNoteConfirmed(noteId)) continue;
+			if (this.isLiveBound(path)) continue; // live channel owns open notes
+			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
+			try {
+				// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
+				const since = toB64(await this.crdt.encodeStateVector(noteId));
+				const { update, head } = await this.api.getUpdates(noteId, since);
+				await this.crdt.applyRemoteUpdate(noteId, update);
+				this.setCrdtHead(path, head); // crdtHead persists under the vault path
+				converged++;
+			} catch (e) {
+				// Isolated: log, leave crdtHead unadvanced, retry next poll.
+				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);
+				rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
+			}
+		}
+		if (converged > 0) {
+			devLog().log("crdt", `coldReceive: converged ${converged} cold note(s)`);
+			this.emitStatus();
+		}
+		return converged;
 	}
 
 	/** Pull remote changes and apply to the vault via the ordered cursor feed.

@@ -131,3 +131,153 @@ describe("crdtHead persistence", () => {
 		expect((e2 as any).getCrdtHead("n.md")).toBe("H3");
 	});
 });
+
+describe("coldReceive", () => {
+	function coldEngine(opts: {
+		heads: Record<string, string>;
+		getUpdates?: (id: string, since?: string) => Promise<{ update: Uint8Array; head: string }>;
+		live?: (path: string) => boolean;
+	}) {
+		// The mock manager records the ARGUMENT it is called with — which is the
+		// noteId (the manager is noteId-keyed), NOT the vault path.
+		const applied: Array<{ id: string; update: Uint8Array }> = [];
+		const svCalls: string[] = [];
+		const api = {
+			getVaultHeads: async () => ({ heads: opts.heads }),
+			getUpdates:
+				opts.getUpdates ??
+				(async (_id: string, _since?: string) => ({ update: new Uint8Array([1]), head: "SRV" })),
+		};
+		const crdt = {
+			encodeStateVector: async (id: string) => {
+				svCalls.push(id);
+				return new Uint8Array([9]);
+			},
+			applyRemoteUpdate: async (id: string, update: Uint8Array) => {
+				applied.push({ id, update });
+			},
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		e.setLiveBoundCheck(opts.live ?? (() => false));
+		return { e, applied, svCalls };
+	}
+
+	test("an advanced head pulls the delta, applies it, and persists the returned head", async () => {
+		const { e, applied, svCalls } = coldEngine({ heads: { "id-a": "SRV" } });
+		// local crdtHead is absent (never cold-synced) -> treated as advanced
+		const n = await e.coldReceive();
+		expect(n).toBe(1);
+		expect(svCalls).toEqual(["id-a"]); // doc opened once (by noteId), to compute since
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // persisted under the path
+	});
+
+	test("an unchanged head is skipped WITHOUT opening the doc (cost gate)", async () => {
+		const { e, applied, svCalls } = coldEngine({ heads: { "id-a": "SRV" } });
+		(e as any).setCrdtHead("a.md", "SRV"); // already at server head
+		const n = await e.coldReceive();
+		expect(n).toBe(0);
+		expect(svCalls).toEqual([]); // never opened the Y.Doc
+		expect(applied).toEqual([]);
+	});
+
+	test("a live-bound note is skipped (the live channel owns it)", async () => {
+		const { e, applied } = coldEngine({ heads: { "id-a": "SRV" }, live: () => true });
+		expect(await e.coldReceive()).toBe(0);
+		expect(applied).toEqual([]);
+	});
+
+	test("a head with no local path is skipped (first-discovery is the pull's job)", async () => {
+		const { e, applied } = coldEngine({ heads: { "id-unknown": "SRV" } });
+		expect(await e.coldReceive()).toBe(0);
+		expect(applied).toEqual([]);
+	});
+
+	test("an unconfirmed note is skipped", async () => {
+		const { e, applied } = coldEngine({ heads: { "id-a": "SRV" } });
+		(e as any).unconfirmNoteId?.("id-a") ?? (e as any).clearConfirmedNoteIds?.();
+		expect(await e.coldReceive()).toBe(0);
+		expect(applied).toEqual([]);
+	});
+
+	test("ops unavailable => never calls getVaultHeads", async () => {
+		let called = false;
+		const api = {
+			getVaultHeads: async () => {
+				called = true;
+				return { heads: {} };
+			},
+			getUpdates: async () => ({ update: new Uint8Array(), head: "" }),
+		};
+		const e = engine({ enableCrdt: true, api });
+		// engine()'s setReady() fires its own fire-and-forget probeCrdtOps() on
+		// construction (unrelated to coldReceive) which also calls this same
+		// mocked getVaultHeads synchronously — reset the flag so the assertion
+		// below isolates coldReceive's own behavior, not that background probe.
+		called = false;
+		// no markProbed => crdtOpsAvailable() is false
+		expect(await e.coldReceive()).toBe(0);
+		expect(called).toBe(false);
+	});
+
+	test("a per-note getUpdates failure does not abort the loop or advance that head", async () => {
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		map.set("b.md", "id-b");
+		const applied: string[] = [];
+		const api = {
+			getVaultHeads: async () => ({ heads: { "id-a": "HA", "id-b": "HB" } }),
+			getUpdates: async (id: string) => {
+				if (id === "id-a") throw new Error("boom");
+				return { update: new Uint8Array([2]), head: "HB" };
+			},
+		};
+		const crdt = {
+			encodeStateVector: async () => new Uint8Array([9]),
+			applyRemoteUpdate: async (id: string) => {
+				applied.push(id);
+			},
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		markConfirmed(e, "id-b");
+		e.setLiveBoundCheck(() => false);
+		const n = await e.coldReceive();
+		expect(applied).toEqual(["id-b"]); // b succeeded (by noteId) despite a failing
+		expect(n).toBe(1);
+		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // a's head NOT advanced
+		expect((e as any).getCrdtHead("b.md")).toBe("HB");
+	});
+
+	test("head is persisted only AFTER applyRemoteUpdate resolves", async () => {
+		let applyResolved = false;
+		const api = {
+			getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
+			getUpdates: async () => ({ update: new Uint8Array([1]), head: "SRV" }),
+		};
+		const crdt = {
+			encodeStateVector: async () => new Uint8Array([9]),
+			applyRemoteUpdate: async () => {
+				// head must not be set yet at this point
+				applyResolved = true;
+			},
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		e.setLiveBoundCheck(() => false);
+		await e.coldReceive();
+		expect(applyResolved).toBe(true);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+	});
+});
