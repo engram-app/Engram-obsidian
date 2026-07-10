@@ -260,19 +260,23 @@ describe("coldReceive", () => {
 	});
 
 	test("head is persisted only AFTER applyRemoteUpdate resolves", async () => {
-		let applyResolved = false;
+		let headDuringApply: string | undefined = "SENTINEL";
 		const api = {
 			getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
 			getUpdates: async () => ({ update: new Uint8Array([1]), head: "SRV" }),
 		};
+		const eRef: { e?: SyncEngine } = {};
 		const crdt = {
 			encodeStateVector: async () => new Uint8Array([9]),
 			applyRemoteUpdate: async () => {
-				// head must not be set yet at this point
-				applyResolved = true;
+				// Capture the head WHILE the apply is in flight: it must still be
+				// unset, so a half-applied note is never marked converged. This
+				// fails if setCrdtHead is (wrongly) reordered before the await.
+				headDuringApply = (eRef.e as any).getCrdtHead("a.md");
 			},
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
+		eRef.e = e;
 		markProbed(e);
 		const map = new NoteIdMap();
 		map.set("a.md", "id-a");
@@ -280,8 +284,8 @@ describe("coldReceive", () => {
 		markConfirmed(e, "id-a");
 		e.setLiveBoundCheck(() => false);
 		await e.coldReceive();
-		expect(applyResolved).toBe(true);
-		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		expect(headDuringApply).toBeUndefined(); // not yet persisted mid-apply
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // persisted after apply
 	});
 });
 
