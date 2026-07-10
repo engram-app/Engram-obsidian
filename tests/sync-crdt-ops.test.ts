@@ -137,6 +137,41 @@ describe("crdtOpsAvailable latch", () => {
 	});
 });
 
+describe("probeCrdtOps — one-shot capability probe", () => {
+	test("a getVaultHeads 404 pre-latches ops-unsupported", async () => {
+		const api = {
+			getVaultHeads: async () => {
+				const err: any = new Error("nf");
+				err.status = 404;
+				throw err;
+			},
+		};
+		const e = engine({ enableCrdt: true, api });
+		await (e as any).probeCrdtOps();
+		expect((e as any).crdtOpsAvailable()).toBe(false);
+	});
+
+	test("a getVaultHeads success leaves ops available", async () => {
+		const api = { getVaultHeads: async () => ({ heads: {} }) };
+		const e = engine({ enableCrdt: true, api });
+		await (e as any).probeCrdtOps();
+		expect((e as any).crdtOpsAvailable()).toBe(true);
+	});
+
+	test("no-op when enableCrdt is false", async () => {
+		let called = false;
+		const api = {
+			getVaultHeads: async () => {
+				called = true;
+				return { heads: {} };
+			},
+		};
+		const e = engine({ enableCrdt: false, api });
+		await (e as any).probeCrdtOps();
+		expect(called).toBe(false);
+	});
+});
+
 describe("channel-down CRDT flush via REST /updates", () => {
 	test("flushCrdtState posts the encoded Y.Doc state and never sends plaintext", async () => {
 		const posted: Array<{ noteId: string; update: Uint8Array }> = [];
@@ -211,6 +246,38 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 		// it actually posts the encoded Y.Doc state via REST /updates.
 		await new Promise((r) => setTimeout(r, 20));
 		expect(flushedNoteId).toBe("id-1");
+	});
+
+	test("a CRDT-wired note with ops UNAVAILABLE and channel DOWN still sends base_hash via pushNote (safety fallback, no behavior change on a pre-Phase-1 backend)", async () => {
+		let baseHashArg: string | undefined;
+		let pushNoteCalled = false;
+		const api = {
+			pushNote: async (...args: any[]) => {
+				pushNoteCalled = true;
+				baseHashArg = args[5];
+				return { note: {}, chunks_indexed: 1 };
+			},
+			postUpdate: async () => {
+				throw new Error("must not flush via REST /updates when ops are unavailable");
+			},
+		} as unknown as EngramApi;
+		const crdt = {
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+			applyLocalEdit: async () => true,
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		(e as any).markCrdtOpsUnsupported(404); // pre-Phase-1 backend: ops unavailable
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down too
+		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
+
+		await (e as any).pushFile(new TFile("p.md"));
+
+		expect(pushNoteCalled).toBe(true);
+		expect(baseHashArg).toBeDefined();
 	});
 
 	test("a NON-CRDT note still sends base_hash (unchanged)", async () => {

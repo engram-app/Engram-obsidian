@@ -1019,6 +1019,22 @@ export class SyncEngine {
 		this.ready = true;
 		devLog().log("lifecycle", "setReady — event handlers enabled");
 		rlog().info("lifecycle", "Engine ready — event handlers enabled");
+		// One-shot capability probe: latch ops off before the first edit if this
+		// is a pre-Phase-1 backend, so we stay on the legacy whole-doc path
+		// instead of 404ing on the first CRDT flush.
+		void this.probeCrdtOps();
+	}
+
+	/** One-shot capability probe: a pre-Phase-1 backend 404s /vault/heads, so we
+	 *  latch ops off before the first edit and stay on the legacy whole-doc path. */
+	async probeCrdtOps(): Promise<void> {
+		if (!this.settings.enableCrdt) return;
+		try {
+			await this.api.getVaultHeads();
+		} catch (e) {
+			const status = (e as { status?: number })?.status;
+			if (status !== undefined) this.markCrdtOpsUnsupported(status);
+		}
 	}
 
 	setSyncBlocked(blocked: boolean): void {
@@ -4290,7 +4306,7 @@ export class SyncEngine {
 	scheduleCrdtFlush(path: string, noteId: string): void {
 		const key = normalizePath(path);
 		const existing = this.crdtFlushTimers.get(key);
-		if (existing !== undefined) clearTimeout(existing);
+		if (existing !== undefined) window.clearTimeout(existing);
 		const t = window.setTimeout(() => {
 			this.crdtFlushTimers.delete(key);
 			void this.flushCrdtState(path, noteId);
