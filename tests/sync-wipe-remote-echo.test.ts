@@ -11,9 +11,11 @@
  *   1. a WS delete for a path wipeRemote itself just deleted is SKIPPED
  *      (never trashFile) — it is our own echo, not a remote intent;
  *   2. the suppression is scoped: deletes for other paths still apply;
- *   3. wipeRemote clears the path's server bindings (syncState, noteIdMap,
- *      CRDT doc + enrollment) so the follow-up pushAll re-mints every file
- *      as new instead of hash-skipping "unchanged" notes into remote loss.
+ *   3. for a wiped EXTRA, wipeRemote clears the path's server bindings
+ *      (syncState, noteIdMap, CRDT doc + enrollment) so the follow-up pushAll
+ *      re-mints it as new instead of hash-skipping an "unchanged" note into
+ *      remote loss. (Notes present locally are no longer wiped — they are
+ *      force-pushed in place; see the "preserves locally-present notes" test.)
  */
 
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";

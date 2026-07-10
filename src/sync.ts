@@ -4088,16 +4088,26 @@ export class SyncEngine {
 			return;
 		}
 
-		// Reconcile removals BEFORE replaceAll overwrites the tracked set: a
-		// folder we previously tracked that the server no longer lists was
+		// A folder we previously tracked that the server no longer lists was
 		// deleted on another device (web). Trash it locally so the delete
 		// propagates. Guarded — only an EMPTY folder still on disk (a note may
 		// have since landed inside it) and never an ignored path
 		// (.obsidian/, .trash/, …).
 		const kept = new Set(names);
-		for (const prev of this.explicitFolders.all()) {
-			if (kept.has(prev)) continue;
-			if (this.shouldIgnore(prev)) continue;
+		const removed = this.explicitFolders
+			.all()
+			.filter((prev) => !kept.has(prev) && !this.shouldIgnore(prev));
+
+		// Drop the tracked set to the server's list BEFORE trashing any folder.
+		// trashFile dispatches Obsidian's vault "delete" event, which routes to
+		// handleFolderDelete; if the folder were still tracked there it would echo
+		// a real DELETE /folders back to the server (the folder-level twin of the
+		// wipeRemote echo). Removing it from the set first makes
+		// handleFolderDelete's membership guard suppress the echo — and covers the
+		// "user deleted all folders → []" case without a special guard.
+		await this.explicitFolders.replaceAll(names);
+
+		for (const prev of removed) {
 			const existing = this.app.vault.getAbstractFileByPath(prev);
 			if (!(existing instanceof TFolder)) continue;
 			if (existing.children.length > 0) continue;
@@ -4107,8 +4117,6 @@ export class SyncEngine {
 				devLog().log("pull", `trash removed folder(${prev}) failed: ${errMsg(e)}`);
 			}
 		}
-
-		await this.explicitFolders.replaceAll(names);
 
 		for (const name of names) {
 			if (this.shouldIgnore(name)) continue;
