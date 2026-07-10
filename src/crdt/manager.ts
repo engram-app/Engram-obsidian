@@ -96,13 +96,11 @@ interface Entry {
 export class CrdtManager {
 	private readonly opts: CrdtManagerOptions;
 	/** Keyed by docId (= the bare note_id — see `docId`). Every public method
-	 *  below that takes a `path`-shaped string parameter is actually keyed by
-	 *  whatever opaque string the caller passes; since Task 6, callers pass the
-	 *  note's stable note_id (resolved via `NoteIdMap`), not its vault path, so
-	 *  a rename (which changes the path but not the id) never disturbs the
-	 *  entry here. Parameter names below still say "path" in a few older
-	 *  comments/tests where the distinction doesn't matter — the manager itself
-	 *  never interprets the string, it only forwards it to callbacks. */
+	 *  below takes a `noteId` parameter; since Task 6, callers pass the note's
+	 *  stable note_id (resolved via `NoteIdMap`), not its vault path, so a
+	 *  rename (which changes the path but not the id) never disturbs the entry
+	 *  here. The manager itself never interprets the string, it only forwards
+	 *  it to callbacks. */
 	private readonly docs = new Map<string, Entry>();
 	/**
 	 * Per-session set of doc IDs for which at least one inbound server sync
@@ -186,9 +184,9 @@ export class CrdtManager {
 		return this.opts.dbPrefix ? `${this.opts.dbPrefix}/${noteId}` : noteId;
 	}
 
-	/** Returns (or opens + rehydrates from IndexedDB) the Y.Doc for `path`. */
-	async getDoc(path: string): Promise<Y.Doc> {
-		return (await this.entry(path)).doc;
+	/** Returns (or opens + rehydrates from IndexedDB) the Y.Doc for `noteId`. */
+	async getDoc(noteId: string): Promise<Y.Doc> {
+		return (await this.entry(noteId)).doc;
 	}
 
 	/**
@@ -219,8 +217,8 @@ export class CrdtManager {
 	 * caller never mass-re-pushes known-synced files via the legacy path on a
 	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
 	 */
-	async applyLocalEdit(path: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
-		const e = await this.entry(path);
+	async applyLocalEdit(noteId: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
+		const e = await this.entry(noteId);
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
 		// Adopt-first seed gate (#161): a history-less doc whose disk content is
@@ -231,7 +229,7 @@ export class CrdtManager {
 		// lineage; later real edits diff in on that shared history. Returns
 		// `true` ("handled, nothing to push") — a legacy fallback here would
 		// mass re-push every known-synced file on a fresh-IDB cold start.
-		if (!lca && this.opts.isUnchangedSynced?.(path, diskContent)) {
+		if (!lca && this.opts.isUnchangedSynced?.(noteId, diskContent)) {
 			return true;
 		}
 
@@ -256,32 +254,32 @@ export class CrdtManager {
 	 * Stamped with `REMOTE_ORIGIN` so the `doc.on("update")` listener does NOT
 	 * re-send it to the server, but DOES flush the merged content to disk.
 	 */
-	async applyRemoteUpdate(path: string, update: Uint8Array): Promise<void> {
-		const e = await this.entry(path);
+	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
+		const e = await this.entry(noteId);
 		Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
 	}
 
 	/** Encode the current state vector (for the channel handshake sync step). */
-	async encodeStateVector(path: string): Promise<Uint8Array> {
-		return Y.encodeStateVector((await this.entry(path)).doc);
+	async encodeStateVector(noteId: string): Promise<Uint8Array> {
+		return Y.encodeStateVector((await this.entry(noteId)).doc);
 	}
 
 	/**
 	 * Encode the full document state as a v1 update.
 	 * Pass `sv` (a peer's state vector) to get only the delta they're missing.
 	 */
-	async encodeStateAsUpdate(path: string, sv?: Uint8Array): Promise<Uint8Array> {
-		return Y.encodeStateAsUpdate((await this.entry(path)).doc, sv);
+	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
+		return Y.encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
 	}
 
 	/** Return the note body (frontmatter excluded). For the full file use projectedText. */
-	async getText(path: string): Promise<string> {
-		return (await this.entry(path)).text.toJSON();
+	async getText(noteId: string): Promise<string> {
+		return (await this.entry(noteId)).text.toJSON();
 	}
 
 	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
-	async projectedText(path: string): Promise<string> {
-		const e = await this.entry(path);
+	async projectedText(noteId: string): Promise<string> {
+		const e = await this.entry(noteId);
 		const { order, values } = frontmatterOf(e.doc);
 		return projectNote(order, values, e.text.toJSON());
 	}
@@ -292,8 +290,8 @@ export class CrdtManager {
 	 * Also clears the synced mark so a future `openDoc` + `startSync` begins a
 	 * fresh handshake.
 	 */
-	closeDoc(path: string): void {
-		const id = this.docId(path);
+	closeDoc(noteId: string): void {
+		const id = this.docId(noteId);
 		const e = this.docs.get(id);
 		if (!e) return;
 		e.doc.destroy();
@@ -303,7 +301,7 @@ export class CrdtManager {
 	}
 
 	/**
-	 * Permanently remove the Y.Doc and its IndexedDB store for `path`.
+	 * Permanently remove the Y.Doc and its IndexedDB store for `noteId`.
 	 *
 	 * Call when a note is deleted or renamed (old path) so the ghost lineage
 	 * does not resurrect stale content if the note is later recreated at the
@@ -311,17 +309,17 @@ export class CrdtManager {
 	 *   doc.destroy() → persistence.clearData() → persistence.destroy()
 	 *   → docs.delete() → synced.delete()
 	 *
-	 * **Never-opened paths (IDB-only ghost):** if no in-memory entry exists for
-	 * the path, `indexedDB.deleteDatabase(storeName)` clears the IDB store
+	 * **Never-opened notes (IDB-only ghost):** if no in-memory entry exists for
+	 * the noteId, `indexedDB.deleteDatabase(storeName)` clears the IDB store
 	 * directly. This covers the case where another session wrote to IDB but the
 	 * current session never opened the doc. The database name matches what
 	 * `entry()` uses when constructing IndexeddbPersistence (y-indexeddb uses
-	 * that name as the database name) — bare `path` unless dbPrefix is set (see
-	 * `storeName`). Resolves without throwing regardless of whether the DB
+	 * that name as the database name) — bare `noteId` unless dbPrefix is set
+	 * (see `storeName`). Resolves without throwing regardless of whether the DB
 	 * existed.
 	 */
-	async removeDoc(path: string): Promise<void> {
-		const id = this.docId(path);
+	async removeDoc(noteId: string): Promise<void> {
+		const id = this.docId(noteId);
 		const e = this.docs.get(id);
 		if (e) {
 			// In-memory entry exists: mirror flattenIfBloated's teardown sequence.
@@ -335,7 +333,7 @@ export class CrdtManager {
 			// resurrection on the next open. This is the same pattern that
 			// ensureDocSchema uses for the one-time schema wipe (schema.ts).
 			await new Promise<void>((resolve) => {
-				const req = indexedDB.deleteDatabase(this.storeName(path));
+				const req = indexedDB.deleteDatabase(this.storeName(noteId));
 				req.onsuccess = () => resolve();
 				req.onerror = () => resolve(); // non-fatal — DB may not exist
 				req.onblocked = () => resolve(); // resolve even if another tab has it open
@@ -376,8 +374,8 @@ export class CrdtManager {
 	 *
 	 * Returns true if the doc was flattened, false if the threshold was not met.
 	 */
-	async flattenIfBloated(path: string): Promise<boolean> {
-		const e = await this.entry(path);
+	async flattenIfBloated(noteId: string): Promise<boolean> {
+		const e = await this.entry(noteId);
 		const encoded = Y.encodeStateAsUpdate(e.doc);
 		const clientIds = Y.decodeStateVector(Y.encodeStateVector(e.doc)).size;
 
@@ -396,15 +394,15 @@ export class CrdtManager {
 		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
 		// applying the fresh update on top of the existing doc merges the two
 		// histories and re-inflates the content.
-		const id = this.docId(path);
+		const id = this.docId(noteId);
 		e.doc.destroy();
 		await e.persistence.clearData();
 		await e.persistence.destroy();
 		this.docs.delete(id);
 
-		// Re-open a clean entry for this path. `entry()` mints a new Y.Doc +
+		// Re-open a clean entry for this note. `entry()` mints a new Y.Doc +
 		// IndexeddbPersistence and awaits whenSynced (IDB is now empty).
-		const fresh = await this.entry(path);
+		const fresh = await this.entry(noteId);
 
 		// Seed the flattened state — both frontmatter and body — with LOCAL origin
 		// inside a single transaction so the update fires onUpdate →
@@ -476,8 +474,8 @@ export class CrdtManager {
 	 *   local update  → forwarded to server via `onUpdate`; NOT flushed to disk
 	 *   remote update → flushed to disk via `onFlushToDisk`; NOT forwarded
 	 */
-	private async entry(path: string): Promise<Entry> {
-		const id = this.docId(path);
+	private async entry(noteId: string): Promise<Entry> {
+		const id = this.docId(noteId);
 		const cached = this.docs.get(id);
 		if (cached) {
 			await cached.ready;
@@ -488,14 +486,14 @@ export class CrdtManager {
 		// The physical IndexedDB store name may be namespaced by dbPrefix (see
 		// CrdtManagerOptions.dbPrefix) — but `id` (bare, no prefix) is still what
 		// goes on the wire and keys the in-memory `docs` map.
-		const persistence = new IndexeddbPersistence(this.storeName(path), doc);
+		const persistence = new IndexeddbPersistence(this.storeName(noteId), doc);
 		const text = doc.getText(CONTENT_KEY);
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
 		// historically ~50 MB; eviction under storage pressure degrades local
 		// durability but sync continues in-memory + over the WS.
-		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(path, err));
+		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(noteId, err));
 
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {
@@ -510,7 +508,7 @@ export class CrdtManager {
 			if (origin !== REMOTE_ORIGIN) return;
 			const { order, values } = frontmatterOf(doc);
 			const body = text.toJSON();
-			void this.opts.onFlushToDisk(path, projectNote(order, values, body));
+			void this.opts.onFlushToDisk(noteId, projectNote(order, values, body));
 		});
 
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
