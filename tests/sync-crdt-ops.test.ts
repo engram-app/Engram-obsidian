@@ -203,6 +203,64 @@ describe("channel-down CRDT flush via REST /updates", () => {
 		await (e as any).flushCrdtState("p.md", "id-1");
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
+
+	// Probe-race stranding (final review Minor-1): a CRDT note edited while the
+	// channel is down schedules a flush WITHOUT a legacy push (pushFile routed
+	// it to scheduleCrdtFlush because ops looked available at edit time). If
+	// the capability probe latches crdtOpsUnsupported before the debounced
+	// flush timer fires, flushCrdtState must NOT just early-return — that
+	// silently strands the edit (durable in the local Y.Doc, never delivered
+	// this session). It must re-drive delivery via the legacy whole-doc push.
+	test("ops latch off mid-flush (probe fires before the timer) delivers via legacy push, not silently dropped", async () => {
+		let pushNoteCalled = false;
+		const testFile = new TFile("p.md");
+		const localApp = {
+			...mockApp,
+			vault: {
+				...mockApp.vault,
+				getFileByPath: mock().mockImplementation((p: string) =>
+					p === "p.md" ? testFile : null,
+				),
+			},
+		};
+		const api = {
+			pushNote: async () => {
+				pushNoteCalled = true;
+				return { note: {}, chunks_indexed: 1 };
+			},
+			postUpdate: async () => {
+				throw new Error("must not call postUpdate once ops are latched unsupported");
+			},
+		};
+		const crdt = {
+			encodeStateAsUpdate: async () => new Uint8Array([1]),
+			applyLocalEdit: async () => true,
+		};
+		const e = new SyncEngine(
+			localApp as any,
+			api as unknown as EngramApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setCrdtManager(crdt as unknown as CrdtManager);
+		e.setReady();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("p.md", "id-1");
+		e.setNoteIdMap(noteIdMap);
+		markConfirmed(e, "id-1");
+		e.setCrdtLiveCheck(() => false); // channel down — schedules a flush, no immediate push
+
+		const result = await (e as any).pushFile(testFile);
+		expect(result).toBe(true);
+		expect(pushNoteCalled).toBe(false); // scheduled, not pushed yet
+
+		// Capability probe latches ops-unsupported BEFORE the debounced flush fires.
+		(e as any).markCrdtOpsUnsupported(404);
+
+		await new Promise((r) => setTimeout(r, 20));
+
+		expect(pushNoteCalled).toBe(true); // delivered via legacy path, not dropped
+	});
 });
 
 // ---------------------------------------------------------------------------

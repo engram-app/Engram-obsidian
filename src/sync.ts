@@ -4315,7 +4315,35 @@ export class SyncEngine {
 	}
 
 	private async flushCrdtState(path: string, noteId: string): Promise<void> {
-		if (!this.crdtOpsAvailable() || !this.crdt) return;
+		if (!this.crdt) return;
+		// Probe-race stranding (final review Minor-1): the flush was scheduled
+		// while ops looked available, but the capability probe latched them off
+		// (crdtOpsUnsupported) before this timer fired — e.g. a pre-Phase-1
+		// backend that 404s /updates. The edit is durable in the local Y.Doc but
+		// was never sent (pushFile's CRDT branch routed it here instead of the
+		// legacy push). Re-drive delivery via pushFile: with ops now
+		// unavailable its CRDT-branch condition is false by construction, so it
+		// falls through to the legacy base_hash push. force=true bypasses the
+		// echo-hash skip (this content's hash was already recorded as the CRDT
+		// baseline on the original edit). If the file no longer exists locally
+		// (renamed/deleted since scheduling), queue it instead of dropping it.
+		if (this.crdtOpsUnsupported && this.settings.enableCrdt) {
+			const file = this.app.vault.getFileByPath(normalizePath(path));
+			if (file) {
+				await this.pushFile(file, true);
+			} else {
+				await this.enqueueChange({
+					path,
+					action: "upsert",
+					kind: "note",
+					mtime: Date.now() / 1000,
+					timestamp: Date.now(),
+					vaultId: this.settings.vaultId ?? undefined,
+				});
+			}
+			return;
+		}
+		if (!this.crdtOpsAvailable()) return;
 		try {
 			const update = await this.crdt.encodeStateAsUpdate(normalizePath(path));
 			await this.api.postUpdate(noteId, update);
@@ -5631,6 +5659,10 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.debounceTimers.clear();
+		for (const timer of this.crdtFlushTimers.values()) {
+			window.clearTimeout(timer);
+		}
+		this.crdtFlushTimers.clear();
 		for (const timer of this.recentlyPushed.values()) {
 			window.clearTimeout(timer);
 		}
