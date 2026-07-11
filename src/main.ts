@@ -1255,12 +1255,25 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
 		this.settings.accessTokenVaultId = undefined;
-		await this.saveSettings();
+
+		// Same ordering invariant as saveOAuthTokens (see the comment there):
+		// swap the provider onto this.api BEFORE saveSettings() rebuilds the note
+		// channel, or the rebuild freezes the OUTGOING OAuth user's id into the
+		// topic while the socket authenticates with the apiKey identity → the
+		// backend rejects the join "unauthorized" and live sync stays dead until
+		// a reload.
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
 			: null;
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
+		}
+
+		await this.saveSettings();
+
+		if (this.authProvider && this.noteStream) {
+			this.noteStream.setAuthProvider(this.authProvider);
+			this.noteStream.setAuthProbe(() => this.api.getMe());
 		}
 	}
 

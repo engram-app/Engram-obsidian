@@ -73,4 +73,51 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 		expect(fakeThis.settings.authMethod).toBe("oauth");
 		expect(fakeThis.settings.accessToken).toBeUndefined();
 	});
+
+	test("clearOAuthTokens installs the apiKey provider on this.api BEFORE saveSettings()", async () => {
+		// Mirror bug: clearing OAuth back to an apiKey identity has the same
+		// channel-rebuild-before-provider-swap hole — saveSettings() would freeze
+		// the outgoing OAuth user's id into the topic while the socket then
+		// authenticates as the apiKey identity.
+		const order: string[] = [];
+		const fakeThis = {
+			settings: {
+				apiKey: "ak-123",
+				vaultId: "v1",
+				refreshToken: "r",
+				authMethod: "oauth",
+			} as Record<string, unknown>,
+			api: {
+				setAuthProvider(_p: unknown) {
+					order.push("api.setAuthProvider");
+				},
+				getMe() {
+					return Promise.resolve({ id: "apikey-user" });
+				},
+			},
+			noteStream: {
+				setAuthProvider(_p: unknown) {
+					order.push("noteStream.setAuthProvider");
+				},
+				setAuthProbe(_f: unknown) {
+					order.push("noteStream.setAuthProbe");
+				},
+			},
+			async saveSettings() {
+				order.push("saveSettings");
+			},
+		};
+
+		await EngramSyncPlugin.prototype.clearOAuthTokens.call(fakeThis as never);
+
+		const apiSwapIdx = order.indexOf("api.setAuthProvider");
+		const saveIdx = order.indexOf("saveSettings");
+		expect(apiSwapIdx).toBeGreaterThanOrEqual(0);
+		expect(saveIdx).toBeGreaterThanOrEqual(0);
+		expect(apiSwapIdx).toBeLessThan(saveIdx);
+
+		// OAuth fields cleared before the save.
+		expect(fakeThis.settings.refreshToken).toBeUndefined();
+		expect(fakeThis.settings.authMethod).toBeNull();
+	});
 });
