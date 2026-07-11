@@ -5104,7 +5104,22 @@ export class SyncEngine {
 	 *    confirms via the type-delete gate. Defaults to false (plain push that
 	 *    leaves remote-only files untouched).
 	 */
-	async pushAll(opts: { replaceRemote?: boolean } = {}): Promise<number> {
+	/** Snapshot the syncable local paths right now. Callers capture this BEFORE
+	 *  markSyncGateAccepted opens the gate, then pass it to pushAll({replaceRemote})
+	 *  so the wipe uses local-truth-at-sync-start and a gate-open live delivery
+	 *  can't shield a remote extra from the wipe (test_86). */
+	snapshotLocalPaths(): Set<string> {
+		return new Set(
+			this.app.vault
+				.getFiles()
+				.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path))
+				.map((f: TFile) => normalizePath(f.path)),
+		);
+	}
+
+	async pushAll(
+		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
 			return 0;
@@ -5126,11 +5141,21 @@ export class SyncEngine {
 		// ends up an exact mirror of local. Runs first so the "Delete all on
 		// remote, then upload local files" label is literally true.
 		if (opts.replaceRemote) {
-			await this.wipeRemote();
+			await this.wipeRemote(opts.localSnapshot);
 		}
 
 		const files = this.app.vault.getFiles();
-		const toSync = files.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+		let toSync = files.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+		// When a pre-gate snapshot is supplied (replace-remote), upload ONLY files
+		// that existed before markSyncGateAccepted opened the gate. A note the
+		// gate-open race delivered into the vault is a REMOTE note wipeRemote just
+		// deleted — re-pushing it here would resurrect it (test_86) or 404 via the
+		// delete-wins guard. Scoping both wipe and push to the snapshot makes the
+		// op exactly "remote := local-at-sync-start".
+		if (opts.localSnapshot) {
+			const snap = opts.localSnapshot;
+			toSync = toSync.filter((f: TFile) => snap.has(normalizePath(f.path)));
+		}
 
 		let pushed = 0;
 		let failed = 0;
@@ -5233,7 +5258,16 @@ export class SyncEngine {
 					"reconcile",
 					`Fixing ${toFix.length} files after pushAll (${missing.length} missing, ${diverged.length} diverged)`,
 				);
+				// Same snapshot fence as the main push loop: when replace-remote
+				// supplied a pre-gate snapshot, reconcile must not re-push a path
+				// outside it. reconcile re-enumerates getFiles(), so a gate-open
+				// race note wiped by wipeRemote would otherwise be classified
+				// "missing" and resurrected here (delete-wins only masks it).
+				const snap = opts.localSnapshot;
 				for (const path of toFix) {
+					if (snap && !snap.has(normalizePath(path))) {
+						continue;
+					}
 					const file = this.app.vault.getFileByPath(normalizePath(path));
 					if (file) {
 						await this.pushFile(file, true);
@@ -5255,7 +5289,7 @@ export class SyncEngine {
 	 *  recreated by the subsequent upload); the user confirms via the type-delete
 	 *  gate. Failures on individual deletes are logged, not thrown, so the
 	 *  re-upload still runs. */
-	private async wipeRemote(): Promise<void> {
+	private async wipeRemote(localSnapshot?: Set<string>): Promise<void> {
 		const manifest = await this.api.getManifest();
 		if (!manifest) {
 			rlog().warn("push", "wipeRemote skipped — backend has no /sync/manifest");
@@ -5268,12 +5302,23 @@ export class SyncEngine {
 		// refuses the same-path re-push as `recently_deleted` (permanent 404 —
 		// the e2e test_86 regression). Leaving it lets the follow-up force-push
 		// update it in place (id retained → CRDT room preserved, no tombstone).
-		const localPaths = new Set(
-			this.app.vault
-				.getFiles()
-				.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
-				.map((f) => normalizePath(f.path)),
-		);
+		//
+		// Prefer a caller-supplied PRE-GATE snapshot of local paths. push-all-
+		// delete-remote runs markSyncGateAccepted() before this wipe, which opens
+		// the gate and lets a queued live WS event inject a server-only note into
+		// the vault BEFORE getFiles() reads it here — that note would then look
+		// "local" and dodge the wipe (test_86 gate-open race: server proof showed
+		// the extra's only DELETE arrived ~30s late). The snapshot is local truth
+		// as of sync start, so a race-injected note is still wiped and genuinely-
+		// local files are still kept.
+		const localPaths =
+			localSnapshot ??
+			new Set(
+				this.app.vault
+					.getFiles()
+					.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
+					.map((f) => normalizePath(f.path)),
+			);
 		const notePaths = manifest.notes
 			.map((n) => n.path)
 			.filter((p) => !localPaths.has(normalizePath(p)));
