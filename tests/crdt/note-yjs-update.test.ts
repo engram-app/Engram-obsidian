@@ -23,6 +23,10 @@ const mockApp = {
 	vault: {
 		configDir: ".obsidian",
 		getFileByPath: mock().mockReturnValue(null),
+		// captureDiskDriftBeforeRemote (BUG 2) probes disk for un-pushed drift.
+		// These tests carry no on-disk file, so there is no drift to merge.
+		getAbstractFileByPath: mock().mockReturnValue(null),
+		cachedRead: mock().mockResolvedValue(""),
 	},
 	fileManager: { trashFile: mock().mockResolvedValue(undefined) },
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },

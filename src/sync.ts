@@ -846,6 +846,41 @@ export class SyncEngine {
 		this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
 	}
 
+	/** Capture an un-pushed on-disk edit into the Y.Doc BEFORE a fanned-out or
+	 *  cold-received remote update flushes to disk, so CRDT MERGES the local
+	 *  drift instead of the remote projection overwriting it (BUG 2: a
+	 *  NOT-live-bound note's external edit lives only on disk until its debounce
+	 *  fires pushFile; a remote apply landing in that window would clobber it).
+	 *  Only acts on a note whose disk content diverges from its recorded baseline
+	 *  (needsColdReconcile) — an in-sync note, or one with no baseline, has
+	 *  nothing local to preserve. Reuses applyLocalEdit (frontmatter split +
+	 *  minimal diff), mirroring reconcileColdStart; oversized notes are left to
+	 *  the legacy path (never seeded — 8 MB WS frame limit). Best-effort: never
+	 *  throws into the apply path. The caller has already established
+	 *  !isLiveBound. */
+	private async captureDiskDriftBeforeRemote(path: string, noteId: string): Promise<void> {
+		if (!this.crdt) return;
+		const normalized = normalizePath(path);
+		const file = this.app.vault.getAbstractFileByPath(normalized);
+		if (!(file instanceof TFile)) return;
+		let disk: string;
+		try {
+			disk = await this.app.vault.cachedRead(file);
+		} catch {
+			return; // unreadable — let the remote apply proceed rather than block sync
+		}
+		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return;
+		if (!this.needsColdReconcile(normalized, disk)) return; // in-sync / no baseline
+		try {
+			await this.crdt.applyLocalEdit(noteId, disk);
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`,
+			);
+		}
+	}
+
 	/** Materialize an EMPTY note whose emptiness the server has just confirmed.
 	 *
 	 *  A non-empty note materializes through the normal update→`flushFromCrdt`
@@ -2516,6 +2551,11 @@ export class SyncEngine {
 			if (this.isLiveBound(path)) continue; // live channel owns open notes
 			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
 			try {
+				// Merge any un-pushed disk drift into the Y.Doc first, so the pulled
+				// remote delta merges with it instead of overwriting it (BUG 2).
+				// Seeding before encodeStateVector keeps `since` consistent with the
+				// now-updated local state.
+				await this.captureDiskDriftBeforeRemote(path, noteId);
 				// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
 				const since = toB64(await this.crdt.encodeStateVector(noteId));
 				const { update, head } = await this.api.getUpdates(noteId, since);
@@ -2559,6 +2599,9 @@ export class SyncEngine {
 		if (!this.isNoteConfirmed(noteId)) return;
 		if (this.isLiveBound(normalizePath(path))) return; // live channel owns open notes
 		try {
+			// Merge any un-pushed disk drift into the Y.Doc first, so this remote
+			// apply merges with it instead of overwriting it (BUG 2).
+			await this.captureDiskDriftBeforeRemote(path, noteId);
 			await this.crdt.applyRemoteUpdate(noteId, update);
 			this.setCrdtHead(path, head); // crdtHead persists under the vault path
 			this.hibernateIfIdle(path, noteId);
