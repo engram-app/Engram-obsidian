@@ -69,7 +69,7 @@ const mockApp = {
 } as any;
 
 type EnginePrivates = {
-	wipeRemote(): Promise<void>;
+	wipeRemote(localSnapshot?: Set<string>): Promise<void>;
 	syncState: Map<string, unknown>;
 };
 
@@ -350,5 +350,94 @@ describe("wipeRemote preserves locally-present notes (delete-wins regression)", 
 		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("Notes/Keep.md");
 		// Its id binding is retained so the re-push updates by id in place.
 		expect(idMap.get("Notes/Keep.md")).toBe("Notes/Keep.md");
+	});
+});
+
+describe("wipeRemote pre-gate local snapshot (test_86 gate-open race)", () => {
+	// push-all-delete-remote runs markSyncGateAccepted() BEFORE wipeRemote. The
+	// gate-open delivers queued live WS events into the vault, so a server-only
+	// note (RemoteOnly) can land locally BEFORE wipeRemote reads getFiles() — it
+	// then looks "local" and dodges the wipe (server proof: the only DELETE came
+	// ~30s later). Passing a snapshot of local paths captured BEFORE the gate
+	// opened makes the wipe use the pre-sync truth: a race-injected note is still
+	// a remote extra (wiped), while genuinely-local files are kept.
+	test("a race-injected note (in the vault but NOT in the snapshot) is still wiped", async () => {
+		const engine = createEngine();
+		manifestWith(["Notes/RemoteOnly.md", "Notes/LocalOnly.md"]);
+		// The vault currently holds BOTH — RemoteOnly was live-delivered by the
+		// gate-open race after the snapshot was taken.
+		mockApp.vault.getFiles.mockReturnValue([
+			new TFile("Notes/RemoteOnly.md"),
+			new TFile("Notes/LocalOnly.md"),
+		]);
+		// Pre-gate snapshot: only LocalOnly was truly local; RemoteOnly was remote-only.
+		const snapshot = new Set(["Notes/LocalOnly.md"]);
+
+		await priv(engine).wipeRemote(snapshot);
+
+		// Race-injected remote note is wiped despite being in the vault now.
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/RemoteOnly.md");
+		// Genuinely-local file is kept (no tombstone → no delete-wins 404).
+		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("Notes/LocalOnly.md");
+	});
+
+	test("without a snapshot, falls back to current getFiles() (unchanged behavior)", async () => {
+		const engine = createEngine();
+		manifestWith(["Notes/Extra.md", "Notes/Local.md"]);
+		mockApp.vault.getFiles.mockReturnValue([new TFile("Notes/Local.md")]);
+
+		await priv(engine).wipeRemote();
+
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Extra.md");
+		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("Notes/Local.md");
+	});
+
+	test("pushAll(replaceRemote, snapshot) does NOT re-push a race-injected note", async () => {
+		const engine = createEngine();
+		manifestWith(["Notes/RemoteOnly.md"]);
+		// Vault holds the race-injected RemoteOnly plus a genuinely-local file.
+		mockApp.vault.getFiles.mockReturnValue([
+			new TFile("Notes/RemoteOnly.md"),
+			new TFile("Notes/LocalOnly.md"),
+		]);
+
+		await engine.pushAll({
+			replaceRemote: true,
+			localSnapshot: new Set(["Notes/LocalOnly.md"]),
+		});
+
+		// Wiped as an extra, and NOT re-pushed (would resurrect it / 404).
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/RemoteOnly.md");
+		const pushedPaths = (mockApi.pushNote as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
+		expect(pushedPaths).not.toContain("Notes/RemoteOnly.md");
+	});
+
+	test("reconcile does NOT resurrect a race-injected note even when getFileByPath resolves it", async () => {
+		// The prior test only proves the MAIN push loop skips the race note — it
+		// leaves the vault's getFileByPath at the beforeEach null, so reconcile's
+		// re-push loop is a no-op. reconcile re-enumerates getFiles() and re-pushes
+		// "missing" paths via pushFile(); this test resolves the race file there so
+		// the reconcile fence (not just the main-loop filter) is what's asserted.
+		const engine = createEngine();
+		// Manifest lacks RemoteOnly (wiped) → reconcile classifies it "missing".
+		manifestWith(["Notes/LocalOnly.md"]);
+		// Vault holds BOTH — RemoteOnly was live-delivered by the gate-open race.
+		mockApp.vault.getFiles.mockReturnValue([
+			new TFile("Notes/RemoteOnly.md"),
+			new TFile("Notes/LocalOnly.md"),
+		]);
+		// Unlike the sibling test, reconcile CAN resolve the race file here — so
+		// without the snapshot fence, pushFile(RemoteOnly, true) would resurrect it.
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === "Notes/RemoteOnly.md" ? new TFile("Notes/RemoteOnly.md") : null,
+		);
+
+		await engine.pushAll({
+			replaceRemote: true,
+			localSnapshot: new Set(["Notes/LocalOnly.md"]),
+		});
+
+		const pushedPaths = (mockApi.pushNote as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
+		expect(pushedPaths).not.toContain("Notes/RemoteOnly.md");
 	});
 });
