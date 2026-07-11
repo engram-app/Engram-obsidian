@@ -182,6 +182,13 @@ export class NoteChannel {
 	 *  transient error after a previously successful join) degrades to the legacy
 	 *  pushNote path rather than silently dropping edits into a dead transport. */
 	onCrdtJoinError: ((reason: string | undefined, min?: number) => void) | null = null;
+	/** Server-pushed Yjs update for a note, fanned out over the per-vault
+	 *  `sync:{userId}:{vaultId}` topic regardless of CRDT-room enrollment
+	 *  (backend fan-out). `b64` is the raw v1 update, still base64-encoded — the
+	 *  CRDT layer decodes it. `head` is the server's post-apply head marker.
+	 *  Lets an IDLE note (no dedicated CRDT room) converge without ever
+	 *  STEP1-enrolling. */
+	onNoteYjsUpdate: ((noteId: string, b64: string, head: string) => void) | null = null;
 
 	constructor(
 		baseUrl: string,
@@ -727,6 +734,16 @@ export class NoteChannel {
 			const b64 = payload.b64 as string | undefined;
 			if (docId && b64) {
 				this.onCrdtMessage?.(docId, b64);
+			}
+			return;
+		}
+
+		if (event === "note_yjs_update" && payload) {
+			const noteId = payload.note_id as string | undefined;
+			const b64 = payload.b64 as string | undefined;
+			const head = payload.head as string | undefined;
+			if (noteId && b64 && head) {
+				this.onNoteYjsUpdate?.(noteId, b64, head);
 			}
 			return;
 		}

@@ -1,7 +1,7 @@
 import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
-import { CrdtChannel } from "./channel";
+import { CrdtChannel, fromB64 } from "./channel";
 import { CrdtEnrollment } from "./enrollment";
 import { CrdtManager } from "./manager";
 import type { NoteIdMap } from "./note-id-map";
@@ -16,6 +16,7 @@ type WiringSyncEngine = Pick<
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "applyPushedNoteUpdate"
 >;
 
 export interface CrdtWiringDeps {
@@ -50,6 +51,9 @@ export interface CrdtWiring {
 	 *  plugin #202) — the create-race cross-wire signature. Handler kicks the
 	 *  sync engine's coalesced live id-map reconcile (channel.onCrdtNoteNotFound). */
 	onCrdtNoteNotFound: (docId: string) => void;
+	/** Server-pushed Yjs update for an IDLE note, fanned out over the per-vault
+	 *  channel regardless of CRDT-room enrollment (channel.onNoteYjsUpdate). */
+	onNoteYjsUpdate: (noteId: string, b64: string, head: string) => void;
 	/** Reconcile the noteIdMap from the manifest, then retry every stranded
 	 *  flush. Exposed for tests + teardown; production fires it via the debounce
 	 *  timer set in the manager's onFlushToDisk. */
@@ -265,6 +269,13 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		void channel.handleFrame(docId, b64);
 	};
 
+	// Vault-channel fan-out (P1): applies a server-pushed Yjs update to an IDLE
+	// note (no dedicated CRDT room) without ever STEP1-enrolling it. The sync
+	// engine itself guards confirmed/live-bound state and isolates failures.
+	const onNoteYjsUpdate = (noteId: string, b64: string, head: string): void => {
+		void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+	};
+
 	// Discovery: when another device opens a room (server announces
 	// crdt_doc_ready), enroll the note here so a sync-step-1 fires and we pull it
 	// even if we've never opened it.
@@ -307,6 +318,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		onCrdtMessage,
 		onCrdtDocReady,
 		onCrdtNoteNotFound,
+		onNoteYjsUpdate,
 		drainStrandedFlushes,
 		clearStrandHealAttempts: () => strandHealAttempts.clear(),
 		dispose,

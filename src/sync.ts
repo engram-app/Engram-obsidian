@@ -2525,6 +2525,33 @@ export class SyncEngine {
 		return converged;
 	}
 
+	/** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
+	 *  to an IDLE note — one with no dedicated CRDT room open right now. Mirrors
+	 *  coldReceive's per-note apply, minus the REST getUpdates fetch (the update
+	 *  bytes arrive directly in the event, not fetched separately). Skips a note
+	 *  the live editor's own room owns (isLiveBound) — that room already applies
+	 *  its own crdt_msg frames, so this would be a harmless-but-wasteful double
+	 *  apply; skipping it matches Relay's `if (isActive) return`. Skips a note
+	 *  not yet confirmed (no server row known) or one this device hasn't mapped
+	 *  to a path (first-discovery is pull()'s job, same as coldReceive).
+	 *  Best-effort: isolates its own failure, never throws. */
+	async applyPushedNoteUpdate(noteId: string, update: Uint8Array, head: string): Promise<void> {
+		if (!this.crdt) return;
+		const path = this.noteIdMap?.pathForId(noteId) ?? null;
+		if (!path) return; // not locally known — first-discovery is pull()'s job
+		if (!this.isNoteConfirmed(noteId)) return;
+		if (this.isLiveBound(normalizePath(path))) return; // live channel owns open notes
+		try {
+			await this.crdt.applyRemoteUpdate(noteId, update);
+			this.setCrdtHead(path, head); // crdtHead persists under the vault path
+		} catch (e) {
+			// Isolated: log, leave crdtHead unadvanced — the next coldReceive poll
+			// (or a subsequent push) will retry convergence.
+			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
+			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+		}
+	}
+
 	/** Pull remote changes and apply to the vault via the ordered cursor feed.
 	 *
 	 *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local

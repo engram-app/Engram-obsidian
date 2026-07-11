@@ -1633,6 +1633,7 @@ export default class EngramSyncPlugin extends Plugin {
 					channel.onCrdtMessage = wiring.onCrdtMessage;
 					channel.onCrdtDocReady = wiring.onCrdtDocReady;
 					channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
+					channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate;
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
 					// backend this never fires and setCrdtManager stays null → every

@@ -255,6 +255,44 @@ describe("NoteChannel inbound crdt_msg", () => {
 
 		channel.disconnect();
 	});
+
+	test("routes inbound note_yjs_update to onNoteYjsUpdate callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: { noteId: string; b64: string; head: string }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head) => received.push({ noteId, b64, head });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV" },
+		]);
+
+		expect(received).toEqual([{ noteId: "id-a", b64: "dGVzdA==", head: "SRV" }]);
+
+		channel.disconnect();
+	});
+
+	test("note_yjs_update without onNoteYjsUpdate is a no-op (no crash)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(() =>
+			simulateMessage(lastWsInstance, [
+				null,
+				null,
+				"sync:u1:v1",
+				"note_yjs_update",
+				{ note_id: "id-a", b64: "dGVzdA==", head: "SRV" },
+			]),
+		).not.toThrow();
+
+		channel.disconnect();
+	});
 });
 
 // ---------------------------------------------------------------------------
