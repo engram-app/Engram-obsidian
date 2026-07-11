@@ -597,3 +597,52 @@ test("removeDoc clears the synced mark so re-opening triggers a fresh handshake 
 	expect(mgr.isSynced("a.md")).toBe(false);
 	await mgr.destroy();
 });
+
+// ---------------------------------------------------------------------------
+// BUG 1: closeDoc must NOT destroy a Y.Doc while a mutating op (applyLocalEdit
+// / applyRemoteUpdate) is in flight. A NOT-live-bound note edited on disk runs
+// applyLocalEdit (which yields at `await entry(...)`); a concurrent fanned-out
+// remote update hibernates the same note → closeDoc → doc.destroy() clears the
+// update listeners, so the resumed applyLocalEdit emits/persists NOTHING and
+// the edit is silently lost. closeDoc must be a no-op while an op is pending.
+// ---------------------------------------------------------------------------
+
+test("BUG 1: closeDoc during an in-flight applyLocalEdit does not destroy the doc or lose the edit", async () => {
+	const captured: Uint8Array[] = [];
+	const { mgr } = makeManager(captured);
+	mgr.markSynced("race.md");
+	// Establish a base so the second edit takes the diff path (history exists).
+	await mgr.applyLocalEdit("race.md", "base body", false);
+	const baseDoc = await mgr.getDoc("race.md");
+	const capturedBefore = captured.length;
+
+	// Gate the NEXT entry() resolution so closeDoc can race the in-flight edit.
+	const realEntry = (mgr as any).entry.bind(mgr);
+	let release!: () => void;
+	const gate = new Promise<void>((r) => {
+		release = r;
+	});
+	let gated = false;
+	const entrySpy = spyOn(mgr as any, "entry").mockImplementation(async (id: string) => {
+		const e = await realEntry(id);
+		if (!gated) {
+			gated = true;
+			await gate; // hold the FIRST applyLocalEdit inside entry()
+		}
+		return e;
+	});
+
+	const editP = mgr.applyLocalEdit("race.md", "base body EDITED", true);
+	await Promise.resolve(); // let applyLocalEdit reach the gated await
+	// Concurrent hibernation fires closeDoc while the edit is in flight.
+	mgr.closeDoc("race.md");
+	release();
+	await editP;
+	entrySpy.mockRestore();
+
+	// The edit must have been applied to the SAME (not-destroyed) doc and emitted.
+	expect(await mgr.getDoc("race.md")).toBe(baseDoc); // doc not destroyed/replaced
+	expect(await mgr.getText("race.md")).toBe("base body EDITED"); // edit not lost
+	expect(captured.length).toBeGreaterThan(capturedBefore); // update was emitted
+	await mgr.destroy();
+});

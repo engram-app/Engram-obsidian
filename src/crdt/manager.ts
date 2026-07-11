@@ -120,8 +120,34 @@ export class CrdtManager {
 	 */
 	private readonly synced = new Set<string>();
 
+	/**
+	 * Per-docId count of mutating ops (applyLocalEdit / applyRemoteUpdate)
+	 * currently in flight. Incremented SYNCHRONOUSLY at the very start of each
+	 * mutating op — before its first `await entry(...)` yields — and decremented
+	 * in a `finally`. `closeDoc` refuses to destroy a doc whose count is > 0:
+	 * otherwise a concurrent hibernation (`closeDoc` from a fanned-out remote
+	 * update) could `doc.destroy()` out from under an awaiting `applyLocalEdit`,
+	 * clearing the update listeners so the resumed edit emits/persists nothing —
+	 * a silent edit loss plus a poisoned synced baseline. Keyed by docId, the
+	 * same key space as `docs`.
+	 */
+	private readonly inFlightOps = new Map<string, number>();
+
 	constructor(opts: CrdtManagerOptions) {
 		this.opts = opts;
+	}
+
+	/** Mark a mutating op as started for `id` (docId). Call synchronously before
+	 *  the op's first await. */
+	private beginOp(id: string): void {
+		this.inFlightOps.set(id, (this.inFlightOps.get(id) ?? 0) + 1);
+	}
+
+	/** Mark a mutating op as finished for `id`. Call from a `finally`. */
+	private endOp(id: string): void {
+		const n = (this.inFlightOps.get(id) ?? 0) - 1;
+		if (n > 0) this.inFlightOps.set(id, n);
+		else this.inFlightOps.delete(id);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -219,6 +245,20 @@ export class CrdtManager {
 	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
 	 */
 	async applyLocalEdit(noteId: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
+		const id = this.docId(noteId);
+		this.beginOp(id); // synchronous, before the first await — fences closeDoc
+		try {
+			return await this.applyLocalEditInner(noteId, diskContent, hasLca);
+		} finally {
+			this.endOp(id);
+		}
+	}
+
+	private async applyLocalEditInner(
+		noteId: string,
+		diskContent: string,
+		hasLca?: boolean,
+	): Promise<boolean> {
 		const e = await this.entry(noteId);
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
@@ -256,8 +296,14 @@ export class CrdtManager {
 	 * re-send it to the server, but DOES flush the merged content to disk.
 	 */
 	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
-		const e = await this.entry(noteId);
-		Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
+		const id = this.docId(noteId);
+		this.beginOp(id); // synchronous, before the first await — fences closeDoc
+		try {
+			const e = await this.entry(noteId);
+			Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
+		} finally {
+			this.endOp(id);
+		}
 	}
 
 	/** Encode the current state vector (for the channel handshake sync step). */
@@ -293,6 +339,12 @@ export class CrdtManager {
 	 */
 	closeDoc(noteId: string): void {
 		const id = this.docId(noteId);
+		// In-flight guard: never destroy a doc while a mutating op (applyLocalEdit
+		// / applyRemoteUpdate) is awaiting on it — destroying clears the update
+		// listeners, so the resumed op emits/persists nothing and its edit is lost
+		// (silent data loss + poisoned baseline). Leave the doc resident; a later
+		// idle apply's hibernation frees it once no op is pending.
+		if ((this.inFlightOps.get(id) ?? 0) > 0) return;
 		const e = this.docs.get(id);
 		if (!e) return;
 		e.doc.destroy();
