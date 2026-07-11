@@ -95,11 +95,13 @@ async function historyLessScenario(opts: {
 	dbPrefix: string;
 	disk: string; // on-disk content for a.md (drift or in-sync)
 	baselineHash: number; // recorded last-synced hash (drives needsColdReconcile)
-	serverFull: string; // full server body (what getUpdates since="" reconstructs)
+	serverFull: string; // full server body (what getUpdates reconstructs)
 	baseStoreContent?: string; // LCA content, if present
+	createThrows?: boolean; // vault.create rejects (conflict-copy write fails)
 }) {
 	const disk = new Map<string, string>();
 	disk.set("a.md", opts.disk);
+	const sinceCalls: string[] = []; // every getUpdates `since` arg, in order
 
 	const box = { e: null as unknown as SyncEngine };
 	const mgr = new CrdtManager({
@@ -130,6 +132,7 @@ async function historyLessScenario(opts: {
 				disk.set(f.path, c);
 			}),
 			create: mock(async (p: string, c: string) => {
+				if (opts.createThrows) throw new Error("EACCES: simulated disk write failure");
 				disk.set(p, c);
 			}),
 			createFolder: mock().mockResolvedValue(undefined),
@@ -141,10 +144,10 @@ async function historyLessScenario(opts: {
 
 	const api = {
 		getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
-		getUpdates: async (_id: string, _since?: string) => ({
-			update: serverFullUpdate,
-			head: "SRV",
-		}),
+		getUpdates: async (_id: string, since?: string) => {
+			sinceCalls.push(since ?? "");
+			return { update: serverFullUpdate, head: "SRV" };
+		},
 	} as unknown as EngramApi;
 
 	const e = new SyncEngine(
@@ -173,7 +176,7 @@ async function historyLessScenario(opts: {
 			delete: () => {},
 		};
 	}
-	return { e, mgr, disk };
+	return { e, mgr, disk, sinceCalls };
 }
 
 /** normalizePath is not exported; a.md needs no normalization in these tests. */
@@ -270,6 +273,65 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 		const conflictKey = [...disk.keys()].find((k) => k.includes("(conflict"));
 		expect(conflictKey).toBeDefined();
 		expect(disk.get(conflictKey as string)).toBe("BASE local");
+		await mgr.destroy();
+	});
+});
+
+describe("I1: no-LCA keep-both preserves the local edit even if the copy write fails", () => {
+	test("conflict-copy write THROWS → local edit NOT lost: adopt aborts, crdtHead unadvanced, original disk intact", async () => {
+		const { e, mgr, disk } = await historyLessScenario({
+			dbPrefix: "hl-copyfail",
+			disk: "BASE local", // un-pushed local edit — the sole live copy
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE REMOTE",
+			createThrows: true, // conflict-copy write fails for real
+			// no baseStoreContent → no LCA → keep-both path
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		// Adopt aborted BEFORE overwriting disk: the original still holds the edit.
+		expect(disk.get("a.md")).toBe("BASE local");
+		// crdtHead NOT advanced → the caller retries next poll (no silent loss).
+		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		await mgr.destroy();
+	});
+
+	test("happy path: original=server, copy=local, both recorded, crdtHead advanced", async () => {
+		const { e, mgr, disk } = await historyLessScenario({
+			dbPrefix: "hl-copyok",
+			disk: "BASE local",
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE REMOTE",
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(disk.get("a.md")).toBe("BASE REMOTE"); // original converged to server
+		const conflictKey = [...disk.keys()].find((k) => k.includes("(conflict"));
+		expect(conflictKey).toBeDefined();
+		expect(disk.get(conflictKey as string)).toBe("BASE local"); // copy = local
+		// Both recorded in syncState so neither is re-pushed as spurious drift.
+		const state = (e as any).syncState as Map<string, { hash: number }>;
+		expect(state.get("a.md")?.hash).toBe(fnv1a("BASE REMOTE"));
+		expect(state.get(conflictKey as string)?.hash).toBe(fnv1a("BASE local"));
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // advanced
+		await mgr.destroy();
+	});
+
+	test("full-state fetch uses the empty-doc state vector, NOT an empty since (backend 400 guard)", async () => {
+		const { e, mgr, sinceCalls } = await historyLessScenario({
+			dbPrefix: "hl-since",
+			disk: "BASE", // no drift — isolate the adopt fetch
+			baselineHash: fnv1a("BASE"),
+			serverFull: "BASE REMOTE",
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(sinceCalls.length).toBe(1);
+		expect(sinceCalls[0]).not.toBe(""); // real empty-doc SV, not the rejected ""
+		expect(sinceCalls[0].length).toBeGreaterThan(0);
 		await mgr.destroy();
 	});
 });

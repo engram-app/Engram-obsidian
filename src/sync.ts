@@ -935,12 +935,45 @@ export class SyncEngine {
 			!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
 			this.needsColdReconcile(normalized, disk);
 
-		// 2. Fetch + adopt the FULL server state. Reconstructs the note on the
+		// 2. Keep-both (drift + NO LCA): the adopt-flush in step 3 overwrites the
+		//    original's disk with server content, after which `disk` survives ONLY
+		//    in memory. Preserve it to its conflict copy FIRST; if that write fails
+		//    for real, ABORT without adopting so the original disk keeps the local
+		//    edit and the caller retries next poll (crdtHead unadvanced) — instead
+		//    of clobbering disk and then losing the sole in-memory copy. The LCA
+		//    branch stays post-adopt (step 4): its merged content is made durable in
+		//    the CRDT before flushing, so a flush failure self-heals. The LCA/no-LCA
+		//    split needs only the BaseStore, not the adopted server text.
+		const lca = hasDrift && disk !== null ? this.baseStore?.get(normalized) : undefined;
+		let keepBothCopied = false;
+		if (hasDrift && disk !== null && !lca) {
+			try {
+				const copy = await this.writeDriftConflictCopy(normalized, disk);
+				keepBothCopied = true;
+				rlog().info(
+					"conflict",
+					`history-less drift → keep-both | original=${normalized} copy=${copy}`,
+				);
+			} catch (e) {
+				rlog().error(
+					"conflict",
+					`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting adopt to retain the local edit for retry`,
+				);
+				return null;
+			}
+		}
+
+		// 3. Fetch + adopt the FULL server state. Reconstructs the note on the
 		//    server lineage; the doc is history-full afterward. The echo-guarded
 		//    flush writes server content to disk (clobbers drift — captured above).
 		let head: string;
 		try {
-			const full = await this.api.getUpdates(noteId, "");
+			// Take the state vector BEFORE adopting (doc still empty → SV encodes
+			// "I have nothing", so the server returns FULL state). An empty `since`
+			// string is rejected by the backend's plausible_state_vector? guard
+			// (400) — mirror coldReceive and send the real (empty-doc) SV instead.
+			const since = toB64(await this.crdt.encodeStateVector(noteId));
+			const full = await this.api.getUpdates(noteId, since);
 			head = full.head;
 			await this.crdt.applyRemoteUpdate(noteId, full.update);
 		} catch (e) {
@@ -951,8 +984,10 @@ export class SyncEngine {
 			return null;
 		}
 
-		// 3. Reconcile any un-pushed disk drift against the adopted server lineage.
-		if (hasDrift && disk !== null) {
+		// 4. Reconcile any un-pushed disk drift against the adopted server lineage.
+		//    The no-LCA keep-both copy is already written durably in step 2, so skip
+		//    it here (don't write it twice); only the LCA 3-way merge remains.
+		if (hasDrift && disk !== null && !keepBothCopied) {
 			await this.reconcileDriftOntoServer(normalized, noteId, disk);
 		}
 		return head;
@@ -1018,11 +1053,10 @@ export class SyncEngine {
 
 		// No LCA / conflicted → keep both. Original stays on server (already
 		// flushed); local drift is preserved as its own conflict-copy note.
-		const date = new Date().toISOString().slice(0, 10);
-		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+		// (The no-LCA case writes this copy pre-adopt in adoptHistoryLessNote; this
+		// path only runs for a conflicted 3-way merge, where the LCA existed.)
 		try {
-			await this.createFileWithFolders(conflictPath, localDisk);
-			this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
+			const conflictPath = await this.writeDriftConflictCopy(normalized, localDisk);
 			rlog().info(
 				"conflict",
 				`history-less drift → keep-both | original=${normalized} copy=${conflictPath}`,
@@ -1033,6 +1067,20 @@ export class SyncEngine {
 				`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}`,
 			);
 		}
+	}
+
+	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
+	 *  `normalized` and record its baseline so it isn't re-pushed as drift.
+	 *  Throws on a GENUINE write failure — `createFileWithFolders` degrades a
+	 *  benign "already exists" race to a modify with the same content, so only
+	 *  real errors (disk full, permission, illegal path) propagate. Returns the
+	 *  conflict path written. */
+	private async writeDriftConflictCopy(normalized: string, localDisk: string): Promise<string> {
+		const date = new Date().toISOString().slice(0, 10);
+		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+		await this.createFileWithFolders(conflictPath, localDisk);
+		this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
+		return conflictPath;
 	}
 
 	/** Materialize an EMPTY note whose emptiness the server has just confirmed.
