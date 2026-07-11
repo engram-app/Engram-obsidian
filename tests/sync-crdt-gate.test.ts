@@ -408,7 +408,7 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
-	test("applyChange materializes a not-yet-local markdown note AND enrolls it (discovery)", async () => {
+	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -437,14 +437,17 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// Materialized from the payload we already hold, AND enrolled for live edits.
+		// Materialized from the payload we already hold. A cold (not live-bound)
+		// discovered note is NOT enrolled — its body arrived room-free and future
+		// updates come over the vault-channel fanout; enrolling every discovered
+		// note on connect is the enrollment storm P2 removes.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalled();
 		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");
 	});
 
-	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
+	test("applyChange does NOT enroll an existing cold (not live-bound) markdown note on catch-up", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -452,10 +455,10 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/have.md", "Notes/have.md");
 		engine.setNoteIdMap(noteIdMap);
-		// The note already exists locally → CRDT owns its body (no legacy write),
-		// but we still re-enroll so a post-reconnect resetAll re-fires the STEP1
-		// handshake and pulls any update made while disconnected (idempotent
-		// otherwise). See test_48 oauth reconnect catch-up.
+		// The note already exists locally → CRDT owns its body (no legacy write).
+		// It is NOT live-bound, so we do NOT open a STEP1 room on the pull feed:
+		// a cold note receives via the channel fanout + coldReceive, and sends
+		// room-free. (A live-bound note WOULD re-handshake — see sync-catchup.)
 		const existingFile = new TFile("Notes/have.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
 
@@ -471,9 +474,9 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// No legacy disk write (CRDT owns the body), but it IS re-enrolled.
+		// No legacy disk write (CRDT owns the body), and no STEP1 for a cold note.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/have.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 

@@ -762,11 +762,13 @@ export default class EngramSyncPlugin extends Plugin {
 			// set so the resulting applyLocalEdit fires normally through the CRDT
 			// route. Only runs when registered and the sync gate is open so that
 			// content is never transmitted before the user picks a direction.
-			// Lazy enrollment skips cold-start reconcile entirely: it seeds drift
-			// into the Y.Doc via applyLocalEdit for EVERY drifted file, bypassing
-			// the live-bound push gate (the cold-note CRDT seeding lazy avoids).
-			// The regular REST fullSync below reconciles cold-note drift instead.
-			if (gateOpen && this.crdtManager && !this.settings.lazyEnrollment) {
+			// Storm gate: we only reconcile ACTUALLY-drifted notes (a baseline
+			// exists AND disk differs). A fresh note (no baseline) is uploaded by
+			// the bounded REST fullSync — the backend bind/3 then seeds CRDT from
+			// its content — and an in-sync note is already converged, so neither
+			// opens a Y.Doc here. That keeps cold start from minting a doc per
+			// markdown file on every connect (the reconnect-storm amplifier).
+			if (gateOpen && this.crdtManager) {
 				const markdownFiles = this.app.vault.getMarkdownFiles();
 				for (const file of markdownFiles) {
 					const crdt = this.crdtManager;
@@ -775,8 +777,10 @@ export default class EngramSyncPlugin extends Plugin {
 					const noteId = this.noteIdMap.getOrMint(file.path);
 					this.app.vault
 						.cachedRead(file)
-						.then((diskContent) =>
-							reconcileColdStart(
+						.then((diskContent) => {
+							// Cheap drift gate BEFORE opening any Y.Doc.
+							if (!this.syncEngine.needsColdReconcile(file.path, diskContent)) return;
+							return reconcileColdStart(
 								{
 									path: file.path,
 									noteId,
@@ -786,9 +790,14 @@ export default class EngramSyncPlugin extends Plugin {
 									applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
 									getText: crdt.getText.bind(crdt),
 									projectedText: crdt.projectedText.bind(crdt),
-									// Guarantee the STEP1/STEP2 adoption for drifted notes even
-									// when the adopt-first seed gate skips the local write.
-									enroll: (id) => this.crdtEnrollment?.enroll(id),
+									// STEP1 only for a live-bound (open) note. A drifted-but-idle
+									// note propagates its captured edit via the room-free /updates
+									// send (applyLocalEdit → manager.onUpdate) — no enrollment storm.
+									enroll: (id) => {
+										if (this.crdtLiveViews?.isBound(file.path)) {
+											this.crdtEnrollment?.enroll(id);
+										}
+									},
 								},
 								() => {
 									rlog().warn(
@@ -796,8 +805,8 @@ export default class EngramSyncPlugin extends Plugin {
 										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
 									);
 								},
-							),
-						)
+							);
+						})
 						.catch((e) => {
 							rlog().warn(
 								"crdt",

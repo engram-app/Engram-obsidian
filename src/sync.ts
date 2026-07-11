@@ -654,11 +654,6 @@ export class SyncEngine {
 	// whole-doc push". Previously duplicated inline in pushFile and
 	// pushNotesViaBatch; both now call this.
 	//
-	// Under lazy enrollment a confirmed-but-cold note has no handshaked Y.Doc
-	// this session, so routing it through applyLocalEdit would seed a DUPLICATE
-	// lineage (#846/#161); a cold note must instead reach convergent REST (in
-	// pushFile) and must NOT be skipped as socket-delivered in the batch seam
-	// (nothing would deliver it) — hence the live-bound requirement here.
 	private isCrdtManaged(path: string, noteId: string | null): boolean {
 		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
 		// shared clauses live in one place and can't drift between the two.
@@ -667,20 +662,18 @@ export class SyncEngine {
 
 	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
 	// note WOULD converge via CRDT ops if the crdt: channel were joined right
-	// now (Task 5, single authority). pushFile/pushNotesViaBatch use this to
-	// decide whether a channel-down note still owes its body to CRDT ops rather
-	// than the legacy whole-doc base_hash push. When it does, the edit is
-	// persisted as a content-free, crdt-tagged durable queue entry and delivered
-	// by runFlushQueue's noteId-keyed /updates branch (the old in-memory
-	// debounced flush was retired in Phase 2b) — the crdt-live check is applied
-	// separately by the caller to pick channel-op vs durable-REST transport.
-	private isCrdtManagedOffline(path: string, noteId: string | null): boolean {
-		return (
-			!!this.crdt &&
-			!!noteId &&
-			this.isNoteConfirmed(noteId) &&
-			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
-		);
+	// now (Task 5, single authority). CRDT is UNCONDITIONAL for a confirmed
+	// note — a cold edit (note edited while its dedicated room is closed) MUST
+	// stay on CRDT so it merges with concurrent remote edits; routing it to
+	// legacy whole-doc REST would be last-write-wins → lost merges (#230).
+	// Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
+	// idle note ships its edit channel-up or as a crdt-tagged durable /updates
+	// entry (runFlushQueue's noteId-keyed branch). pushFile/pushNotesViaBatch
+	// use this to keep a channel-down note off the legacy base_hash push; the
+	// crdt-live check is applied separately by the caller to pick channel-op vs
+	// durable-REST transport.
+	private isCrdtManagedOffline(_path: string, noteId: string | null): boolean {
+		return !!this.crdt && !!noteId && this.isNoteConfirmed(noteId);
 	}
 
 	private confirmNoteId(noteId: string | null | undefined): void {
@@ -784,6 +777,17 @@ export class SyncEngine {
 	isUnchangedSynced(path: string, content: string): boolean {
 		const state = this.syncState.get(normalizePath(path));
 		return state !== undefined && state.hash === fnv1a(content);
+	}
+
+	/** True only when this path has a recorded CRDT baseline that disagrees
+	 *  with disk — a real external-edit-while-closed that must be captured into
+	 *  CRDT. No baseline (fresh note → the bounded REST fullSync uploads it and
+	 *  the backend bind/3 seeds CRDT from content) or in-sync => false, so
+	 *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
+	 *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
+	needsColdReconcile(path: string, content: string): boolean {
+		const state = this.syncState.get(normalizePath(path));
+		return state !== undefined && state.hash !== fnv1a(content);
 	}
 
 	/** Write a remote-merged CRDT result to disk.
@@ -2500,18 +2504,11 @@ export class SyncEngine {
 				await this.crdt.applyRemoteUpdate(noteId, update);
 				this.setCrdtHead(path, head); // crdtHead persists under the vault path
 				converged++;
-				// Free the transient doc — but ONLY under lazy enrollment. Under eager
-				// enrollment (the current default) every note is channel-enrolled and its
-				// doc is owned by the live channel, not minted just for this convergence;
-				// freeing it here would only churn (destroy now, re-mint on the next
-				// channel frame). Under lazy enrollment a cold note's doc IS transient, so
-				// closeDoc drops the in-memory doc + IndexedDB handle (the IDB store
-				// persists → re-hydrates on next open; the disk flush from applyRemoteUpdate
-				// captured its content synchronously and runs independently). Re-check
-				// live-bound — the user may have opened the note during the awaits above.
-				if (this.settings.lazyEnrollment && !this.isLiveBound(path)) {
-					this.crdt.closeDoc(noteId);
-				}
+				// The doc is not freed here: every note is channel-enrolled and its
+				// doc is owned by the live channel, not minted just for this
+				// convergence; freeing it would only churn (destroy now, re-mint on
+				// the next channel frame). Resident-set bounding happens on note close
+				// / after cold-receive instead (plugin #228).
 			} catch (e) {
 				// Isolated: log, leave crdtHead unadvanced, retry next poll.
 				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);
@@ -3719,11 +3716,13 @@ export class SyncEngine {
 			// and can be missed if we weren't subscribed when the other device opened
 			// the room). An already-local note is left to its existing CRDT routing.
 			if (!this.app.vault.getFileByPath(normalized)) {
-				// Lazy enrollment: do NOT open a room for a cold discovered note.
-				// The /changes payload already carries the body (flushFromCrdt below
-				// writes it room-free), so skipping the STEP1 keeps a large vault
-				// from opening a room per note on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
+				// Enroll (STEP1) ONLY when the note is live-bound (open in the
+				// editor). An idle discovered note gets its body room-free via the
+				// flushFromCrdt below (the /changes payload already carries it), so
+				// skipping STEP1 keeps a large vault from opening a room per note on
+				// connect (the enrollment storm). Send stays intact — an idle CRDT
+				// note ships local edits without enrollment.
+				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
@@ -3749,11 +3748,11 @@ export class SyncEngine {
 				// body we are already holding; markRecentlyFlushed suppresses the
 				// echo and the converged serverHash keeps dedupe quiet. The later
 				// idempotent STEP2 re-flush is suppressed by the same window.
-				// Lazy enrollment: a cold (not live-bound) note stays room-free.
-				// Divergence is still handled below — a clean local file backfills
-				// via REST (flushFromCrdt), a live-bound one re-handshakes — but we
-				// do not eagerly STEP1 every CRDT note in the vault on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
+				// A cold (not live-bound) note stays room-free — we do not eagerly
+				// STEP1 every CRDT note in the vault on connect (the enrollment
+				// storm). Divergence is still handled below: a clean local file
+				// backfills via REST (flushFromCrdt), a live-bound one re-handshakes.
+				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
