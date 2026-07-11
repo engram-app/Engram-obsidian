@@ -408,7 +408,7 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
-	test("applyChange materializes a not-yet-local markdown note AND enrolls it (discovery)", async () => {
+	test("applyChange materializes a not-yet-local markdown note without enrolling it (discovery)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -437,14 +437,15 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// Materialized from the payload we already hold, AND enrolled for live edits.
+		// Materialized from the payload we already hold; a cold discovered note is
+		// NOT enrolled (lazy is the only path) - only editor-open notes get a room.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalled();
 		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");
 	});
 
-	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
+	test("applyChange does NOT enroll an existing cold markdown note (reconnect catch-up via REST)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -471,9 +472,10 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// No legacy disk write (CRDT owns the body), but it IS re-enrolled.
+		// No legacy disk write (CRDT owns the body); a cold note is NOT re-enrolled
+		// (lazy is the only path) - REST /changes IS the reconnect catch-up now.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/have.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
@@ -568,9 +570,9 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
 
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		expect(newApplyLocalEdit).toHaveBeenCalledTimes(1);
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -645,9 +647,9 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
 
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		// CRDT path active — pushNote must not be called
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -717,9 +719,9 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		engine.setNoteIdMap(noteIdMap);
 		markConfirmed(engine, "id-note");
 
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
+		await (engine as any).pushFile(file);
 
 		// CRDT path active — applyLocalEdit called, pushNote NOT called
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);

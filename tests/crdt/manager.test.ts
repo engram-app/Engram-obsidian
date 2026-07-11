@@ -4,7 +4,6 @@ import * as Y from "yjs";
 import { CrdtChannel } from "../../src/crdt/channel";
 import { CrdtManager, frontmatterOf } from "../../src/crdt/manager";
 import { rlog } from "../../src/remote-log";
-import { reconcileColdStart } from "../../src/sync";
 
 // ---------------------------------------------------------------------------
 // Task 6: doc-shape constants + frontmatterOf accessor
@@ -359,80 +358,6 @@ test("flush reconstructs full file from Y.Map + body", async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 7D: catch-split in reconcileColdStart
-// — write failure does NOT trigger onCorruption; decode failure DOES
-// ---------------------------------------------------------------------------
-
-describe("reconcileColdStart catch-split", () => {
-	test("write failure (applyLocalEdit throws) does NOT trigger onCorruption", async () => {
-		let corrupted = false;
-		const projectedText = async () => "old content";
-		const getText = async () => "old content"; // decode succeeds
-		const applyLocalEdit = async () => {
-			throw new Error("storage write failed");
-		};
-
-		// Should not reject AND should not call onCorruption
-		await reconcileColdStart(
-			{ path: "n.md", noteId: "note-1", diskContent: "new content" },
-			{ projectedText, getText, applyLocalEdit },
-			() => {
-				corrupted = true;
-			},
-		);
-		// Write failure must NOT masquerade as corruption
-		expect(corrupted).toBe(false);
-	});
-
-	test("decode failure (getText throws) DOES trigger onCorruption", async () => {
-		let corrupted = false;
-		const projectedText = async (): Promise<string> => {
-			throw new Error("decode failed");
-		};
-		const getText = async (): Promise<string> => {
-			throw new Error("decode failed");
-		};
-		const applyLocalEdit = async () => true;
-
-		await reconcileColdStart(
-			{ path: "n.md", noteId: "note-2", diskContent: "some content" },
-			{ projectedText, getText, applyLocalEdit },
-			() => {
-				corrupted = true;
-			},
-		);
-		expect(corrupted).toBe(true);
-	});
-
-	test("write failure logs a warn via rlog (observable, not silent)", async () => {
-		// rlog() returns the noop logger before initRemoteLog — spy on its warn
-		// method to capture calls made by reconcileColdStart's write-fail catch.
-		const logger = rlog();
-		const warnSpy = spyOn(logger, "warn");
-
-		const projectedText = async () => "old content";
-		const getText = async () => "old content";
-		const applyLocalEdit = async () => {
-			throw new Error("storage write failed");
-		};
-
-		await reconcileColdStart(
-			{ path: "fail.md", noteId: "note-3", diskContent: "new content" },
-			{ projectedText, getText, applyLocalEdit },
-			() => {},
-		);
-
-		// The warn must have been called with category "crdt" and mention the path.
-		expect(warnSpy).toHaveBeenCalledTimes(1);
-		const [cat, msg] = warnSpy.mock.calls[0] as [string, string];
-		expect(cat).toBe("crdt");
-		expect(msg).toContain("fail.md");
-
-		warnSpy.mockRestore();
-	});
-});
-
-// ---------------------------------------------------------------------------
 // Bug 1: flattenIfBloated must preserve frontmatter (TDD RED before fix)
 // ---------------------------------------------------------------------------
 
@@ -493,32 +418,6 @@ test("projectedText returns body-only for a plain note (no frontmatter)", async 
 	await mgr.applyLocalEdit("plain.md", "just body", false);
 	expect(await mgr.projectedText("plain.md")).toBe("just body");
 	await mgr.destroy();
-});
-
-// ---------------------------------------------------------------------------
-// Bug 3: reconcileColdStart uses projectedText so early-return fires correctly
-// ---------------------------------------------------------------------------
-
-test("reconcileColdStart returns early when projectedText matches disk (no applyLocalEdit)", async () => {
-	let applyCallCount = 0;
-	const fullFile = "---\ntitle: T\n---\nbody";
-
-	const crdt = {
-		projectedText: async () => fullFile, // matches disk
-		getText: async () => "body", // old body-only value — would NOT match
-		applyLocalEdit: async () => {
-			applyCallCount++;
-			return true;
-		},
-	};
-
-	await reconcileColdStart(
-		{ path: "n.md", noteId: "note-4", diskContent: fullFile },
-		crdt,
-		() => {},
-	);
-	// projectedText matches diskContent, so applyLocalEdit must NOT be called.
-	expect(applyCallCount).toBe(0);
 });
 
 // ---------------------------------------------------------------------------

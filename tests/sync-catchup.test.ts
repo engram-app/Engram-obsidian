@@ -217,8 +217,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			"authoritative body the announce never delivered",
 		);
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		// Enrollment still fires (live routing unaffected).
-		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Lazy is the only path: a cold (not live-bound) note is NOT enrolled - the
+		// body arrives room-free via REST, no STEP1 opens a room per note on connect.
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
@@ -477,7 +478,8 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 
 		expect(mockApp.vault.process).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Converged cold note: no disk write AND no enroll (lazy is the only path).
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
 

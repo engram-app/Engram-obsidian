@@ -473,6 +473,7 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 
 		// Confirm id-conf for known.md via a pull.
 		await engine.applySyncChange({
@@ -491,8 +492,7 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		// Control: while confirmed + CRDT live, an edit routes through CRDT.
 		applyLocalEdit.mockClear();
 		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
-		engine.handleModify(new TFile("known.md"));
-		await flush();
+		await (engine as any).pushFile(new TFile("known.md"));
 		expect(applyLocalEdit).toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 
@@ -507,8 +507,7 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		applyLocalEdit.mockClear();
 		(mockApi.pushNote as ReturnType<typeof mock>).mockClear();
 		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("body v2");
-		engine.handleModify(new TFile("known.md"));
-		await flush();
+		await (engine as any).pushFile(new TFile("known.md"));
 		expect(mockApi.pushNote).toHaveBeenCalled();
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
@@ -1420,6 +1419,7 @@ describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 
 		await engine.applySyncChange({
 			id: "id-real-edit",
@@ -1461,6 +1461,7 @@ describe("a successful CRDT push updates the echo-hash baseline (final review IM
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
+		engine.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT
 
 		// Discovery establishes the last-FLUSHED baseline.
 		const original = "# Revert Test\nOriginal content.";

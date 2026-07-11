@@ -91,7 +91,6 @@ const mockApp = {
 
 function engine(opts?: {
 	enableCrdt?: boolean;
-	lazyEnrollment?: boolean;
 	api?: Partial<EngramApi>;
 	crdt?: Partial<CrdtManager>;
 }): SyncEngine {
@@ -102,7 +101,6 @@ function engine(opts?: {
 			...DEFAULT_SETTINGS,
 			debounceMs: 1,
 			enableCrdt: opts?.enableCrdt ?? true,
-			lazyEnrollment: opts?.lazyEnrollment ?? false,
 		},
 		mock().mockResolvedValue(undefined),
 	);
@@ -143,9 +141,6 @@ describe("coldReceive", () => {
 		heads: Record<string, string>;
 		getUpdates?: (id: string, since?: string) => Promise<{ update: Uint8Array; head: string }>;
 		live?: (path: string) => boolean;
-		// Doc-freeing is gated on lazy enrollment; default on so the free path is
-		// exercised. Pass false to assert the eager-mode gate (no free).
-		lazy?: boolean;
 		// When set, applyRemoteUpdate rejects — to exercise the per-note catch.
 		applyThrows?: boolean;
 	}) {
@@ -176,7 +171,7 @@ describe("coldReceive", () => {
 				closed.push(id);
 			},
 		};
-		const e = engine({ enableCrdt: true, lazyEnrollment: opts.lazy ?? true, api, crdt });
+		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
 		const map = new NoteIdMap();
 		map.set("a.md", "id-a");
@@ -231,13 +226,6 @@ describe("coldReceive", () => {
 		expect(await e.coldReceive()).toBe(1);
 		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // still converged
 		expect(closed).toEqual([]); // NOT freed — the live channel now owns it
-	});
-
-	test("under EAGER enrollment the doc is applied but NOT freed (free is a lazy-mode opt)", async () => {
-		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, lazy: false });
-		expect(await e.coldReceive()).toBe(1);
-		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // convergence still happens
-		expect(closed).toEqual([]); // eager: the channel owns the doc — freeing would churn
 	});
 
 	test("applyRemoteUpdate failure leaves the doc resident and the head unadvanced", async () => {

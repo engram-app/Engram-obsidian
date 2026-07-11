@@ -98,68 +98,6 @@ export async function routeModify(
 	return await crdt.applyLocalEdit(file.noteId, content);
 }
 
-/** At startup, the on-disk file may have changed while the app was closed
- *  (external editor, another sync app, OS). For a synced note this is NOT a
- *  3-way merge: diff the disk content into the Y.Doc as a local edit. The CRDT
- *  converges it with any remote history once the handshake runs. The conflict
- *  modal is only a last resort if the doc itself cannot be opened/decoded.
- *
- *  The try/catch is split into two distinct error categories:
- *  - `getText` (decode) failure → `onCorruption` — the Y.Doc state is unreadable
- *    and the user must intervene via the conflict modal.
- *  - `applyLocalEdit` (write) failure → swallowed — a transient storage write error
- *    must not masquerade as CRDT corruption and trigger the conflict modal. The CRDT
- *    handshake will converge the state once connectivity is restored. */
-export async function reconcileColdStart(
-	// `path` is retained purely for log messages (a note_id is meaningless to a
-	// human reading the console); every CRDT call below routes on `noteId`.
-	file: { path: string; noteId: string; diskContent: string },
-	crdt: {
-		// Returns boolean (consumed/declined) but the value is intentionally
-		// ignored here — a DECLINED write (handshake gate) is treated identically
-		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
-		// those files until their STEP2 handshake completes.
-		applyLocalEdit: (noteId: string, content: string) => Promise<boolean | undefined>;
-		getText: (noteId: string) => Promise<string>;
-		projectedText: (noteId: string) => Promise<string>;
-		enroll?: (noteId: string) => void;
-	},
-	onCorruption: () => void,
-	maxBytes: number = MAX_CRDT_NOTE_BYTES,
-): Promise<void> {
-	// Same cap as routeModify: an oversized note must NEVER enter the Yjs doc.
-	// Seeding it here produces a base64 crdt_msg past Bandit's 8 MB frame limit
-	// → 1009 → and because cold-start reconcile re-runs on every reconnect, a
-	// permanent crash loop that kills all sync for the vault. Leave it to the
-	// legacy push path (server-gated at 10 MB / 413). Default-capped so a future
-	// caller cannot reintroduce this by forgetting to pass the limit.
-	if (exceedsCrdtNoteLimit(file.diskContent, maxBytes)) {
-		return;
-	}
-	let current: string;
-	try {
-		current = await crdt.projectedText(file.noteId);
-	} catch {
-		onCorruption(); // surface the existing ConflictModal only on decode failure
-		return;
-	}
-	if (current === file.diskContent) return; // already in sync
-	try {
-		await crdt.applyLocalEdit(file.noteId, file.diskContent);
-	} catch (e) {
-		// Storage write failure: do not masquerade as corruption. The CRDT
-		// handshake will converge the state once connectivity is restored.
-		rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
-	}
-	// A drifted note must always get a handshake: when the doc is history-less
-	// and the adopt-first seed gate skipped inside applyLocalEdit (IDB-evicted
-	// doc whose disk content matches the last-synced hash), the note converges
-	// ONLY via STEP1/STEP2 — without enrolling here it would silently sit out
-	// live sync until the user opens it. Enrollment is idempotent (once per
-	// session), so seeding paths pay nothing extra.
-	crdt.enroll?.(file.noteId);
-}
-
 /** Check if an error is an HTTP response with the given status code.
  *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
 function isHttpStatus(e: unknown, status: number): boolean {
@@ -679,7 +617,7 @@ export class SyncEngine {
 			!!this.crdt &&
 			!!noteId &&
 			this.isNoteConfirmed(noteId) &&
-			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
+			this.isLiveBound(normalizePath(path))
 		);
 	}
 
@@ -2509,7 +2447,7 @@ export class SyncEngine {
 				// persists → re-hydrates on next open; the disk flush from applyRemoteUpdate
 				// captured its content synchronously and runs independently). Re-check
 				// live-bound — the user may have opened the note during the awaits above.
-				if (this.settings.lazyEnrollment && !this.isLiveBound(path)) {
+				if (!this.isLiveBound(path)) {
 					this.crdt.closeDoc(noteId);
 				}
 			} catch (e) {
@@ -3696,8 +3634,7 @@ export class SyncEngine {
 				// The /changes payload already carries the body (flushFromCrdt below
 				// writes it room-free), so skipping the STEP1 keeps a large vault
 				// from opening a room per note on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
-				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
+				rlog().info("pull", `CRDT discovery: materializing new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
 				// pulls-then-checks (e.g. triggerFullSync) sees the file immediately.
@@ -3726,7 +3663,6 @@ export class SyncEngine {
 				// Divergence is still handled below — a clean local file backfills
 				// via REST (flushFromCrdt), a live-bound one re-handshakes — but we
 				// do not eagerly STEP1 every CRDT note in the vault on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
@@ -3813,7 +3749,7 @@ export class SyncEngine {
 						}
 					}
 				} else {
-					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
+					rlog().info("pull", `CRDT-managed: converged, no-op ${change.path}`);
 				}
 			}
 			if (!crdtConflictFallthrough) return false;

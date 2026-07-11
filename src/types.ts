@@ -28,15 +28,6 @@ export interface EngramSyncSettings {
 	 *  plugin never joins the `crdt:` topic and routes every save through the legacy
 	 *  path — behaving exactly like a non-CRDT build. */
 	enableCrdt: boolean;
-	/** Lazy CRDT room enrollment. OFF by default. When true, the plugin only
-	 *  opens a live CRDT room for a note that is open in the editor (live-bound);
-	 *  cold notes sync via the REST pull feed (receive) and convergent REST push
-	 *  (send) instead of holding a room. This makes sync cost track active editing
-	 *  rather than vault size, so a large vault no longer opens hundreds of rooms
-	 *  on connect (the 2026-07-09 reconnect-storm amplifier). Correctness hinge:
-	 *  when on, CRDT push is additionally gated on live-bound so a confirmed but
-	 *  never-handshaked cold note does not seed a duplicate CRDT lineage. */
-	lazyEnrollment: boolean;
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -106,7 +97,6 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	diagnosticsEnabled: false,
 	conflictResolution: "auto",
 	enableCrdt: true,
-	lazyEnrollment: false,
 	vaultId: null,
 	clientId: "",
 	planState: null,

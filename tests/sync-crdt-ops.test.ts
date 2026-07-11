@@ -276,6 +276,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
+		e.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT ops
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -314,6 +315,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
+		e.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT ops
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -375,6 +377,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 		e.setCrdtManager(crdt as unknown as CrdtManager);
 		e.setReady();
 		markProbed(e);
+		e.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT ops
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -430,6 +433,7 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
+		e.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT ops
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("T.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -475,6 +479,7 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
+		e.setLiveBoundCheck(() => true); // open note: pushFile routes CRDT ops
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
