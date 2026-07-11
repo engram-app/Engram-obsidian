@@ -86,9 +86,7 @@ export class CrdtLiveViews {
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
 		this.refcount = new ViewerRefcount((path) => {
-			// Last viewer left: persist the current Y.Text to disk now.
-			const noteId = this.deps.resolveId(path);
-			void this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
+			void this.onLastViewerRelease(path);
 		});
 		this.frontmatter = new CrdtFrontmatterHook({
 			getPath: (v) => getMarkdownFilePath(v),
@@ -102,6 +100,20 @@ export class CrdtLiveViews {
 
 	isBound(path: string): boolean {
 		return this.refcount.isBound(path);
+	}
+
+	/** The last viewer of `path` left: persist the current Y.Text to disk, then
+	 *  free the doc so the resident set stays bounded by open notes (closeDoc was
+	 *  dead code before this — a Y.Doc leaked for every note ever visited in a
+	 *  session). The IndexedDB store is preserved, so the note re-hydrates on next
+	 *  open or remote update; no data loss. Skips the free if a new viewer bound
+	 *  during the async flush (re-open race) — destroying a doc the editor just
+	 *  re-bound to would break live sync. Returns the promise for tests. */
+	private async onLastViewerRelease(path: string): Promise<void> {
+		const noteId = this.deps.resolveId(path);
+		const text = await this.deps.manager.getText(noteId);
+		await this.deps.flushToDisk(path, text);
+		if (!this.refcount.isBound(path)) this.deps.manager.closeDoc(noteId);
 	}
 
 	/** Open (or get cached) the path's Y.Text from the CRDT manager, resolving

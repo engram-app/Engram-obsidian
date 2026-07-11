@@ -18543,7 +18543,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++;
+          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.isLiveBound(path) || this.crdt.closeDoc(noteId);
         } catch (e) {
           devLog().log("crdt", `coldReceive: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
         }
@@ -21149,8 +21149,7 @@ var ViewerRefcount = class {
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
-      let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
+      this.onLastViewerRelease(path);
     }), this.frontmatter = new CrdtFrontmatterHook({
       getPath: (v) => getMarkdownFilePath(v),
       getYText: (path) => this.getYText(path)
@@ -21161,6 +21160,17 @@ var ViewerRefcount = class {
   }
   isBound(path) {
     return this.refcount.isBound(path);
+  }
+  /** The last viewer of `path` left: persist the current Y.Text to disk, then
+   *  free the doc so the resident set stays bounded by open notes (closeDoc was
+   *  dead code before this — a Y.Doc leaked for every note ever visited in a
+   *  session). The IndexedDB store is preserved, so the note re-hydrates on next
+   *  open or remote update; no data loss. Skips the free if a new viewer bound
+   *  during the async flush (re-open race) — destroying a doc the editor just
+   *  re-bound to would break live sync. Returns the promise for tests. */
+  async onLastViewerRelease(path) {
+    let noteId = this.deps.resolveId(path), text2 = await this.deps.manager.getText(noteId);
+    await this.deps.flushToDisk(path, text2), this.refcount.isBound(path) || this.deps.manager.closeDoc(noteId);
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */

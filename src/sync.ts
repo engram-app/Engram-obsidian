@@ -2500,6 +2500,13 @@ export class SyncEngine {
 				await this.crdt.applyRemoteUpdate(noteId, update);
 				this.setCrdtHead(path, head); // crdtHead persists under the vault path
 				converged++;
+				// Free the transient doc: this note is cold, so its Y.Doc was minted
+				// only for this convergence. closeDoc drops the in-memory doc + IndexedDB
+				// handle (the IDB store persists, so it re-hydrates on next open); the
+				// disk flush from applyRemoteUpdate captured its content synchronously and
+				// runs independently. Re-check live-bound — the user may have opened the
+				// note during the awaits above, in which case the live channel owns it.
+				if (!this.isLiveBound(path)) this.crdt.closeDoc(noteId);
 			} catch (e) {
 				// Isolated: log, leave crdtHead unadvanced, retry next poll.
 				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);

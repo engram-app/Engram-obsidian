@@ -142,6 +142,7 @@ describe("coldReceive", () => {
 		// noteId (the manager is noteId-keyed), NOT the vault path.
 		const applied: Array<{ id: string; update: Uint8Array }> = [];
 		const svCalls: string[] = [];
+		const closed: string[] = [];
 		const api = {
 			getVaultHeads: async () => ({ heads: opts.heads }),
 			getUpdates:
@@ -159,6 +160,9 @@ describe("coldReceive", () => {
 			applyRemoteUpdate: async (id: string, update: Uint8Array) => {
 				applied.push({ id, update });
 			},
+			closeDoc: (id: string) => {
+				closed.push(id);
+			},
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
@@ -167,7 +171,7 @@ describe("coldReceive", () => {
 		e.setNoteIdMap(map);
 		markConfirmed(e, "id-a");
 		e.setLiveBoundCheck(opts.live ?? (() => false));
-		return { e, applied, svCalls };
+		return { e, applied, svCalls, closed };
 	}
 
 	test("an advanced head pulls the delta, applies it, and persists the returned head", async () => {
@@ -190,9 +194,31 @@ describe("coldReceive", () => {
 	});
 
 	test("a live-bound note is skipped (the live channel owns it)", async () => {
-		const { e, applied } = coldEngine({ heads: { "id-a": "SRV" }, live: () => true });
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, live: () => true });
 		expect(await e.coldReceive()).toBe(0);
 		expect(applied).toEqual([]);
+		expect(closed).toEqual([]); // never opened, so nothing to free
+	});
+
+	test("a converged cold note's transient doc is freed after applying (closeDoc)", async () => {
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" } });
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
+		// The doc was minted only for this convergence — freed so it doesn't leak.
+		expect(closed).toEqual(["id-a"]);
+	});
+
+	test("a note opened DURING convergence is applied but NOT freed (re-open guard)", async () => {
+		// live is false at the initial gate (so we converge) but true by the time
+		// we re-check after applying — the user opened it mid-convergence.
+		let n = 0;
+		const { e, applied, closed } = coldEngine({
+			heads: { "id-a": "SRV" },
+			live: () => n++ > 0,
+		});
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // still converged
+		expect(closed).toEqual([]); // NOT freed — the live channel now owns it
 	});
 
 	test("a head with no local path is skipped (first-discovery is the pull's job)", async () => {
