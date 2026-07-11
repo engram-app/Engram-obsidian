@@ -69,6 +69,9 @@ export interface CrdtLiveViewsDeps {
 	resolveId(path: string): string;
 	/** The existing disk flush (SyncEngine.flushFromCrdt). Called on last release. */
 	flushToDisk(path: string, content: string): Promise<void>;
+	/** Optional: surface a last-release flush/getText failure (the doc is left
+	 *  resident in that case) instead of dropping the rejection on the floor. */
+	onReleaseError?: (path: string, err: unknown) => void;
 }
 
 export class CrdtLiveViews {
@@ -86,7 +89,9 @@ export class CrdtLiveViews {
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
 		this.refcount = new ViewerRefcount((path) => {
-			void this.onLastViewerRelease(path);
+			// A flush/getText failure leaves the doc resident (correct: never free what
+			// we couldn't persist) — surface it instead of swallowing the rejection.
+			this.onLastViewerRelease(path).catch((e) => this.deps.onReleaseError?.(path, e));
 		});
 		this.frontmatter = new CrdtFrontmatterHook({
 			getPath: (v) => getMarkdownFilePath(v),

@@ -90,6 +90,23 @@ describe("seed lifecycle", () => {
 		await m.destroy();
 	});
 
+	it("closeDoc frees the doc but PRESERVES the IndexedDB store (re-hydrates on re-open)", async () => {
+		// The whole no-data-loss argument for the doc-lifecycle frees rests on
+		// closeDoc using destroy() (in-memory teardown) and NOT clearData() (wipe).
+		// This pins that: content written before closeDoc must survive a re-open.
+		const m = makeManager(`seed-gate-close-persist-${Math.random().toString(36).slice(2)}`);
+		m.markSynced("cp.md");
+		await m.applyLocalEdit("cp.md", "durable content");
+		expect(await m.getText("cp.md")).toBe("durable content");
+
+		m.closeDoc("cp.md"); // free the in-memory doc — must NOT wipe IDB
+
+		// Re-open on the SAME manager (mirrors the channel re-mint / re-open path):
+		// entry() re-materializes the doc from the preserved IDB store.
+		expect(await m.getText("cp.md")).toBe("durable content");
+		await m.destroy();
+	});
+
 	it("destroy clears all synced marks", async () => {
 		const m = makeManager();
 		m.markSynced("d.md");

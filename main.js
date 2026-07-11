@@ -18543,7 +18543,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.isLiveBound(path) || this.crdt.closeDoc(noteId);
+          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.settings.lazyEnrollment && !this.isLiveBound(path) && this.crdt.closeDoc(noteId);
         } catch (e) {
           devLog().log("crdt", `coldReceive: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
         }
@@ -21149,7 +21149,10 @@ var ViewerRefcount = class {
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
-      this.onLastViewerRelease(path);
+      this.onLastViewerRelease(path).catch((e) => {
+        var _a, _b;
+        return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
+      });
     }), this.frontmatter = new CrdtFrontmatterHook({
       getPath: (v) => getMarkdownFilePath(v),
       getYText: (path) => this.getYText(path)
@@ -22400,7 +22403,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           // (pushFile would otherwise be the only minter, deferring the live
           // binding until after the first save).
           resolveId: (path) => this.noteIdMap.getOrMint(path),
-          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
+          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          onReleaseError: (path, err) => rlog().warn(
+            "crdt",
+            `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
+          )
         }), this.syncEngine.setLiveBoundCheck(
           (path) => {
             var _a2, _b2;
