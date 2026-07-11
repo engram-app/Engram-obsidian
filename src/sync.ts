@@ -797,10 +797,10 @@ export class SyncEngine {
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
-	async flushFromCrdt(path: string, content: string): Promise<void> {
+	async flushFromCrdt(path: string, content: string): Promise<boolean> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
-			return;
+			return true;
 		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -814,7 +814,7 @@ export class SyncEngine {
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
 			this.recordCrdtBaseline(normalized, content);
-			return;
+			return true;
 		}
 		this.markRecentlyFlushed(normalized);
 		try {
@@ -833,8 +833,16 @@ export class SyncEngine {
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
 			this.recordCrdtBaseline(normalized, content);
+			return true;
 		} catch (e) {
+			// Return false (do NOT swallow silently): the remote-apply path's
+			// onFlushToDisk wrapper turns this into a rejection so applyRemoteUpdate
+			// rejects and crdtHead stays unadvanced (#235). recordCrdtBaseline is
+			// intentionally NOT reached here — a failed write must not mark the note
+			// synced. Best-effort callers (pull/materialize) ignore the return and
+			// keep today's log-and-continue behavior.
 			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+			return false;
 		}
 	}
 

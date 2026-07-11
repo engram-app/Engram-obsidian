@@ -1618,7 +1618,12 @@ export default class EngramSyncPlugin extends Plugin {
 						// binding until after the first save).
 						resolveId: (path) => this.noteIdMap.getOrMint(path),
 						flushToDisk: (path, content) =>
-							this.syncEngine.flushFromCrdt(path, content),
+							// flushFromCrdt now reports a write-success boolean (#235); the
+							// live-editor release path keeps its prior behavior (a failed write
+							// is logged inside flushFromCrdt, not surfaced here), so discard it.
+							this.syncEngine
+								.flushFromCrdt(path, content)
+								.then(() => {}),
 						onReleaseError: (path, err) =>
 							rlog().warn(
 								"crdt",

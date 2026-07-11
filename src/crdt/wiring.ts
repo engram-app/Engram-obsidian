@@ -204,7 +204,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const manager = new CrdtManager({
 		dbPrefix: deps.dbPrefix,
 		onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
-		onFlushToDisk: (noteId, content) => {
+		onFlushToDisk: async (noteId, content) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {
 				// Unknown id: a crdt_msg/STEP2 arrived for a note this device hasn't
@@ -212,9 +212,16 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				// healUnknownNoteId re-resolves the id from the manifest and retries so
 				// a drift self-heals instead of stranding forever.
 				healUnknownNoteId(noteId, content);
-				return Promise.resolve();
+				return;
 			}
-			return deps.isBound(path) ? Promise.resolve() : syncEngine.flushFromCrdt(path, content);
+			if (deps.isBound(path)) return; // live editor owns disk
+			// Propagate a disk-write failure so applyRemoteUpdate rejects and the
+			// caller leaves crdtHead unadvanced (#235). flushFromCrdt returns false
+			// ONLY on an actual write failure; a skip (gate closed / idempotent) and
+			// a legacy void return both read as success.
+			if ((await syncEngine.flushFromCrdt(path, content)) === false) {
+				throw new Error(`flushFromCrdt reported a write failure for ${path}`);
+			}
 		},
 		// Adopt-first seed gate: never re-encode content the server already holds.
 		isUnchangedSynced: (noteId, content) => {

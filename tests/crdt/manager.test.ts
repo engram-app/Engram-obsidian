@@ -151,6 +151,50 @@ test("applyRemoteUpdate flushes merged text to disk", async () => {
 	await mgr.destroy();
 });
 
+// ---------------------------------------------------------------------------
+// #235: applyRemoteUpdate must NOT resolve before the disk flush completes.
+// The remote-origin doc.on("update") listener used to fire-and-forget
+// (`void onFlushToDisk(...)`), so applyRemoteUpdate returned as soon as
+// Y.applyUpdate finished. The caller (applyPushedNoteUpdate/coldReceive) then
+// advanced crdtHead synchronously. If the disk write FAILED, the watermark
+// said "converged" but disk never got the content → silent divergence, and
+// coldReceive's head-diff never re-pulls. applyRemoteUpdate must await the
+// flush and reject if it fails, so the caller leaves crdtHead unadvanced.
+// ---------------------------------------------------------------------------
+
+test("#235: applyRemoteUpdate rejects when the disk flush fails (no silent converge)", async () => {
+	const mgr = new CrdtManager({
+		dbPrefix: "flush-fail",
+		onUpdate: () => {},
+		onFlushToDisk: async () => {
+			throw new Error("disk write failed");
+		},
+	});
+	// A remote update that integrates real ops, so the flush listener fires.
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "remote body");
+	const update = Y.encodeStateAsUpdate(server);
+
+	await expect(mgr.applyRemoteUpdate("note.md", update)).rejects.toThrow("disk write failed");
+	await mgr.destroy();
+});
+
+test("#235: applyRemoteUpdate resolves when the flush succeeds (happy path unchanged)", async () => {
+	const flushed: Record<string, string> = {};
+	const mgr = new CrdtManager({
+		dbPrefix: "flush-ok",
+		onUpdate: () => {},
+		onFlushToDisk: async (id, content) => {
+			flushed[id] = content;
+		},
+	});
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "remote body");
+	await mgr.applyRemoteUpdate("note.md", Y.encodeStateAsUpdate(server));
+	expect(flushed["note.md"]).toBe("remote body");
+	await mgr.destroy();
+});
+
 test("closeDoc + reapply: entry() rehydrates full prior state from IndexedDB before merging the next delta (P3 hibernation correctness)", async () => {
 	// Mirrors SyncEngine.hibernateIfIdle (P3, plugin #232-series): after an
 	// idle note's Y.Doc applies a pushed/converged update, the doc is freed

@@ -104,6 +104,41 @@ async function destroy(...devices: Device[]): Promise<void> {
 	}
 }
 
+test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays unadvanced)", async () => {
+	// The onFlushToDisk wrapper must propagate a disk-write failure so the
+	// manager's applyRemoteUpdate rejects; the caller then leaves crdtHead
+	// unadvanced and retries, instead of silently marking the note converged.
+	const map = new NoteIdMap();
+	const noteId = "note-flushfail";
+	map.set("F/fail.md", noteId);
+	const syncEngine = {
+		// Real flushFromCrdt returns false when the disk write throws.
+		flushFromCrdt: async () => false,
+		isUnchangedSynced: () => false,
+		materializeEmptyDiscovered: async () => {},
+		reconcileNoteIdMapFromManifest: async () => 0,
+		isSyncBlocked: () => false,
+		ensureNoteIdMapped: () => {},
+	};
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine,
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "flushfail",
+	});
+
+	const server = new (await import("yjs")).Doc();
+	server.getText("content").insert(0, "body that fails to land");
+	const update = (await import("yjs")).encodeStateAsUpdate(server);
+
+	await expect(wiring.manager.applyRemoteUpdate(noteId, update)).rejects.toThrow();
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
+
 test("create on A materializes on B with genesis exactly once", async () => {
 	const a = makeDevice("A", () => 0);
 	const b = makeDevice("B", () => 0);

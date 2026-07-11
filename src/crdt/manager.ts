@@ -133,6 +133,17 @@ export class CrdtManager {
 	 */
 	private readonly inFlightOps = new Map<string, number>();
 
+	/**
+	 * Per-docId promise for the disk flush kicked off by the most recent
+	 * REMOTE_ORIGIN doc update (the `onFlushToDisk` call in `entry()`'s
+	 * remote-merge listener). `applyRemoteUpdate` awaits this after
+	 * `Y.applyUpdate` so a FAILED flush rejects the apply instead of being
+	 * fire-and-forgotten (#235). Set synchronously inside `Y.applyUpdate` (the
+	 * listener fires synchronously), read + deleted by `applyRemoteUpdate`
+	 * immediately after. Keyed by docId, same key space as `docs`.
+	 */
+	private readonly pendingFlush = new Map<string, Promise<void>>();
+
 	constructor(opts: CrdtManagerOptions) {
 		this.opts = opts;
 	}
@@ -301,6 +312,19 @@ export class CrdtManager {
 		try {
 			const e = await this.entry(noteId);
 			Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
+			// Y.applyUpdate fired the remote-merge listener SYNCHRONOUSLY, which
+			// recorded the disk-flush promise in `pendingFlush`. Await it so a flush
+			// FAILURE rejects applyRemoteUpdate: the caller
+			// (applyPushedNoteUpdate/coldReceive) then leaves crdtHead unadvanced and
+			// retries, instead of marking a note "converged" that never reached disk
+			// (#235). A no-op update integrates zero ops → no listener → no pending
+			// flush → nothing to await (head may advance, which is correct for a
+			// genuinely empty/already-applied update).
+			const flush = this.pendingFlush.get(id);
+			if (flush) {
+				this.pendingFlush.delete(id);
+				await flush;
+			}
 		} finally {
 			this.endOp(id);
 		}
@@ -351,6 +375,7 @@ export class CrdtManager {
 		void e.persistence.destroy();
 		this.docs.delete(id);
 		this.synced.delete(id);
+		this.pendingFlush.delete(id);
 	}
 
 	/**
@@ -395,6 +420,7 @@ export class CrdtManager {
 		// Clear the synced mark regardless of which branch ran. A recreated note
 		// at the same path must go through the full STEP2 handshake before seeding.
 		this.synced.delete(id);
+		this.pendingFlush.delete(id);
 	}
 
 	/** Tear down all open docs. Call on plugin unload. */
@@ -405,6 +431,7 @@ export class CrdtManager {
 			this.docs.delete(id);
 		}
 		this.synced.clear();
+		this.pendingFlush.clear();
 	}
 
 	/**
@@ -561,7 +588,14 @@ export class CrdtManager {
 			if (origin !== REMOTE_ORIGIN) return;
 			const { order, values } = frontmatterOf(doc);
 			const body = text.toJSON();
-			void this.opts.onFlushToDisk(noteId, projectNote(order, values, body));
+			// Record the flush promise (do NOT fire-and-forget): applyRemoteUpdate
+			// awaits it so a write failure rejects the apply and the caller leaves
+			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
+			// return from a test double into an awaitable.
+			this.pendingFlush.set(
+				id,
+				Promise.resolve(this.opts.onFlushToDisk(noteId, projectNote(order, values, body))),
+			);
 		});
 
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);

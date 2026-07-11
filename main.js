@@ -12398,7 +12398,41 @@ var _CrdtManager = class _CrdtManager {
      * closeDoc/destroy and clearSynced; see Task 5.)
      */
     this.synced = /* @__PURE__ */ new Set();
+    /**
+     * Per-docId count of mutating ops (applyLocalEdit / applyRemoteUpdate)
+     * currently in flight. Incremented SYNCHRONOUSLY at the very start of each
+     * mutating op — before its first `await entry(...)` yields — and decremented
+     * in a `finally`. `closeDoc` refuses to destroy a doc whose count is > 0:
+     * otherwise a concurrent hibernation (`closeDoc` from a fanned-out remote
+     * update) could `doc.destroy()` out from under an awaiting `applyLocalEdit`,
+     * clearing the update listeners so the resumed edit emits/persists nothing —
+     * a silent edit loss plus a poisoned synced baseline. Keyed by docId, the
+     * same key space as `docs`.
+     */
+    this.inFlightOps = /* @__PURE__ */ new Map();
+    /**
+     * Per-docId promise for the disk flush kicked off by the most recent
+     * REMOTE_ORIGIN doc update (the `onFlushToDisk` call in `entry()`'s
+     * remote-merge listener). `applyRemoteUpdate` awaits this after
+     * `Y.applyUpdate` so a FAILED flush rejects the apply instead of being
+     * fire-and-forgotten (#235). Set synchronously inside `Y.applyUpdate` (the
+     * listener fires synchronously), read + deleted by `applyRemoteUpdate`
+     * immediately after. Keyed by docId, same key space as `docs`.
+     */
+    this.pendingFlush = /* @__PURE__ */ new Map();
     this.opts = opts;
+  }
+  /** Mark a mutating op as started for `id` (docId). Call synchronously before
+   *  the op's first await. */
+  beginOp(id2) {
+    var _a;
+    this.inFlightOps.set(id2, ((_a = this.inFlightOps.get(id2)) != null ? _a : 0) + 1);
+  }
+  /** Mark a mutating op as finished for `id`. Call from a `finally`. */
+  endOp(id2) {
+    var _a;
+    let n = ((_a = this.inFlightOps.get(id2)) != null ? _a : 0) - 1;
+    n > 0 ? this.inFlightOps.set(id2, n) : this.inFlightOps.delete(id2);
   }
   // ---------------------------------------------------------------------------
   // Handshake-gate API
@@ -12487,6 +12521,15 @@ var _CrdtManager = class _CrdtManager {
    * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
    */
   async applyLocalEdit(noteId, diskContent, hasLca) {
+    let id2 = this.docId(noteId);
+    this.beginOp(id2);
+    try {
+      return await this.applyLocalEditInner(noteId, diskContent, hasLca);
+    } finally {
+      this.endOp(id2);
+    }
+  }
+  async applyLocalEditInner(noteId, diskContent, hasLca) {
     var _a, _b;
     let e = await this.entry(noteId), lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
     if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, diskContent)))
@@ -12500,8 +12543,16 @@ var _CrdtManager = class _CrdtManager {
    * re-send it to the server, but DOES flush the merged content to disk.
    */
   async applyRemoteUpdate(noteId, update) {
-    let e = await this.entry(noteId);
-    applyUpdate(e.doc, update, REMOTE_ORIGIN);
+    let id2 = this.docId(noteId);
+    this.beginOp(id2);
+    try {
+      let e = await this.entry(noteId);
+      applyUpdate(e.doc, update, REMOTE_ORIGIN);
+      let flush = this.pendingFlush.get(id2);
+      flush && (this.pendingFlush.delete(id2), await flush);
+    } finally {
+      this.endOp(id2);
+    }
   }
   /** Encode the current state vector (for the channel handshake sync step). */
   async encodeStateVector(noteId) {
@@ -12530,8 +12581,11 @@ var _CrdtManager = class _CrdtManager {
    * fresh handshake.
    */
   closeDoc(noteId) {
-    let id2 = this.docId(noteId), e = this.docs.get(id2);
-    e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2), this.synced.delete(id2));
+    var _a;
+    let id2 = this.docId(noteId);
+    if (((_a = this.inFlightOps.get(id2)) != null ? _a : 0) > 0) return;
+    let e = this.docs.get(id2);
+    e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2), this.synced.delete(id2), this.pendingFlush.delete(id2));
   }
   /**
    * Permanently remove the Y.Doc and its IndexedDB store for `noteId`.
@@ -12556,13 +12610,13 @@ var _CrdtManager = class _CrdtManager {
     e ? (e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2)) : await new Promise((resolve) => {
       let req = indexedDB.deleteDatabase(this.storeName(noteId));
       req.onsuccess = () => resolve(), req.onerror = () => resolve(), req.onblocked = () => resolve();
-    }), this.synced.delete(id2);
+    }), this.synced.delete(id2), this.pendingFlush.delete(id2);
   }
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {
     for (let [id2, e] of this.docs)
       e.doc.destroy(), await e.persistence.destroy(), this.docs.delete(id2);
-    this.synced.clear();
+    this.synced.clear(), this.pendingFlush.clear();
   }
   /**
    * Flatten the doc to a single-client-ID snapshot ONLY when both axes of the
@@ -12645,7 +12699,10 @@ var _CrdtManager = class _CrdtManager {
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
       let { order, values } = frontmatterOf(doc2), body = text2.toJSON();
-      this.opts.onFlushToDisk(noteId, projectNote(order, values, body));
+      this.pendingFlush.set(
+        id2,
+        Promise.resolve(this.opts.onFlushToDisk(noteId, projectNote(order, values, body)))
+      );
     });
     let ready = persistence.whenSynced.then(() => {
     }), entry = { doc: doc2, persistence, text: text2, ready };
@@ -17663,20 +17720,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Requires the sync gate to be open — returns early when blocked so inbound
    *  CRDT frames cannot overwrite local files before the user picks a direction. */
   async flushFromCrdt(path, content) {
-    if (this.syncBlocked) {
-      devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`);
-      return;
-    }
+    if (this.syncBlocked)
+      return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content) {
-      this.recordCrdtBaseline(normalized, content);
-      return;
-    }
+    if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)
+      return this.recordCrdtBaseline(normalized, content), !0;
     this.markRecentlyFlushed(normalized);
     try {
-      file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content);
+      return file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
     } catch (e) {
-      rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+      return rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`), !1;
     }
   }
   /** Seed the last-synced baseline from freshly-delivered CRDT content. Merges
@@ -17685,6 +17738,51 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   recordCrdtBaseline(normalized, content) {
     let prev = this.syncState.get(normalized);
     this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+  }
+  /** Capture an un-pushed on-disk edit into the Y.Doc BEFORE a fanned-out or
+   *  cold-received remote update flushes to disk, so CRDT MERGES the local
+   *  drift instead of the remote projection overwriting it (BUG 2: a
+   *  NOT-live-bound note's external edit lives only on disk until its debounce
+   *  fires pushFile; a remote apply landing in that window would clobber it).
+   *  Only acts on a note whose disk content diverges from its recorded baseline
+   *  (needsColdReconcile) — an in-sync note, or one with no baseline, has
+   *  nothing local to preserve. Reuses applyLocalEdit (frontmatter split +
+   *  minimal diff), mirroring reconcileColdStart; oversized notes are left to
+   *  the legacy path (never seeded — 8 MB WS frame limit).
+   *
+   *  CAVEAT (history-less docs): if the Y.Doc has no CRDT history yet (an idle
+   *  note whose content arrived via the cursor feed, so its doc was never
+   *  populated), applyLocalEdit's seedOnce inserts the whole disk as a FRESH
+   *  lineage; the subsequent server-lineage merge then DOUBLES the shared
+   *  baseline (both edits survive, but the baseline text is duplicated, and the
+   *  doubling is permanent). This is pre-existing seedOnce behavior (the legacy
+   *  push path doubles the same way), bounded to the narrow
+   *  history-less + un-pushed-drift + first-push window, and strictly better
+   *  than the silent LOSS it replaces. A proper fix needs a real 3-way/LCA
+   *  merge for history-less docs (adopt-remote-first would instead clobber the
+   *  remote) — tracked as a follow-up, not addressed here.
+   *
+   *  Best-effort: never throws into the apply path. The caller has already
+   *  established !isLiveBound. */
+  async captureDiskDriftBeforeRemote(path, noteId) {
+    if (!this.crdt) return;
+    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    if (!(file instanceof import_obsidian21.TFile)) return;
+    let disk;
+    try {
+      disk = await this.app.vault.cachedRead(file);
+    } catch (e) {
+      return;
+    }
+    if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk))
+      try {
+        await this.crdt.applyLocalEdit(noteId, disk);
+      } catch (e) {
+        rlog().warn(
+          "crdt",
+          `captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`
+        );
+      }
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -18576,6 +18674,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
+          await this.captureDiskDriftBeforeRemote(path, noteId);
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
           await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.hibernateIfIdle(path, noteId);
         } catch (e) {
@@ -18601,7 +18700,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
       try {
-        await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), this.hibernateIfIdle(path, noteId);
+        await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), this.hibernateIfIdle(path, noteId);
       } catch (e) {
         devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
       }
@@ -21497,9 +21596,14 @@ function createCrdtWiring(deps) {
   let box = { channel: null }, manager = new CrdtManager({
     dbPrefix: deps.dbPrefix,
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
-    onFlushToDisk: (noteId, content) => {
+    onFlushToDisk: async (noteId, content) => {
       let path = noteIdMap.pathForId(noteId);
-      return path ? deps.isBound(path) ? Promise.resolve() : syncEngine.flushFromCrdt(path, content) : (healUnknownNoteId(noteId, content), Promise.resolve());
+      if (!path) {
+        healUnknownNoteId(noteId, content);
+        return;
+      }
+      if (!deps.isBound(path) && await syncEngine.flushFromCrdt(path, content) === !1)
+        throw new Error(`flushFromCrdt reported a write failure for ${path}`);
     },
     // Adopt-first seed gate: never re-encode content the server already holds.
     isUnchangedSynced: (noteId, content) => {
@@ -22501,7 +22605,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           // (pushFile would otherwise be the only minter, deferring the live
           // binding until after the first save).
           resolveId: (path) => this.noteIdMap.getOrMint(path),
-          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          flushToDisk: (path, content) => (
+            // flushFromCrdt now reports a write-success boolean (#235); the
+            // live-editor release path keeps its prior behavior (a failed write
+            // is logged inside flushFromCrdt, not surfaced here), so discard it.
+            this.syncEngine.flushFromCrdt(path, content).then(() => {
+            })
+          ),
           onReleaseError: (path, err) => rlog().warn(
             "crdt",
             `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
