@@ -21332,24 +21332,41 @@ async function ensureDocSchema(vaultId, storage, dbs) {
 // src/crdt/enrollment.ts
 var CrdtEnrollment = class {
   constructor(opts) {
-    /** note_ids that have already received a `startSync` call this session. */
+    /** note_ids that have already received (or been queued for) a startSync this session. */
     this.enrolled = /* @__PURE__ */ new Set();
-    this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll;
+    /** FIFO of note_ids awaiting their startSync handshake (bounded fan-out). */
+    this.queue = [];
+    /** startSync handshakes currently in flight. */
+    this.active = 0;
+    var _a;
+    this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll, this.concurrency = (_a = opts.concurrency) != null ? _a : 4;
   }
   /**
    * Enroll `noteId` if it hasn't been enrolled this session. Calling multiple
    * times for the same note_id is idempotent — `startSync` fires exactly once,
    * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
    *
+   * `startSync` fan-out is bounded to `concurrency` in-flight handshakes at
+   * once (fix for the connect storm on large-vault open) — every note still
+   * enrolls, just queued FIFO behind the cap instead of all firing at once.
+   *
    * No markdown/extension gate here (see class doc) — callers that know the
    * path (routing/open-file sites) must check `.md` themselves before calling;
    * callers reacting to a bare-id wire announce enroll unconditionally.
    */
   enroll(noteId) {
-    this.enrolled.has(noteId) || (this.enrolled.add(noteId), this.startSync(noteId).then(() => {
-      var _a;
-      return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
-    }));
+    this.enrolled.has(noteId) || (this.enrolled.add(noteId), this.queue.push(noteId), this.drain());
+  }
+  drain() {
+    for (; this.active < this.concurrency && this.queue.length > 0; ) {
+      let noteId = this.queue.shift();
+      this.active++, this.startSync(noteId).then(() => {
+        var _a;
+        return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
+      }).finally(() => {
+        this.active--, this.drain();
+      });
+    }
   }
   /**
    * Clear the enrollment record for `noteId` and call `resetSync` on the
@@ -21357,10 +21374,13 @@ var CrdtEnrollment = class {
    * reconnect so the state-vector handshake re-fires with fresh server state.
    */
   reset(noteId) {
-    this.enrolled.delete(noteId), this.resetSync(noteId);
+    this.enrolled.delete(noteId);
+    let i = this.queue.indexOf(noteId);
+    i !== -1 && this.queue.splice(i, 1), this.resetSync(noteId);
   }
   /** Clear all enrollments (use when the channel is torn down). */
   resetAll() {
+    this.queue.length = 0;
     for (let noteId of this.enrolled)
       this.resetSync(noteId);
     this.enrolled.clear();

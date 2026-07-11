@@ -26,8 +26,13 @@
  */
 
 export class CrdtEnrollment {
-	/** note_ids that have already received a `startSync` call this session. */
+	/** note_ids that have already received (or been queued for) a startSync this session. */
 	private readonly enrolled = new Set<string>();
+	/** FIFO of note_ids awaiting their startSync handshake (bounded fan-out). */
+	private readonly queue: string[] = [];
+	/** startSync handshakes currently in flight. */
+	private active = 0;
+	private readonly concurrency: number;
 
 	private readonly startSync: (noteId: string) => Promise<void>;
 	private readonly resetSync: (noteId: string) => void;
@@ -44,16 +49,24 @@ export class CrdtEnrollment {
 		resetSync: (noteId: string) => void;
 		/** Called once after startSync resolves — wire to flattenIfBloated. */
 		onAfterEnroll?: (noteId: string) => Promise<void>;
+		/** Max concurrent STEP1 handshakes. Bounds the connect fan-out so a large
+		 *  vault does not storm the backend with N simultaneous room joins. */
+		concurrency?: number;
 	}) {
 		this.startSync = opts.startSync;
 		this.resetSync = opts.resetSync;
 		this.onAfterEnroll = opts.onAfterEnroll;
+		this.concurrency = opts.concurrency ?? 4;
 	}
 
 	/**
 	 * Enroll `noteId` if it hasn't been enrolled this session. Calling multiple
 	 * times for the same note_id is idempotent — `startSync` fires exactly once,
 	 * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
+	 *
+	 * `startSync` fan-out is bounded to `concurrency` in-flight handshakes at
+	 * once (fix for the connect storm on large-vault open) — every note still
+	 * enrolls, just queued FIFO behind the cap instead of all firing at once.
 	 *
 	 * No markdown/extension gate here (see class doc) — callers that know the
 	 * path (routing/open-file sites) must check `.md` themselves before calling;
@@ -62,7 +75,21 @@ export class CrdtEnrollment {
 	enroll(noteId: string): void {
 		if (this.enrolled.has(noteId)) return;
 		this.enrolled.add(noteId);
-		void this.startSync(noteId).then(() => this.onAfterEnroll?.(noteId));
+		this.queue.push(noteId);
+		this.drain();
+	}
+
+	private drain(): void {
+		while (this.active < this.concurrency && this.queue.length > 0) {
+			const noteId = this.queue.shift() as string;
+			this.active++;
+			void this.startSync(noteId)
+				.then(() => this.onAfterEnroll?.(noteId))
+				.finally(() => {
+					this.active--;
+					this.drain();
+				});
+		}
 	}
 
 	/**
@@ -72,11 +99,16 @@ export class CrdtEnrollment {
 	 */
 	reset(noteId: string): void {
 		this.enrolled.delete(noteId);
+		// Drop it from the queue too, so a reset-before-handshake note is not
+		// later handshaked against stale server state.
+		const i = this.queue.indexOf(noteId);
+		if (i !== -1) this.queue.splice(i, 1);
 		this.resetSync(noteId);
 	}
 
 	/** Clear all enrollments (use when the channel is torn down). */
 	resetAll(): void {
+		this.queue.length = 0;
 		for (const noteId of this.enrolled) {
 			this.resetSync(noteId);
 		}
