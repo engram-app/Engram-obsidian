@@ -1586,6 +1586,11 @@ export default class EngramSyncPlugin extends Plugin {
 						resolveId: (path) => this.noteIdMap.getOrMint(path),
 						flushToDisk: (path, content) =>
 							this.syncEngine.flushFromCrdt(path, content),
+						onReleaseError: (path, err) =>
+							rlog().warn(
+								"crdt",
+								`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
+							),
 					});
 					// Tell the sync engine which paths have a live editor binding so its
 					// disk-modify handler skips re-feeding disk content into the Y.Text for
