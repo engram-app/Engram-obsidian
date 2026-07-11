@@ -348,6 +348,21 @@ export class CrdtManager {
 		return (await this.entry(noteId)).text.toJSON();
 	}
 
+	/**
+	 * True when `noteId`'s Y.Doc already carries CRDT history (its Y.Text holds
+	 * content after IDB rehydration). A history-LESS doc — a feed-synced note
+	 * whose content arrived via the cursor feed, so its IndexedDB store was never
+	 * populated — must NOT seed disk drift before a remote merge (that mints a
+	 * second lineage and DOUBLES the baseline, #234) and cannot be reconstructed
+	 * from a bare incremental delta (missing causal base). Callers branch on this
+	 * to adopt FULL server state for a history-less note instead. Opening the
+	 * entry rehydrates from IDB first, so the answer reflects durable state, not a
+	 * transiently-empty in-memory doc.
+	 */
+	async hasHistory(noteId: string): Promise<boolean> {
+		return this.textHasHistory((await this.entry(noteId)).text);
+	}
+
 	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
 	async projectedText(noteId: string): Promise<string> {
 		const e = await this.entry(noteId);

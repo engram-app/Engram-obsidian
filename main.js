@@ -12569,6 +12569,20 @@ var _CrdtManager = class _CrdtManager {
   async getText(noteId) {
     return (await this.entry(noteId)).text.toJSON();
   }
+  /**
+   * True when `noteId`'s Y.Doc already carries CRDT history (its Y.Text holds
+   * content after IDB rehydration). A history-LESS doc — a feed-synced note
+   * whose content arrived via the cursor feed, so its IndexedDB store was never
+   * populated — must NOT seed disk drift before a remote merge (that mints a
+   * second lineage and DOUBLES the baseline, #234) and cannot be reconstructed
+   * from a bare incremental delta (missing causal base). Callers branch on this
+   * to adopt FULL server state for a history-less note instead. Opening the
+   * entry rehydrates from IDB first, so the answer reflects durable state, not a
+   * transiently-empty in-memory doc.
+   */
+  async hasHistory(noteId) {
+    return this.textHasHistory((await this.entry(noteId)).text);
+  }
   /** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
   async projectedText(noteId) {
     let e = await this.entry(noteId), { order, values } = frontmatterOf(e.doc);
@@ -17750,17 +17764,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  minimal diff), mirroring reconcileColdStart; oversized notes are left to
    *  the legacy path (never seeded — 8 MB WS frame limit).
    *
-   *  CAVEAT (history-less docs): if the Y.Doc has no CRDT history yet (an idle
-   *  note whose content arrived via the cursor feed, so its doc was never
-   *  populated), applyLocalEdit's seedOnce inserts the whole disk as a FRESH
-   *  lineage; the subsequent server-lineage merge then DOUBLES the shared
-   *  baseline (both edits survive, but the baseline text is duplicated, and the
-   *  doubling is permanent). This is pre-existing seedOnce behavior (the legacy
-   *  push path doubles the same way), bounded to the narrow
-   *  history-less + un-pushed-drift + first-push window, and strictly better
-   *  than the silent LOSS it replaces. A proper fix needs a real 3-way/LCA
-   *  merge for history-less docs (adopt-remote-first would instead clobber the
-   *  remote) — tracked as a follow-up, not addressed here.
+   *  PRECONDITION (history-FULL docs only): the callers
+   *  (`applyPushedNoteUpdate`/`coldReceive`) invoke this ONLY when the note's
+   *  Y.Doc already carries the baseline lineage (`crdt.hasHistory` true). A
+   *  history-LESS doc is routed to `adoptHistoryLessNote` instead — seeding disk
+   *  into an empty doc here would mint a FRESH lineage that unions with the
+   *  server lineage and DOUBLES the baseline (#234). On a history-full doc the
+   *  seed is a clean minimal diff onto the existing baseline, so the subsequent
+   *  `applyRemoteUpdate` CRDT-merges both edits without doubling.
    *
    *  Best-effort: never throws into the apply path. The caller has already
    *  established !isLiveBound. */
@@ -17783,6 +17794,103 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`
         );
       }
+  }
+  /** Adopt a not-live-bound CRDT note whose local Y.Doc has NO history yet
+   *  (#234). A feed-synced note (content delivered via the cursor feed, its
+   *  IndexedDB store never populated) has an empty Y.Doc. Two coupled failures
+   *  arise if we treat it like a history-full note:
+   *   - DOUBLING: `captureDiskDriftBeforeRemote` → `applyLocalEdit(disk)` seeds
+   *     the whole disk as a FRESH lineage; the subsequent server-lineage merge
+   *     unions two independent insertions of the baseline → baseline doubles.
+   *   - INCOMPLETENESS: the fanned-out/cold delta is one INCREMENTAL update; a
+   *     delta applied to an empty doc has no causal base, so its ops buffer and
+   *     the note never reconstructs.
+   *  Both are avoided by fetching FULL server state (since="" → full) and
+   *  adopting it, so the doc becomes history-full on the server's own lineage;
+   *  any un-pushed disk drift is then reconciled against it (no seed, no
+   *  double). Returns the adopted server head, or null on failure (caller leaves
+   *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
+   *  own failure, never throws. */
+  async adoptHistoryLessNote(path, noteId) {
+    if (!this.crdt) return null;
+    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
+    if (file instanceof import_obsidian21.TFile)
+      try {
+        disk = await this.app.vault.cachedRead(file);
+      } catch (e) {
+        disk = null;
+      }
+    let hasDrift = disk !== null && !exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk), head;
+    try {
+      let full = await this.api.getUpdates(noteId, "");
+      head = full.head, await this.crdt.applyRemoteUpdate(noteId, full.update);
+    } catch (e) {
+      return rlog().warn(
+        "crdt",
+        `adoptHistoryLessNote: full-state adopt failed for ${path}: ${errMsg(e)}`
+      ), null;
+    }
+    return hasDrift && disk !== null && await this.reconcileDriftOntoServer(normalized, noteId, disk), head;
+  }
+  /** Reconcile an un-pushed disk edit (`localDisk`) against a note whose Y.Doc
+   *  now holds the adopted SERVER lineage (`adoptHistoryLessNote` step 3). The
+   *  doc == server content at entry; disk was just overwritten with server
+   *  content by the adopt-flush, but `localDisk` holds the pre-adopt disk.
+   *   - LCA available (BaseStore has the last-synced base): a real 3-way merge
+   *     preserves both sides. Diff the merged text onto the server lineage via
+   *     `applyLocalEdit` (doc is history-full → diffIntoYText, NO seed → NO
+   *     double), then flush the merged result and push it (the local update
+   *     emitted by applyLocalEdit).
+   *   - No LCA, or the 3-way merge conflicts: keep BOTH, never lose or double.
+   *     The original note converges to SERVER (doc == disk == server already);
+   *     the local version is preserved as a separate conflict-copy note. This is
+   *     the CRDT-consistent shape of the legacy keep-both (server→original,
+   *     local→copy), so the Y.Doc and disk never disagree.
+   *  Best-effort: isolates its own failure, never throws. */
+  async reconcileDriftOntoServer(normalized, noteId, localDisk) {
+    var _a, _b;
+    if (!this.crdt) return;
+    let serverText;
+    try {
+      serverText = await this.crdt.projectedText(noteId);
+    } catch (e) {
+      rlog().warn(
+        "crdt",
+        `reconcileDriftOntoServer: projectedText failed for ${normalized}: ${errMsg(e)}`
+      );
+      return;
+    }
+    if (serverText === localDisk) return;
+    let base = (_a = this.baseStore) == null ? void 0 : _a.get(normalized);
+    if (base) {
+      let merge2 = threeWayMerge(base.content, localDisk, serverText);
+      if (merge2.clean) {
+        try {
+          await this.crdt.applyLocalEdit(noteId, merge2.merged), await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId)), (_b = this.baseStore) == null || _b.set(normalized, merge2.merged, base.version), rlog().info(
+            "conflict",
+            `history-less drift 3-way merged | path=${normalized} | baseLen=${base.content.length} localLen=${localDisk.length} remoteLen=${serverText.length} mergedLen=${merge2.merged.length}`
+          );
+        } catch (e) {
+          rlog().error(
+            "conflict",
+            `history-less 3-way merge apply failed for ${normalized}: ${errMsg(e)}`
+          );
+        }
+        return;
+      }
+    }
+    let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+    try {
+      await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), rlog().info(
+        "conflict",
+        `history-less drift \u2192 keep-both | original=${normalized} copy=${conflictPath}`
+      );
+    } catch (e) {
+      rlog().error(
+        "conflict",
+        `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}`
+      );
+    }
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -18674,6 +18782,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
+          if (!(typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)) {
+            let adopted = await this.adoptHistoryLessNote(path, noteId);
+            if (adopted === null) continue;
+            this.setCrdtHead(path, adopted), converged++, this.hibernateIfIdle(path, noteId);
+            continue;
+          }
           await this.captureDiskDriftBeforeRemote(path, noteId);
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
           await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.hibernateIfIdle(path, noteId);
@@ -18700,7 +18814,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
       try {
-        await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), this.hibernateIfIdle(path, noteId);
+        if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)
+          await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head);
+        else {
+          let adopted = await this.adoptHistoryLessNote(path, noteId);
+          if (adopted === null) return;
+          this.setCrdtHead(path, adopted);
+        }
+        this.hibernateIfIdle(path, noteId);
       } catch (e) {
         devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
       }
