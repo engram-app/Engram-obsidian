@@ -855,9 +855,22 @@ export class SyncEngine {
 	 *  (needsColdReconcile) — an in-sync note, or one with no baseline, has
 	 *  nothing local to preserve. Reuses applyLocalEdit (frontmatter split +
 	 *  minimal diff), mirroring reconcileColdStart; oversized notes are left to
-	 *  the legacy path (never seeded — 8 MB WS frame limit). Best-effort: never
-	 *  throws into the apply path. The caller has already established
-	 *  !isLiveBound. */
+	 *  the legacy path (never seeded — 8 MB WS frame limit).
+	 *
+	 *  CAVEAT (history-less docs): if the Y.Doc has no CRDT history yet (an idle
+	 *  note whose content arrived via the cursor feed, so its doc was never
+	 *  populated), applyLocalEdit's seedOnce inserts the whole disk as a FRESH
+	 *  lineage; the subsequent server-lineage merge then DOUBLES the shared
+	 *  baseline (both edits survive, but the baseline text is duplicated, and the
+	 *  doubling is permanent). This is pre-existing seedOnce behavior (the legacy
+	 *  push path doubles the same way), bounded to the narrow
+	 *  history-less + un-pushed-drift + first-push window, and strictly better
+	 *  than the silent LOSS it replaces. A proper fix needs a real 3-way/LCA
+	 *  merge for history-less docs (adopt-remote-first would instead clobber the
+	 *  remote) — tracked as a follow-up, not addressed here.
+	 *
+	 *  Best-effort: never throws into the apply path. The caller has already
+	 *  established !isLiveBound. */
 	private async captureDiskDriftBeforeRemote(path: string, noteId: string): Promise<void> {
 		if (!this.crdt) return;
 		const normalized = normalizePath(path);
