@@ -17812,6 +17812,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
    *  own failure, never throws. */
   async adoptHistoryLessNote(path, noteId) {
+    var _a;
     if (!this.crdt) return null;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
     if (file instanceof import_obsidian21.TFile)
@@ -17820,9 +17821,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         disk = null;
       }
-    let hasDrift = disk !== null && !exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk), head;
+    let hasDrift = disk !== null && !exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk), lca = hasDrift && disk !== null ? (_a = this.baseStore) == null ? void 0 : _a.get(normalized) : void 0, keepBothCopied = !1;
+    if (hasDrift && disk !== null && !lca)
+      try {
+        let copy2 = await this.writeDriftConflictCopy(normalized, disk);
+        keepBothCopied = !0, rlog().info(
+          "conflict",
+          `history-less drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+        );
+      } catch (e) {
+        return rlog().error(
+          "conflict",
+          `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting adopt to retain the local edit for retry`
+        ), null;
+      }
+    let head;
     try {
-      let full = await this.api.getUpdates(noteId, "");
+      let since = toB64(await this.crdt.encodeStateVector(noteId)), full = await this.api.getUpdates(noteId, since);
       head = full.head, await this.crdt.applyRemoteUpdate(noteId, full.update);
     } catch (e) {
       return rlog().warn(
@@ -17830,7 +17845,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         `adoptHistoryLessNote: full-state adopt failed for ${path}: ${errMsg(e)}`
       ), null;
     }
-    return hasDrift && disk !== null && await this.reconcileDriftOntoServer(normalized, noteId, disk), head;
+    return hasDrift && disk !== null && !keepBothCopied && await this.reconcileDriftOntoServer(normalized, noteId, disk), head;
   }
   /** Reconcile an un-pushed disk edit (`localDisk`) against a note whose Y.Doc
    *  now holds the adopted SERVER lineage (`adoptHistoryLessNote` step 3). The
@@ -17879,9 +17894,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return;
       }
     }
-    let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
     try {
-      await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), rlog().info(
+      let conflictPath = await this.writeDriftConflictCopy(normalized, localDisk);
+      rlog().info(
         "conflict",
         `history-less drift \u2192 keep-both | original=${normalized} copy=${conflictPath}`
       );
@@ -17891,6 +17906,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}`
       );
     }
+  }
+  /** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
+   *  `normalized` and record its baseline so it isn't re-pushed as drift.
+   *  Throws on a GENUINE write failure — `createFileWithFolders` degrades a
+   *  benign "already exists" race to a modify with the same content, so only
+   *  real errors (disk full, permission, illegal path) propagate. Returns the
+   *  conflict path written. */
+  async writeDriftConflictCopy(normalized, localDisk) {
+    let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -19160,7 +19185,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            if ((_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), (_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId), event.content_hash !== void 0) {
+            if ((_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId)), event.content_hash !== void 0) {
               let np = (0, import_obsidian21.normalizePath)(event.path), prior = this.syncState.get(np);
               (prior == null ? void 0 : prior.serverHash) === void 0 && this.syncState.set(np, {
                 hash: (_u = prior == null ? void 0 : prior.hash) != null ? _u : fnv1a(""),

@@ -3443,8 +3443,13 @@ export class SyncEngine {
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
 					// (disk write re-enters handleModify → applyLocalEdit).
-					// P2-1: enroll in the note's CRDT room so this device receives live
-					// updates (enroll() is idempotent — already-enrolled notes no-op).
+					// Vault-channel fan-out: an IDLE note received here converges
+					// room-free over the note_yjs_update broadcast
+					// (applyPushedNoteUpdate) or the pull backstop — enrolling a room
+					// for it would defeat the fan-out isolation and re-open the connect
+					// storm (a room per note that ever received a live edit). Enroll
+					// ONLY when the note is live-bound (open in the editor), matching the
+					// pull-path discovery gate (isLiveBound) at applyChange below.
 					// Rooms are keyed by note_id, so resolve it: prefer the id the
 					// server's broadcast now carries (a device that has NEVER seen this
 					// note learns it here), else the locally-known sidecar mapping. Learn
@@ -3476,7 +3481,9 @@ export class SyncEngine {
 					} else {
 						this.noteIdMap?.set(event.path, noteId);
 						this.confirmNoteId(noteId);
-						this.crdtEnrollment?.enroll(noteId);
+						if (this.isLiveBound(normalizePath(event.path))) {
+							this.crdtEnrollment?.enroll(noteId);
+						}
 						// SEED the CAS base from the event when none exists — the CRDT
 						// delivery that writes the body never advances serverHash (issue
 						// #203), so a device whose only knowledge of this note came

@@ -150,3 +150,53 @@ describe("C1 branch records the CAS base from the WS event", () => {
 		expect(stored?.hash).toBe(777);
 	});
 });
+
+describe("C1 branch enrolls a CRDT room ONLY for a live-bound note", () => {
+	// Vault-channel fan-out: an IDLE note received via note_changed converges
+	// room-free over the note_yjs_update broadcast (applyPushedNoteUpdate) or the
+	// pull backstop. Enrolling a room for it defeats the fan-out isolation and
+	// re-opens the connect-storm (a room per note that ever received a live edit).
+	// The pull path already gates its discovery enroll on isLiveBound
+	// (sync.ts:4023/4053) — the live-stream path must match.
+	function fakeEnrollment() {
+		return { enroll: mock((_id: string) => {}), reset: mock((_id: string) => {}) };
+	}
+
+	test("idle (not live-bound) upsert does NOT enroll a room", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		const enrollment = fakeEnrollment();
+		engine.setCrdtEnrollment(enrollment as any);
+		engine.setLiveBoundCheck(() => false);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "idle.md",
+			id: "note-id-idle",
+			content_hash: "srv-h",
+			version: 1,
+		} as any);
+
+		expect(enrollment.enroll).not.toHaveBeenCalled();
+	});
+
+	test("live-bound upsert DOES enroll the room", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		const enrollment = fakeEnrollment();
+		engine.setCrdtEnrollment(enrollment as any);
+		engine.setLiveBoundCheck(() => true);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "open.md",
+			id: "note-id-open",
+			content_hash: "srv-h",
+			version: 1,
+		} as any);
+
+		expect(enrollment.enroll).toHaveBeenCalledWith("note-id-open");
+	});
+});

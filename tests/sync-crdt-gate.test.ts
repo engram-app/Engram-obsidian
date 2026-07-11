@@ -185,14 +185,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
-	test("upsert for markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
+	test("upsert for an IDLE markdown CRDT note does NOT enroll a room (vault-channel fan-out)", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
-		// NoteStreamEvent carries no note_id (Task 6) — the enroll call resolves
-		// it via the sidecar, so seed a mapping for this test's path.
+		// Default isLiveBound is false → the note is idle (not open in the editor).
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/test.md", "Notes/test.md");
 		engine.setNoteIdMap(noteIdMap);
@@ -213,11 +212,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		// Legacy disk-write must NOT happen — CRDT owns the content
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		// But enroll MUST be called to ensure the device stays in sync if not currently observing
-		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
+		// An idle note converges room-free over the note_yjs_update broadcast; enrolling
+		// a room per note that received a live edit is the connect storm P2 removes.
+		// The live-bound positive case is covered in sync-c1-serverhash.test.ts.
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
-	test("brand-new markdown upsert enrolls via the broadcast's note_id (never-seen, no local mapping)", async () => {
+	test("brand-new IDLE markdown upsert learns the note_id but does NOT enroll (never-seen, no local mapping)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_id: string) => {});
@@ -242,9 +243,10 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		});
 
 		// CRDT owns the body → no legacy disk-write; the id is learned from the
-		// broadcast and enrolled by so the crdt: room delivers the body.
+		// broadcast so future local edits route through CRDT. The body itself
+		// arrives room-free over the fan-out — no enrollment for an idle note.
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(enroll).toHaveBeenCalledWith("id-brand-new");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(noteIdMap.get("Notes/brand-new.md")).toBe("id-brand-new");
 	});
 
