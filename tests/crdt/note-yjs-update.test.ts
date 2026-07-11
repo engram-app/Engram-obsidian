@@ -140,3 +140,30 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual([]); // a failed apply is left for retry, not freed
 	});
 });
+
+describe("applyPushedNoteUpdate ordering (b#3)", () => {
+	test("the idle doc is freed only AFTER setCrdtHead durably records the head", async () => {
+		// Mirrors the coldReceive ordering test: hibernateIfIdle -> closeDoc must
+		// run AFTER the head is persisted, so a half-recorded note is never freed.
+		const order: string[] = [];
+		const crdt = {
+			applyRemoteUpdate: async () => {},
+			closeDoc: (id: string) => order.push(`close:${id}`),
+		};
+		const e = engine({ crdt });
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		e.setLiveBoundCheck(() => false);
+		markConfirmed(e, "id-a");
+		const originalSetCrdtHead = (e as any).setCrdtHead.bind(e);
+		(e as any).setCrdtHead = (path: string, head: string) => {
+			order.push(`head:${path}`);
+			return originalSetCrdtHead(path, head);
+		};
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(order).toEqual(["head:a.md", "close:id-a"]);
+	});
+});

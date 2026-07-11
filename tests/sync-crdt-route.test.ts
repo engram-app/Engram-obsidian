@@ -1429,3 +1429,42 @@ describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never wh
 		expect(batch).not.toHaveBeenCalled();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// b#2 (test-coverage review): the main.ts cold-start enroll seam. A drifted
+// note gets its handshake enrolled ONLY when it is live-bound (open in the
+// editor); an idle drifted note propagates room-free (no STEP1 storm on
+// connect). main.ts wires this as the `enroll` callback passed to
+// reconcileColdStart; we replicate that wiring inline (same style as the
+// "cold-start loop gates reconcileColdStart on needsColdReconcile" test above).
+// ---------------------------------------------------------------------------
+
+describe("cold-start enroll gate: idle drifted note does NOT enroll, live-bound DOES", () => {
+	async function run(bound: boolean) {
+		const enroll = mock((_id: string) => {});
+		// Replicate main.ts's enroll-callback wiring: enroll only when live-bound.
+		await reconcileColdStart(
+			{ path: "n.md", noteId: "id-n", diskContent: "drifted body" },
+			{
+				applyLocalEdit: mock(async () => true),
+				getText: mock(async () => "old baseline"),
+				projectedText: mock(async () => "old baseline"),
+				enroll: (id: string) => {
+					if (bound) enroll(id);
+				},
+			} as any,
+			() => {},
+		);
+		return enroll;
+	}
+
+	test("idle (not live-bound) drifted note: enroll NOT called (no STEP1 storm)", async () => {
+		const enroll = await run(false);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("live-bound drifted note: enroll IS called (STEP1 for the open note)", async () => {
+		const enroll = await run(true);
+		expect(enroll).toHaveBeenCalledWith("id-n");
+	});
+});
