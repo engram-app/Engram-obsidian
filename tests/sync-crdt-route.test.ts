@@ -1347,3 +1347,85 @@ describe("discovery pull enrolls only live-bound notes", () => {
 		expect(enroll).toHaveBeenCalledWith("id-disc");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// BUG 3 invariant (b#1 from the adversarial review): a note that WAS confirmed
+// but whose syncState baseline is missing (evicted) must NEVER be routed to
+// whole-doc last-write-wins — that would lose a concurrent remote edit (the
+// anti-#230 failure this branch exists to prevent). needsColdReconcile returns
+// false for a baseline-less note, so cold-start SKIPS seeding it; the concern
+// is whether the fullSync/push fallback then routes it LWW. It does not:
+// pushFile and pushNotesViaBatch gate CRDT purely on isNoteConfirmed(noteId),
+// INDEPENDENT of any syncState baseline. This pins that invariant.
+//
+// Investigation note: confirmedNoteIds is in-memory only (never serialized via
+// saveData) and cleared on every reconnect (clearConfirmedNoteIds) — so it
+// cannot outlive syncState across a restart in persistence. Within a session a
+// note is confirmed only by a push-response or the pull feed, both of which
+// set/refresh the baseline in the same operation. Even so, the routing does not
+// depend on the baseline at all, so a transient confirmed-but-baseline-less
+// note still stays on CRDT. Proven below.
+// ---------------------------------------------------------------------------
+
+describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never whole-doc LWW)", () => {
+	test("confirmed + drifted + NO baseline: cold-start skips it, but the edit still routes CRDT, not REST", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		// Deliberately NO importSyncState: the baseline was evicted.
+
+		// Precondition that motivates BUG 3: cold-start's storm gate SKIPS this
+		// note (needsColdReconcile is false without a baseline, even though disk
+		// drifted), so the disk edit is not seeded at cold start.
+		const needs = (
+			engine as unknown as { needsColdReconcile(p: string, c: string): boolean }
+		).needsColdReconcile("note.md", "drifted body");
+		expect(needs).toBe(false);
+
+		// The invariant: routing does NOT consult the baseline. A confirmed note
+		// routes to CRDT (applyLocalEdit), never to whole-doc REST LWW (pushNote).
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("isCrdtManagedOffline is true for a confirmed note with no baseline", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		// no baseline imported
+		const managed = (
+			engine as unknown as { isCrdtManagedOffline(p: string, id: string | null): boolean }
+		).isCrdtManagedOffline("p.md", "id-1");
+		expect(managed).toBe(true);
+	});
+
+	test("batch push skips a confirmed baseline-less note as CRDT-owned (not whole-doc LWW)", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => true);
+		// no baseline imported
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [] });
+
+		const file = new TFile("note.md");
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		// Skipped as crdt-owned — a confirmed note is never whole-doc REST-pushed,
+		// baseline or not.
+		expect(batch).not.toHaveBeenCalled();
+	});
+});
