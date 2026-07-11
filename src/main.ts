@@ -1225,15 +1225,26 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
 		this.settings.accessTokenVaultId = undefined;
-		await this.saveSettings();
 
+		// Wire the new auth provider onto this.api BEFORE saveSettings(). saveSettings()
+		// rebuilds the note channel (setupNoteStream → connectChannel), which freezes
+		// the channel's topic userId from this.api.getMe() at construction. If the
+		// provider is still the OLD user's when that getMe() runs, the new channel is
+		// minted as crdt:<oldUserId>:<newVaultId> while the socket later authenticates
+		// with the NEW user's token → the backend rejects the join "unauthorized" and
+		// live sync stays silently dead until a reload. (Unlike the e2e swap helper,
+		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
+		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
-			if (this.noteStream) {
-				this.noteStream.setAuthProvider(this.authProvider);
-				this.noteStream.setAuthProbe(() => this.api.getMe());
-			}
+		}
+
+		await this.saveSettings();
+
+		if (this.authProvider && this.noteStream) {
+			this.noteStream.setAuthProvider(this.authProvider);
+			this.noteStream.setAuthProbe(() => this.api.getMe());
 		}
 	}
 
