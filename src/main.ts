@@ -1725,8 +1725,16 @@ export default class EngramSyncPlugin extends Plugin {
 			}
 
 			case "push-all-delete-remote": {
+				// Snapshot local files BEFORE opening the gate: markSyncGateAccepted
+				// lets queued live WS events into the vault, and a race-delivered
+				// remote note would otherwise look "local" to wipeRemote and dodge
+				// the wipe (test_86 gate-open race). See SyncEngine.snapshotLocalPaths.
+				const localSnapshot = this.syncEngine.snapshotLocalPaths();
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ replaceRemote: true });
+				const pushed = await this.syncEngine.pushAll({
+					replaceRemote: true,
+					localSnapshot,
+				});
 				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
 				return true;
 			}

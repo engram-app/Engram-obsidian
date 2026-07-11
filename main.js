@@ -19846,6 +19846,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *    confirms via the type-delete gate. Defaults to false (plain push that
    *    leaves remote-only files untouched).
    */
+  /** Snapshot the syncable local paths right now. Callers capture this BEFORE
+   *  markSyncGateAccepted opens the gate, then pass it to pushAll({replaceRemote})
+   *  so the wipe uses local-truth-at-sync-start and a gate-open live delivery
+   *  can't shield a remote extra from the wipe (test_86). */
+  snapshotLocalPaths() {
+    return new Set(
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
+    );
+  }
   async pushAll(opts = {}) {
     var _a, _b, _c, _d;
     if (this.syncBlocked)
@@ -19854,8 +19863,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
-    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote();
-    let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
+    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote(opts.localSnapshot);
+    let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+    if (opts.localSnapshot) {
+      let snap = opts.localSnapshot;
+      toSync = toSync.filter((f) => snap.has((0, import_obsidian21.normalizePath)(f.path)));
+    }
+    let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
       var _a2;
@@ -19926,14 +19940,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  recreated by the subsequent upload); the user confirms via the type-delete
    *  gate. Failures on individual deletes are logged, not thrown, so the
    *  re-upload still runs. */
-  async wipeRemote() {
+  async wipeRemote(localSnapshot) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     let manifest = await this.api.getManifest();
     if (!manifest) {
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let localPaths = new Set(
+    let localPaths = localSnapshot != null ? localSnapshot : new Set(
       this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
     ), notePaths = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), attachmentPaths = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), total = notePaths.length + attachmentPaths.length;
     rlog().info(
@@ -22469,8 +22483,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
+        let localSnapshot = this.syncEngine.snapshotLocalPaths();
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
+        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0, localSnapshot });
         return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
