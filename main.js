@@ -19925,7 +19925,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "reconcile",
           `Fixing ${toFix.length} files after pushAll (${missing.length} missing, ${diverged.length} diverged)`
         );
+        let snap = opts.localSnapshot;
         for (let path of toFix) {
+          if (snap && !snap.has((0, import_obsidian21.normalizePath)(path)))
+            continue;
           let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(path));
           file && await this.pushFile(file, !0);
         }
@@ -22485,7 +22488,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       case "push-all-delete-remote": {
         let localSnapshot = this.syncEngine.snapshotLocalPaths();
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0, localSnapshot });
+        let pushed = await this.syncEngine.pushAll({
+          replaceRemote: !0,
+          localSnapshot
+        });
         return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {

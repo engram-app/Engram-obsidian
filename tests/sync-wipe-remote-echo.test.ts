@@ -411,4 +411,33 @@ describe("wipeRemote pre-gate local snapshot (test_86 gate-open race)", () => {
 		const pushedPaths = (mockApi.pushNote as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
 		expect(pushedPaths).not.toContain("Notes/RemoteOnly.md");
 	});
+
+	test("reconcile does NOT resurrect a race-injected note even when getFileByPath resolves it", async () => {
+		// The prior test only proves the MAIN push loop skips the race note — it
+		// leaves the vault's getFileByPath at the beforeEach null, so reconcile's
+		// re-push loop is a no-op. reconcile re-enumerates getFiles() and re-pushes
+		// "missing" paths via pushFile(); this test resolves the race file there so
+		// the reconcile fence (not just the main-loop filter) is what's asserted.
+		const engine = createEngine();
+		// Manifest lacks RemoteOnly (wiped) → reconcile classifies it "missing".
+		manifestWith(["Notes/LocalOnly.md"]);
+		// Vault holds BOTH — RemoteOnly was live-delivered by the gate-open race.
+		mockApp.vault.getFiles.mockReturnValue([
+			new TFile("Notes/RemoteOnly.md"),
+			new TFile("Notes/LocalOnly.md"),
+		]);
+		// Unlike the sibling test, reconcile CAN resolve the race file here — so
+		// without the snapshot fence, pushFile(RemoteOnly, true) would resurrect it.
+		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
+			p === "Notes/RemoteOnly.md" ? new TFile("Notes/RemoteOnly.md") : null,
+		);
+
+		await engine.pushAll({
+			replaceRemote: true,
+			localSnapshot: new Set(["Notes/LocalOnly.md"]),
+		});
+
+		const pushedPaths = (mockApi.pushNote as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
+		expect(pushedPaths).not.toContain("Notes/RemoteOnly.md");
+	});
 });

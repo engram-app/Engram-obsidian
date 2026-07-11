@@ -5258,7 +5258,16 @@ export class SyncEngine {
 					"reconcile",
 					`Fixing ${toFix.length} files after pushAll (${missing.length} missing, ${diverged.length} diverged)`,
 				);
+				// Same snapshot fence as the main push loop: when replace-remote
+				// supplied a pre-gate snapshot, reconcile must not re-push a path
+				// outside it. reconcile re-enumerates getFiles(), so a gate-open
+				// race note wiped by wipeRemote would otherwise be classified
+				// "missing" and resurrected here (delete-wins only masks it).
+				const snap = opts.localSnapshot;
 				for (const path of toFix) {
+					if (snap && !snap.has(normalizePath(path))) {
+						continue;
+					}
 					const file = this.app.vault.getFileByPath(normalizePath(path));
 					if (file) {
 						await this.pushFile(file, true);
