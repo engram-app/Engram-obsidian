@@ -18542,6 +18542,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       version: (_c = note.version) != null ? _c : change.version
     };
   }
+  /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
+   *  durably recorded (P3, plugin #232-series). Idle notes are not
+   *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
+   *  a doc opened just to apply a cold/pushed convergence delta is transient,
+   *  so leaving it resident forever is unbounded memory growth. `closeDoc`
+   *  does not `clearData()`, so the IndexedDB store persists; the next apply
+   *  re-opens via `CrdtManager.entry()`, which awaits `whenSynced` and
+   *  rehydrates the full prior state before merging the next delta — no data
+   *  loss. Re-checks `isLiveBound` AFTER the caller's awaits: the user may
+   *  have opened the note in the editor while the apply was in flight, in
+   *  which case that room now owns the doc's lifecycle and it must stay
+   *  resident. */
+  hibernateIfIdle(path, noteId) {
+    this.crdt && (this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.crdt.closeDoc(noteId));
+  }
   /** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
    *  Diffs the server head-index against the persisted per-note crdtHead and,
    *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
@@ -18562,7 +18577,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++;
+          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.hibernateIfIdle(path, noteId);
         } catch (e) {
           devLog().log("crdt", `coldReceive: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
         }
@@ -18577,15 +18592,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  its own crdt_msg frames, so this would be a harmless-but-wasteful double
    *  apply; skipping it matches Relay's `if (isActive) return`. Skips a note
    *  not yet confirmed (no server row known) or one this device hasn't mapped
-   *  to a path (first-discovery is pull()'s job, same as coldReceive).
-   *  Best-effort: isolates its own failure, never throws. */
+   *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
+   *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
+   *  coldReceive. Best-effort: isolates its own failure, never throws. */
   async applyPushedNoteUpdate(noteId, update, head) {
     var _a, _b;
     if (!this.crdt) return;
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
       try {
-        await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head);
+        await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), this.hibernateIfIdle(path, noteId);
       } catch (e) {
         devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
       }

@@ -207,13 +207,57 @@ describe("coldReceive", () => {
 		expect(closed).toEqual([]); // never opened, so nothing to free
 	});
 
-	test("a converged cold note's doc is NOT freed after applying (channel-fanout keeps it resident)", async () => {
-		// Under the vault-channel fanout model (P1/P2) every note is enrolled and
-		// its doc is owned by the live channel — idle notes RECEIVE pushed updates
-		// through that resident doc, so freeing it here would only churn (destroy
-		// now, re-mint on the next channel frame). Resident-set bounding happens on
-		// note close instead (#228). coldReceive therefore never closeDoc()s.
+	test("a converged cold note's doc IS freed after applying (P3 hibernation)", async () => {
+		// Idle notes are not channel-enrolled (P2 removed lazyEnrollment) — an
+		// idle doc opened just to apply this convergence delta is transient.
+		// Freeing it after the head is durably recorded keeps the resident set
+		// bounded to notes actually open in the editor (live-bound); the next
+		// apply re-opens via entry(), which rehydrates full prior state from
+		// IndexedDB before merging (plugin #232-series P3).
 		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" } });
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
+		expect(closed).toEqual(["id-a"]);
+	});
+
+	test("a converged cold note's doc is freed only AFTER setCrdtHead durably records the head", async () => {
+		const order: string[] = [];
+		const api = {
+			getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
+			getUpdates: async () => ({ update: new Uint8Array([1]), head: "SRV" }),
+		};
+		const crdt = {
+			encodeStateVector: async () => new Uint8Array([9]),
+			applyRemoteUpdate: async () => {},
+			closeDoc: (id: string) => order.push(`close:${id}`),
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		e.setLiveBoundCheck(() => false);
+		const originalSetCrdtHead = (e as any).setCrdtHead.bind(e);
+		(e as any).setCrdtHead = (path: string, head: string) => {
+			order.push(`head:${path}`);
+			return originalSetCrdtHead(path, head);
+		};
+		await e.coldReceive();
+		expect(order).toEqual(["head:a.md", "close:id-a"]);
+	});
+
+	test("a note that becomes live-bound DURING the apply is NOT freed (re-checked after the await)", async () => {
+		// The user may open the note in the editor while its convergence delta
+		// is in flight. hibernateIfIdle re-checks isLiveBound AFTER the awaits,
+		// not just at the top of the loop — so a note that flips live-bound
+		// mid-apply keeps its doc resident for the editor.
+		let liveCalls = 0;
+		const live = () => {
+			liveCalls++;
+			return liveCalls > 1; // false on the entry guard, true by hibernation time
+		};
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, live });
 		expect(await e.coldReceive()).toBe(1);
 		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
 		expect(closed).toEqual([]);

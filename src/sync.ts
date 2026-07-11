@@ -2476,6 +2476,24 @@ export class SyncEngine {
 		};
 	}
 
+	/** Free `noteId`'s Y.Doc after a remote update has been applied and its head
+	 *  durably recorded (P3, plugin #232-series). Idle notes are not
+	 *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
+	 *  a doc opened just to apply a cold/pushed convergence delta is transient,
+	 *  so leaving it resident forever is unbounded memory growth. `closeDoc`
+	 *  does not `clearData()`, so the IndexedDB store persists; the next apply
+	 *  re-opens via `CrdtManager.entry()`, which awaits `whenSynced` and
+	 *  rehydrates the full prior state before merging the next delta — no data
+	 *  loss. Re-checks `isLiveBound` AFTER the caller's awaits: the user may
+	 *  have opened the note in the editor while the apply was in flight, in
+	 *  which case that room now owns the doc's lifecycle and it must stay
+	 *  resident. */
+	private hibernateIfIdle(path: string, noteId: string): void {
+		if (!this.crdt) return;
+		if (this.isLiveBound(normalizePath(path))) return;
+		this.crdt.closeDoc(noteId);
+	}
+
 	/** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
 	 *  Diffs the server head-index against the persisted per-note crdtHead and,
 	 *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
@@ -2504,11 +2522,12 @@ export class SyncEngine {
 				await this.crdt.applyRemoteUpdate(noteId, update);
 				this.setCrdtHead(path, head); // crdtHead persists under the vault path
 				converged++;
-				// The doc is not freed here: every note is channel-enrolled and its
-				// doc is owned by the live channel, not minted just for this
-				// convergence; freeing it would only churn (destroy now, re-mint on
-				// the next channel frame). Resident-set bounding happens on note close
-				// / after cold-receive instead (plugin #228).
+				// Idle notes are not channel-enrolled under the fan-out model (P2
+				// removed lazyEnrollment) — this doc was opened just for this
+				// convergence, so free it now that the head is durably recorded.
+				// A note that became live-bound during the awaits above stays
+				// resident (hibernateIfIdle re-checks).
+				this.hibernateIfIdle(path, noteId);
 			} catch (e) {
 				// Isolated: log, leave crdtHead unadvanced, retry next poll.
 				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);
@@ -2530,8 +2549,9 @@ export class SyncEngine {
 	 *  its own crdt_msg frames, so this would be a harmless-but-wasteful double
 	 *  apply; skipping it matches Relay's `if (isActive) return`. Skips a note
 	 *  not yet confirmed (no server row known) or one this device hasn't mapped
-	 *  to a path (first-discovery is pull()'s job, same as coldReceive).
-	 *  Best-effort: isolates its own failure, never throws. */
+	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
+	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
+	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
 	async applyPushedNoteUpdate(noteId: string, update: Uint8Array, head: string): Promise<void> {
 		if (!this.crdt) return;
 		const path = this.noteIdMap?.pathForId(noteId) ?? null;
@@ -2541,9 +2561,11 @@ export class SyncEngine {
 		try {
 			await this.crdt.applyRemoteUpdate(noteId, update);
 			this.setCrdtHead(path, head); // crdtHead persists under the vault path
+			this.hibernateIfIdle(path, noteId);
 		} catch (e) {
 			// Isolated: log, leave crdtHead unadvanced — the next coldReceive poll
-			// (or a subsequent push) will retry convergence.
+			// (or a subsequent push) will retry convergence. Not freed: a failed
+			// apply is left for retry, not hibernated.
 			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
 			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
 		}

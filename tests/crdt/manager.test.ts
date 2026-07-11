@@ -151,6 +151,39 @@ test("applyRemoteUpdate flushes merged text to disk", async () => {
 	await mgr.destroy();
 });
 
+test("closeDoc + reapply: entry() rehydrates full prior state from IndexedDB before merging the next delta (P3 hibernation correctness)", async () => {
+	// Mirrors SyncEngine.hibernateIfIdle (P3, plugin #232-series): after an
+	// idle note's Y.Doc applies a pushed/converged update, the doc is freed
+	// with closeDoc (no clearData — the IDB store persists). This proves the
+	// SECOND apply, after the doc has been freed and reopened, produces the
+	// correctly MERGED content — i.e. entry() rehydrated the full "Hello "
+	// state before merging the "World" delta, not just applied the delta into
+	// a fresh empty doc.
+	const { mgr } = makeManager();
+	const server = new Y.Doc();
+	const serverText = server.getText("content");
+	serverText.insert(0, "Hello ");
+
+	await mgr.applyRemoteUpdate("hibernate.md", Y.encodeStateAsUpdate(server));
+	expect(await mgr.getText("hibernate.md")).toBe("Hello ");
+
+	// Capture the server's state vector as of just the first insert, BEFORE
+	// the second insert — so update2 below is a delta relative to that point,
+	// not a full re-encode. Applying it into a doc that never rehydrated
+	// "Hello " would leave the merge incomplete/incorrect.
+	const svAfterFirst = Y.encodeStateVector(server);
+	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush before hibernating
+
+	mgr.closeDoc("hibernate.md"); // hibernate — doc freed, IDB store persists
+
+	serverText.insert(serverText.length, "World");
+	const update2 = Y.encodeStateAsUpdate(server, svAfterFirst);
+
+	await mgr.applyRemoteUpdate("hibernate.md", update2);
+	expect(await mgr.getText("hibernate.md")).toBe("Hello World");
+	await mgr.destroy();
+});
+
 test("state persists to IndexedDB across a manager restart", async () => {
 	const a = makeManager();
 	// markSynced required before first seed (audit P0-1 fix).

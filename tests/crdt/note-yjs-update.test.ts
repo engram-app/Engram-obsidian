@@ -45,23 +45,25 @@ function noteEngine(opts: {
 	applyThrows?: boolean;
 }) {
 	const applied: Array<{ id: string; update: Uint8Array }> = [];
+	const closed: string[] = [];
 	const crdt = {
 		applyRemoteUpdate: async (id: string, update: Uint8Array) => {
 			if (opts.applyThrows) throw new Error("apply failed");
 			applied.push({ id, update });
 		},
+		closeDoc: (id: string) => closed.push(id),
 	};
 	const e = engine({ crdt });
 	const map = new NoteIdMap();
 	map.set("a.md", "id-a");
 	e.setNoteIdMap(map);
 	e.setLiveBoundCheck(opts.live ?? (() => false));
-	return { e, applied };
+	return { e, applied, closed };
 }
 
 describe("applyPushedNoteUpdate (note_yjs_update)", () => {
-	test("a confirmed, not-live-bound note applies the update and persists the head", async () => {
-		const { e, applied } = noteEngine({});
+	test("a confirmed, not-live-bound note applies the update, persists the head, and hibernates the doc (P3)", async () => {
+		const { e, applied, closed } = noteEngine({});
 		markConfirmed(e, "id-a");
 		const update = new Uint8Array([1, 2, 3]);
 
@@ -69,16 +71,37 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 
 		expect(applied).toEqual([{ id: "id-a", update }]);
 		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		expect(closed).toEqual(["id-a"]); // idle doc freed after the head is durably set
 	});
 
-	test("a live-bound note is skipped (the editor's own room owns it)", async () => {
-		const { e, applied } = noteEngine({ live: () => true });
+	test("a live-bound note is skipped (the editor's own room owns it) — no apply, no free", async () => {
+		const { e, applied, closed } = noteEngine({ live: () => true });
 		markConfirmed(e, "id-a");
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
 		expect(applied).toEqual([]);
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		expect(closed).toEqual([]);
+	});
+
+	test("a note that becomes live-bound DURING the apply is NOT hibernated (re-checked after the await)", async () => {
+		// isLiveBound is checked once at entry (false — not yet open) and again
+		// after the apply resolves (true — the user opened it mid-apply). The
+		// second check must win: the editor now owns this doc's lifecycle.
+		let liveCalls = 0;
+		const live = () => {
+			liveCalls++;
+			return liveCalls > 1;
+		};
+		const { e, applied, closed } = noteEngine({ live });
+		markConfirmed(e, "id-a");
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // head still recorded
+		expect(closed).toEqual([]); // but the doc stays resident for the editor
 	});
 
 	test("an unconfirmed note is skipped", async () => {
@@ -100,8 +123,8 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(applied).toEqual([]);
 	});
 
-	test("applyRemoteUpdate failure leaves the head unadvanced (isolated, no throw)", async () => {
-		const { e, applied } = noteEngine({ applyThrows: true });
+	test("applyRemoteUpdate failure leaves the head unadvanced and the doc NOT hibernated (isolated, no throw, retry-safe)", async () => {
+		const { e, applied, closed } = noteEngine({ applyThrows: true });
 		markConfirmed(e, "id-a");
 
 		await expect(
@@ -110,5 +133,6 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 
 		expect(applied).toEqual([]);
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		expect(closed).toEqual([]); // a failed apply is left for retry, not freed
 	});
 });
