@@ -3,12 +3,32 @@
  * parse issues from a backend parse_status/parse_reason. Mirrors the
  * mock-api harness in tests/sync-cold-receive.test.ts.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
-import { TFile } from "obsidian";
+import { TFile, __noticeCapture } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+
+const DEGRADED_NOTICE_DEBOUNCE_MS = 1500;
+
+// recordParseStatus now arms a real window.setTimeout on every degraded
+// transition (Task 5). Fake timers for the whole file so no test in here
+// leaves a dangling real 1500ms timer that fires mid-suite and pollutes the
+// shared __noticeCapture mock used by other test files (mirrors
+// offline-queue.test.ts's jest.useFakeTimers pattern).
+beforeEach(() => {
+	jest.useFakeTimers();
+});
+afterEach(() => {
+	jest.useRealTimers();
+});
+
+/** Advance fake timers past the degraded-notice debounce window. */
+async function flushDebounce(): Promise<void> {
+	jest.advanceTimersByTime(DEGRADED_NOTICE_DEBOUNCE_MS);
+	await Promise.resolve();
+}
 
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
@@ -253,5 +273,43 @@ describe("applySyncChange consumes parse_status from the /sync/changes feed", ()
 			},
 		});
 		expect(engine.issues.get("")).toBeUndefined();
+	});
+});
+
+describe("recordParseStatus debounced degraded-transition Notice", () => {
+	test("fires ONE debounced notice for a burst of degraded transitions", async () => {
+		__noticeCapture.notices.length = 0;
+		const engine = makeEngine();
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "frontmatter_invalid_yaml",
+			message: "bad a",
+			detail: null,
+		});
+		engine.recordParseStatus("notes/b.md", "note", "degraded", {
+			code: "frontmatter_invalid_yaml",
+			message: "bad b",
+			detail: null,
+		});
+		await flushDebounce();
+		expect(__noticeCapture.notices.length).toBe(1);
+		expect(__noticeCapture.notices[0].message).toContain("frontmatter");
+	});
+
+	test("re-recording an already-degraded note does not re-fire the notice", async () => {
+		__noticeCapture.notices.length = 0;
+		const engine = makeEngine();
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "frontmatter_invalid_yaml",
+			message: "bad",
+			detail: null,
+		});
+		await flushDebounce();
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "frontmatter_invalid_yaml",
+			message: "bad",
+			detail: null,
+		});
+		await flushDebounce();
+		expect(__noticeCapture.notices.length).toBe(1); // only the first transition
 	});
 });

@@ -202,6 +202,11 @@ const ECHO_COOLDOWN_MS = 5000;
  *  on #970 backends a long TTL cannot swallow another device's real delete. */
 const WIPE_ECHO_COOLDOWN_MS = 10 * 60_000;
 
+/** Debounce window for the ok->degraded transition Notice: aggregates a
+ *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
+const DEGRADED_NOTICE_DEBOUNCE_MS = 1500;
+const DEGRADED_NOTICE_DURATION_MS = 10_000;
+
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -272,6 +277,10 @@ const MIME_TYPES: Record<string, string> = {
 
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
+	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
+	 *  flush, awaiting the debounced Notice below. */
+	private pendingDegraded: Set<string> = new Set();
+	private degradedNoticeTimer: number | null = null;
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
@@ -5294,8 +5303,10 @@ export class SyncEngine {
 	/** Record or clear a note's frontmatter parse issue from a backend
 	 *  parse_status/parse_reason. Called on every push success + feed apply. When
 	 *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
-	 *  (a real error issue recorded elsewhere must survive). Debounced transition
-	 *  Notice is wired in Task 5. */
+	 *  (a real error issue recorded elsewhere must survive). Fires a debounced
+	 *  Notice ONLY on the ok->degraded transition (a note that newly degrades),
+	 *  so a steady-state degraded vault stays quiet and re-recording an
+	 *  already-degraded note does not re-notify. */
 	recordParseStatus(
 		path: string,
 		kind: "note" | "attachment",
@@ -5310,6 +5321,7 @@ export class SyncEngine {
 			}
 			return;
 		}
+		const wasDegraded = this.issues.get(path)?.category === "frontmatter";
 		const now = Date.now();
 		this.issues.record({
 			path,
@@ -5321,6 +5333,40 @@ export class SyncEngine {
 			lastFailedAt: now,
 			attempts: 1,
 		});
+		if (!wasDegraded) {
+			this.pendingDegraded.add(path);
+			if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+			this.degradedNoticeTimer = window.setTimeout(
+				() => this.flushDegradedNotice(),
+				DEGRADED_NOTICE_DEBOUNCE_MS,
+			);
+		}
+	}
+
+	/** Flush the pending degraded-transition burst into a single Notice.
+	 *  Single note: names the file with an "Open note" link. Multiple: a
+	 *  count pointing at Sync Center. Mirrors the clickable-Notice pattern in
+	 *  limit-toast.ts. */
+	private flushDegradedNotice(): void {
+		this.degradedNoticeTimer = null;
+		const paths = [...this.pendingDegraded];
+		this.pendingDegraded.clear();
+		if (paths.length === 0) return;
+		if (paths.length === 1) {
+			const [path] = paths as [string];
+			const notice = new Notice(
+				`Engram: frontmatter problem in "${path.split("/").pop()}"`,
+				DEGRADED_NOTICE_DURATION_MS,
+			);
+			const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
+			const link = noticeEl?.createEl("a", { text: "Open note" });
+			link?.addEventListener("click", () => void this.app.workspace.openLinkText(path, ""));
+		} else {
+			new Notice(
+				`Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
+				DEGRADED_NOTICE_DURATION_MS,
+			);
+		}
 	}
 
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
