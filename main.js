@@ -12558,6 +12558,17 @@ var _CrdtManager = class _CrdtManager {
   async encodeStateVector(noteId) {
     return encodeStateVector((await this.entry(noteId)).doc);
   }
+  /** True when the doc holds PENDING structs: a remote update was applied that
+   *  references state this device is missing (updates it never saw — e.g. edits
+   *  another device made while this one was offline). Yjs parks such an update
+   *  in `store.pendingStructs` and does NOT integrate it until the missing deps
+   *  arrive, so the visible doc stays behind. The fan-out apply path checks this
+   *  to avoid advancing crdtHead over an unconverged doc (which would make
+   *  coldReceive's cost gate skip the note and the gap would never heal). */
+  async hasPendingGap(noteId) {
+    var _a;
+    return ((_a = (await this.entry(noteId)).doc.store) == null ? void 0 : _a.pendingStructs) != null;
+  }
   /**
    * Encode the full document state as a v1 update.
    * Pass `sv` (a peer's state vector) to get only the delta they're missing.
@@ -18840,7 +18851,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
       try {
         if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)
-          await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head);
+          if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
+            let since = toB64(await this.crdt.encodeStateVector(noteId)), { update: full, head: fullHead } = await this.api.getUpdates(
+              noteId,
+              since
+            );
+            await this.crdt.applyRemoteUpdate(noteId, full), await this.crdt.hasPendingGap(noteId) || this.setCrdtHead(path, fullHead);
+          } else
+            this.setCrdtHead(path, head);
         else {
           let adopted = await this.adoptHistoryLessNote(path, noteId);
           if (adopted === null) return;

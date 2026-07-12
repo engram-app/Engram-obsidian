@@ -2849,7 +2849,33 @@ export class SyncEngine {
 				// apply merges with it instead of overwriting it (BUG 2).
 				await this.captureDiskDriftBeforeRemote(path, noteId);
 				await this.crdt.applyRemoteUpdate(noteId, update);
-				this.setCrdtHead(path, head); // crdtHead persists under the vault path
+				// Gap heal: if the applied delta references state this device missed
+				// while offline (another device edited the note while this one was off
+				// the channel), Yjs PENDS it — the doc has NOT reached `head`.
+				// Advancing crdtHead to `head` anyway would make coldReceive's cost
+				// gate (getCrdtHead === serverHead → skip) skip the note, so the gap
+				// would never heal (the note converges only much later via an unrelated
+				// full pull — the >30s missed-open reconnect case). Pull the full delta
+				// since our REAL state vector to fill the gap now, and advance crdtHead
+				// only to a head the doc has actually reached.
+				const hadGap =
+					typeof this.crdt.hasPendingGap === "function" &&
+					(await this.crdt.hasPendingGap(noteId));
+				if (hadGap) {
+					const since = toB64(await this.crdt.encodeStateVector(noteId));
+					const { update: full, head: fullHead } = await this.api.getUpdates(
+						noteId,
+						since,
+					);
+					await this.crdt.applyRemoteUpdate(noteId, full);
+					// Still gapped after the full pull → leave crdtHead unadvanced so
+					// coldReceive retries; else record the head we converged to.
+					if (!(await this.crdt.hasPendingGap(noteId))) {
+						this.setCrdtHead(path, fullHead);
+					}
+				} else {
+					this.setCrdtHead(path, head); // crdtHead persists under the vault path
+				}
 			} else {
 				const adopted = await this.adoptHistoryLessNote(path, noteId);
 				if (adopted === null) return; // adopt failed — leave head unadvanced, retry

@@ -335,6 +335,20 @@ export class CrdtManager {
 		return Y.encodeStateVector((await this.entry(noteId)).doc);
 	}
 
+	/** True when the doc holds PENDING structs: a remote update was applied that
+	 *  references state this device is missing (updates it never saw — e.g. edits
+	 *  another device made while this one was offline). Yjs parks such an update
+	 *  in `store.pendingStructs` and does NOT integrate it until the missing deps
+	 *  arrive, so the visible doc stays behind. The fan-out apply path checks this
+	 *  to avoid advancing crdtHead over an unconverged doc (which would make
+	 *  coldReceive's cost gate skip the note and the gap would never heal). */
+	async hasPendingGap(noteId: string): Promise<boolean> {
+		const doc = (await this.entry(noteId)).doc as unknown as {
+			store?: { pendingStructs?: unknown };
+		};
+		return doc.store?.pendingStructs != null;
+	}
+
 	/**
 	 * Encode the full document state as a v1 update.
 	 * Pass `sv` (a peer's state vector) to get only the delta they're missing.

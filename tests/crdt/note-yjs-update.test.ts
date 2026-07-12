@@ -141,6 +141,97 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 	});
 });
 
+describe("applyPushedNoteUpdate — gap heal (missed-open reconnect)", () => {
+	// A device that was offline while another device edited a note misses that
+	// edit's fan-out. A LATER fan-out delta then references the missed update:
+	// Yjs PENDS it (doc stays behind, hasPendingGap true). Advancing crdtHead to
+	// the broadcast head over that unconverged doc would make coldReceive's cost
+	// gate skip the note forever — the gap never heals (>30s convergence,
+	// e2e test_web_edit_reaches_obsidian_that_missed_room_open). Instead the apply
+	// must pull the FULL delta since our real state vector and advance only to the
+	// head we actually reached.
+	function gapEngine(opts: {
+		hasPendingGap: () => Promise<boolean>;
+		getUpdates: (id: string, since?: string) => Promise<{ update: Uint8Array; head: string }>;
+	}) {
+		const applied: Array<{ id: string; update: Uint8Array }> = [];
+		const crdt = {
+			applyRemoteUpdate: async (id: string, update: Uint8Array) => {
+				applied.push({ id, update });
+			},
+			closeDoc: () => {},
+			encodeStateVector: async () => new Uint8Array([9, 9]),
+			hasPendingGap: opts.hasPendingGap,
+		};
+		const api = { getUpdates: mock(opts.getUpdates) } as unknown as EngramApi;
+		const e = new SyncEngine(
+			mockApp,
+			api,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setCrdtManager(crdt as unknown as CrdtManager);
+		e.setReady();
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		e.setLiveBoundCheck(() => false);
+		markConfirmed(e, "id-a");
+		return { e, applied, api };
+	}
+
+	test("a gapped delta pulls the full delta and advances to the reached head, not the broadcast head", async () => {
+		let gapCalls = 0;
+		const { e, applied, api } = gapEngine({
+			// gap after the pushed delta, converged after the full pull
+			hasPendingGap: async () => {
+				gapCalls++;
+				return gapCalls === 1;
+			},
+			getUpdates: async () => ({ update: new Uint8Array([7, 7, 7]), head: "FULL" }),
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		// Applied the gapped delta, then the full delta from getUpdates.
+		expect(applied).toEqual([
+			{ id: "id-a", update: new Uint8Array([1]) },
+			{ id: "id-a", update: new Uint8Array([7, 7, 7]) },
+		]);
+		expect(api.getUpdates as ReturnType<typeof mock>).toHaveBeenCalledTimes(1);
+		// Advanced to the head the doc actually reached, NOT the broadcast "SRV".
+		expect((e as any).getCrdtHead("a.md")).toBe("FULL");
+	});
+
+	test("still gapped after the full pull → leaves crdtHead unadvanced for coldReceive to retry", async () => {
+		const { e } = gapEngine({
+			hasPendingGap: async () => true, // never converges (deeper gap)
+			getUpdates: async () => ({ update: new Uint8Array([7]), head: "FULL" }),
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		// Unadvanced so coldReceive's cost gate re-pulls next poll — never stamped
+		// converged over a doc that has not reached the head.
+		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+	});
+
+	test("no gap → advances to the broadcast head without a getUpdates round-trip", async () => {
+		const { e, applied, api } = gapEngine({
+			hasPendingGap: async () => false,
+			getUpdates: async () => {
+				throw new Error("must not fetch when the delta applied cleanly");
+			},
+		});
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect(api.getUpdates as ReturnType<typeof mock>).not.toHaveBeenCalled();
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+	});
+});
+
 describe("applyPushedNoteUpdate ordering (b#3)", () => {
 	test("the idle doc is freed only AFTER setCrdtHead durably records the head", async () => {
 		// Mirrors the coldReceive ordering test: hibernateIfIdle -> closeDoc must
