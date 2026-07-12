@@ -25,6 +25,7 @@ function sectionHeading(parent: HTMLElement, title: string): Setting {
 const CATEGORY_ORDER: SyncIssueCategory[] = [
 	"needs_pro",
 	"quota",
+	"frontmatter",
 	"too_large",
 	"auth",
 	"conflict",
@@ -36,6 +37,7 @@ const CATEGORY_ORDER: SyncIssueCategory[] = [
 const CATEGORY_ICON: Partial<Record<SyncIssueCategory, string>> = {
 	needs_pro: "🔒",
 	quota: "🗄",
+	frontmatter: "📝",
 	too_large: "📦",
 	auth: "🔑",
 	conflict: "⚡",
@@ -363,6 +365,13 @@ function renderFileRow(
 	parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`);
 	parts.push(formatRelative(issue.lastFailedAt));
 	meta.setText(parts.join(" · "));
+
+	if (issue.parseReason) {
+		const reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
+		reason.createSpan({ text: issue.parseReason.message });
+		const snippet = issue.parseReason.detail?.snippet;
+		if (snippet) reason.createEl("code", { text: snippet });
+	}
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
 

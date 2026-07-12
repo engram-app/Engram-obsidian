@@ -260,4 +260,27 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		// No actionable card for a transient failure.
 		expect(findAllByCls(parent, "engram-sync-center-card")).toHaveLength(0);
 	});
+
+	test("renders frontmatter reason message and snippet, not just HTTP status", () => {
+		const issue: SyncIssue = {
+			path: "notes/broken.md",
+			kind: "note",
+			category: "frontmatter",
+			message: "Frontmatter isn't valid YAML",
+			parseReason: {
+				code: "frontmatter_invalid_yaml",
+				message: "Frontmatter isn't valid YAML",
+				detail: { key: null, line: 2, snippet: "date:YYYY-MM-DD" },
+			},
+			firstFailedAt: Date.now(),
+			lastFailedAt: Date.now(),
+			attempts: 1,
+		};
+		const plugin = makeMockPlugin([issue]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const text = allText(parent);
+		expect(text).toContain("Frontmatter isn't valid YAML");
+		expect(text).toContain("date:YYYY-MM-DD");
+	});
 });
