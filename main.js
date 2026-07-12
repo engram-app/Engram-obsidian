@@ -20158,7 +20158,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (entries.length === 0) return 0;
     devLog().log("queue", `flush start \u2014 ${entries.length} entries`), rlog().info("queue", `Queue flush start \u2014 ${entries.length} entries`);
     let flushed = 0;
-    for (let entry of entries)
+    for (let entry of entries) {
+      if (this.syncBlocked) break;
       try {
         if (entry.action === "delete")
           try {
@@ -20252,6 +20253,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         if (await this.handleFlushFailure(entry, e) === "retry") break;
       }
+    }
     return devLog().log(
       "queue",
       `flush done \u2014 ${flushed}/${entries.length} flushed, ${this.queue.size} remaining`
@@ -22078,8 +22080,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     });
   }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() && this.registerVault().then(async (registered) => {
-      if (!registered) return;
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
+      if (!registered) {
+        await this.applySyncGate();
+        return;
+      }
       if (!await this.applySyncGate())
         return this.doSyncWithFirstSyncCheck();
       try {
@@ -22100,7 +22105,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       }
     }).catch((e) => {
       console.error("Engram Sync: sync after settings change failed", e), rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
-    });
+    }) : (this.syncEngine.setSyncBlocked(!0), rlog().setEnabled(!1));
   }
   /** Register this vault with the backend. Must be called before sync starts.
    *  Returns true if registration succeeded (or vault was already registered).
