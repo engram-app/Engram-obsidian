@@ -17675,7 +17675,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -18394,14 +18394,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           ))
-            return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { ...existing, hash }), (_h = this.crdtEnrollment) == null || _h.enroll(noteId), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+            return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { ...existing, hash }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
               "push",
               `crdt edit queued durably (channel down): ${file.path}`
             ), rlog().info(
               "push",
               `CRDT edit queued durably (channel down): ${file.path}`
             ), !0);
-          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId));
+          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId));
         }
         let baseHash = existing == null ? void 0 : existing.serverHash, resp = baseHash !== void 0 ? await this.api.pushNote(
           file.path,

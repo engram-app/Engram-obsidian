@@ -697,6 +697,12 @@ export class SyncEngine {
 		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
 		if (!path.endsWith(".md")) return;
 		if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) return;
+		// Vault-channel fan-out: a cold (not-open-in-editor) send stays room-free —
+		// its edits ship over /updates and it RECEIVES future updates over the
+		// note_yjs_update broadcast, no room needed. Enroll (STEP1) only for a
+		// live-bound note, matching the pull/stream gates. The note's server row is
+		// already created by the REST push above, so an idle note is not stranded.
+		if (!this.isLiveBound(normalizePath(path))) return;
 		this.crdtEnrollment.reset(noteId);
 		this.crdtEnrollment.enroll(noteId);
 	}
@@ -2075,7 +2081,14 @@ export class SyncEngine {
 						// the server. enroll() fires startSync's STEP1 handshake so the client
 						// re-syncs any Yjs history it's missing. Idempotent per session, so a
 						// note already enrolled via active-leaf-change is unaffected.
-						this.crdtEnrollment?.enroll(noteId);
+						// Vault-channel fan-out: enroll (STEP1) only for a live-bound note.
+						// An idle note's send already shipped over the channel/updates above,
+						// and it RECEIVES future updates over the note_yjs_update broadcast —
+						// no room needed. A brand-new empty note's row is created by the REST
+						// push path, so skipping STEP1 here does not strand it.
+						if (this.isLiveBound(normalizePath(file.path))) {
+							this.crdtEnrollment?.enroll(noteId);
+						}
 						success = true;
 						// Task 5 (TOCTOU fix): re-check liveness AFTER the awaited seed
 						// above. The channel can drop DURING routeModify — a stale
@@ -2124,9 +2137,14 @@ export class SyncEngine {
 					// at or above MAX_CRDT_NOTE_BYTES can exceed Bandit's 8 MB WebSocket
 					// frame limit (1009 close) and — because the bloated doc persists in
 					// IndexedDB — re-crashes on every reconnect, killing all vault sync.
+					// Vault-channel fan-out: enroll (STEP1) only for a live-bound note —
+					// the legacy REST push above already delivered the body server-side; an
+					// idle note receives future updates over the note_yjs_update broadcast,
+					// no room needed. Oversized notes never enroll (8 MB WS frame limit).
 					if (
 						file.extension === "md" &&
-						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES &&
+						this.isLiveBound(normalizePath(file.path))
 					) {
 						this.crdtEnrollment?.enroll(noteId);
 					}

@@ -321,7 +321,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 // ---------------------------------------------------------------------------
 
 describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
-	test("declined md fires legacy pushNote AND enroll for a small file", async () => {
+	test("declined md fires legacy pushNote but does NOT enroll a cold (idle) note", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
 		const engine = createEngine(noteIdMap);
@@ -330,21 +330,22 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll } as any);
-		// rest-first fix: this test exercises the DECLINED-inside-CRDT-block
-		// behavior (routeModify itself returns false), which requires the note
-		// to have entered the CRDT gate in the first place — confirm it.
 		markConfirmed(engine, "id-note");
+		// Default isLiveBound === false → idle note.
 
 		// Default cachedRead returns "body" (well under MAX_CRDT_NOTE_BYTES).
 		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await flush();
 
-		// Legacy push must fire.
+		// Legacy push still delivers the body server-side.
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		// Enroll must also fire (kicks off the STEP1 handshake for the declined
-		// note), keyed by note_id (Task 6) not path.
-		expect(enroll).toHaveBeenCalledWith("id-note");
+		// Vault-channel fan-out: a cold send stays room-free — no STEP1 enrollment.
+		// The note receives future updates over the note_yjs_update broadcast.
+		// (A live-bound note never reaches this declined-legacy path — its open
+		// editor room owns the edit — so enrollment for open notes comes from the
+		// open-file path, not here.)
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {

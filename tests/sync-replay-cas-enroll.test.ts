@@ -206,21 +206,42 @@ describe("A4: offline-replay pushes carry the CAS base", () => {
 });
 
 describe("A6: first confirmation re-fires the CRDT handshake", () => {
-	test("fresh-note create push: reset+enroll on the confirmed id", async () => {
+	test("fresh-note create push: cold (idle) note does NOT re-enroll (vault-channel fan-out)", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
 		engine.setNoteIdMap(map);
 		const enroll = mock();
 		const reset = mock();
 		engine.setCrdtEnrollment({ enroll, reset } as any);
+		// Default isLiveBound === false → idle note.
 
 		const file = new TFile("fresh.md");
 		engine.handleModify(file);
 		await flush();
 
-		// Pre-push STEP1 went out for the MINT (dropped server-side: no row yet).
-		// After the create-push confirms, the handshake must re-fire for the
-		// server-confirmed id — reset lifts the once-per-session guard first.
+		// Fan-out: the created note's row exists server-side (create push), and it
+		// receives future updates over the note_yjs_update broadcast — no room. A
+		// cold create stays room-free (test_cold_send_over_fanout_opens_no_room).
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("fresh-note create push: live-bound note DOES re-fire the handshake", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map);
+		const enroll = mock();
+		const reset = mock();
+		engine.setCrdtEnrollment({ enroll, reset } as any);
+		engine.setLiveBoundCheck(() => true); // note open in the editor
+
+		const file = new TFile("fresh.md");
+		engine.handleModify(file);
+		await flush();
+
+		// An open note's editor room needs the handshake — reset lifts the
+		// once-per-session guard first, then enroll re-fires STEP1 on the
+		// server-confirmed id.
 		expect(reset).toHaveBeenCalledWith("server-minted-id");
 		expect(enroll).toHaveBeenLastCalledWith("server-minted-id");
 	});
@@ -245,13 +266,14 @@ describe("A6: first confirmation re-fires the CRDT handshake", () => {
 		expect(reset).not.toHaveBeenCalled();
 	});
 
-	test("offline-replay create: reset+enroll on the confirmed id", async () => {
+	test("offline-replay create: cold (idle) note does NOT re-enroll (fan-out)", async () => {
 		const engine = createEngine();
 		const map = new NoteIdMap();
 		engine.setNoteIdMap(map);
 		const enroll = mock();
 		const reset = mock();
 		engine.setCrdtEnrollment({ enroll, reset } as any);
+		// Default isLiveBound === false → idle note.
 
 		engine.queue.load([
 			{ path: "fresh.md", action: "upsert", content: "new", mtime: 100, timestamp: 1 },
@@ -259,7 +281,9 @@ describe("A6: first confirmation re-fires the CRDT handshake", () => {
 
 		await engine.flushQueue();
 
-		expect(reset).toHaveBeenCalledWith("server-minted-id");
-		expect(enroll).toHaveBeenLastCalledWith("server-minted-id");
+		// Same fan-out contract as the live-create test above: an idle replayed
+		// create stays room-free (the live-bound re-fire path is covered there).
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 });
