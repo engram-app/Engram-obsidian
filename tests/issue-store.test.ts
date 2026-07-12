@@ -6,6 +6,7 @@ import {
 	healthCheckDelay,
 	issueDisposition,
 	limitReasonToCategory,
+	parseStatusToIssue,
 	remediation,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
@@ -382,5 +383,60 @@ describe("healthCheckDelay (exponential backoff)", () => {
 		expect(healthCheckDelay(1)).toBe(10_000);
 		expect(healthCheckDelay(2)).toBe(20_000);
 		expect(healthCheckDelay(10)).toBe(60_000); // capped
+	});
+});
+
+describe("frontmatter parse issues", () => {
+	test("frontmatter category is actionable", () => {
+		expect(issueDisposition("frontmatter")).toBe("actionable");
+	});
+
+	test("remediation copy exists for frontmatter (no em dash)", () => {
+		const { title, hint } = remediation("frontmatter");
+		expect(title.length).toBeGreaterThan(0);
+		expect(hint.length).toBeGreaterThan(0);
+		expect(`${title} ${hint}`).not.toContain("—");
+	});
+
+	test("parseStatusToIssue returns null when ok", () => {
+		expect(parseStatusToIssue("ok", null)).toBeNull();
+		expect(parseStatusToIssue(undefined, undefined)).toBeNull();
+	});
+
+	test("maps frontmatter_invalid_yaml to frontmatter category with reason", () => {
+		const reason = {
+			code: "frontmatter_invalid_yaml",
+			message: "Frontmatter isn't valid YAML",
+			detail: { key: null, line: 2, snippet: "date:YYYY-MM-DD" },
+		};
+		const got = parseStatusToIssue("degraded", reason);
+		expect(got).not.toBeNull();
+		expect(got?.category).toBe("frontmatter");
+		expect(got?.message).toBe("Frontmatter isn't valid YAML");
+		expect(got?.parseReason).toEqual(reason);
+	});
+
+	test("maps frontmatter_unparseable_key to frontmatter category", () => {
+		const reason = {
+			code: "frontmatter_unparseable_key",
+			message: "A frontmatter value could not be parsed",
+			detail: { key: "tags", line: 3, snippet: "tags: [unclosed" },
+		};
+		expect(parseStatusToIssue("degraded", reason)?.category).toBe("frontmatter");
+	});
+
+	test("maps note_processing_failed to other category (generic failure)", () => {
+		const reason = {
+			code: "note_processing_failed",
+			message: "Processing failed",
+			detail: null,
+		};
+		expect(parseStatusToIssue("degraded", reason)?.category).toBe("other");
+	});
+
+	test("degraded with null reason still yields a frontmatter issue", () => {
+		const got = parseStatusToIssue("degraded", null);
+		expect(got?.category).toBe("frontmatter");
+		expect(got?.message.length).toBeGreaterThan(0);
 	});
 });

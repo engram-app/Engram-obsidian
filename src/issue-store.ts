@@ -1,5 +1,5 @@
 import { LimitExceededError } from "./limit-error";
-import type { SyncIssue, SyncIssueCategory } from "./types";
+import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
 /** Persistent store of sync failures keyed by file path.
  *
@@ -211,6 +211,7 @@ export function issueDisposition(category: SyncIssueCategory): IssueDisposition 
 		case "too_large":
 		case "auth":
 		case "conflict":
+		case "frontmatter":
 			return "actionable";
 		default:
 			return "transient";
@@ -247,6 +248,11 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 				title: "Unresolved conflict",
 				hint: "Open the file to resolve the conflict, then sync again.",
 			};
+		case "frontmatter":
+			return {
+				title: "Frontmatter needs a fix",
+				hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+			};
 		case "server":
 			return {
 				title: "Server error",
@@ -263,6 +269,21 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 				hint: "An unexpected error — retrying automatically.",
 			};
 	}
+}
+
+/** Turn a backend parse_status/parse_reason into the fields of a SyncIssue,
+ *  or null when the note parsed cleanly. frontmatter_* codes are the
+ *  actionable "frontmatter" category; note_processing_failed is a generic
+ *  batch failure -> the transient "other" bucket. */
+export function parseStatusToIssue(
+	parseStatus: "ok" | "degraded" | undefined,
+	parseReason: ParseReason | null | undefined,
+): { category: SyncIssueCategory; message: string; parseReason?: ParseReason } | null {
+	if (parseStatus !== "degraded") return null;
+	const category: SyncIssueCategory =
+		parseReason?.code === "note_processing_failed" ? "other" : "frontmatter";
+	const message = parseReason?.message ?? "Frontmatter could not be parsed";
+	return parseReason ? { category, message, parseReason } : { category, message };
 }
 
 const HEALTH_CHECK_BASE_MS = 5_000;
