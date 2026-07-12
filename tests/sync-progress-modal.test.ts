@@ -16,6 +16,7 @@ import {
 	describePlannedWork,
 	plannedPhases,
 	renderCompletionSummary,
+	rowCounts,
 } from "../src/sync-progress-modal";
 import type { SyncPlan } from "../src/types";
 
@@ -265,5 +266,28 @@ describe("plannedPhases", () => {
 
 	test("nothing to do yields no rows", () => {
 		expect(plannedPhases("push-all-keep-remote", plan())).toEqual([]);
+	});
+});
+
+describe("rowCounts — denominator does not balloon mid-sync", () => {
+	// A plan-seeded row promised "Uploading N" from the manifest diff. The engine
+	// then reports a much larger `total` (every file it examines, hash-unchanged
+	// skips included) — this is the "10x total" bug. The plan number must win.
+	test("planned row keeps the plan total, ignoring the engine's inflated total", () => {
+		expect(rowCounts(true, 5, 3, 50, 5)).toEqual({ current: 3, total: 5 });
+	});
+
+	test("planned row clamps current so actual uploads never overshoot the total", () => {
+		// Plan under-counted (7 really uploaded vs 5 predicted) → clamp to 5.
+		expect(rowCounts(true, 5, 7, 50, 5)).toEqual({ current: 5, total: 5 });
+	});
+
+	test("unforeseen (fallback) row adopts the engine total", () => {
+		// planned=false → the plan didn't predict this phase; trust the engine.
+		expect(rowCounts(false, 0, 10, 50, 0)).toEqual({ current: 10, total: 50 });
+	});
+
+	test("fallback row keeps its previous total when the engine reports 0", () => {
+		expect(rowCounts(false, 0, 4, 0, 12)).toEqual({ current: 4, total: 12 });
 	});
 });

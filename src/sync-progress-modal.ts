@@ -132,10 +132,39 @@ export function plannedPhases(choice: SyncChoice, plan: SyncPlan): PlannedPhase[
 /** How often to flush buffered progress to the DOM (ms). */
 const TICK_INTERVAL_MS = 50;
 
+/** Resolve the {current, total} a progress row should display.
+ *
+ *  `planned` (row was seeded from the plan): keep `plannedTotal` as the
+ *  denominator. The engine's live `total` counts every file it *examines* —
+ *  hash-unchanged and CRDT-owned files are counted there and then skipped, so
+ *  when `syncState` is stale that number can be many times the plan's
+ *  manifest-diff count and would make the denominator balloon mid-sync (the
+ *  "Uploading 5" → "Uploading 50" jump). The plan number is the honest "files
+ *  that will actually sync" count, so it wins.
+ *
+ *  `!planned` (a phase the plan didn't predict): trust the engine's total,
+ *  falling back to the row's previous total when the engine reports 0.
+ *
+ *  `current` (the engine now reports *actual uploads*, not files processed) is
+ *  clamped so it can never overshoot the denominator. Pure for testing. */
+export function rowCounts(
+	planned: boolean,
+	plannedTotal: number,
+	engineCurrent: number,
+	engineTotal: number,
+	prevTotal: number,
+): { current: number; total: number } {
+	const total = planned ? plannedTotal : engineTotal || prevTotal;
+	return { current: Math.min(engineCurrent, total), total };
+}
+
 interface RowState {
 	phase: SyncProgress["phase"];
 	label: string;
 	plannedTotal: number;
+	/** True when this row was seeded from the plan (so its denominator is the
+	 *  honest manifest-diff count, not the engine's larger examine-count). */
+	planned: boolean;
 	current: number;
 	total: number;
 	failed: number;
@@ -204,6 +233,7 @@ export class SyncProgressModal extends Modal {
 			phase: p.phase,
 			label: p.label,
 			plannedTotal: p.total,
+			planned: true,
 			current: 0,
 			total: p.total,
 			failed: 0,
@@ -302,6 +332,7 @@ export class SyncProgressModal extends Modal {
 				phase: progress.phase,
 				label: PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase,
 				plannedTotal: progress.total,
+				planned: false,
 				current: 0,
 				total: progress.total,
 				failed: 0,
@@ -313,8 +344,15 @@ export class SyncProgressModal extends Modal {
 		}
 
 		row.seen = true;
-		row.current = progress.current;
-		row.total = progress.total || row.total;
+		const counts = rowCounts(
+			row.planned,
+			row.plannedTotal,
+			progress.current,
+			progress.total,
+			row.total,
+		);
+		row.current = counts.current;
+		row.total = counts.total;
 		row.failed = progress.failed;
 
 		// Any other phase that has already run is now finished.

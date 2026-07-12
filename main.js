@@ -16185,7 +16185,12 @@ function plannedPhases(choice, plan) {
   let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
   return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
 }
-var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
+var TICK_INTERVAL_MS = 50;
+function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
+  let total = planned ? plannedTotal : engineTotal || prevTotal;
+  return { current: Math.min(engineCurrent, total), total };
+}
+var SyncProgressModal = class extends import_obsidian13.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
    *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
    *  on completion so the user can verify their vault. All optional so callers
@@ -16209,6 +16214,7 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       phase: p.phase,
       label: p.label,
       plannedTotal: p.total,
+      planned: !0,
       current: 0,
       total: p.total,
       failed: 0,
@@ -16266,12 +16272,21 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       phase: progress.phase,
       label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
       plannedTotal: progress.total,
+      planned: !1,
       current: 0,
       total: progress.total,
       failed: 0,
       seen: !1,
       done: !1
-    }, this.rows.push(row), this.createRow(row)), row.seen = !0, row.current = progress.current, row.total = progress.total || row.total, row.failed = progress.failed;
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
+    let counts = rowCounts(
+      row.planned,
+      row.plannedTotal,
+      progress.current,
+      progress.total,
+      row.total
+    );
+    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
     for (let other of this.rows)
       other !== row && other.seen && (other.done = !0);
     this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
@@ -19067,7 +19082,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           r === "ok" ? applied++ : r === "error" && failed++;
         (_g = this.onSyncProgress) == null || _g.call(this, {
           phase: "pulling",
-          current: Math.min(i + batch.length, noteChanges.length),
+          current: applied,
           total,
           failed,
           currentPath: lastPath
@@ -19095,13 +19110,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           r === "ok" ? applied++ : r === "error" && failed++;
         (_h = this.onSyncProgress) == null || _h.call(this, {
           phase: "pulling",
-          current: noteCount + Math.min(i + batch.length, attachChanges.length),
+          current: applied,
           total,
           failed,
           currentPath: lastPath
         });
       }
-      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: total, total, failed });
+      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: applied, total, failed });
       let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
       return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
         "pull",
@@ -19844,13 +19859,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async pushNotesViaBatch(files, force, onProgress) {
     var _a, _b, _c, _d;
     if (this.batchPushUnsupported) return null;
-    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
+    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
       var _a2, _b2, _c2;
       if (chunk.length === 0) return "ok";
       let entries = [];
       for (let e of chunk) {
         if (this.shouldDeferMint((0, import_obsidian21.normalizePath)(e.file.path))) {
-          done++, rlog().info(
+          rlog().info(
             "push",
             `Mint refused (engine-flushed file, id relocated away): ${e.file.path}`
           ), this.logEntry("skip", e.file.path, "skipped", void 0, "mint-deferred");
@@ -19876,7 +19891,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         ), byPath = new Map(resp.results.map((r) => [r.path, r]));
         for (let e of entries) {
           let r = byPath.get(e.file.path);
-          if (done++, !r) {
+          if (!r) {
             failed++, this.logEntry("push", e.file.path, "error", "missing batch result");
             continue;
           }
@@ -19918,7 +19933,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `Batch push failed (${errMsg(err)}) \u2014 queueing ${entries.length} files`
         );
         for (let e of entries)
-          failed++, done++, await this.enqueueChange({
+          failed++, await this.enqueueChange({
             path: e.file.path,
             action: "upsert",
             kind: "note",
@@ -19935,7 +19950,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let i = 0; i < files.length; i++) {
       let file = files[i], noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
       if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-        done++, this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
+        this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
         continue;
       }
       if (file.stat.size <= MAX_CRDT_NOTE_BYTES && noteId && this.crdt && this.crdtOpsAvailable() && this.isCrdtManagedOffline(file.path, noteId)) {
@@ -19949,7 +19964,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         )) {
-          done++, await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
+          await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
           continue;
         }
       }
@@ -19959,7 +19974,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
       if (!force && existing !== void 0 && hash === existing.hash) {
-        done++, this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
+        this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
         continue;
       }
       if (chunk.length >= BATCH_MAX_NOTES || chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET) {
@@ -19975,9 +19990,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               timestamp: Date.now(),
               vaultId: (_c = this.settings.vaultId) != null ? _c : void 0
             });
-          return onProgress == null || onProgress(done, failed), { pushed, failed };
+          return onProgress == null || onProgress(pushed, failed), { pushed, failed };
         }
-        onProgress == null || onProgress(done, failed);
+        onProgress == null || onProgress(pushed, failed);
       }
       chunk.push({ file, content, hash, version: existing == null ? void 0 : existing.version }), chunkBytes += content.length;
     }
@@ -19993,17 +20008,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           timestamp: Date.now(),
           vaultId: (_d = this.settings.vaultId) != null ? _d : void 0
         });
-      return onProgress == null || onProgress(done, failed), { pushed, failed };
+      return onProgress == null || onProgress(pushed, failed), { pushed, failed };
     }
-    onProgress == null || onProgress(done, failed);
+    onProgress == null || onProgress(pushed, failed);
     for (let file of oversized) {
       try {
-        let ok = await this.pushFile(file, force);
-        done++, ok && (pushed++, this.logEntry("push", file.path, "ok"));
+        await this.pushFile(file, force) && (pushed++, this.logEntry("push", file.path, "ok"));
       } catch (e) {
-        done++, failed++, this.logEntry("push", file.path, "error", errMsg(e));
+        failed++, this.logEntry("push", file.path, "error", errMsg(e));
       }
-      onProgress == null || onProgress(done, failed);
+      onProgress == null || onProgress(pushed, failed);
     }
     return this.flushQueue(), { pushed, failed };
   }
@@ -20044,21 +20058,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
     total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !1, (done, failedSoFar) => {
-      var _a2;
-      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-        phase: "pushing",
-        current: Math.min(done, total),
-        total,
-        failed: failedSoFar
-      });
-    }), perFile, doneOffset = 0;
-    batchOutcome ? (pushed += batchOutcome.pushed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
+      noteFiles,
+      !1,
+      (pushedSoFar, failedSoFar) => {
+        var _a2;
+        (_a2 = this.onSyncProgress) == null || _a2.call(this, {
+          phase: "pushing",
+          current: pushedSoFar,
+          total,
+          failed: failedSoFar
+        });
+      }
+    ), perFile;
+    batchOutcome ? (pushed += batchOutcome.pushed, perFile = attachFiles) : perFile = toSync;
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
       pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
         phase: "pushing",
-        current: Math.min(doneOffset + i + batch.length, total),
+        current: pushed,
         total,
         failed: 0
       });
@@ -20195,16 +20213,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
-      var _a2;
-      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-        phase: "pushing",
-        current: done,
-        total,
-        failed: failedSoFar
-      });
-    }), perFile, doneOffset = 0;
-    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
+      noteFiles,
+      !0,
+      (pushedSoFar, failedSoFar) => {
+        var _a2;
+        (_a2 = this.onSyncProgress) == null || _a2.call(this, {
+          phase: "pushing",
+          current: pushedSoFar,
+          total,
+          failed: failedSoFar
+        });
+      }
+    ), perFile;
+    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, perFile = attachFiles) : perFile = toSync;
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(
         batch.map(async (f) => {
@@ -20220,7 +20242,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       pushed += results.filter(Boolean).length, (_c = this.onSyncProgress) == null || _c.call(this, {
         phase: "pushing",
-        current: doneOffset + i + batch.length,
+        current: pushed,
         total,
         failed,
         currentPath: batch[batch.length - 1].path

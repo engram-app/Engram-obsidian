@@ -3254,7 +3254,7 @@ export class SyncEngine {
 				}
 				this.onSyncProgress?.({
 					phase: "pulling",
-					current: Math.min(i + batch.length, noteChanges.length),
+					current: applied,
 					total,
 					failed,
 					currentPath: lastPath,
@@ -3295,14 +3295,14 @@ export class SyncEngine {
 				}
 				this.onSyncProgress?.({
 					phase: "pulling",
-					current: noteCount + Math.min(i + batch.length, attachChanges.length),
+					current: applied,
 					total,
 					failed,
 					currentPath: lastPath,
 				});
 			}
 
-			this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
+			this.onSyncProgress?.({ phase: "complete", current: applied, total, failed });
 
 			// Update lastSync to server time
 			const serverTime =
@@ -4861,7 +4861,7 @@ export class SyncEngine {
 	private async pushNotesViaBatch(
 		files: TFile[],
 		force: boolean,
-		onProgress?: (done: number, failed: number) => void,
+		onProgress?: (pushed: number, failed: number) => void,
 	): Promise<{ pushed: number; failed: number } | null> {
 		if (this.batchPushUnsupported) return null;
 
@@ -4878,7 +4878,6 @@ export class SyncEngine {
 
 		let pushed = 0;
 		let failed = 0;
-		let done = 0;
 
 		type Entry = { file: TFile; content: string; hash: number; version?: number };
 		let chunk: Entry[] = [];
@@ -4894,7 +4893,6 @@ export class SyncEngine {
 			const entries: Entry[] = [];
 			for (const e of chunk) {
 				if (this.shouldDeferMint(normalizePath(e.file.path))) {
-					done++;
 					rlog().info(
 						"push",
 						`Mint refused (engine-flushed file, id relocated away): ${e.file.path}`,
@@ -4934,7 +4932,6 @@ export class SyncEngine {
 
 				for (const e of entries) {
 					const r = byPath.get(e.file.path);
-					done++;
 					if (!r) {
 						failed++;
 						this.logEntry("push", e.file.path, "error", "missing batch result");
@@ -5002,7 +4999,6 @@ export class SyncEngine {
 				);
 				for (const e of entries) {
 					failed++;
-					done++;
 					await this.enqueueChange({
 						path: e.file.path,
 						action: "upsert",
@@ -5042,7 +5038,6 @@ export class SyncEngine {
 			// count, the same measure routeModify caps on.
 			const noteId = this.noteIdMap?.get(file.path) ?? null;
 			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
 				continue;
 			}
@@ -5080,7 +5075,6 @@ export class SyncEngine {
 				// push, silently losing the edit. On decline, fall through to the
 				// normal batch push below (mirrors pushFile's `if (consumed)`).
 				if (consumed) {
-					done++;
 					await this.enqueueCrdtEdit(file, noteId);
 					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
 					continue;
@@ -5094,7 +5088,6 @@ export class SyncEngine {
 			const hash = fnv1a(content);
 			const existing = this.syncState.get(normalizePath(file.path));
 			if (!force && existing !== undefined && hash === existing.hash) {
-				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
 				continue;
 			}
@@ -5118,10 +5111,10 @@ export class SyncEngine {
 							vaultId: this.settings.vaultId ?? undefined,
 						});
 					}
-					onProgress?.(done, failed);
+					onProgress?.(pushed, failed);
 					return { pushed, failed };
 				}
-				onProgress?.(done, failed);
+				onProgress?.(pushed, failed);
 			}
 
 			chunk.push({ file, content, hash, version: existing?.version });
@@ -5142,27 +5135,25 @@ export class SyncEngine {
 					vaultId: this.settings.vaultId ?? undefined,
 				});
 			}
-			onProgress?.(done, failed);
+			onProgress?.(pushed, failed);
 			return { pushed, failed };
 		}
-		onProgress?.(done, failed);
+		onProgress?.(pushed, failed);
 
 		// Oversized notes: single-note path → server 413 → proper terminal
 		// too_large issue with sizeBytes.
 		for (const file of oversized) {
 			try {
 				const ok = await this.pushFile(file, force);
-				done++;
 				if (ok) {
 					pushed++;
 					this.logEntry("push", file.path, "ok");
 				}
 			} catch (e) {
-				done++;
 				failed++;
 				this.logEntry("push", file.path, "error", errMsg(e));
 			}
-			onProgress?.(done, failed);
+			onProgress?.(pushed, failed);
 		}
 
 		// Deliver any channel-down CRDT entries the loop just enqueued (Task 5).
@@ -5270,20 +5261,22 @@ export class SyncEngine {
 		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
 		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
 
-		const batchOutcome = await this.pushNotesViaBatch(noteFiles, false, (done, failedSoFar) => {
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: Math.min(done, total),
-				total,
-				failed: failedSoFar,
-			});
-		});
+		const batchOutcome = await this.pushNotesViaBatch(
+			noteFiles,
+			false,
+			(pushedSoFar, failedSoFar) => {
+				this.onSyncProgress?.({
+					phase: "pushing",
+					current: pushedSoFar,
+					total,
+					failed: failedSoFar,
+				});
+			},
+		);
 
 		let perFile: TFile[];
-		let doneOffset = 0;
 		if (batchOutcome) {
 			pushed += batchOutcome.pushed;
-			doneOffset = noteFiles.length;
 			perFile = attachFiles;
 		} else {
 			perFile = toSync;
@@ -5295,7 +5288,7 @@ export class SyncEngine {
 			pushed += results.filter(Boolean).length;
 			this.onSyncProgress?.({
 				phase: "pushing",
-				current: Math.min(doneOffset + i + batch.length, total),
+				current: pushed,
 				total,
 				failed: 0,
 			});
@@ -5597,21 +5590,23 @@ export class SyncEngine {
 		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
 		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
 
-		const batchOutcome = await this.pushNotesViaBatch(noteFiles, true, (done, failedSoFar) => {
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: done,
-				total,
-				failed: failedSoFar,
-			});
-		});
+		const batchOutcome = await this.pushNotesViaBatch(
+			noteFiles,
+			true,
+			(pushedSoFar, failedSoFar) => {
+				this.onSyncProgress?.({
+					phase: "pushing",
+					current: pushedSoFar,
+					total,
+					failed: failedSoFar,
+				});
+			},
+		);
 
 		let perFile: TFile[];
-		let doneOffset = 0;
 		if (batchOutcome) {
 			pushed += batchOutcome.pushed;
 			failed += batchOutcome.failed;
-			doneOffset = noteFiles.length;
 			perFile = attachFiles;
 		} else {
 			perFile = toSync;
@@ -5640,7 +5635,7 @@ export class SyncEngine {
 			pushed += results.filter(Boolean).length;
 			this.onSyncProgress?.({
 				phase: "pushing",
-				current: doneOffset + i + batch.length,
+				current: pushed,
 				total,
 				failed,
 				currentPath: batch[batch.length - 1]!.path,
