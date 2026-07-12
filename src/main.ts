@@ -47,6 +47,7 @@ import {
 	type SyncPreviewContext,
 	type SyncStatus,
 } from "./types";
+import { RELEASES_URL, checkForPluginUpdate } from "./update-check";
 
 import { BaseStore } from "./base-store";
 import type { CrdtEnrollment } from "./crdt/enrollment";
@@ -241,6 +242,20 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  open is a silent no-op. See single-flight.ts. */
 	private readonly syncPreviewGuard = createSingleFlight();
 
+	/** Notify-only update nudge for users who don't enable auto-update. Fetches
+	 *  the published manifest, and if it's ahead of the installed version shows a
+	 *  Notice linking to the release. Never installs — that's Obsidian's job. */
+	private async nudgeIfUpdateAvailable(): Promise<void> {
+		const latest = await checkForPluginUpdate(this.manifest.version);
+		if (!latest) return;
+		const frag = activeDocument.createDocumentFragment();
+		frag.append(`Engram Vault Sync ${latest} is available. `);
+		const link = frag.createEl("a", { text: "View release", href: RELEASES_URL });
+		link.setAttr("target", "_blank");
+		frag.append(" or update in Settings → Community plugins.");
+		new Notice(frag, 15000);
+	}
+
 	async onload(): Promise<void> {
 		initDevLog();
 		devLog().log("lifecycle", "plugin loading");
@@ -261,6 +276,11 @@ export default class EngramSyncPlugin extends Plugin {
 				}).open();
 			});
 		}
+
+		// Store users get a silent "update available" badge in Settings; users who
+		// don't enable auto-update never see it. Nudge them once per launch with a
+		// notify-only Notice (no self-install — Obsidian policy owns that path).
+		this.app.workspace.onLayoutReady(() => void this.nudgeIfUpdateAvailable());
 
 		this.api = new EngramApi(this.settings.apiUrl, this.settings.apiKey);
 		if (this.settings.vaultId) {
