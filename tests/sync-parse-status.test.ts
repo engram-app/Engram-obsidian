@@ -312,4 +312,44 @@ describe("recordParseStatus debounced degraded-transition Notice", () => {
 		await flushDebounce();
 		expect(__noticeCapture.notices.length).toBe(1); // only the first transition
 	});
+
+	test("other-category transition (note_processing_failed) never fires the notice", async () => {
+		__noticeCapture.notices.length = 0;
+		const engine = makeEngine();
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "note_processing_failed",
+			message: "processing failed",
+			detail: null,
+		});
+		await flushDebounce();
+		expect(engine.issues.get("notes/a.md")?.category).toBe("other");
+		expect(__noticeCapture.notices.length).toBe(0);
+	});
+
+	test("other-category transition does not re-arm on repeat pushes", async () => {
+		__noticeCapture.notices.length = 0;
+		const engine = makeEngine();
+		for (let i = 0; i < 3; i++) {
+			engine.recordParseStatus("notes/a.md", "note", "degraded", {
+				code: "note_processing_failed",
+				message: "processing failed",
+				detail: null,
+			});
+		}
+		await flushDebounce();
+		expect(__noticeCapture.notices.length).toBe(0);
+	});
+
+	test("destroy() clears the pending debounce timer so no notice fires after teardown", async () => {
+		__noticeCapture.notices.length = 0;
+		const engine = makeEngine();
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "frontmatter_invalid_yaml",
+			message: "bad",
+			detail: null,
+		});
+		engine.destroy();
+		await flushDebounce();
+		expect(__noticeCapture.notices.length).toBe(0);
+	});
 });

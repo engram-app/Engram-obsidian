@@ -5304,9 +5304,12 @@ export class SyncEngine {
 	 *  parse_status/parse_reason. Called on every push success + feed apply. When
 	 *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
 	 *  (a real error issue recorded elsewhere must survive). Fires a debounced
-	 *  Notice ONLY on the ok->degraded transition (a note that newly degrades),
-	 *  so a steady-state degraded vault stays quiet and re-recording an
-	 *  already-degraded note does not re-notify. */
+	 *  Notice ONLY on the ok->degraded transition into the "frontmatter"
+	 *  category (a note that newly degrades with a user-fixable frontmatter
+	 *  problem), so a steady-state degraded vault stays quiet, a re-recorded
+	 *  already-degraded note does not re-notify, and a generic "other"
+	 *  category failure (e.g. note_processing_failed) never enters the
+	 *  Notice path at all. */
 	recordParseStatus(
 		path: string,
 		kind: "note" | "attachment",
@@ -5333,7 +5336,7 @@ export class SyncEngine {
 			lastFailedAt: now,
 			attempts: 1,
 		});
-		if (!wasDegraded) {
+		if (!wasDegraded && mapped.category === "frontmatter") {
 			this.pendingDegraded.add(path);
 			if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 			this.degradedNoticeTimer = window.setTimeout(
@@ -6471,6 +6474,9 @@ export class SyncEngine {
 		}
 		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+		this.degradedNoticeTimer = null;
+		this.pendingDegraded.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();
 	}
