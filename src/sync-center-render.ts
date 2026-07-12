@@ -371,6 +371,15 @@ function renderFileRow(
 		reason.createSpan({ text: issue.parseReason.message });
 		const snippet = issue.parseReason.detail?.snippet;
 		if (snippet) reason.createEl("code", { text: snippet });
+		// note_processing_failed sits in the transient "Retrying automatically"
+		// section but will not self-heal on identical re-push. Surface the
+		// accurate, non-retrying remediation hint so the framing isn't misleading.
+		if (issue.parseReason.code === "note_processing_failed") {
+			reason.createEl("p", {
+				cls: "engram-sync-center-card-hint",
+				text: remediation(issue.category, issue.parseReason).hint,
+			});
+		}
 	}
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });

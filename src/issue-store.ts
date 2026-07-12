@@ -221,7 +221,20 @@ export function issueDisposition(category: SyncIssueCategory): IssueDisposition 
 /** Plain-language explanation + what-to-do for each failure category, shown on
  *  the Sync Center cards so a failure is understandable without decoding HTTP
  *  status codes. */
-export function remediation(category: SyncIssueCategory): { title: string; hint: string } {
+export function remediation(
+	category: SyncIssueCategory,
+	reason?: ParseReason | null,
+): { title: string; hint: string } {
+	// A per-entry server-side processing failure is bucketed under "other" but,
+	// unlike a genuine transient error, will NOT self-heal on an identical
+	// re-push. Give it accurate, non-retrying copy so we don't tell the user it
+	// is "retrying automatically" (review minor #3).
+	if (reason?.code === "note_processing_failed") {
+		return {
+			title: "Note couldn't be processed",
+			hint: "The server couldn't process this note. Check its contents, then edit and save to try again.",
+		};
+	}
 	switch (category) {
 		case "needs_pro":
 			return {

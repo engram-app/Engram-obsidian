@@ -434,6 +434,22 @@ describe("frontmatter parse issues", () => {
 		expect(parseStatusToIssue("degraded", reason)?.category).toBe("other");
 	});
 
+	test("note_processing_failed remediation is accurate and does not claim auto-retry", () => {
+		const reason = {
+			code: "note_processing_failed" as const,
+			message: "Processing failed",
+			detail: null,
+		};
+		const { title, hint } = remediation("other", reason);
+		expect(title.length).toBeGreaterThan(0);
+		expect(hint.length).toBeGreaterThan(0);
+		expect(`${title} ${hint}`).not.toContain("—");
+		// A per-entry server-side failure will not self-heal on identical re-push,
+		// so the generic transient "retrying automatically" copy is misleading.
+		expect(hint.toLowerCase()).not.toContain("retrying");
+		expect(hint).not.toBe(remediation("other").hint);
+	});
+
 	test("degraded with null reason still yields a frontmatter issue", () => {
 		const got = parseStatusToIssue("degraded", null);
 		expect(got?.category).toBe("frontmatter");
