@@ -91,7 +91,6 @@ const mockApp = {
 
 function engine(opts?: {
 	enableCrdt?: boolean;
-	lazyEnrollment?: boolean;
 	api?: Partial<EngramApi>;
 	crdt?: Partial<CrdtManager>;
 }): SyncEngine {
@@ -102,7 +101,6 @@ function engine(opts?: {
 			...DEFAULT_SETTINGS,
 			debounceMs: 1,
 			enableCrdt: opts?.enableCrdt ?? true,
-			lazyEnrollment: opts?.lazyEnrollment ?? false,
 		},
 		mock().mockResolvedValue(undefined),
 	);
@@ -143,9 +141,6 @@ describe("coldReceive", () => {
 		heads: Record<string, string>;
 		getUpdates?: (id: string, since?: string) => Promise<{ update: Uint8Array; head: string }>;
 		live?: (path: string) => boolean;
-		// Doc-freeing is gated on lazy enrollment; default on so the free path is
-		// exercised. Pass false to assert the eager-mode gate (no free).
-		lazy?: boolean;
 		// When set, applyRemoteUpdate rejects — to exercise the per-note catch.
 		applyThrows?: boolean;
 	}) {
@@ -176,7 +171,7 @@ describe("coldReceive", () => {
 				closed.push(id);
 			},
 		};
-		const e = engine({ enableCrdt: true, lazyEnrollment: opts.lazy ?? true, api, crdt });
+		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
 		const map = new NoteIdMap();
 		map.set("a.md", "id-a");
@@ -212,32 +207,60 @@ describe("coldReceive", () => {
 		expect(closed).toEqual([]); // never opened, so nothing to free
 	});
 
-	test("a converged cold note's transient doc is freed after applying (closeDoc)", async () => {
+	test("a converged cold note's doc IS freed after applying (P3 hibernation)", async () => {
+		// Idle notes are not channel-enrolled (P2 removed lazyEnrollment) — an
+		// idle doc opened just to apply this convergence delta is transient.
+		// Freeing it after the head is durably recorded keeps the resident set
+		// bounded to notes actually open in the editor (live-bound); the next
+		// apply re-opens via entry(), which rehydrates full prior state from
+		// IndexedDB before merging (plugin #232-series P3).
 		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" } });
 		expect(await e.coldReceive()).toBe(1);
 		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
-		// The doc was minted only for this convergence — freed so it doesn't leak.
 		expect(closed).toEqual(["id-a"]);
 	});
 
-	test("a note opened DURING convergence is applied but NOT freed (re-open guard)", async () => {
-		// live is false at the initial gate (so we converge) but true by the time
-		// we re-check after applying — the user opened it mid-convergence.
-		let n = 0;
-		const { e, applied, closed } = coldEngine({
-			heads: { "id-a": "SRV" },
-			live: () => n++ > 0,
-		});
-		expect(await e.coldReceive()).toBe(1);
-		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // still converged
-		expect(closed).toEqual([]); // NOT freed — the live channel now owns it
+	test("a converged cold note's doc is freed only AFTER setCrdtHead durably records the head", async () => {
+		const order: string[] = [];
+		const api = {
+			getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
+			getUpdates: async () => ({ update: new Uint8Array([1]), head: "SRV" }),
+		};
+		const crdt = {
+			encodeStateVector: async () => new Uint8Array([9]),
+			applyRemoteUpdate: async () => {},
+			closeDoc: (id: string) => order.push(`close:${id}`),
+		};
+		const e = engine({ enableCrdt: true, api, crdt });
+		markProbed(e);
+		const map = new NoteIdMap();
+		map.set("a.md", "id-a");
+		e.setNoteIdMap(map);
+		markConfirmed(e, "id-a");
+		e.setLiveBoundCheck(() => false);
+		const originalSetCrdtHead = (e as any).setCrdtHead.bind(e);
+		(e as any).setCrdtHead = (path: string, head: string) => {
+			order.push(`head:${path}`);
+			return originalSetCrdtHead(path, head);
+		};
+		await e.coldReceive();
+		expect(order).toEqual(["head:a.md", "close:id-a"]);
 	});
 
-	test("under EAGER enrollment the doc is applied but NOT freed (free is a lazy-mode opt)", async () => {
-		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, lazy: false });
+	test("a note that becomes live-bound DURING the apply is NOT freed (re-checked after the await)", async () => {
+		// The user may open the note in the editor while its convergence delta
+		// is in flight. hibernateIfIdle re-checks isLiveBound AFTER the awaits,
+		// not just at the top of the loop — so a note that flips live-bound
+		// mid-apply keeps its doc resident for the editor.
+		let liveCalls = 0;
+		const live = () => {
+			liveCalls++;
+			return liveCalls > 1; // false on the entry guard, true by hibernation time
+		};
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, live });
 		expect(await e.coldReceive()).toBe(1);
-		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // convergence still happens
-		expect(closed).toEqual([]); // eager: the channel owns the doc — freeing would churn
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
+		expect(closed).toEqual([]);
 	});
 
 	test("applyRemoteUpdate failure leaves the doc resident and the head unadvanced", async () => {
@@ -245,22 +268,8 @@ describe("coldReceive", () => {
 		// The per-note catch swallows it: coldReceive resolves, converged 0.
 		expect(await e.coldReceive()).toBe(0);
 		expect(applied).toEqual([]); // apply threw before recording
-		expect(closed).toEqual([]); // closeDoc is AFTER apply — not reached on failure
+		expect(closed).toEqual([]);
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // head not advanced → retry next poll
-	});
-
-	test("closeDoc runs only AFTER the head is durably recorded", async () => {
-		const closedAtHead: Array<string | undefined> = [];
-		const { e } = coldEngine({ heads: { "id-a": "SRV" } });
-		// Re-wrap closeDoc to capture the persisted head at free time.
-		const mgr = (e as any).crdt;
-		const origClose = mgr.closeDoc;
-		mgr.closeDoc = (id: string) => {
-			closedAtHead.push((e as any).getCrdtHead("a.md"));
-			origClose(id);
-		};
-		await e.coldReceive();
-		expect(closedAtHead).toEqual(["SRV"]); // head already committed when we free
 	});
 
 	test("a head with no local path is skipped (first-discovery is the pull's job)", async () => {

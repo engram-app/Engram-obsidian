@@ -255,6 +255,84 @@ describe("NoteChannel inbound crdt_msg", () => {
 
 		channel.disconnect();
 	});
+
+	test("routes inbound note_yjs_update to onNoteYjsUpdate callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: { noteId: string; b64: string; head: string }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head) => received.push({ noteId, b64, head });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV" },
+		]);
+
+		expect(received).toEqual([{ noteId: "id-a", b64: "dGVzdA==", head: "SRV" }]);
+
+		channel.disconnect();
+	});
+
+	test("note_yjs_update without onNoteYjsUpdate is a no-op (no crash)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		expect(() =>
+			simulateMessage(lastWsInstance, [
+				null,
+				null,
+				"sync:u1:v1",
+				"note_yjs_update",
+				{ note_id: "id-a", b64: "dGVzdA==", head: "SRV" },
+			]),
+		).not.toThrow();
+
+		channel.disconnect();
+	});
+
+	// b#4 (test-coverage review): a malformed note_yjs_update missing a required
+	// field must be dropped silently — never delivered as a partial event that
+	// would apply undefined bytes / persist an undefined head.
+	test("note_yjs_update with a missing field does NOT invoke the callback", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: unknown[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head) => received.push({ noteId, b64, head });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		// Missing head.
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==" },
+		]);
+		// Missing b64.
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", head: "SRV" },
+		]);
+		// Missing note_id.
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ b64: "dGVzdA==", head: "SRV" },
+		]);
+
+		expect(received).toEqual([]);
+
+		channel.disconnect();
+	});
 });
 
 // ---------------------------------------------------------------------------

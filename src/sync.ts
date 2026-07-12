@@ -654,11 +654,6 @@ export class SyncEngine {
 	// whole-doc push". Previously duplicated inline in pushFile and
 	// pushNotesViaBatch; both now call this.
 	//
-	// Under lazy enrollment a confirmed-but-cold note has no handshaked Y.Doc
-	// this session, so routing it through applyLocalEdit would seed a DUPLICATE
-	// lineage (#846/#161); a cold note must instead reach convergent REST (in
-	// pushFile) and must NOT be skipped as socket-delivered in the batch seam
-	// (nothing would deliver it) — hence the live-bound requirement here.
 	private isCrdtManaged(path: string, noteId: string | null): boolean {
 		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
 		// shared clauses live in one place and can't drift between the two.
@@ -667,20 +662,18 @@ export class SyncEngine {
 
 	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
 	// note WOULD converge via CRDT ops if the crdt: channel were joined right
-	// now (Task 5, single authority). pushFile/pushNotesViaBatch use this to
-	// decide whether a channel-down note still owes its body to CRDT ops rather
-	// than the legacy whole-doc base_hash push. When it does, the edit is
-	// persisted as a content-free, crdt-tagged durable queue entry and delivered
-	// by runFlushQueue's noteId-keyed /updates branch (the old in-memory
-	// debounced flush was retired in Phase 2b) — the crdt-live check is applied
-	// separately by the caller to pick channel-op vs durable-REST transport.
-	private isCrdtManagedOffline(path: string, noteId: string | null): boolean {
-		return (
-			!!this.crdt &&
-			!!noteId &&
-			this.isNoteConfirmed(noteId) &&
-			(!this.settings.lazyEnrollment || this.isLiveBound(normalizePath(path)))
-		);
+	// now (Task 5, single authority). CRDT is UNCONDITIONAL for a confirmed
+	// note — a cold edit (note edited while its dedicated room is closed) MUST
+	// stay on CRDT so it merges with concurrent remote edits; routing it to
+	// legacy whole-doc REST would be last-write-wins → lost merges (#230).
+	// Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
+	// idle note ships its edit channel-up or as a crdt-tagged durable /updates
+	// entry (runFlushQueue's noteId-keyed branch). pushFile/pushNotesViaBatch
+	// use this to keep a channel-down note off the legacy base_hash push; the
+	// crdt-live check is applied separately by the caller to pick channel-op vs
+	// durable-REST transport.
+	private isCrdtManagedOffline(_path: string, noteId: string | null): boolean {
+		return !!this.crdt && !!noteId && this.isNoteConfirmed(noteId);
 	}
 
 	private confirmNoteId(noteId: string | null | undefined): void {
@@ -704,6 +697,12 @@ export class SyncEngine {
 		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
 		if (!path.endsWith(".md")) return;
 		if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) return;
+		// Vault-channel fan-out: a cold (not-open-in-editor) send stays room-free —
+		// its edits ship over /updates and it RECEIVES future updates over the
+		// note_yjs_update broadcast, no room needed. Enroll (STEP1) only for a
+		// live-bound note, matching the pull/stream gates. The note's server row is
+		// already created by the REST push above, so an idle note is not stranded.
+		if (!this.isLiveBound(normalizePath(path))) return;
 		this.crdtEnrollment.reset(noteId);
 		this.crdtEnrollment.enroll(noteId);
 	}
@@ -786,6 +785,17 @@ export class SyncEngine {
 		return state !== undefined && state.hash === fnv1a(content);
 	}
 
+	/** True only when this path has a recorded CRDT baseline that disagrees
+	 *  with disk — a real external-edit-while-closed that must be captured into
+	 *  CRDT. No baseline (fresh note → the bounded REST fullSync uploads it and
+	 *  the backend bind/3 seeds CRDT from content) or in-sync => false, so
+	 *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
+	 *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
+	needsColdReconcile(path: string, content: string): boolean {
+		const state = this.syncState.get(normalizePath(path));
+		return state !== undefined && state.hash !== fnv1a(content);
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
@@ -793,10 +803,10 @@ export class SyncEngine {
 	 *  Safe to call from main.ts — does not expose the private markRecentlyFlushed.
 	 *  Requires the sync gate to be open — returns early when blocked so inbound
 	 *  CRDT frames cannot overwrite local files before the user picks a direction. */
-	async flushFromCrdt(path: string, content: string): Promise<void> {
+	async flushFromCrdt(path: string, content: string): Promise<boolean> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", `flushFromCrdt short-circuited — gate closed: ${path}`);
-			return;
+			return true;
 		}
 		const normalized = normalizePath(path);
 		const file = this.app.vault.getAbstractFileByPath(normalized);
@@ -810,7 +820,7 @@ export class SyncEngine {
 			// missing (an earlier flush created the file before this fix). Record
 			// it so a later server tombstone isn't misread as a resurrection.
 			this.recordCrdtBaseline(normalized, content);
-			return;
+			return true;
 		}
 		this.markRecentlyFlushed(normalized);
 		try {
@@ -829,8 +839,16 @@ export class SyncEngine {
 			// delete (folder-rename cleanup) trips the resurrection guard, which
 			// re-pushes the old path and resurrects it forever (e2e test_34/78).
 			this.recordCrdtBaseline(normalized, content);
+			return true;
 		} catch (e) {
+			// Return false (do NOT swallow silently): the remote-apply path's
+			// onFlushToDisk wrapper turns this into a rejection so applyRemoteUpdate
+			// rejects and crdtHead stays unadvanced (#235). recordCrdtBaseline is
+			// intentionally NOT reached here — a failed write must not mark the note
+			// synced. Best-effort callers (pull/materialize) ignore the return and
+			// keep today's log-and-continue behavior.
 			rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`);
+			return false;
 		}
 	}
 
@@ -840,6 +858,248 @@ export class SyncEngine {
 	private recordCrdtBaseline(normalized: string, content: string): void {
 		const prev = this.syncState.get(normalized);
 		this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+	}
+
+	/** Capture an un-pushed on-disk edit into the Y.Doc BEFORE a fanned-out or
+	 *  cold-received remote update flushes to disk, so CRDT MERGES the local
+	 *  drift instead of the remote projection overwriting it (BUG 2: a
+	 *  NOT-live-bound note's external edit lives only on disk until its debounce
+	 *  fires pushFile; a remote apply landing in that window would clobber it).
+	 *  Only acts on a note whose disk content diverges from its recorded baseline
+	 *  (needsColdReconcile) — an in-sync note, or one with no baseline, has
+	 *  nothing local to preserve. Reuses applyLocalEdit (frontmatter split +
+	 *  minimal diff), mirroring reconcileColdStart; oversized notes are left to
+	 *  the legacy path (never seeded — 8 MB WS frame limit).
+	 *
+	 *  PRECONDITION (history-FULL docs only): the callers
+	 *  (`applyPushedNoteUpdate`/`coldReceive`) invoke this ONLY when the note's
+	 *  Y.Doc already carries the baseline lineage (`crdt.hasHistory` true). A
+	 *  history-LESS doc is routed to `adoptHistoryLessNote` instead — seeding disk
+	 *  into an empty doc here would mint a FRESH lineage that unions with the
+	 *  server lineage and DOUBLES the baseline (#234). On a history-full doc the
+	 *  seed is a clean minimal diff onto the existing baseline, so the subsequent
+	 *  `applyRemoteUpdate` CRDT-merges both edits without doubling.
+	 *
+	 *  Best-effort: never throws into the apply path. The caller has already
+	 *  established !isLiveBound. */
+	private async captureDiskDriftBeforeRemote(path: string, noteId: string): Promise<void> {
+		if (!this.crdt) return;
+		const normalized = normalizePath(path);
+		const file = this.app.vault.getAbstractFileByPath(normalized);
+		if (!(file instanceof TFile)) return;
+		let disk: string;
+		try {
+			disk = await this.app.vault.cachedRead(file);
+		} catch {
+			return; // unreadable — let the remote apply proceed rather than block sync
+		}
+		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return;
+		if (!this.needsColdReconcile(normalized, disk)) return; // in-sync / no baseline
+		try {
+			await this.crdt.applyLocalEdit(noteId, disk);
+			// The seeded drift ships live via manager.onUpdate -> sendCrdt ONLY
+			// when the crdt topic is joined. In the reconnect window where the sync
+			// topic delivered THIS fan-out but the crdt topic has not re-joined yet
+			// (`!crdtLive()`), that update is dropped — and once the caller's
+			// flushFromCrdt advances the baseline to the merged disk content, the
+			// debounced pushFile echo-skips, stranding the drift until the note's
+			// next edit. Durably queue it (noteId-keyed, dedup) so the next flush
+			// ships the merged Y.Doc state regardless. Mirrors pushFile's own
+			// channel-down handling; `file` is a TFile past the guard above.
+			if (!(this.crdtLive?.() ?? true)) {
+				await this.enqueueCrdtEdit(file, noteId);
+				void this.flushQueue();
+			}
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`captureDiskDriftBeforeRemote: seed failed for ${path}: ${errMsg(e)}`,
+			);
+		}
+	}
+
+	/** Adopt a not-live-bound CRDT note whose local Y.Doc has NO history yet
+	 *  (#234). A feed-synced note (content delivered via the cursor feed, its
+	 *  IndexedDB store never populated) has an empty Y.Doc. Two coupled failures
+	 *  arise if we treat it like a history-full note:
+	 *   - DOUBLING: `captureDiskDriftBeforeRemote` → `applyLocalEdit(disk)` seeds
+	 *     the whole disk as a FRESH lineage; the subsequent server-lineage merge
+	 *     unions two independent insertions of the baseline → baseline doubles.
+	 *   - INCOMPLETENESS: the fanned-out/cold delta is one INCREMENTAL update; a
+	 *     delta applied to an empty doc has no causal base, so its ops buffer and
+	 *     the note never reconstructs.
+	 *  Both are avoided by fetching FULL server state (since="" → full) and
+	 *  adopting it, so the doc becomes history-full on the server's own lineage;
+	 *  any un-pushed disk drift is then reconciled against it (no seed, no
+	 *  double). Returns the adopted server head, or null on failure (caller leaves
+	 *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
+	 *  own failure, never throws. */
+	private async adoptHistoryLessNote(path: string, noteId: string): Promise<string | null> {
+		if (!this.crdt) return null;
+		const normalized = normalizePath(path);
+
+		// 1. Capture disk + the drift flag BEFORE the adopt-flush overwrites disk
+		//    and its recorded baseline (needsColdReconcile compares to syncState).
+		const file = this.app.vault.getAbstractFileByPath(normalized);
+		let disk: string | null = null;
+		if (file instanceof TFile) {
+			try {
+				disk = await this.app.vault.cachedRead(file);
+			} catch {
+				disk = null; // unreadable — proceed with a plain adopt, no drift merge
+			}
+		}
+		const hasDrift =
+			disk !== null &&
+			!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
+			this.needsColdReconcile(normalized, disk);
+
+		// 2. Keep-both (drift + NO LCA): the adopt-flush in step 3 overwrites the
+		//    original's disk with server content, after which `disk` survives ONLY
+		//    in memory. Preserve it to its conflict copy FIRST; if that write fails
+		//    for real, ABORT without adopting so the original disk keeps the local
+		//    edit and the caller retries next poll (crdtHead unadvanced) — instead
+		//    of clobbering disk and then losing the sole in-memory copy. The LCA
+		//    branch stays post-adopt (step 4): its merged content is made durable in
+		//    the CRDT before flushing, so a flush failure self-heals. The LCA/no-LCA
+		//    split needs only the BaseStore, not the adopted server text.
+		const lca = hasDrift && disk !== null ? this.baseStore?.get(normalized) : undefined;
+		let keepBothCopied = false;
+		if (hasDrift && disk !== null && !lca) {
+			try {
+				const copy = await this.writeDriftConflictCopy(normalized, disk);
+				keepBothCopied = true;
+				rlog().info(
+					"conflict",
+					`history-less drift → keep-both | original=${normalized} copy=${copy}`,
+				);
+			} catch (e) {
+				rlog().error(
+					"conflict",
+					`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting adopt to retain the local edit for retry`,
+				);
+				return null;
+			}
+		}
+
+		// 3. Fetch + adopt the FULL server state. Reconstructs the note on the
+		//    server lineage; the doc is history-full afterward. The echo-guarded
+		//    flush writes server content to disk (clobbers drift — captured above).
+		let head: string;
+		try {
+			// Take the state vector BEFORE adopting (doc still empty → SV encodes
+			// "I have nothing", so the server returns FULL state). An empty `since`
+			// string is rejected by the backend's plausible_state_vector? guard
+			// (400) — mirror coldReceive and send the real (empty-doc) SV instead.
+			const since = toB64(await this.crdt.encodeStateVector(noteId));
+			const full = await this.api.getUpdates(noteId, since);
+			head = full.head;
+			await this.crdt.applyRemoteUpdate(noteId, full.update);
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`adoptHistoryLessNote: full-state adopt failed for ${path}: ${errMsg(e)}`,
+			);
+			return null;
+		}
+
+		// 4. Reconcile any un-pushed disk drift against the adopted server lineage.
+		//    The no-LCA keep-both copy is already written durably in step 2, so skip
+		//    it here (don't write it twice); only the LCA 3-way merge remains.
+		if (hasDrift && disk !== null && !keepBothCopied) {
+			await this.reconcileDriftOntoServer(normalized, noteId, disk);
+		}
+		return head;
+	}
+
+	/** Reconcile an un-pushed disk edit (`localDisk`) against a note whose Y.Doc
+	 *  now holds the adopted SERVER lineage (`adoptHistoryLessNote` step 3). The
+	 *  doc == server content at entry; disk was just overwritten with server
+	 *  content by the adopt-flush, but `localDisk` holds the pre-adopt disk.
+	 *   - LCA available (BaseStore has the last-synced base): a real 3-way merge
+	 *     preserves both sides. Diff the merged text onto the server lineage via
+	 *     `applyLocalEdit` (doc is history-full → diffIntoYText, NO seed → NO
+	 *     double), then flush the merged result and push it (the local update
+	 *     emitted by applyLocalEdit).
+	 *   - No LCA, or the 3-way merge conflicts: keep BOTH, never lose or double.
+	 *     The original note converges to SERVER (doc == disk == server already);
+	 *     the local version is preserved as a separate conflict-copy note. This is
+	 *     the CRDT-consistent shape of the legacy keep-both (server→original,
+	 *     local→copy), so the Y.Doc and disk never disagree.
+	 *  Best-effort: isolates its own failure, never throws. */
+	private async reconcileDriftOntoServer(
+		normalized: string,
+		noteId: string,
+		localDisk: string,
+	): Promise<void> {
+		if (!this.crdt) return;
+		let serverText: string;
+		try {
+			serverText = await this.crdt.projectedText(noteId);
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`reconcileDriftOntoServer: projectedText failed for ${normalized}: ${errMsg(e)}`,
+			);
+			return;
+		}
+		if (serverText === localDisk) return; // no real divergence
+
+		const base = this.baseStore?.get(normalized);
+		if (base) {
+			const merge = threeWayMerge(base.content, localDisk, serverText);
+			if (merge.clean) {
+				try {
+					// Doc is history-full → applyLocalEdit diffs (no seed, no double).
+					await this.crdt.applyLocalEdit(noteId, merge.merged);
+					await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId));
+					this.baseStore?.set(normalized, merge.merged, base.version);
+					rlog().info(
+						"conflict",
+						`history-less drift 3-way merged | path=${normalized}` +
+							` | baseLen=${base.content.length} localLen=${localDisk.length}` +
+							` remoteLen=${serverText.length} mergedLen=${merge.merged.length}`,
+					);
+				} catch (e) {
+					rlog().error(
+						"conflict",
+						`history-less 3-way merge apply failed for ${normalized}: ${errMsg(e)}`,
+					);
+				}
+				return;
+			}
+		}
+
+		// No LCA / conflicted → keep both. Original stays on server (already
+		// flushed); local drift is preserved as its own conflict-copy note.
+		// (The no-LCA case writes this copy pre-adopt in adoptHistoryLessNote; this
+		// path only runs for a conflicted 3-way merge, where the LCA existed.)
+		try {
+			const conflictPath = await this.writeDriftConflictCopy(normalized, localDisk);
+			rlog().info(
+				"conflict",
+				`history-less drift → keep-both | original=${normalized} copy=${conflictPath}`,
+			);
+		} catch (e) {
+			rlog().error(
+				"conflict",
+				`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}`,
+			);
+		}
+	}
+
+	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
+	 *  `normalized` and record its baseline so it isn't re-pushed as drift.
+	 *  Throws on a GENUINE write failure — `createFileWithFolders` degrades a
+	 *  benign "already exists" race to a modify with the same content, so only
+	 *  real errors (disk full, permission, illegal path) propagate. Returns the
+	 *  conflict path written. */
+	private async writeDriftConflictCopy(normalized: string, localDisk: string): Promise<string> {
+		const date = new Date().toISOString().slice(0, 10);
+		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+		await this.createFileWithFolders(conflictPath, localDisk);
+		this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
+		return conflictPath;
 	}
 
 	/** Materialize an EMPTY note whose emptiness the server has just confirmed.
@@ -1834,7 +2094,14 @@ export class SyncEngine {
 						// the server. enroll() fires startSync's STEP1 handshake so the client
 						// re-syncs any Yjs history it's missing. Idempotent per session, so a
 						// note already enrolled via active-leaf-change is unaffected.
-						this.crdtEnrollment?.enroll(noteId);
+						// Vault-channel fan-out: enroll (STEP1) only for a live-bound note.
+						// An idle note's send already shipped over the channel/updates above,
+						// and it RECEIVES future updates over the note_yjs_update broadcast —
+						// no room needed. A brand-new empty note's row is created by the REST
+						// push path, so skipping STEP1 here does not strand it.
+						if (this.isLiveBound(normalizePath(file.path))) {
+							this.crdtEnrollment?.enroll(noteId);
+						}
 						success = true;
 						// Task 5 (TOCTOU fix): re-check liveness AFTER the awaited seed
 						// above. The channel can drop DURING routeModify — a stale
@@ -1883,9 +2150,14 @@ export class SyncEngine {
 					// at or above MAX_CRDT_NOTE_BYTES can exceed Bandit's 8 MB WebSocket
 					// frame limit (1009 close) and — because the bloated doc persists in
 					// IndexedDB — re-crashes on every reconnect, killing all vault sync.
+					// Vault-channel fan-out: enroll (STEP1) only for a live-bound note —
+					// the legacy REST push above already delivered the body server-side; an
+					// idle note receives future updates over the note_yjs_update broadcast,
+					// no room needed. Oversized notes never enroll (8 MB WS frame limit).
 					if (
 						file.extension === "md" &&
-						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES &&
+						this.isLiveBound(normalizePath(file.path))
 					) {
 						this.crdtEnrollment?.enroll(noteId);
 					}
@@ -2472,6 +2744,24 @@ export class SyncEngine {
 		};
 	}
 
+	/** Free `noteId`'s Y.Doc after a remote update has been applied and its head
+	 *  durably recorded (P3, plugin #232-series). Idle notes are not
+	 *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
+	 *  a doc opened just to apply a cold/pushed convergence delta is transient,
+	 *  so leaving it resident forever is unbounded memory growth. `closeDoc`
+	 *  does not `clearData()`, so the IndexedDB store persists; the next apply
+	 *  re-opens via `CrdtManager.entry()`, which awaits `whenSynced` and
+	 *  rehydrates the full prior state before merging the next delta — no data
+	 *  loss. Re-checks `isLiveBound` AFTER the caller's awaits: the user may
+	 *  have opened the note in the editor while the apply was in flight, in
+	 *  which case that room now owns the doc's lifecycle and it must stay
+	 *  resident. */
+	private hibernateIfIdle(path: string, noteId: string): void {
+		if (!this.crdt) return;
+		if (this.isLiveBound(normalizePath(path))) return;
+		this.crdt.closeDoc(noteId);
+	}
+
 	/** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
 	 *  Diffs the server head-index against the persisted per-note crdtHead and,
 	 *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
@@ -2494,24 +2784,39 @@ export class SyncEngine {
 			if (this.isLiveBound(path)) continue; // live channel owns open notes
 			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
 			try {
+				// A history-LESS doc (feed-synced, never in IDB) doubles on a disk-drift
+				// seed and can't reconstruct from a delta — adopt full server state +
+				// reconcile drift instead (#234). Default to history-full when the
+				// manager lacks hasHistory (partial test doubles) → pre-#234 behavior.
+				const historyFull =
+					typeof this.crdt.hasHistory === "function"
+						? await this.crdt.hasHistory(noteId)
+						: true;
+				if (!historyFull) {
+					const adopted = await this.adoptHistoryLessNote(path, noteId);
+					if (adopted === null) continue; // adopt failed — retry next poll
+					this.setCrdtHead(path, adopted);
+					converged++;
+					this.hibernateIfIdle(path, noteId);
+					continue;
+				}
+				// Merge any un-pushed disk drift into the Y.Doc first, so the pulled
+				// remote delta merges with it instead of overwriting it (BUG 2).
+				// Seeding before encodeStateVector keeps `since` consistent with the
+				// now-updated local state.
+				await this.captureDiskDriftBeforeRemote(path, noteId);
 				// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
 				const since = toB64(await this.crdt.encodeStateVector(noteId));
 				const { update, head } = await this.api.getUpdates(noteId, since);
 				await this.crdt.applyRemoteUpdate(noteId, update);
 				this.setCrdtHead(path, head); // crdtHead persists under the vault path
 				converged++;
-				// Free the transient doc — but ONLY under lazy enrollment. Under eager
-				// enrollment (the current default) every note is channel-enrolled and its
-				// doc is owned by the live channel, not minted just for this convergence;
-				// freeing it here would only churn (destroy now, re-mint on the next
-				// channel frame). Under lazy enrollment a cold note's doc IS transient, so
-				// closeDoc drops the in-memory doc + IndexedDB handle (the IDB store
-				// persists → re-hydrates on next open; the disk flush from applyRemoteUpdate
-				// captured its content synchronously and runs independently). Re-check
-				// live-bound — the user may have opened the note during the awaits above.
-				if (this.settings.lazyEnrollment && !this.isLiveBound(path)) {
-					this.crdt.closeDoc(noteId);
-				}
+				// Idle notes are not channel-enrolled under the fan-out model (P2
+				// removed lazyEnrollment) — this doc was opened just for this
+				// convergence, so free it now that the head is durably recorded.
+				// A note that became live-bound during the awaits above stays
+				// resident (hibernateIfIdle re-checks).
+				this.hibernateIfIdle(path, noteId);
 			} catch (e) {
 				// Isolated: log, leave crdtHead unadvanced, retry next poll.
 				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);
@@ -2523,6 +2828,86 @@ export class SyncEngine {
 			this.emitStatus();
 		}
 		return converged;
+	}
+
+	/** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
+	 *  to an IDLE note — one with no dedicated CRDT room open right now. Mirrors
+	 *  coldReceive's per-note apply, minus the REST getUpdates fetch (the update
+	 *  bytes arrive directly in the event, not fetched separately). Skips a note
+	 *  the live editor's own room owns (isLiveBound) — that room already applies
+	 *  its own crdt_msg frames, so this would be a harmless-but-wasteful double
+	 *  apply; skipping it matches Relay's `if (isActive) return`. Skips a note
+	 *  not yet confirmed (no server row known) or one this device hasn't mapped
+	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
+	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
+	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
+	async applyPushedNoteUpdate(noteId: string, update: Uint8Array, head: string): Promise<void> {
+		if (!this.crdt) return;
+		const path = this.noteIdMap?.pathForId(noteId) ?? null;
+		if (!path) return; // not locally known — first-discovery is pull()'s job
+		// A fan-out for a mapped note is the server pushing that note's bytes —
+		// authoritative proof it has a row. So confirm it here rather than dropping
+		// it. Without this, a reconnect (clearConfirmedNoteIds un-confirms every
+		// note for write-routing safety) opens a window where fanned-out appends are
+		// silently skipped until a slow re-confirmation — the >30s missed-open case
+		// (test_web_edit_reaches_obsidian_that_missed_room_open).
+		this.confirmNoteId(noteId);
+		if (this.isLiveBound(normalizePath(path))) return; // live channel owns open notes
+		try {
+			// A history-LESS doc (feed-synced, never in IDB) must NOT seed disk drift
+			// (doubles the baseline) nor apply the bare delta (incomplete). Adopt full
+			// server state + reconcile drift instead (#234). Default to history-full
+			// when the manager lacks hasHistory (partial test doubles) so the existing
+			// mock-based tests keep the pre-#234 behavior.
+			const historyFull =
+				typeof this.crdt.hasHistory === "function"
+					? await this.crdt.hasHistory(noteId)
+					: true;
+			if (historyFull) {
+				// Merge any un-pushed disk drift into the Y.Doc first, so this remote
+				// apply merges with it instead of overwriting it (BUG 2).
+				await this.captureDiskDriftBeforeRemote(path, noteId);
+				await this.crdt.applyRemoteUpdate(noteId, update);
+				// Gap heal: if the applied delta references state this device missed
+				// while offline (another device edited the note while this one was off
+				// the channel), Yjs PENDS it — the doc has NOT reached `head`.
+				// Advancing crdtHead to `head` anyway would make coldReceive's cost
+				// gate (getCrdtHead === serverHead → skip) skip the note, so the gap
+				// would never heal (the note converges only much later via an unrelated
+				// full pull — the >30s missed-open reconnect case). Pull the full delta
+				// since our REAL state vector to fill the gap now, and advance crdtHead
+				// only to a head the doc has actually reached.
+				const hadGap =
+					typeof this.crdt.hasPendingGap === "function" &&
+					(await this.crdt.hasPendingGap(noteId));
+				if (hadGap) {
+					const since = toB64(await this.crdt.encodeStateVector(noteId));
+					const { update: full, head: fullHead } = await this.api.getUpdates(
+						noteId,
+						since,
+					);
+					await this.crdt.applyRemoteUpdate(noteId, full);
+					// Still gapped after the full pull → leave crdtHead unadvanced so
+					// coldReceive retries; else record the head we converged to.
+					if (!(await this.crdt.hasPendingGap(noteId))) {
+						this.setCrdtHead(path, fullHead);
+					}
+				} else {
+					this.setCrdtHead(path, head); // crdtHead persists under the vault path
+				}
+			} else {
+				const adopted = await this.adoptHistoryLessNote(path, noteId);
+				if (adopted === null) return; // adopt failed — leave head unadvanced, retry
+				this.setCrdtHead(path, adopted);
+			}
+			this.hibernateIfIdle(path, noteId);
+		} catch (e) {
+			// Isolated: log, leave crdtHead unadvanced — the next coldReceive poll
+			// (or a subsequent push) will retry convergence. Not freed: a failed
+			// apply is left for retry, not hibernated.
+			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
+			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+		}
 	}
 
 	/** Pull remote changes and apply to the vault via the ordered cursor feed.
@@ -3121,8 +3506,13 @@ export class SyncEngine {
 					// note_changed/upsert path must not double-write the body or run
 					// threeWayMerge/ConflictModal, which would create a feedback loop
 					// (disk write re-enters handleModify → applyLocalEdit).
-					// P2-1: enroll in the note's CRDT room so this device receives live
-					// updates (enroll() is idempotent — already-enrolled notes no-op).
+					// Vault-channel fan-out: an IDLE note received here converges
+					// room-free over the note_yjs_update broadcast
+					// (applyPushedNoteUpdate) or the pull backstop — enrolling a room
+					// for it would defeat the fan-out isolation and re-open the connect
+					// storm (a room per note that ever received a live edit). Enroll
+					// ONLY when the note is live-bound (open in the editor), matching the
+					// pull-path discovery gate (isLiveBound) at applyChange below.
 					// Rooms are keyed by note_id, so resolve it: prefer the id the
 					// server's broadcast now carries (a device that has NEVER seen this
 					// note learns it here), else the locally-known sidecar mapping. Learn
@@ -3154,7 +3544,9 @@ export class SyncEngine {
 					} else {
 						this.noteIdMap?.set(event.path, noteId);
 						this.confirmNoteId(noteId);
-						this.crdtEnrollment?.enroll(noteId);
+						if (this.isLiveBound(normalizePath(event.path))) {
+							this.crdtEnrollment?.enroll(noteId);
+						}
 						// SEED the CAS base from the event when none exists — the CRDT
 						// delivery that writes the body never advances serverHash (issue
 						// #203), so a device whose only knowledge of this note came
@@ -3170,13 +3562,16 @@ export class SyncEngine {
 						// seeded base errs toward a false 409/conflict copy, the safe
 						// direction. Gate on "no base yet", not file existence: the room
 						// delivery can race the file onto disk before this event runs.
+						const np = normalizePath(event.path);
+						// Captured BEFORE the CAS-seed below (which creates an entry):
+						// undefined means this device has NO prior record of the note
+						// (a genuine first delivery, not a converged/raced one).
+						const priorState = this.syncState.get(np);
 						if (event.content_hash !== undefined) {
-							const np = normalizePath(event.path);
-							const prior = this.syncState.get(np);
-							if (prior?.serverHash === undefined) {
+							if (priorState?.serverHash === undefined) {
 								this.syncState.set(np, {
-									hash: prior?.hash ?? fnv1a(""),
-									version: event.version ?? prior?.version,
+									hash: priorState?.hash ?? fnv1a(""),
+									version: event.version ?? priorState?.version,
 									serverHash: event.content_hash,
 								});
 							}
@@ -3185,6 +3580,34 @@ export class SyncEngine {
 							"ws",
 							`CRDT-managed: skipping legacy body apply for ${event.path}`,
 						);
+						// First-delivery materialization (idle, room-free): a never-seen note
+						// (no prior syncState, no local file) that is idle is NOT enrolled here
+						// (fan-out isolation), so it can never join a room. Its live note_yjs_update
+						// fan-out is fire-and-forget and is MISSED if this device was offline when it
+						// fired (a note created before we connected). materializeRelocated below needs
+						// a SYNCED doc so it bails, leaving only the pull-discovery backstop, which
+						// serializes behind slow conflict resolution (9s+ observed) and loses the
+						// delivery-timing race (e2e test_27, and the broader created-before-connect
+						// class). Materialize now from AUTHORITATIVE content, like the pre-fan-out
+						// legacy apply did: inline body if the broadcast carries it, else one getNote
+						// fetch (serialize_note is hash-only in prod). This is real server content, not
+						// an unsynced empty projection, so it sidesteps the #547 premature-empty class.
+						// flushFromCrdt's markRecentlyFlushed suppresses the echo and records the CRDT
+						// baseline; CRDT still owns subsequent live edits. A note with a prior baseline
+						// is left to its convergence path, a live-bound one to its editor/room, and a
+						// synced doc (the rename case) to materializeRelocated below.
+						const synced =
+							typeof this.crdt.isSynced === "function" && this.crdt.isSynced(noteId);
+						if (
+							priorState === undefined &&
+							!synced &&
+							!this.isLiveBound(np) &&
+							!this.app.vault.getAbstractFileByPath(np)
+						) {
+							const body =
+								event.content ?? (await this.api.getNote(event.path)).content;
+							await this.flushFromCrdt(np, body);
+						}
 						// #189: a rename carries no content change, so it never produces a
 						// Y.Doc update — onFlushToDisk never fires for it — and enroll()
 						// above is a per-session no-op for an id this device already
@@ -3692,11 +4115,13 @@ export class SyncEngine {
 			// and can be missed if we weren't subscribed when the other device opened
 			// the room). An already-local note is left to its existing CRDT routing.
 			if (!this.app.vault.getFileByPath(normalized)) {
-				// Lazy enrollment: do NOT open a room for a cold discovered note.
-				// The /changes payload already carries the body (flushFromCrdt below
-				// writes it room-free), so skipping the STEP1 keeps a large vault
-				// from opening a room per note on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
+				// Enroll (STEP1) ONLY when the note is live-bound (open in the
+				// editor). An idle discovered note gets its body room-free via the
+				// flushFromCrdt below (the /changes payload already carries it), so
+				// skipping STEP1 keeps a large vault from opening a room per note on
+				// connect (the enrollment storm). Send stays intact — an idle CRDT
+				// note ships local edits without enrollment.
+				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`);
 				// The /changes payload already carries the authoritative body, so
 				// materialize it now — awaited within this pull, so a caller that
@@ -3722,11 +4147,11 @@ export class SyncEngine {
 				// body we are already holding; markRecentlyFlushed suppresses the
 				// echo and the converged serverHash keeps dedupe quiet. The later
 				// idempotent STEP2 re-flush is suppressed by the same window.
-				// Lazy enrollment: a cold (not live-bound) note stays room-free.
-				// Divergence is still handled below — a clean local file backfills
-				// via REST (flushFromCrdt), a live-bound one re-handshakes — but we
-				// do not eagerly STEP1 every CRDT note in the vault on connect.
-				if (noteId && !this.settings.lazyEnrollment) this.crdtEnrollment?.enroll(noteId);
+				// A cold (not live-bound) note stays room-free — we do not eagerly
+				// STEP1 every CRDT note in the vault on connect (the enrollment
+				// storm). Divergence is still handled below: a clean local file
+				// backfills via REST (flushFromCrdt), a live-bound one re-handshakes.
+				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {

@@ -157,7 +157,13 @@ beforeEach(resetMocks);
 // ---------------------------------------------------------------------------
 
 describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
-	test("upsert with inline content does NOT call vault.create/modify when CRDT active (markdown)", async () => {
+	test("first-delivery upsert with inline content materializes from that content (no getNote)", async () => {
+		// A never-seen IDLE CRDT note will never join a room (fan-out isolation),
+		// and its live note_yjs_update fan-out is missed if we were offline when it
+		// fired (a note created before we connected). Deferring to the slow pull
+		// backstop loses the delivery-timing race (e2e test_27 + the broader
+		// created-before-connect class), so materialize now from the AUTHORITATIVE
+		// broadcast body. Inline content is present, so no getNote round-trip.
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
@@ -166,8 +172,6 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			event_type: "upsert",
 			path: "Notes/test.md",
 			timestamp: Date.now(),
-			// The broadcast carries the note_id (server sends it) — with an id the
-			// note is CRDT-participatable, so the C1 skip owns its body.
 			id: "id-inline-1",
 			content: "# From server",
 			title: "test",
@@ -178,21 +182,46 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			version: 1,
 		});
 
-		// Legacy disk-write must NOT happen — CRDT owns the content
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		// getNote should not be fetched either
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		// Inline body used — no extra HTTP round-trip.
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
-	test("upsert for markdown CRDT note enroll is called to ensure live sync (P2-1)", async () => {
+	test("a KNOWN CRDT note (prior syncState) upsert does NOT re-materialize — CRDT owns the body", async () => {
+		// The first-delivery write fires ONLY for a genuinely never-seen note. A
+		// note this device already has a baseline for converges via CRDT / the pull
+		// path; re-writing it here would double-write the body and could clobber a
+		// converged base. Gate: prior syncState present -> skip.
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		seedSyncState(engine, "Notes/known.md", "old body", 3);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/known.md",
+			timestamp: Date.now(),
+			id: "id-known-1",
+			content: "# From server",
+			title: "known",
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			version: 4,
+		});
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+	});
+
+	test("upsert for an IDLE markdown CRDT note does NOT enroll a room (vault-channel fan-out)", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		const enroll = mock((_p: string) => {});
 		engine.setCrdtEnrollment({ enroll } as any);
-		// NoteStreamEvent carries no note_id (Task 6) — the enroll call resolves
-		// it via the sidecar, so seed a mapping for this test's path.
+		// Default isLiveBound is false → the note is idle (not open in the editor).
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/test.md", "Notes/test.md");
 		engine.setNoteIdMap(noteIdMap);
@@ -210,14 +239,15 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			version: 1,
 		});
 
-		// Legacy disk-write must NOT happen — CRDT owns the content
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		// But enroll MUST be called to ensure the device stays in sync if not currently observing
-		expect(enroll).toHaveBeenCalledWith("Notes/test.md");
+		// A first delivery materializes room-free (from the inline body) so it
+		// appears promptly, but it does NOT enroll a room: enrolling a room per note
+		// that received a live edit is the connect storm P2 removes. The live-bound
+		// positive case is covered in sync-c1-serverhash.test.ts.
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
-	test("brand-new markdown upsert enrolls via the broadcast's note_id (never-seen, no local mapping)", async () => {
+	test("brand-new IDLE markdown upsert learns the note_id but does NOT enroll (never-seen, no local mapping)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_id: string) => {});
@@ -241,11 +271,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			version: 1,
 		});
 
-		// CRDT owns the body → no legacy disk-write; the id is learned from the
-		// broadcast and enrolled by so the crdt: room delivers the body.
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(enroll).toHaveBeenCalledWith("id-brand-new");
+		// The id is learned from the broadcast so future local edits route through
+		// CRDT, and the first delivery materializes room-free from the inline body
+		// (a never-seen idle note joins no room and may have missed the fan-out).
+		// Still no enrollment for an idle note.
 		expect(noteIdMap.get("Notes/brand-new.md")).toBe("id-brand-new");
+		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("markdown upsert with NO resolvable note_id materializes via legacy apply (not silently dropped)", async () => {
@@ -301,7 +333,12 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(enroll).not.toHaveBeenCalled();
 	});
 
-	test("upsert hash-only (no inline content) does NOT call getNote/vault.create when CRDT active (markdown)", async () => {
+	test("upsert hash-only first-delivery fetches the body once and materializes (CRDT active, markdown)", async () => {
+		// The prod broadcast is hash-only (serialize_note drops content). A
+		// first-delivery idle note therefore has no inline body, so it fetches the
+		// AUTHORITATIVE content once (getNote) and writes it room-free. This is real
+		// server content, not an unsynced empty projection, so it does not hit the
+		// #547 premature-empty class.
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 
@@ -309,14 +346,12 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			event_type: "upsert",
 			path: "Notes/test.md",
 			timestamp: Date.now(),
-			// id present → CRDT-participatable, C1 skip owns the body (no fetch)
 			id: "id-hash-1",
 			content_hash: "abc123",
 		});
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/test.md");
+		expect(mockApp.vault.create).toHaveBeenCalled();
 	});
 
 	test("DELETE event for markdown still processes via legacy path when CRDT active", async () => {
@@ -408,7 +443,7 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
-	test("applyChange materializes a not-yet-local markdown note AND enrolls it (discovery)", async () => {
+	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -437,14 +472,17 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// Materialized from the payload we already hold, AND enrolled for live edits.
+		// Materialized from the payload we already hold. A cold (not live-bound)
+		// discovered note is NOT enrolled — its body arrived room-free and future
+		// updates come over the vault-channel fanout; enrolling every discovered
+		// note on connect is the enrollment storm P2 removes.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/discovered.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalled();
 		expect((mockApp.vault.create as any).mock.calls[0][1]).toContain("remote content");
 	});
 
-	test("applyChange re-enrolls an existing markdown note (reconnect catch-up)", async () => {
+	test("applyChange does NOT enroll an existing cold (not live-bound) markdown note on catch-up", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 		const enroll = mock((_p: string) => {});
@@ -452,10 +490,10 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/have.md", "Notes/have.md");
 		engine.setNoteIdMap(noteIdMap);
-		// The note already exists locally → CRDT owns its body (no legacy write),
-		// but we still re-enroll so a post-reconnect resetAll re-fires the STEP1
-		// handshake and pulls any update made while disconnected (idempotent
-		// otherwise). See test_48 oauth reconnect catch-up.
+		// The note already exists locally → CRDT owns its body (no legacy write).
+		// It is NOT live-bound, so we do NOT open a STEP1 room on the pull feed:
+		// a cold note receives via the channel fanout + coldReceive, and sends
+		// room-free. (A live-bound note WOULD re-handshake — see sync-catchup.)
 		const existingFile = new TFile("Notes/have.md");
 		(mockApp.vault.getFileByPath as any).mockReturnValue(existingFile);
 
@@ -471,9 +509,9 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 			version: 1,
 		});
 
-		// No legacy disk write (CRDT owns the body), but it IS re-enrolled.
+		// No legacy disk write (CRDT owns the body), and no STEP1 for a cold note.
 		expect(result).toBe(false);
-		expect(enroll).toHaveBeenCalledWith("Notes/have.md");
+		expect(enroll).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 

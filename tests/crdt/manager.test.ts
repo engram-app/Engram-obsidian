@@ -151,6 +151,83 @@ test("applyRemoteUpdate flushes merged text to disk", async () => {
 	await mgr.destroy();
 });
 
+// ---------------------------------------------------------------------------
+// #235: applyRemoteUpdate must NOT resolve before the disk flush completes.
+// The remote-origin doc.on("update") listener used to fire-and-forget
+// (`void onFlushToDisk(...)`), so applyRemoteUpdate returned as soon as
+// Y.applyUpdate finished. The caller (applyPushedNoteUpdate/coldReceive) then
+// advanced crdtHead synchronously. If the disk write FAILED, the watermark
+// said "converged" but disk never got the content → silent divergence, and
+// coldReceive's head-diff never re-pulls. applyRemoteUpdate must await the
+// flush and reject if it fails, so the caller leaves crdtHead unadvanced.
+// ---------------------------------------------------------------------------
+
+test("#235: applyRemoteUpdate rejects when the disk flush fails (no silent converge)", async () => {
+	const mgr = new CrdtManager({
+		dbPrefix: "flush-fail",
+		onUpdate: () => {},
+		onFlushToDisk: async () => {
+			throw new Error("disk write failed");
+		},
+	});
+	// A remote update that integrates real ops, so the flush listener fires.
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "remote body");
+	const update = Y.encodeStateAsUpdate(server);
+
+	await expect(mgr.applyRemoteUpdate("note.md", update)).rejects.toThrow("disk write failed");
+	await mgr.destroy();
+});
+
+test("#235: applyRemoteUpdate resolves when the flush succeeds (happy path unchanged)", async () => {
+	const flushed: Record<string, string> = {};
+	const mgr = new CrdtManager({
+		dbPrefix: "flush-ok",
+		onUpdate: () => {},
+		onFlushToDisk: async (id, content) => {
+			flushed[id] = content;
+		},
+	});
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "remote body");
+	await mgr.applyRemoteUpdate("note.md", Y.encodeStateAsUpdate(server));
+	expect(flushed["note.md"]).toBe("remote body");
+	await mgr.destroy();
+});
+
+test("closeDoc + reapply: entry() rehydrates full prior state from IndexedDB before merging the next delta (P3 hibernation correctness)", async () => {
+	// Mirrors SyncEngine.hibernateIfIdle (P3, plugin #232-series): after an
+	// idle note's Y.Doc applies a pushed/converged update, the doc is freed
+	// with closeDoc (no clearData — the IDB store persists). This proves the
+	// SECOND apply, after the doc has been freed and reopened, produces the
+	// correctly MERGED content — i.e. entry() rehydrated the full "Hello "
+	// state before merging the "World" delta, not just applied the delta into
+	// a fresh empty doc.
+	const { mgr } = makeManager();
+	const server = new Y.Doc();
+	const serverText = server.getText("content");
+	serverText.insert(0, "Hello ");
+
+	await mgr.applyRemoteUpdate("hibernate.md", Y.encodeStateAsUpdate(server));
+	expect(await mgr.getText("hibernate.md")).toBe("Hello ");
+
+	// Capture the server's state vector as of just the first insert, BEFORE
+	// the second insert — so update2 below is a delta relative to that point,
+	// not a full re-encode. Applying it into a doc that never rehydrated
+	// "Hello " would leave the merge incomplete/incorrect.
+	const svAfterFirst = Y.encodeStateVector(server);
+	await new Promise((r) => setTimeout(r, 50)); // let y-indexeddb flush before hibernating
+
+	mgr.closeDoc("hibernate.md"); // hibernate — doc freed, IDB store persists
+
+	serverText.insert(serverText.length, "World");
+	const update2 = Y.encodeStateAsUpdate(server, svAfterFirst);
+
+	await mgr.applyRemoteUpdate("hibernate.md", update2);
+	expect(await mgr.getText("hibernate.md")).toBe("Hello World");
+	await mgr.destroy();
+});
+
 test("state persists to IndexedDB across a manager restart", async () => {
 	const a = makeManager();
 	// markSynced required before first seed (audit P0-1 fix).
@@ -562,5 +639,54 @@ test("removeDoc clears the synced mark so re-opening triggers a fresh handshake 
 	// After removal the synced mark must be gone so a re-created note
 	// goes through the full handshake gate before seeding.
 	expect(mgr.isSynced("a.md")).toBe(false);
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
+// BUG 1: closeDoc must NOT destroy a Y.Doc while a mutating op (applyLocalEdit
+// / applyRemoteUpdate) is in flight. A NOT-live-bound note edited on disk runs
+// applyLocalEdit (which yields at `await entry(...)`); a concurrent fanned-out
+// remote update hibernates the same note → closeDoc → doc.destroy() clears the
+// update listeners, so the resumed applyLocalEdit emits/persists NOTHING and
+// the edit is silently lost. closeDoc must be a no-op while an op is pending.
+// ---------------------------------------------------------------------------
+
+test("BUG 1: closeDoc during an in-flight applyLocalEdit does not destroy the doc or lose the edit", async () => {
+	const captured: Uint8Array[] = [];
+	const { mgr } = makeManager(captured);
+	mgr.markSynced("race.md");
+	// Establish a base so the second edit takes the diff path (history exists).
+	await mgr.applyLocalEdit("race.md", "base body", false);
+	const baseDoc = await mgr.getDoc("race.md");
+	const capturedBefore = captured.length;
+
+	// Gate the NEXT entry() resolution so closeDoc can race the in-flight edit.
+	const realEntry = (mgr as any).entry.bind(mgr);
+	let release!: () => void;
+	const gate = new Promise<void>((r) => {
+		release = r;
+	});
+	let gated = false;
+	const entrySpy = spyOn(mgr as any, "entry").mockImplementation(async (id: string) => {
+		const e = await realEntry(id);
+		if (!gated) {
+			gated = true;
+			await gate; // hold the FIRST applyLocalEdit inside entry()
+		}
+		return e;
+	});
+
+	const editP = mgr.applyLocalEdit("race.md", "base body EDITED", true);
+	await Promise.resolve(); // let applyLocalEdit reach the gated await
+	// Concurrent hibernation fires closeDoc while the edit is in flight.
+	mgr.closeDoc("race.md");
+	release();
+	await editP;
+	entrySpy.mockRestore();
+
+	// The edit must have been applied to the SAME (not-destroyed) doc and emitted.
+	expect(await mgr.getDoc("race.md")).toBe(baseDoc); // doc not destroyed/replaced
+	expect(await mgr.getText("race.md")).toBe("base body EDITED"); // edit not lost
+	expect(captured.length).toBeGreaterThan(capturedBefore); // update was emitted
 	await mgr.destroy();
 });

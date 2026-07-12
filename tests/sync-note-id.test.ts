@@ -710,14 +710,18 @@ describe("CRDT-managed rename materializes the new path when enroll() no-ops (#1
 		);
 	});
 
-	test("does NOT materialize when the CRDT handshake for this id hasn't completed yet (avoids premature-empty writes)", async () => {
-		// A brand-new note this device has never enrolled: enroll() fires for
-		// the first time and isSynced() is still false until its STEP2 lands.
-		// Materializing here would risk writing an empty/partial file (#547
-		// class) — this must stay on the existing STEP2->onFlushToDisk path.
+	test("a LIVE-BOUND note whose CRDT handshake hasn't completed does NOT materialize (avoids premature-empty writes)", async () => {
+		// A live-bound (open in the editor) note enrolls a room and isSynced() is
+		// still false until its STEP2 lands. Its editor/room owns the body, so the
+		// upsert must not write — materializing here would risk an empty/partial
+		// file (#547 class); it stays on the STEP2->onFlushToDisk path. (An IDLE
+		// first delivery is different: it joins no room and may have missed the
+		// fan-out, so it materializes from AUTHORITATIVE fetched content — covered
+		// in sync-crdt-gate / sync-c1-serverhash.)
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
+		engine.setLiveBoundCheck(() => true);
 		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
 
 		const projectedText = mock().mockResolvedValue("");

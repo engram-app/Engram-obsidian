@@ -1,7 +1,7 @@
 import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
-import { CrdtChannel } from "./channel";
+import { CrdtChannel, fromB64 } from "./channel";
 import { CrdtEnrollment } from "./enrollment";
 import { CrdtManager } from "./manager";
 import type { NoteIdMap } from "./note-id-map";
@@ -16,6 +16,7 @@ type WiringSyncEngine = Pick<
 	| "reconcileNoteIdMapFromManifest"
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
+	| "applyPushedNoteUpdate"
 >;
 
 export interface CrdtWiringDeps {
@@ -50,6 +51,9 @@ export interface CrdtWiring {
 	 *  plugin #202) — the create-race cross-wire signature. Handler kicks the
 	 *  sync engine's coalesced live id-map reconcile (channel.onCrdtNoteNotFound). */
 	onCrdtNoteNotFound: (docId: string) => void;
+	/** Server-pushed Yjs update for an IDLE note, fanned out over the per-vault
+	 *  channel regardless of CRDT-room enrollment (channel.onNoteYjsUpdate). */
+	onNoteYjsUpdate: (noteId: string, b64: string, head: string) => void;
 	/** Reconcile the noteIdMap from the manifest, then retry every stranded
 	 *  flush. Exposed for tests + teardown; production fires it via the debounce
 	 *  timer set in the manager's onFlushToDisk. */
@@ -200,7 +204,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const manager = new CrdtManager({
 		dbPrefix: deps.dbPrefix,
 		onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
-		onFlushToDisk: (noteId, content) => {
+		onFlushToDisk: async (noteId, content) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {
 				// Unknown id: a crdt_msg/STEP2 arrived for a note this device hasn't
@@ -208,9 +212,16 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				// healUnknownNoteId re-resolves the id from the manifest and retries so
 				// a drift self-heals instead of stranding forever.
 				healUnknownNoteId(noteId, content);
-				return Promise.resolve();
+				return;
 			}
-			return deps.isBound(path) ? Promise.resolve() : syncEngine.flushFromCrdt(path, content);
+			if (deps.isBound(path)) return; // live editor owns disk
+			// Propagate a disk-write failure so applyRemoteUpdate rejects and the
+			// caller leaves crdtHead unadvanced (#235). flushFromCrdt returns false
+			// ONLY on an actual write failure; a skip (gate closed / idempotent) and
+			// a legacy void return both read as success.
+			if ((await syncEngine.flushFromCrdt(path, content)) === false) {
+				throw new Error(`flushFromCrdt reported a write failure for ${path}`);
+			}
 		},
 		// Adopt-first seed gate: never re-encode content the server already holds.
 		isUnchangedSynced: (noteId, content) => {
@@ -265,6 +276,13 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		void channel.handleFrame(docId, b64);
 	};
 
+	// Vault-channel fan-out (P1): applies a server-pushed Yjs update to an IDLE
+	// note (no dedicated CRDT room) without ever STEP1-enrolling it. The sync
+	// engine itself guards confirmed/live-bound state and isolates failures.
+	const onNoteYjsUpdate = (noteId: string, b64: string, head: string): void => {
+		void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+	};
+
 	// Discovery: when another device opens a room (server announces
 	// crdt_doc_ready), enroll the note here so a sync-step-1 fires and we pull it
 	// even if we've never opened it.
@@ -280,7 +298,14 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Kick the coalesced manifest reconcile so the mapping lands now, not at
 		// the next cold start.
 		syncEngine.ensureNoteIdMapped(docId);
-		enrollment.enroll(docId);
+		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
+		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
+		// dedicated room. This announce-driven enroll was the primary connect-storm
+		// source: pre-fan-out, every crdt_doc_ready fanned an enroll to every device.
+		// Enroll (STEP1) ONLY when a live editor binding owns the note, matching every
+		// other enroll gate. An unmapped id can't be open, so pathForId null → skip.
+		const path = noteIdMap.pathForId(docId);
+		if (path !== null && deps.isBound(path)) enrollment.enroll(docId);
 	};
 
 	// Backend #955 (plugin #202): the server tells us when a crdt_msg we sent
@@ -307,6 +332,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		onCrdtMessage,
 		onCrdtDocReady,
 		onCrdtNoteNotFound,
+		onNoteYjsUpdate,
 		drainStrandedFlushes,
 		clearStrandHealAttempts: () => strandHealAttempts.clear(),
 		dispose,

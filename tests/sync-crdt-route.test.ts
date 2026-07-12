@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { MAX_CRDT_NOTE_BYTES, SyncEngine, reconcileColdStart, routeModify } from "../src/sync";
+import {
+	MAX_CRDT_NOTE_BYTES,
+	SyncEngine,
+	fnv1a,
+	reconcileColdStart,
+	routeModify,
+} from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // ---------------------------------------------------------------------------
@@ -228,34 +234,54 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("lazyEnrollment: a confirmed but NOT live-bound note routes to REST, not CRDT", async () => {
-		// Correctness hinge of lazy enrollment: the CRDT push gate keys on
-		// isNoteConfirmed, and every pulled note is confirmed. Without also
-		// gating on live-bound, a cold confirmed note that is edited routes
-		// through applyLocalEdit on a history-less Y.Doc and seeds a DUPLICATE
-		// lineage (#846/#161 class). Under lazy, a not-live-bound note must fall
-		// through to convergent REST instead.
+	test("anti-#230: a confirmed but NOT live-bound (cold) note STILL routes through CRDT, not REST", async () => {
+		// The anti-#230 invariant. A cold edit (note edited while its dedicated
+		// room is closed) MUST stay on CRDT so its change merges with concurrent
+		// remote edits. Routing it to legacy whole-doc REST is last-write-wins →
+		// LOST MERGES (this is exactly what broke test_concurrent_edits_both_survive
+		// under the abandoned lazyEnrollment flag). CRDT is now unconditional for a
+		// confirmed note — enrollment (STEP1) is only the down-pull, never required
+		// to SEND an edit (manager.onUpdate ships it channel-up or via /updates).
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
-		const engine = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
-			mock().mockResolvedValue(undefined),
-		);
-		engine.setReady();
-		engine.setNoteIdMap(noteIdMap);
+		const engine = createEngine(noteIdMap);
 		const applyLocalEdit = mock(async () => true);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		markConfirmed(engine, "id-note");
-		// NOT live-bound (default isLiveBound === false).
+		// NOT live-bound (default isLiveBound === false) — a cold note.
 
 		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await flush();
 
-		expect(applyLocalEdit).not.toHaveBeenCalled();
-		expect(mockApi.pushNote).toHaveBeenCalled();
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("consumed CRDT edit does NOT enroll a cold (idle) note (vault-channel fan-out)", async () => {
+		// The consumed-branch enroll gate: an idle note's edit ships over the
+		// channel/updates (manager.onUpdate) with no room, and it receives future
+		// updates over the note_yjs_update broadcast — no STEP1 enrollment.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true); // consumed
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+		markConfirmed(engine, "id-note");
+		// Default isLiveBound === false → idle.
+
+		engine.handleModify(new TFile("note.md"));
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(enroll).not.toHaveBeenCalled();
+		// (A live-bound note's edits flow through the editor's ySync binding, not
+		// handleModify's routeModify — so an open note enrolls via the bind path,
+		// never this consumed branch. Verified: with isLiveBound true, handleModify
+		// does not even call applyLocalEdit here.)
 	});
 
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
@@ -320,7 +346,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 // ---------------------------------------------------------------------------
 
 describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
-	test("declined md fires legacy pushNote AND enroll for a small file", async () => {
+	test("declined md fires legacy pushNote but does NOT enroll a cold (idle) note", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("note.md", "id-note");
 		const engine = createEngine(noteIdMap);
@@ -329,21 +355,22 @@ describe("SyncEngine declined CRDT path (applyLocalEdit returns false)", () => {
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll } as any);
-		// rest-first fix: this test exercises the DECLINED-inside-CRDT-block
-		// behavior (routeModify itself returns false), which requires the note
-		// to have entered the CRDT gate in the first place — confirm it.
 		markConfirmed(engine, "id-note");
+		// Default isLiveBound === false → idle note.
 
 		// Default cachedRead returns "body" (well under MAX_CRDT_NOTE_BYTES).
 		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await flush();
 
-		// Legacy push must fire.
+		// Legacy push still delivers the body server-side.
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		// Enroll must also fire (kicks off the STEP1 handshake for the declined
-		// note), keyed by note_id (Task 6) not path.
-		expect(enroll).toHaveBeenCalledWith("id-note");
+		// Vault-channel fan-out: a cold send stays room-free — no STEP1 enrollment.
+		// The note receives future updates over the note_yjs_update broadcast.
+		// (A live-bound note never reaches this declined-legacy path — its open
+		// editor room owns the edit — so enrollment for open notes comes from the
+		// open-file path, not here.)
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("declined md does NOT enroll for a >MAX_CRDT_NOTE_BYTES file", async () => {
@@ -466,6 +493,98 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		engine.handleModify(file);
 		await flush();
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// needsColdReconcile — the cold-start storm gate. Only a note with a recorded
+// CRDT baseline that DISAGREES with disk needs a Y.Doc opened on connect.
+// ---------------------------------------------------------------------------
+
+describe("needsColdReconcile", () => {
+	function asPredicate(engine: SyncEngine): (path: string, content: string) => boolean {
+		return (
+			engine as unknown as { needsColdReconcile(path: string, content: string): boolean }
+		).needsColdReconcile.bind(engine);
+	}
+	function seedBaseline(engine: SyncEngine, path: string, content: string): void {
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(path, {
+			hash: fnv1a(content),
+		});
+	}
+
+	test("no baseline (fresh note) → false", () => {
+		const engine = createEngine();
+		expect(asPredicate(engine)("fresh.md", "anything")).toBe(false);
+	});
+
+	test("baseline hash == fnv1a(disk) (in sync) → false", () => {
+		const engine = createEngine();
+		seedBaseline(engine, "n.md", "same body");
+		expect(asPredicate(engine)("n.md", "same body")).toBe(false);
+	});
+
+	test("baseline exists and differs from disk → true", () => {
+		const engine = createEngine();
+		seedBaseline(engine, "n.md", "old body");
+		expect(asPredicate(engine)("n.md", "new body edited while closed")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Cold-start loop body: `if (needsColdReconcile) reconcileColdStart(...)`.
+// The storm-killer — an in-sync note must NOT open a Y.Doc (no projectedText).
+// ---------------------------------------------------------------------------
+
+describe("cold-start loop gates reconcileColdStart on needsColdReconcile", () => {
+	function needs(engine: SyncEngine, path: string, content: string): boolean {
+		return (
+			engine as unknown as { needsColdReconcile(path: string, content: string): boolean }
+		).needsColdReconcile(path, content);
+	}
+	function seedBaseline(engine: SyncEngine, path: string, content: string): void {
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(path, {
+			hash: fnv1a(content),
+		});
+	}
+
+	test("in-sync note is skipped: reconcileColdStart never opens a Y.Doc (storm-killer)", async () => {
+		const engine = createEngine();
+		const disk = "converged body";
+		seedBaseline(engine, "n.md", disk);
+		const projectedText = mock(async () => disk);
+		const applyLocalEdit = mock(async () => {});
+
+		// Replicate the main.ts loop body.
+		if (needs(engine, "n.md", disk)) {
+			await reconcileColdStart(
+				{ path: "n.md", noteId: "id-n", diskContent: disk },
+				{ applyLocalEdit, getText: mock(async () => disk), projectedText } as any,
+				() => {},
+			);
+		}
+
+		expect(projectedText).not.toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
+	});
+
+	test("drifted note IS reconciled: applyLocalEdit called with disk content", async () => {
+		const engine = createEngine();
+		seedBaseline(engine, "n.md", "old");
+		const disk = "edited while app was closed";
+		const projectedText = mock(async () => "old");
+		const applyLocalEdit = mock(async () => {});
+
+		if (needs(engine, "n.md", disk)) {
+			await reconcileColdStart(
+				{ path: "n.md", noteId: "id-n", diskContent: disk },
+				{ applyLocalEdit, getText: mock(async () => "old"), projectedText } as any,
+				() => {},
+			);
+		}
+
+		expect(projectedText).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-n", disk);
 	});
 });
 
@@ -1191,20 +1310,187 @@ describe("isCrdtManaged", () => {
 		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
 	});
 
-	test("lazy enrollment + not live-bound → false", async () => {
-		const engine = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, lazyEnrollment: true },
-			mock().mockResolvedValue(undefined),
-		);
-		engine.setReady();
-		engine.setNoteIdMap(new NoteIdMap());
+	test("confirmed + live + NOT live-bound (cold) → true (CRDT unconditional, anti-#230)", () => {
+		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
 		markConfirmed(engine, "id-1");
 		engine.setCrdtLiveCheck(() => true);
-		// isLiveBound defaults to () => false
+		// isLiveBound defaults to () => false — a cold note. It must still be
+		// CRDT-managed so cold edits merge instead of last-write-wins clobbering.
 
-		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
+		expect(asPredicate(engine)("p.md", "id-1")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Discovery pull enrollment: STEP1 fires ONLY for live-bound notes. An idle
+// (not-open) discovered note gets its body room-free via flushFromCrdt below;
+// enrolling every discovered note on connect is the enrollment storm.
+// ---------------------------------------------------------------------------
+
+describe("discovery pull enrolls only live-bound notes", () => {
+	async function discover(engine: SyncEngine): Promise<void> {
+		await engine.applySyncChange({
+			id: "id-disc",
+			path: "Notes/Disc.md",
+			title: "Disc",
+			content: "# Disc\ndiscovered body",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+			version: 1,
+		} as any);
+	}
+
+	test("idle (not live-bound) discovered note: enroll NOT called, body still materialized", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+		engine.setCrdtLiveCheck(() => true);
+		// isLiveBound defaults to () => false — idle.
+		(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+
+		await discover(engine);
+
+		expect(enroll).not.toHaveBeenCalled();
+		// Body still arrives room-free (flushFromCrdt creates the file).
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+
+	test("live-bound discovered note: enroll IS called (STEP1 for the open note)", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+		engine.setCrdtLiveCheck(() => true);
+		engine.setLiveBoundCheck(() => true);
+
+		await discover(engine);
+
+		expect(enroll).toHaveBeenCalledWith("id-disc");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// BUG 3 invariant (b#1 from the adversarial review): a note that WAS confirmed
+// but whose syncState baseline is missing (evicted) must NEVER be routed to
+// whole-doc last-write-wins — that would lose a concurrent remote edit (the
+// anti-#230 failure this branch exists to prevent). needsColdReconcile returns
+// false for a baseline-less note, so cold-start SKIPS seeding it; the concern
+// is whether the fullSync/push fallback then routes it LWW. It does not:
+// pushFile and pushNotesViaBatch gate CRDT purely on isNoteConfirmed(noteId),
+// INDEPENDENT of any syncState baseline. This pins that invariant.
+//
+// Investigation note: confirmedNoteIds is in-memory only (never serialized via
+// saveData) and cleared on every reconnect (clearConfirmedNoteIds) — so it
+// cannot outlive syncState across a restart in persistence. Within a session a
+// note is confirmed only by a push-response or the pull feed, both of which
+// set/refresh the baseline in the same operation. Even so, the routing does not
+// depend on the baseline at all, so a transient confirmed-but-baseline-less
+// note still stays on CRDT. Proven below.
+// ---------------------------------------------------------------------------
+
+describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never whole-doc LWW)", () => {
+	test("confirmed + drifted + NO baseline: cold-start skips it, but the edit still routes CRDT, not REST", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-note");
+		// Deliberately NO importSyncState: the baseline was evicted.
+
+		// Precondition that motivates BUG 3: cold-start's storm gate SKIPS this
+		// note (needsColdReconcile is false without a baseline, even though disk
+		// drifted), so the disk edit is not seeded at cold start.
+		const needs = (
+			engine as unknown as { needsColdReconcile(p: string, c: string): boolean }
+		).needsColdReconcile("note.md", "drifted body");
+		expect(needs).toBe(false);
+
+		// The invariant: routing does NOT consult the baseline. A confirmed note
+		// routes to CRDT (applyLocalEdit), never to whole-doc REST LWW (pushNote).
+		const file = new TFile("note.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("isCrdtManagedOffline is true for a confirmed note with no baseline", () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-1");
+		// no baseline imported
+		const managed = (
+			engine as unknown as { isCrdtManagedOffline(p: string, id: string | null): boolean }
+		).isCrdtManagedOffline("p.md", "id-1");
+		expect(managed).toBe(true);
+	});
+
+	test("batch push skips a confirmed baseline-less note as CRDT-owned (not whole-doc LWW)", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => true) } as any);
+		markConfirmed(engine, "id-note");
+		engine.setCrdtLiveCheck(() => true);
+		// no baseline imported
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [] });
+
+		const file = new TFile("note.md");
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
+			}
+		).pushNotesViaBatch([file], false);
+
+		// Skipped as crdt-owned — a confirmed note is never whole-doc REST-pushed,
+		// baseline or not.
+		expect(batch).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// b#2 (test-coverage review): the main.ts cold-start enroll seam. A drifted
+// note gets its handshake enrolled ONLY when it is live-bound (open in the
+// editor); an idle drifted note propagates room-free (no STEP1 storm on
+// connect). main.ts wires this as the `enroll` callback passed to
+// reconcileColdStart; we replicate that wiring inline (same style as the
+// "cold-start loop gates reconcileColdStart on needsColdReconcile" test above).
+// ---------------------------------------------------------------------------
+
+describe("cold-start enroll gate: idle drifted note does NOT enroll, live-bound DOES", () => {
+	async function run(bound: boolean) {
+		const enroll = mock((_id: string) => {});
+		// Replicate main.ts's enroll-callback wiring: enroll only when live-bound.
+		await reconcileColdStart(
+			{ path: "n.md", noteId: "id-n", diskContent: "drifted body" },
+			{
+				applyLocalEdit: mock(async () => true),
+				getText: mock(async () => "old baseline"),
+				projectedText: mock(async () => "old baseline"),
+				enroll: (id: string) => {
+					if (bound) enroll(id);
+				},
+			} as any,
+			() => {},
+		);
+		return enroll;
+	}
+
+	test("idle (not live-bound) drifted note: enroll NOT called (no STEP1 storm)", async () => {
+		const enroll = await run(false);
+		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("live-bound drifted note: enroll IS called (STEP1 for the open note)", async () => {
+		const enroll = await run(true);
+		expect(enroll).toHaveBeenCalledWith("id-n");
 	});
 });

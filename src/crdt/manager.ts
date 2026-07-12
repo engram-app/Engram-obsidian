@@ -120,8 +120,45 @@ export class CrdtManager {
 	 */
 	private readonly synced = new Set<string>();
 
+	/**
+	 * Per-docId count of mutating ops (applyLocalEdit / applyRemoteUpdate)
+	 * currently in flight. Incremented SYNCHRONOUSLY at the very start of each
+	 * mutating op — before its first `await entry(...)` yields — and decremented
+	 * in a `finally`. `closeDoc` refuses to destroy a doc whose count is > 0:
+	 * otherwise a concurrent hibernation (`closeDoc` from a fanned-out remote
+	 * update) could `doc.destroy()` out from under an awaiting `applyLocalEdit`,
+	 * clearing the update listeners so the resumed edit emits/persists nothing —
+	 * a silent edit loss plus a poisoned synced baseline. Keyed by docId, the
+	 * same key space as `docs`.
+	 */
+	private readonly inFlightOps = new Map<string, number>();
+
+	/**
+	 * Per-docId promise for the disk flush kicked off by the most recent
+	 * REMOTE_ORIGIN doc update (the `onFlushToDisk` call in `entry()`'s
+	 * remote-merge listener). `applyRemoteUpdate` awaits this after
+	 * `Y.applyUpdate` so a FAILED flush rejects the apply instead of being
+	 * fire-and-forgotten (#235). Set synchronously inside `Y.applyUpdate` (the
+	 * listener fires synchronously), read + deleted by `applyRemoteUpdate`
+	 * immediately after. Keyed by docId, same key space as `docs`.
+	 */
+	private readonly pendingFlush = new Map<string, Promise<void>>();
+
 	constructor(opts: CrdtManagerOptions) {
 		this.opts = opts;
+	}
+
+	/** Mark a mutating op as started for `id` (docId). Call synchronously before
+	 *  the op's first await. */
+	private beginOp(id: string): void {
+		this.inFlightOps.set(id, (this.inFlightOps.get(id) ?? 0) + 1);
+	}
+
+	/** Mark a mutating op as finished for `id`. Call from a `finally`. */
+	private endOp(id: string): void {
+		const n = (this.inFlightOps.get(id) ?? 0) - 1;
+		if (n > 0) this.inFlightOps.set(id, n);
+		else this.inFlightOps.delete(id);
 	}
 
 	// ---------------------------------------------------------------------------
@@ -219,6 +256,20 @@ export class CrdtManager {
 	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
 	 */
 	async applyLocalEdit(noteId: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
+		const id = this.docId(noteId);
+		this.beginOp(id); // synchronous, before the first await — fences closeDoc
+		try {
+			return await this.applyLocalEditInner(noteId, diskContent, hasLca);
+		} finally {
+			this.endOp(id);
+		}
+	}
+
+	private async applyLocalEditInner(
+		noteId: string,
+		diskContent: string,
+		hasLca?: boolean,
+	): Promise<boolean> {
 		const e = await this.entry(noteId);
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
@@ -256,13 +307,46 @@ export class CrdtManager {
 	 * re-send it to the server, but DOES flush the merged content to disk.
 	 */
 	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
-		const e = await this.entry(noteId);
-		Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
+		const id = this.docId(noteId);
+		this.beginOp(id); // synchronous, before the first await — fences closeDoc
+		try {
+			const e = await this.entry(noteId);
+			Y.applyUpdate(e.doc, update, REMOTE_ORIGIN);
+			// Y.applyUpdate fired the remote-merge listener SYNCHRONOUSLY, which
+			// recorded the disk-flush promise in `pendingFlush`. Await it so a flush
+			// FAILURE rejects applyRemoteUpdate: the caller
+			// (applyPushedNoteUpdate/coldReceive) then leaves crdtHead unadvanced and
+			// retries, instead of marking a note "converged" that never reached disk
+			// (#235). A no-op update integrates zero ops → no listener → no pending
+			// flush → nothing to await (head may advance, which is correct for a
+			// genuinely empty/already-applied update).
+			const flush = this.pendingFlush.get(id);
+			if (flush) {
+				this.pendingFlush.delete(id);
+				await flush;
+			}
+		} finally {
+			this.endOp(id);
+		}
 	}
 
 	/** Encode the current state vector (for the channel handshake sync step). */
 	async encodeStateVector(noteId: string): Promise<Uint8Array> {
 		return Y.encodeStateVector((await this.entry(noteId)).doc);
+	}
+
+	/** True when the doc holds PENDING structs: a remote update was applied that
+	 *  references state this device is missing (updates it never saw — e.g. edits
+	 *  another device made while this one was offline). Yjs parks such an update
+	 *  in `store.pendingStructs` and does NOT integrate it until the missing deps
+	 *  arrive, so the visible doc stays behind. The fan-out apply path checks this
+	 *  to avoid advancing crdtHead over an unconverged doc (which would make
+	 *  coldReceive's cost gate skip the note and the gap would never heal). */
+	async hasPendingGap(noteId: string): Promise<boolean> {
+		const doc = (await this.entry(noteId)).doc as unknown as {
+			store?: { pendingStructs?: unknown };
+		};
+		return doc.store?.pendingStructs != null;
 	}
 
 	/**
@@ -276,6 +360,21 @@ export class CrdtManager {
 	/** Return the note body (frontmatter excluded). For the full file use projectedText. */
 	async getText(noteId: string): Promise<string> {
 		return (await this.entry(noteId)).text.toJSON();
+	}
+
+	/**
+	 * True when `noteId`'s Y.Doc already carries CRDT history (its Y.Text holds
+	 * content after IDB rehydration). A history-LESS doc — a feed-synced note
+	 * whose content arrived via the cursor feed, so its IndexedDB store was never
+	 * populated — must NOT seed disk drift before a remote merge (that mints a
+	 * second lineage and DOUBLES the baseline, #234) and cannot be reconstructed
+	 * from a bare incremental delta (missing causal base). Callers branch on this
+	 * to adopt FULL server state for a history-less note instead. Opening the
+	 * entry rehydrates from IDB first, so the answer reflects durable state, not a
+	 * transiently-empty in-memory doc.
+	 */
+	async hasHistory(noteId: string): Promise<boolean> {
+		return this.textHasHistory((await this.entry(noteId)).text);
 	}
 
 	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
@@ -293,12 +392,19 @@ export class CrdtManager {
 	 */
 	closeDoc(noteId: string): void {
 		const id = this.docId(noteId);
+		// In-flight guard: never destroy a doc while a mutating op (applyLocalEdit
+		// / applyRemoteUpdate) is awaiting on it — destroying clears the update
+		// listeners, so the resumed op emits/persists nothing and its edit is lost
+		// (silent data loss + poisoned baseline). Leave the doc resident; a later
+		// idle apply's hibernation frees it once no op is pending.
+		if ((this.inFlightOps.get(id) ?? 0) > 0) return;
 		const e = this.docs.get(id);
 		if (!e) return;
 		e.doc.destroy();
 		void e.persistence.destroy();
 		this.docs.delete(id);
 		this.synced.delete(id);
+		this.pendingFlush.delete(id);
 	}
 
 	/**
@@ -343,6 +449,7 @@ export class CrdtManager {
 		// Clear the synced mark regardless of which branch ran. A recreated note
 		// at the same path must go through the full STEP2 handshake before seeding.
 		this.synced.delete(id);
+		this.pendingFlush.delete(id);
 	}
 
 	/** Tear down all open docs. Call on plugin unload. */
@@ -353,6 +460,7 @@ export class CrdtManager {
 			this.docs.delete(id);
 		}
 		this.synced.clear();
+		this.pendingFlush.clear();
 	}
 
 	/**
@@ -509,7 +617,14 @@ export class CrdtManager {
 			if (origin !== REMOTE_ORIGIN) return;
 			const { order, values } = frontmatterOf(doc);
 			const body = text.toJSON();
-			void this.opts.onFlushToDisk(noteId, projectNote(order, values, body));
+			// Record the flush promise (do NOT fire-and-forget): applyRemoteUpdate
+			// awaits it so a write failure rejects the apply and the caller leaves
+			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
+			// return from a test double into an awaitable.
+			this.pendingFlush.set(
+				id,
+				Promise.resolve(this.opts.onFlushToDisk(noteId, projectNote(order, values, body))),
+			);
 		});
 
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
