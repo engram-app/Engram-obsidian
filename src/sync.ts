@@ -3906,6 +3906,13 @@ export class SyncEngine {
 			// un-confirm: the id itself is retired (a recreate mints a fresh one),
 			// so there's nothing to revoke.
 			this.confirmNoteId(c.id);
+			// A note degraded on ANOTHER device surfaces here too: the feed carries
+			// parse_status/parse_reason on the raw SyncNoteChange, but the NoteChange
+			// mapping below deliberately drops them (that shape is also fed by the
+			// legacy GET /notes/changes, which never had these fields). Read them off
+			// `c` before the mapping erases them. Deleted entries skip this (a
+			// tombstone has no parse status).
+			this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
 		}
 		const nc: NoteChange = {
 			path: c.path,

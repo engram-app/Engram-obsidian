@@ -183,3 +183,75 @@ describe("recordParseStatus wired into conflict re-push resolution", () => {
 		expect(engine.issues.get("notes/c.md")?.category).toBe("frontmatter");
 	});
 });
+
+describe("applySyncChange consumes parse_status from the /sync/changes feed", () => {
+	test("applySyncChange records a frontmatter issue from a degraded feed entry", async () => {
+		const engine = makeEngine();
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-1",
+			seq: 5,
+			path: "notes/remote.md",
+			title: "remote",
+			content: "---\ndate:YYYY-MM-DD\n---\nbody",
+			folder: "notes",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-07-12T00:00:00Z",
+			deleted: false,
+			parse_status: "degraded",
+			parse_reason: {
+				code: "frontmatter_invalid_yaml",
+				message: "Frontmatter isn't valid YAML",
+				detail: { key: null, line: 2, snippet: "date:YYYY-MM-DD" },
+			},
+		});
+		expect(engine.issues.get("notes/remote.md")?.category).toBe("frontmatter");
+	});
+
+	test("deleted feed entry does not record a parse issue", async () => {
+		const engine = makeEngine();
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-2",
+			seq: 6,
+			path: "notes/gone.md",
+			title: "gone",
+			folder: "notes",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-07-12T00:00:00Z",
+			deleted: true,
+			parse_status: "degraded",
+			parse_reason: {
+				code: "frontmatter_invalid_yaml",
+				message: "Frontmatter isn't valid YAML",
+				detail: null,
+			},
+		});
+		expect(engine.issues.get("notes/gone.md")).toBeUndefined();
+	});
+
+	test("folder-marker feed entry (no path) does not throw or record an issue", async () => {
+		const engine = makeEngine();
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-3",
+			seq: 7,
+			path: "",
+			title: "",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-07-12T00:00:00Z",
+			deleted: false,
+			parse_status: "degraded",
+			parse_reason: {
+				code: "frontmatter_invalid_yaml",
+				message: "Frontmatter isn't valid YAML",
+				detail: null,
+			},
+		});
+		expect(engine.issues.get("")).toBeUndefined();
+	});
+});
