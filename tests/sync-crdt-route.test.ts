@@ -259,6 +259,31 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	test("consumed CRDT edit does NOT enroll a cold (idle) note (vault-channel fan-out)", async () => {
+		// The consumed-branch enroll gate: an idle note's edit ships over the
+		// channel/updates (manager.onUpdate) with no room, and it receives future
+		// updates over the note_yjs_update broadcast — no STEP1 enrollment.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => true); // consumed
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+		markConfirmed(engine, "id-note");
+		// Default isLiveBound === false → idle.
+
+		engine.handleModify(new TFile("note.md"));
+		await flush();
+
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(enroll).not.toHaveBeenCalled();
+		// (A live-bound note's edits flow through the editor's ySync binding, not
+		// handleModify's routeModify — so an open note enrolls via the bind path,
+		// never this consumed branch. Verified: with isLiveBound true, handleModify
+		// does not even call applyLocalEdit here.)
+	});
+
 	test("binary attachment modify does NOT call applyLocalEdit", async () => {
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => true);

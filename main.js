@@ -21797,7 +21797,10 @@ function createCrdtWiring(deps) {
   }, onNoteYjsUpdate = (noteId, b64, head) => {
     syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
   }, onCrdtDocReady = (docId) => {
-    syncEngine.isSyncBlocked() || (syncEngine.ensureNoteIdMapped(docId), enrollment.enroll(docId));
+    if (syncEngine.isSyncBlocked()) return;
+    syncEngine.ensureNoteIdMapped(docId);
+    let path = noteIdMap.pathForId(docId);
+    path !== null && deps.isBound(path) && enrollment.enroll(docId);
   }, onCrdtNoteNotFound = (docId) => {
     syncEngine.isSyncBlocked() || syncEngine.ensureNoteIdMapped(docId);
   };

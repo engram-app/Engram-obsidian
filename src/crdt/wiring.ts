@@ -298,7 +298,14 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Kick the coalesced manifest reconcile so the mapping lands now, not at
 		// the next cold start.
 		syncEngine.ensureNoteIdMapped(docId);
-		enrollment.enroll(docId);
+		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
+		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
+		// dedicated room. This announce-driven enroll was the primary connect-storm
+		// source: pre-fan-out, every crdt_doc_ready fanned an enroll to every device.
+		// Enroll (STEP1) ONLY when a live editor binding owns the note, matching every
+		// other enroll gate. An unmapped id can't be open, so pathForId null → skip.
+		const path = noteIdMap.pathForId(docId);
+		if (path !== null && deps.isBound(path)) enrollment.enroll(docId);
 	};
 
 	// Backend #955 (plugin #202): the server tells us when a crdt_msg we sent

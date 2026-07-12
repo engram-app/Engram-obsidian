@@ -104,6 +104,66 @@ async function destroy(...devices: Device[]): Promise<void> {
 	}
 }
 
+// Vault-channel fan-out: onCrdtDocReady must NOT open a room for an idle note.
+// Pre-fan-out, every crdt_doc_ready announce enrolled the note on every device
+// (the connect-storm). Now an idle note converges over the note_yjs_update
+// broadcast; only a live-bound (open) note enrolls. Enrollment fires STEP1 via
+// sendCrdt, so a STEP1 frame is the observable "a room was opened" signal.
+function fanoutStubEngine() {
+	return {
+		flushFromCrdt: async () => {},
+		isUnchangedSynced: () => false,
+		materializeEmptyDiscovered: async () => {},
+		reconcileNoteIdMapFromManifest: async () => 0,
+		isSyncBlocked: () => false,
+		ensureNoteIdMapped: () => {},
+		applyPushedNoteUpdate: async () => {},
+	};
+}
+
+test("onCrdtDocReady does NOT enroll an idle (unbound) note — fan-out delivers it", async () => {
+	const map = new NoteIdMap();
+	map.set("Idle.md", "id-idle");
+	const sent: string[] = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: fanoutStubEngine(),
+		sendCrdt: (docId) => sent.push(docId),
+		isBound: () => false, // idle — not open in any editor
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "docready-idle",
+	});
+
+	wiring.onCrdtDocReady("id-idle");
+	await sleep(50);
+
+	// No STEP1 frame → no room opened. The note stays room-free.
+	expect(sent).not.toContain("id-idle");
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
+
+test("onCrdtDocReady DOES enroll a live-bound (open) note", async () => {
+	const map = new NoteIdMap();
+	map.set("Open.md", "id-open");
+	const sent: string[] = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: fanoutStubEngine(),
+		sendCrdt: (docId) => sent.push(docId),
+		isBound: () => true, // note open in the editor
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "docready-open",
+	});
+
+	wiring.onCrdtDocReady("id-open");
+	await waitFor(() => sent.includes("id-open"), "STEP1 sent for the open note's room");
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
+
 test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays unadvanced)", async () => {
 	// The onFlushToDisk wrapper must propagate a disk-write failure so the
 	// manager's applyRemoteUpdate rejects; the caller then leaves crdtHead
