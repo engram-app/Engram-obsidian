@@ -2927,7 +2927,7 @@ export class SyncEngine {
 	 *  materializes server-marked empty folders and hydrates the
 	 *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
 	 *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-	async pull(): Promise<number> {
+	async pull(emitProgress = false): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
@@ -2969,16 +2969,19 @@ export class SyncEngine {
 
 			let applied: number;
 			if (!this.getSyncCursor()) {
-				applied = await this.bootstrap();
+				applied = await this.bootstrap(emitProgress);
 			} else {
 				try {
-					applied = await this.pullViaCursor(this.getSyncCursor() ?? undefined);
+					applied = await this.pullViaCursor(
+						this.getSyncCursor() ?? undefined,
+						emitProgress,
+					);
 				} catch (e) {
 					if (e instanceof HistoryExpiredError) {
 						rlog().warn("pull", "HISTORY_EXPIRED — re-bootstrapping");
 						this.setSyncCursor(null);
 						await this.saveData({ syncCursor: null });
-						applied = await this.bootstrap();
+						applied = await this.bootstrap(emitProgress);
 					} else {
 						throw e;
 					}
@@ -3887,12 +3890,12 @@ export class SyncEngine {
 	 *  (delete server-deleted, push offline-created — disambiguated by the
 	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
 	 *  (3-way merging diverged files via applyChange). Returns count applied. */
-	private async bootstrap(): Promise<number> {
+	private async bootstrap(emitProgress = false): Promise<number> {
 		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
 		const manifest = await this.api.getManifest();
 
 		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
-		if (!manifest) return this.pullViaCursor(undefined);
+		if (!manifest) return this.pullViaCursor(undefined, emitProgress);
 
 		const serverPaths = new Set<string>([
 			...manifest.notes.map((n) => normalizePath(n.path)),
@@ -3933,7 +3936,10 @@ export class SyncEngine {
 		}
 
 		// Content delivery: genesis pull (full content + tombstones, ordered).
-		const applied = await this.pullViaCursor(undefined);
+		// The manifest gives us a real up-front total for the progress bar (a
+		// genesis pull, unlike an incremental delta, knows its own size).
+		const knownTotal = manifest.notes.length + manifest.attachments.length;
+		const applied = await this.pullViaCursor(undefined, emitProgress, knownTotal);
 
 		// §E: an empty vault's genesis pull delivers no entries, so the cursor is
 		// still null. Seed it from the manifest's change_seq so the NEXT pull
@@ -3970,7 +3976,11 @@ export class SyncEngine {
 	 *  server returns from seq 0). Applies each entry, persists the cursor after
 	 *  every page (at-least-once; applies are idempotent), returns count applied.
 	 *  Throws HistoryExpiredError on 410. */
-	private async pullViaCursor(startCursor: string | undefined): Promise<number> {
+	private async pullViaCursor(
+		startCursor: string | undefined,
+		emitProgress = false,
+		knownTotal?: number,
+	): Promise<number> {
 		let cursor = startCursor;
 		let applied = 0;
 
@@ -4008,6 +4018,20 @@ export class SyncEngine {
 				this.setSyncCursor(encodeCursor(last.seq, last.id));
 			}
 			await this.saveData({ syncCursor: this.getSyncCursor() });
+
+			// Foreground (manual) sync only: report real downloads-so-far so the
+			// modal's Download row climbs instead of sitting frozen until done.
+			// `total` is only read by the settings bar (the modal keeps the plan
+			// total); bootstrap passes a real manifest count, an incremental delta
+			// has none so falls back to `applied` (never a misleading N/0).
+			if (emitProgress) {
+				this.onSyncProgress?.({
+					phase: "pulling",
+					current: applied,
+					total: knownTotal ?? applied,
+					failed: 0,
+				});
+			}
 
 			if (!resp.has_more || !resp.next_cursor) break;
 			cursor = resp.next_cursor;
@@ -4774,7 +4798,7 @@ export class SyncEngine {
 		// the old and new lastSync values.
 		const prePullSync = this.lastSync;
 
-		const pulled = await this.pull();
+		const pulled = await this.pull(true);
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").

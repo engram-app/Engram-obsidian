@@ -18902,7 +18902,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materializes server-marked empty folders and hydrates the
    *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
    *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-  async pull() {
+  async pull(emitProgress = !1) {
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
@@ -18913,13 +18913,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.getSyncCursor() !== null && this.syncStateVaultId !== null && this.settings.vaultId != null && this.syncStateVaultId !== this.settings.vaultId && await this.invalidateIfVaultChanged();
       let applied;
       if (!this.getSyncCursor())
-        applied = await this.bootstrap();
+        applied = await this.bootstrap(emitProgress);
       else
         try {
-          applied = await this.pullViaCursor((_b = this.getSyncCursor()) != null ? _b : void 0);
+          applied = await this.pullViaCursor(
+            (_b = this.getSyncCursor()) != null ? _b : void 0,
+            emitProgress
+          );
         } catch (e) {
           if (e instanceof HistoryExpiredError)
-            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap();
+            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap(emitProgress);
           else
             throw e;
         }
@@ -19356,11 +19359,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  (delete server-deleted, push offline-created — disambiguated by the
    *  syncState baseline), then a genesis cursor pull delivers/refreshes content
    *  (3-way merging diverged files via applyChange). Returns count applied. */
-  async bootstrap() {
+  async bootstrap(emitProgress = !1) {
     var _a;
     rlog().info("pull", "Bootstrap \u2014 manifest reconcile + genesis cursor pull");
     let manifest = await this.api.getManifest();
-    if (!manifest) return this.pullViaCursor(void 0);
+    if (!manifest) return this.pullViaCursor(void 0, emitProgress);
     let serverPaths = /* @__PURE__ */ new Set([
       ...manifest.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
       ...manifest.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
@@ -19382,7 +19385,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else
           toPush.push(file);
     }
-    let applied = await this.pullViaCursor(void 0);
+    let knownTotal = manifest.notes.length + manifest.attachments.length, applied = await this.pullViaCursor(void 0, emitProgress, knownTotal);
     this.getSyncCursor() === null && typeof manifest.change_seq == "number" && (this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID)), await this.saveData({ syncCursor: this.getSyncCursor() }));
     for (let file of toPush)
       try {
@@ -19400,7 +19403,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  server returns from seq 0). Applies each entry, persists the cursor after
    *  every page (at-least-once; applies are idempotent), returns count applied.
    *  Throws HistoryExpiredError on 410. */
-  async pullViaCursor(startCursor) {
+  async pullViaCursor(startCursor, emitProgress = !1, knownTotal) {
+    var _a;
     let cursor = startCursor, applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
@@ -19421,7 +19425,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         }
       let last2 = resp.changes[resp.changes.length - 1];
-      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), !resp.has_more || !resp.next_cursor) break;
+      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), emitProgress && ((_a = this.onSyncProgress) == null || _a.call(this, {
+        phase: "pulling",
+        current: applied,
+        total: knownTotal != null ? knownTotal : applied,
+        failed: 0
+      })), !resp.has_more || !resp.next_cursor) break;
       cursor = resp.next_cursor;
     }
     return applied;
@@ -19813,7 +19822,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
     await this.invalidateIfVaultChanged();
-    let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
+    let prePullSync = this.lastSync, pulled = await this.pull(!0), pushed = await this.pushModifiedFiles(prePullSync);
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
       current: pushed,
