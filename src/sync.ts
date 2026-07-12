@@ -18,6 +18,7 @@ import {
 	categorizeError,
 	healthCheckDelay,
 	issueDisposition,
+	parseStatusToIssue,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
@@ -37,6 +38,7 @@ import type {
 	ManifestResponse,
 	NoteChange,
 	NoteStreamEvent,
+	ParseReason,
 	QueueEntry,
 	ReconcileResult,
 	SyncChange,
@@ -1945,6 +1947,12 @@ export class SyncEngine {
 
 		const isBinary = this.isBinaryFile(file);
 		let success = false;
+		// Set in the note branch below so recordParseStatus can run AFTER the
+		// shared issues.clear(file.path) — resp (and thus parse_status) is only
+		// in scope inside that branch, but the clear is shared with attachments.
+		let pushedNoteParse:
+			| { path: string; parseStatus?: "ok" | "degraded"; parseReason?: ParseReason | null }
+			| undefined;
 		devLog().log(
 			"push",
 			`start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`,
@@ -2302,6 +2310,12 @@ export class SyncEngine {
 							this.baseStore?.set(np, serverNote.content, serverNote.version);
 							this.noteIdMap?.set(np, serverNote.id);
 							this.confirmNoteId(serverNote.id);
+							this.recordParseStatus(
+								serverNote.path,
+								"note",
+								serverNote.parse_status,
+								serverNote.parse_reason,
+							);
 						}
 					} else if (resolution.choice === "merge" && resolution.mergedContent != null) {
 						const mergeResp = await this.api.pushNote(
@@ -2384,9 +2398,22 @@ export class SyncEngine {
 					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
 					this.confirmNoteId(resp.note.id);
 				}
+				pushedNoteParse = {
+					path: resp.note.path ?? file.path,
+					parseStatus: resp.note.parse_status,
+					parseReason: resp.note.parse_reason,
+				};
 			}
 			success = true;
 			this.issues.clear(file.path);
+			if (pushedNoteParse) {
+				this.recordParseStatus(
+					pushedNoteParse.path,
+					"note",
+					pushedNoteParse.parseStatus,
+					pushedNoteParse.parseReason,
+				);
+			}
 			devLog().log("push", `ok: ${file.path}`);
 			rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`);
 			this.goOnline();
@@ -5237,6 +5264,44 @@ export class SyncEngine {
 			this.confirmNoteId(result.id);
 		}
 		this.issues.clear(file.path);
+		this.recordParseStatus(
+			result.server_path ?? file.path,
+			"note",
+			result.parse_status,
+			result.parse_reason,
+		);
+	}
+
+	/** Record or clear a note's frontmatter parse issue from a backend
+	 *  parse_status/parse_reason. Called on every push success + feed apply. When
+	 *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
+	 *  (a real error issue recorded elsewhere must survive). Debounced transition
+	 *  Notice is wired in Task 5. */
+	recordParseStatus(
+		path: string,
+		kind: "note" | "attachment",
+		parseStatus: "ok" | "degraded" | undefined,
+		parseReason: ParseReason | null | undefined,
+	): void {
+		const mapped = parseStatusToIssue(parseStatus, parseReason);
+		if (!mapped) {
+			const existing = this.issues.get(path);
+			if (existing && (existing.category === "frontmatter" || existing.parseReason)) {
+				this.issues.clear(path);
+			}
+			return;
+		}
+		const now = Date.now();
+		this.issues.record({
+			path,
+			kind,
+			category: mapped.category,
+			message: mapped.message,
+			parseReason: mapped.parseReason,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
 	}
 
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
