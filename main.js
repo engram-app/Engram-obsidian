@@ -18543,7 +18543,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (path && this.isNoteConfirmed(noteId) && !this.isLiveBound(path) && this.getCrdtHead(path) !== serverHead)
         try {
           let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++;
+          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), converged++, this.settings.lazyEnrollment && !this.isLiveBound(path) && this.crdt.closeDoc(noteId);
         } catch (e) {
           devLog().log("crdt", `coldReceive: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
         }
@@ -19846,6 +19846,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *    confirms via the type-delete gate. Defaults to false (plain push that
    *    leaves remote-only files untouched).
    */
+  /** Snapshot the syncable local paths right now. Callers capture this BEFORE
+   *  markSyncGateAccepted opens the gate, then pass it to pushAll({replaceRemote})
+   *  so the wipe uses local-truth-at-sync-start and a gate-open live delivery
+   *  can't shield a remote extra from the wipe (test_86). */
+  snapshotLocalPaths() {
+    return new Set(
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
+    );
+  }
   async pushAll(opts = {}) {
     var _a, _b, _c, _d;
     if (this.syncBlocked)
@@ -19854,8 +19863,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
-    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote();
-    let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), pushed = 0, failed = 0, total = toSync.length;
+    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote(opts.localSnapshot);
+    let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
+    if (opts.localSnapshot) {
+      let snap = opts.localSnapshot;
+      toSync = toSync.filter((f) => snap.has((0, import_obsidian21.normalizePath)(f.path)));
+    }
+    let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
       var _a2;
@@ -19911,7 +19925,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "reconcile",
           `Fixing ${toFix.length} files after pushAll (${missing.length} missing, ${diverged.length} diverged)`
         );
+        let snap = opts.localSnapshot;
         for (let path of toFix) {
+          if (snap && !snap.has((0, import_obsidian21.normalizePath)(path)))
+            continue;
           let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(path));
           file && await this.pushFile(file, !0);
         }
@@ -19926,14 +19943,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  recreated by the subsequent upload); the user confirms via the type-delete
    *  gate. Failures on individual deletes are logged, not thrown, so the
    *  re-upload still runs. */
-  async wipeRemote() {
+  async wipeRemote(localSnapshot) {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     let manifest = await this.api.getManifest();
     if (!manifest) {
       rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
       return;
     }
-    let localPaths = new Set(
+    let localPaths = localSnapshot != null ? localSnapshot : new Set(
       this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
     ), notePaths = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), attachmentPaths = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), total = notePaths.length + attachmentPaths.length;
     rlog().info(
@@ -21151,8 +21168,10 @@ var ViewerRefcount = class {
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
-      let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((t) => this.deps.flushToDisk(path, t));
+      this.onLastViewerRelease(path).catch((e) => {
+        var _a, _b;
+        return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
+      });
     }), this.frontmatter = new CrdtFrontmatterHook({
       getPath: (v) => getMarkdownFilePath(v),
       getYText: (path) => this.getYText(path)
@@ -21163,6 +21182,17 @@ var ViewerRefcount = class {
   }
   isBound(path) {
     return this.refcount.isBound(path);
+  }
+  /** The last viewer of `path` left: persist the current Y.Text to disk, then
+   *  free the doc so the resident set stays bounded by open notes (closeDoc was
+   *  dead code before this — a Y.Doc leaked for every note ever visited in a
+   *  session). The IndexedDB store is preserved, so the note re-hydrates on next
+   *  open or remote update; no data loss. Skips the free if a new viewer bound
+   *  during the async flush (re-open race) — destroying a doc the editor just
+   *  re-bound to would break live sync. Returns the promise for tests. */
+  async onLastViewerRelease(path) {
+    let noteId = this.deps.resolveId(path), text2 = await this.deps.manager.getText(noteId);
+    await this.deps.flushToDisk(path, text2), this.refcount.isBound(path) || this.deps.manager.closeDoc(noteId);
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
@@ -21304,24 +21334,41 @@ async function ensureDocSchema(vaultId, storage, dbs) {
 // src/crdt/enrollment.ts
 var CrdtEnrollment = class {
   constructor(opts) {
-    /** note_ids that have already received a `startSync` call this session. */
+    /** note_ids that have already received (or been queued for) a startSync this session. */
     this.enrolled = /* @__PURE__ */ new Set();
-    this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll;
+    /** FIFO of note_ids awaiting their startSync handshake (bounded fan-out). */
+    this.queue = [];
+    /** startSync handshakes currently in flight. */
+    this.active = 0;
+    var _a;
+    this.startSync = opts.startSync, this.resetSync = opts.resetSync, this.onAfterEnroll = opts.onAfterEnroll, this.concurrency = (_a = opts.concurrency) != null ? _a : 4;
   }
   /**
    * Enroll `noteId` if it hasn't been enrolled this session. Calling multiple
    * times for the same note_id is idempotent — `startSync` fires exactly once,
    * followed by `onAfterEnroll` (if provided) so bloat compaction runs on open.
    *
+   * `startSync` fan-out is bounded to `concurrency` in-flight handshakes at
+   * once (fix for the connect storm on large-vault open) — every note still
+   * enrolls, just queued FIFO behind the cap instead of all firing at once.
+   *
    * No markdown/extension gate here (see class doc) — callers that know the
    * path (routing/open-file sites) must check `.md` themselves before calling;
    * callers reacting to a bare-id wire announce enroll unconditionally.
    */
   enroll(noteId) {
-    this.enrolled.has(noteId) || (this.enrolled.add(noteId), this.startSync(noteId).then(() => {
-      var _a;
-      return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
-    }));
+    this.enrolled.has(noteId) || (this.enrolled.add(noteId), this.queue.push(noteId), this.drain());
+  }
+  drain() {
+    for (; this.active < this.concurrency && this.queue.length > 0; ) {
+      let noteId = this.queue.shift();
+      this.active++, this.startSync(noteId).then(() => {
+        var _a;
+        return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
+      }).finally(() => {
+        this.active--, this.drain();
+      });
+    }
   }
   /**
    * Clear the enrollment record for `noteId` and call `resetSync` on the
@@ -21329,10 +21376,13 @@ var CrdtEnrollment = class {
    * reconnect so the state-vector handshake re-fires with fresh server state.
    */
   reset(noteId) {
-    this.enrolled.delete(noteId), this.resetSync(noteId);
+    this.enrolled.delete(noteId);
+    let i = this.queue.indexOf(noteId);
+    i !== -1 && this.queue.splice(i, 1), this.resetSync(noteId);
   }
   /** Clear all enrollments (use when the channel is torn down). */
   resetAll() {
+    this.queue.length = 0;
     for (let noteId of this.enrolled)
       this.resetSync(noteId);
     this.enrolled.clear();
@@ -22250,10 +22300,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.createAuthProvider(), this.authProvider && (this.api.setAuthProvider(this.authProvider), this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe())));
+    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   async clearOAuthTokens() {
-    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, await this.saveSettings(), this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider);
+    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   setupNoteStream() {
     var _a, _b, _c, _d, _e;
@@ -22395,7 +22445,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           // (pushFile would otherwise be the only minter, deferring the live
           // binding until after the first save).
           resolveId: (path) => this.noteIdMap.getOrMint(path),
-          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content)
+          flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content),
+          onReleaseError: (path, err) => rlog().warn(
+            "crdt",
+            `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
+          )
         }), this.syncEngine.setLiveBoundCheck(
           (path) => {
             var _a2, _b2;
@@ -22457,8 +22511,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
+        let localSnapshot = this.syncEngine.snapshotLocalPaths();
         await this.markSyncGateAccepted();
-        let pushed = await this.syncEngine.pushAll({ replaceRemote: !0 });
+        let pushed = await this.syncEngine.pushAll({
+          replaceRemote: !0,
+          localSnapshot
+        });
         return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {

@@ -103,6 +103,70 @@ describe("CrdtEnrollment.resetAll", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bounded-concurrency drain queue — fix connect storm (fan-out throttle)
+// ---------------------------------------------------------------------------
+
+describe("CrdtEnrollment bounded concurrency", () => {
+	test("never runs more than `concurrency` startSyncs in flight at once", async () => {
+		let inFlight = 0;
+		let maxInFlight = 0;
+		const release: Array<() => void> = [];
+		const startSync = (_id: string) =>
+			new Promise<void>((resolve) => {
+				inFlight++;
+				maxInFlight = Math.max(maxInFlight, inFlight);
+				release.push(() => {
+					inFlight--;
+					resolve();
+				});
+			});
+		const e = new CrdtEnrollment({ startSync, resetSync: () => {}, concurrency: 4 });
+
+		for (let i = 0; i < 50; i++) e.enroll(`id-${i}`);
+		// Only `concurrency` should have started; the rest are queued.
+		expect(release.length).toBe(4);
+		expect(maxInFlight).toBe(4);
+
+		// Drain: releasing one starts exactly one more, never exceeding the cap.
+		while (release.length > 0) {
+			release.shift()!();
+			await Promise.resolve(); // let the drain microtask run
+			await Promise.resolve();
+			expect(inFlight).toBeLessThanOrEqual(4);
+		}
+		expect(maxInFlight).toBe(4);
+	});
+
+	test("all 50 notes eventually enroll (none dropped)", async () => {
+		const seen = new Set<string>();
+		const startSync = async (id: string) => {
+			seen.add(id);
+		};
+		const e = new CrdtEnrollment({ startSync, resetSync: () => {}, concurrency: 4 });
+		for (let i = 0; i < 50; i++) e.enroll(`id-${i}`);
+		// flush all queued microtasks
+		for (let i = 0; i < 200; i++) await Promise.resolve();
+		expect(seen.size).toBe(50);
+	});
+
+	test("enroll is still idempotent per note_id", async () => {
+		let calls = 0;
+		const e = new CrdtEnrollment({
+			startSync: async () => {
+				calls++;
+			},
+			resetSync: () => {},
+			concurrency: 4,
+		});
+		e.enroll("id-1");
+		e.enroll("id-1");
+		e.enroll("id-1");
+		for (let i = 0; i < 10; i++) await Promise.resolve();
+		expect(calls).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Task 8C: onAfterEnroll — flattenIfBloated is called after startSync resolves
 // ---------------------------------------------------------------------------
 

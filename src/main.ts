@@ -1240,15 +1240,26 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
 		this.settings.accessTokenVaultId = undefined;
-		await this.saveSettings();
 
+		// Wire the new auth provider onto this.api BEFORE saveSettings(). saveSettings()
+		// rebuilds the note channel (setupNoteStream → connectChannel), which freezes
+		// the channel's topic userId from this.api.getMe() at construction. If the
+		// provider is still the OLD user's when that getMe() runs, the new channel is
+		// minted as crdt:<oldUserId>:<newVaultId> while the socket later authenticates
+		// with the NEW user's token → the backend rejects the join "unauthorized" and
+		// live sync stays silently dead until a reload. (Unlike the e2e swap helper,
+		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
+		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
 		this.authProvider = this.createAuthProvider();
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
-			if (this.noteStream) {
-				this.noteStream.setAuthProvider(this.authProvider);
-				this.noteStream.setAuthProbe(() => this.api.getMe());
-			}
+		}
+
+		await this.saveSettings();
+
+		if (this.authProvider && this.noteStream) {
+			this.noteStream.setAuthProvider(this.authProvider);
+			this.noteStream.setAuthProbe(() => this.api.getMe());
 		}
 	}
 
@@ -1259,12 +1270,25 @@ export default class EngramSyncPlugin extends Plugin {
 		this.settings.accessToken = undefined;
 		this.settings.accessTokenExpiresAt = undefined;
 		this.settings.accessTokenVaultId = undefined;
-		await this.saveSettings();
+
+		// Same ordering invariant as saveOAuthTokens (see the comment there):
+		// swap the provider onto this.api BEFORE saveSettings() rebuilds the note
+		// channel, or the rebuild freezes the OUTGOING OAuth user's id into the
+		// topic while the socket authenticates with the apiKey identity → the
+		// backend rejects the join "unauthorized" and live sync stays dead until
+		// a reload.
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
 			: null;
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
+		}
+
+		await this.saveSettings();
+
+		if (this.authProvider && this.noteStream) {
+			this.noteStream.setAuthProvider(this.authProvider);
+			this.noteStream.setAuthProbe(() => this.api.getMe());
 		}
 	}
 
@@ -1601,6 +1625,11 @@ export default class EngramSyncPlugin extends Plugin {
 						resolveId: (path) => this.noteIdMap.getOrMint(path),
 						flushToDisk: (path, content) =>
 							this.syncEngine.flushFromCrdt(path, content),
+						onReleaseError: (path, err) =>
+							rlog().warn(
+								"crdt",
+								`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
+							),
 					});
 					// Tell the sync engine which paths have a live editor binding so its
 					// disk-modify handler skips re-feeding disk content into the Y.Text for
@@ -1735,8 +1764,16 @@ export default class EngramSyncPlugin extends Plugin {
 			}
 
 			case "push-all-delete-remote": {
+				// Snapshot local files BEFORE opening the gate: markSyncGateAccepted
+				// lets queued live WS events into the vault, and a race-delivered
+				// remote note would otherwise look "local" to wipeRemote and dodge
+				// the wipe (test_86 gate-open race). See SyncEngine.snapshotLocalPaths.
+				const localSnapshot = this.syncEngine.snapshotLocalPaths();
 				await this.markSyncGateAccepted();
-				const pushed = await this.syncEngine.pushAll({ replaceRemote: true });
+				const pushed = await this.syncEngine.pushAll({
+					replaceRemote: true,
+					localSnapshot,
+				});
 				new Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`);
 				return true;
 			}

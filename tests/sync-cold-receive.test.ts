@@ -91,13 +91,19 @@ const mockApp = {
 
 function engine(opts?: {
 	enableCrdt?: boolean;
+	lazyEnrollment?: boolean;
 	api?: Partial<EngramApi>;
 	crdt?: Partial<CrdtManager>;
 }): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		(opts?.api ?? mockApi) as unknown as EngramApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: opts?.enableCrdt ?? true },
+		{
+			...DEFAULT_SETTINGS,
+			debounceMs: 1,
+			enableCrdt: opts?.enableCrdt ?? true,
+			lazyEnrollment: opts?.lazyEnrollment ?? false,
+		},
 		mock().mockResolvedValue(undefined),
 	);
 	if (opts?.crdt) e.setCrdtManager(opts.crdt as unknown as CrdtManager);
@@ -137,11 +143,17 @@ describe("coldReceive", () => {
 		heads: Record<string, string>;
 		getUpdates?: (id: string, since?: string) => Promise<{ update: Uint8Array; head: string }>;
 		live?: (path: string) => boolean;
+		// Doc-freeing is gated on lazy enrollment; default on so the free path is
+		// exercised. Pass false to assert the eager-mode gate (no free).
+		lazy?: boolean;
+		// When set, applyRemoteUpdate rejects — to exercise the per-note catch.
+		applyThrows?: boolean;
 	}) {
 		// The mock manager records the ARGUMENT it is called with — which is the
 		// noteId (the manager is noteId-keyed), NOT the vault path.
 		const applied: Array<{ id: string; update: Uint8Array }> = [];
 		const svCalls: string[] = [];
+		const closed: string[] = [];
 		const api = {
 			getVaultHeads: async () => ({ heads: opts.heads }),
 			getUpdates:
@@ -157,17 +169,21 @@ describe("coldReceive", () => {
 				return new Uint8Array([9]);
 			},
 			applyRemoteUpdate: async (id: string, update: Uint8Array) => {
+				if (opts.applyThrows) throw new Error("apply failed");
 				applied.push({ id, update });
 			},
+			closeDoc: (id: string) => {
+				closed.push(id);
+			},
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ enableCrdt: true, lazyEnrollment: opts.lazy ?? true, api, crdt });
 		markProbed(e);
 		const map = new NoteIdMap();
 		map.set("a.md", "id-a");
 		e.setNoteIdMap(map);
 		markConfirmed(e, "id-a");
 		e.setLiveBoundCheck(opts.live ?? (() => false));
-		return { e, applied, svCalls };
+		return { e, applied, svCalls, closed };
 	}
 
 	test("an advanced head pulls the delta, applies it, and persists the returned head", async () => {
@@ -190,9 +206,61 @@ describe("coldReceive", () => {
 	});
 
 	test("a live-bound note is skipped (the live channel owns it)", async () => {
-		const { e, applied } = coldEngine({ heads: { "id-a": "SRV" }, live: () => true });
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, live: () => true });
 		expect(await e.coldReceive()).toBe(0);
 		expect(applied).toEqual([]);
+		expect(closed).toEqual([]); // never opened, so nothing to free
+	});
+
+	test("a converged cold note's transient doc is freed after applying (closeDoc)", async () => {
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" } });
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]);
+		// The doc was minted only for this convergence — freed so it doesn't leak.
+		expect(closed).toEqual(["id-a"]);
+	});
+
+	test("a note opened DURING convergence is applied but NOT freed (re-open guard)", async () => {
+		// live is false at the initial gate (so we converge) but true by the time
+		// we re-check after applying — the user opened it mid-convergence.
+		let n = 0;
+		const { e, applied, closed } = coldEngine({
+			heads: { "id-a": "SRV" },
+			live: () => n++ > 0,
+		});
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // still converged
+		expect(closed).toEqual([]); // NOT freed — the live channel now owns it
+	});
+
+	test("under EAGER enrollment the doc is applied but NOT freed (free is a lazy-mode opt)", async () => {
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, lazy: false });
+		expect(await e.coldReceive()).toBe(1);
+		expect(applied.map((a) => a.id)).toEqual(["id-a"]); // convergence still happens
+		expect(closed).toEqual([]); // eager: the channel owns the doc — freeing would churn
+	});
+
+	test("applyRemoteUpdate failure leaves the doc resident and the head unadvanced", async () => {
+		const { e, applied, closed } = coldEngine({ heads: { "id-a": "SRV" }, applyThrows: true });
+		// The per-note catch swallows it: coldReceive resolves, converged 0.
+		expect(await e.coldReceive()).toBe(0);
+		expect(applied).toEqual([]); // apply threw before recording
+		expect(closed).toEqual([]); // closeDoc is AFTER apply — not reached on failure
+		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // head not advanced → retry next poll
+	});
+
+	test("closeDoc runs only AFTER the head is durably recorded", async () => {
+		const closedAtHead: Array<string | undefined> = [];
+		const { e } = coldEngine({ heads: { "id-a": "SRV" } });
+		// Re-wrap closeDoc to capture the persisted head at free time.
+		const mgr = (e as any).crdt;
+		const origClose = mgr.closeDoc;
+		mgr.closeDoc = (id: string) => {
+			closedAtHead.push((e as any).getCrdtHead("a.md"));
+			origClose(id);
+		};
+		await e.coldReceive();
+		expect(closedAtHead).toEqual(["SRV"]); // head already committed when we free
 	});
 
 	test("a head with no local path is skipped (first-discovery is the pull's job)", async () => {
