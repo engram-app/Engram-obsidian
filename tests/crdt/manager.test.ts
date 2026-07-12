@@ -573,6 +573,47 @@ test("projectedText returns body-only for a plain note (no frontmatter)", async 
 });
 
 // ---------------------------------------------------------------------------
+// Lossless projection of degraded frontmatter keys (backend
+// feat/frontmatter-resilience). The server stores a key it could not parse as
+// YAML in a dedicated `frontmatter_raw` Y.Map (its verbatim source span),
+// alongside the good `frontmatter` map + full-order `frontmatter_order`. That
+// map syncs over CRDT; the projection MUST re-render those spans verbatim in
+// source order, or the degraded key is silently dropped on materialize to disk
+// (data loss, and permanent server loss if the stripped file echoes back).
+// ---------------------------------------------------------------------------
+
+test("projectedText re-renders a degraded frontmatter_raw key verbatim (single-line)", async () => {
+	const { mgr } = makeManager();
+	const doc = await mgr.getDoc("deg.md");
+	doc.transact(() => {
+		doc.getArray<string>("frontmatter_order").push(["title", "date"]);
+		doc.getMap<string>("frontmatter").set("title", '"Hi"');
+		// `date` is degraded (backend could not JSON-encode the parsed Date), so it
+		// lives out-of-band in frontmatter_raw as its verbatim source span.
+		doc.getMap<string>("frontmatter_raw").set("date", "date: 2024-01-01");
+		doc.getText("content").insert(0, "the body\n");
+	});
+	expect(await mgr.projectedText("deg.md")).toBe(
+		"---\ntitle: Hi\ndate: 2024-01-01\n---\nthe body\n",
+	);
+	await mgr.destroy();
+});
+
+test("projectedText preserves a multi-line degraded raw span byte-for-byte", async () => {
+	const { mgr } = makeManager();
+	const doc = await mgr.getDoc("deg2.md");
+	const rawSpan = "coords: [\n  1,\n  2,\n]";
+	doc.transact(() => {
+		doc.getArray<string>("frontmatter_order").push(["coords", "title"]);
+		doc.getMap<string>("frontmatter").set("title", '"Hi"');
+		doc.getMap<string>("frontmatter_raw").set("coords", rawSpan);
+		doc.getText("content").insert(0, "b\n");
+	});
+	expect(await mgr.projectedText("deg2.md")).toBe(`---\n${rawSpan}\ntitle: Hi\n---\nb\n`);
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
 // Bug 3: reconcileColdStart uses projectedText so early-return fires correctly
 // ---------------------------------------------------------------------------
 

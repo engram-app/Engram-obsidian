@@ -80,17 +80,49 @@ function topLevelKeyOrder(block: string, map: Record<string, unknown>): string[]
 	return order;
 }
 
-export function emitFrontmatter(order: string[], values: Record<string, string>): string {
-	const present = order.filter((k) => Object.prototype.hasOwnProperty.call(values, k));
-	if (present.length === 0) return "";
-	// Build one object in source order; `yaml.stringify` preserves insertion order.
-	const obj: Record<string, unknown> = {};
-	for (const k of present) obj[k] = JSON.parse(values[k]!);
-	const out = yamlStringify(obj);
-	return out.endsWith("\n") ? out : `${out}\n`;
+function ensureTrailingNewline(s: string): string {
+	if (s === "") return "";
+	return s.endsWith("\n") ? s : `${s}\n`;
 }
 
-export function projectNote(order: string[], values: Record<string, string>, body: string): string {
-	const block = emitFrontmatter(order, values);
+// Emit a single GOOD key as canonical YAML (its value is a JSON string). One key
+// per call so raw spans can interleave in source order — mirrors the backend
+// Frontmatter.emit_key/2.
+function emitKey(key: string, valueJson: string): string {
+	const value: unknown = JSON.parse(valueJson);
+	return ensureTrailingNewline(yamlStringify({ [key]: value }));
+}
+
+// `raws` holds DEGRADED keys the backend could not parse as YAML, mapped to
+// their verbatim source spans (stored out-of-band from `values` in the note's
+// `frontmatter_raw` Y.Map). A degraded key is in `order` but NOT in `values`,
+// so it must be re-rendered verbatim here or it is silently dropped. Mirrors
+// the backend Engram.Notes.Frontmatter.emit/3.
+export function emitFrontmatter(
+	order: string[],
+	values: Record<string, string>,
+	raws: Record<string, string> = {},
+): string {
+	const has = (m: Record<string, string>, k: string) =>
+		Object.prototype.hasOwnProperty.call(m, k);
+	const present = order.filter((k) => has(raws, k) || has(values, k));
+	if (present.length === 0) return "";
+	let out = "";
+	for (const key of present) {
+		// A degraded key re-renders from its verbatim span (never via the YAML
+		// emitter, which would canonicalize/lose it). Raws take precedence so a
+		// stale good-value shadow can never override the source-of-truth span.
+		out += has(raws, key) ? ensureTrailingNewline(raws[key]!) : emitKey(key, values[key]!);
+	}
+	return ensureTrailingNewline(out);
+}
+
+export function projectNote(
+	order: string[],
+	values: Record<string, string>,
+	body: string,
+	raws: Record<string, string> = {},
+): string {
+	const block = emitFrontmatter(order, values, raws);
 	return block === "" ? body : `${FENCE}\n${block}${FENCE}\n${body}`;
 }

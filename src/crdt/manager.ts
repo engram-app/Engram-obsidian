@@ -15,6 +15,14 @@ export const REMOTE_ORIGIN = "remote";
 
 /** Y.Doc shared-type key for the frontmatter key-value map. */
 export const FRONTMATTER_KEY = "frontmatter";
+/**
+ * Y.Doc shared-type key for the out-of-band raw-passthrough map: DEGRADED
+ * frontmatter keys (ones the backend could not parse as YAML) mapped to their
+ * verbatim source spans. Kept separate from FRONTMATTER_KEY so a normal
+ * client-written value is never mis-read as a raw-passthrough marker. Mirrors
+ * the backend CrdtBridge `@raw_frontmatter_name`.
+ */
+export const RAW_FRONTMATTER_KEY = "frontmatter_raw";
 /** Y.Doc shared-type key for the ordered list of frontmatter keys. */
 export const ORDER_KEY = "frontmatter_order";
 /** Y.Doc shared-type key for the note body text. */
@@ -28,6 +36,15 @@ export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<str
 	const order = doc.getArray<string>(ORDER_KEY).toArray();
 	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
 	return { order, values };
+}
+
+/**
+ * Read the out-of-band degraded-key raw spans from a Y.Doc.
+ * Returns `{}` for a doc with no degraded keys. Mirrors the backend
+ * CrdtBridge.raw_frontmatter_of/1.
+ */
+export function rawFrontmatterOf(doc: Y.Doc): Record<string, string> {
+	return doc.getMap<string>(RAW_FRONTMATTER_KEY).toJSON();
 }
 
 export interface CrdtManagerOptions {
@@ -381,7 +398,7 @@ export class CrdtManager {
 	async projectedText(noteId: string): Promise<string> {
 		const e = await this.entry(noteId);
 		const { order, values } = frontmatterOf(e.doc);
-		return projectNote(order, values, e.text.toJSON());
+		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
 
 	/**
@@ -498,6 +515,7 @@ export class CrdtManager {
 
 		const plaintext = e.text.toJSON();
 		const { order, values } = frontmatterOf(e.doc);
+		const raws = rawFrontmatterOf(e.doc);
 
 		// Tear down the bloated entry entirely (clears both IDB and the in-memory
 		// Y.Doc). We must reset the in-memory state — not just IDB — otherwise
@@ -522,6 +540,11 @@ export class CrdtManager {
 		// re-merge the bloat right back (spec §4.2).
 		fresh.doc.transact(() => {
 			this.applyFrontmatterInto(fresh.doc, order, values);
+			// Carry the out-of-band degraded-key spans onto the fresh lineage too,
+			// else flatten would strip them (data loss). Fresh doc → empty raw map,
+			// so a plain set per key suffices (no delete pass needed).
+			const rawMap = fresh.doc.getMap<string>(RAW_FRONTMATTER_KEY);
+			for (const [k, v] of Object.entries(raws)) rawMap.set(k, v);
 			fresh.text.insert(0, plaintext);
 		}); // local origin → propagated to the server
 		return true;
@@ -616,6 +639,7 @@ export class CrdtManager {
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (origin !== REMOTE_ORIGIN) return;
 			const { order, values } = frontmatterOf(doc);
+			const raws = rawFrontmatterOf(doc);
 			const body = text.toJSON();
 			// Record the flush promise (do NOT fire-and-forget): applyRemoteUpdate
 			// awaits it so a write failure rejects the apply and the caller leaves
@@ -623,7 +647,9 @@ export class CrdtManager {
 			// return from a test double into an awaitable.
 			this.pendingFlush.set(
 				id,
-				Promise.resolve(this.opts.onFlushToDisk(noteId, projectNote(order, values, body))),
+				Promise.resolve(
+					this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
+				),
 			);
 		});
 
