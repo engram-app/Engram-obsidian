@@ -144,6 +144,20 @@ describe("SyncEngine.recordParseStatus", () => {
 		engine.recordParseStatus("notes/a.md", "note", "ok", null);
 		expect(engine.issues.get("notes/a.md")?.category).toBe("server");
 	});
+
+	test("ok parse_status clears a prior other-category note_processing_failed issue", () => {
+		const engine = makeEngine();
+		// note_processing_failed lands in "other" but carries a parseReason, so the
+		// `|| existing.parseReason` clause must clear it once the note parses ok.
+		engine.recordParseStatus("notes/a.md", "note", "degraded", {
+			code: "note_processing_failed",
+			message: "processing failed",
+			detail: null,
+		});
+		expect(engine.issues.get("notes/a.md")?.category).toBe("other");
+		engine.recordParseStatus("notes/a.md", "note", "ok", null);
+		expect(engine.issues.get("notes/a.md")).toBeUndefined();
+	});
 });
 
 const DEGRADED = {
@@ -159,7 +173,9 @@ const DEGRADED = {
  *  a version conflict, the resolver picks `choice`, the retry push returns a
  *  degraded :ok note. baseStore stays null so the 3-way auto-merge is skipped
  *  and the interactive resolution branch runs. */
-async function pushWithConflictResolution(choice: "keep-local" | "merge"): Promise<SyncEngine> {
+async function pushWithConflictResolution(
+	choice: "keep-local" | "keep-remote" | "merge",
+): Promise<SyncEngine> {
 	const engine = makeEngine();
 	(engine as unknown as { baseStore: null }).baseStore = null;
 	const file = new TFile("notes/c.md", 1000);
@@ -169,17 +185,21 @@ async function pushWithConflictResolution(choice: "keep-local" | "merge"): Promi
 		.mockReset()
 		.mockResolvedValueOnce({
 			conflict: true,
+			// keep-remote records parse status off the CONFLICT server_note (no
+			// re-push), so it must carry parse_status/parse_reason + content_hash.
 			server_note: {
 				id: "id-1",
 				path: "notes/c.md",
 				title: "c",
 				content: "# remote",
+				content_hash: "h",
 				folder: "notes",
 				tags: [],
 				mtime: 1,
 				created_at: "2026-01-01T00:00:00Z",
 				updated_at: "2026-01-01T00:00:00Z",
 				version: 5,
+				...DEGRADED,
 			},
 		})
 		.mockResolvedValueOnce({
@@ -200,6 +220,11 @@ describe("recordParseStatus wired into conflict re-push resolution", () => {
 
 	test("merge re-push (mergeResp) records a frontmatter issue", async () => {
 		const engine = await pushWithConflictResolution("merge");
+		expect(engine.issues.get("notes/c.md")?.category).toBe("frontmatter");
+	});
+
+	test("keep-remote resolution records a frontmatter issue from the server_note", async () => {
+		const engine = await pushWithConflictResolution("keep-remote");
 		expect(engine.issues.get("notes/c.md")?.category).toBe("frontmatter");
 	});
 });
@@ -250,6 +275,32 @@ describe("applySyncChange consumes parse_status from the /sync/changes feed", ()
 			},
 		});
 		expect(engine.issues.get("notes/gone.md")).toBeUndefined();
+	});
+
+	test("degraded feed entry matching an ignore pattern records NO issue", async () => {
+		const engine = makeEngine();
+		// `.trash/` is always ignored; applyChange would skip it, so surfacing a
+		// Sync Center card for it is misleading (review minor #5).
+		await engine.applySyncChange({
+			type: "note",
+			id: "id-ig",
+			seq: 8,
+			path: ".trash/ignored.md",
+			title: "ignored",
+			content: "---\ndate:YYYY-MM-DD\n---\nbody",
+			folder: ".trash",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-07-12T00:00:00Z",
+			deleted: false,
+			parse_status: "degraded",
+			parse_reason: {
+				code: "frontmatter_invalid_yaml",
+				message: "Frontmatter isn't valid YAML",
+				detail: null,
+			},
+		});
+		expect(engine.issues.get(".trash/ignored.md")).toBeUndefined();
 	});
 
 	test("folder-marker feed entry (no path) does not throw or record an issue", async () => {

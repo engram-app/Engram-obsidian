@@ -3920,8 +3920,12 @@ export class SyncEngine {
 			// mapping below deliberately drops them (that shape is also fed by the
 			// legacy GET /notes/changes, which never had these fields). Read them off
 			// `c` before the mapping erases them. Deleted entries skip this (a
-			// tombstone has no parse status).
-			this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
+			// tombstone has no parse status). Ignored paths skip it too: applyChange
+			// below drops them, so a Sync Center card for an ignored note would be
+			// misleading (review minor #5).
+			if (!this.shouldIgnore(c.path)) {
+				this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
+			}
 		}
 		const nc: NoteChange = {
 			path: c.path,
