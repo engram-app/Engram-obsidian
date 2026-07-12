@@ -573,10 +573,21 @@ export class CrdtManager {
 	): void {
 		const map = doc.getMap<string>(FRONTMATTER_KEY);
 		const arr = doc.getArray<string>(ORDER_KEY);
+		const rawMap = doc.getMap<string>(RAW_FRONTMATTER_KEY);
 		const current = map.toJSON() as Record<string, string>;
 		doc.transact(() => {
 			for (const [k, v] of Object.entries(values)) {
 				if (current[k] !== v) map.set(k, v);
+				// A locally-parsed GOOD value supersedes any stale raw span for the
+				// same key. The plugin's parser is more lenient than the backend, so
+				// a key the backend degraded into frontmatter_raw can re-ingest here
+				// as a good value; without this delete, emitFrontmatter's
+				// raws-precedence would re-emit the old span and silently revert the
+				// user's edit (whole-branch review finding #1). Scoped to keys this
+				// call writes as good values, so a raw key the parse did NOT
+				// re-produce is left untouched (no data loss). Local ingest never
+				// PRODUCES raws, so this only ever deletes stale entries.
+				if (rawMap.has(k)) rawMap.delete(k);
 			}
 			for (const k of Object.keys(current)) {
 				if (!(k in values)) map.delete(k);

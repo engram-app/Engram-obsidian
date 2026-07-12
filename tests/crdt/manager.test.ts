@@ -2,7 +2,7 @@ import { describe, expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as Y from "yjs";
 import { CrdtChannel } from "../../src/crdt/channel";
-import { CrdtManager, frontmatterOf } from "../../src/crdt/manager";
+import { CrdtManager, frontmatterOf, rawFrontmatterOf } from "../../src/crdt/manager";
 import { rlog } from "../../src/remote-log";
 import { reconcileColdStart } from "../../src/sync";
 
@@ -610,6 +610,52 @@ test("projectedText preserves a multi-line degraded raw span byte-for-byte", asy
 		doc.getText("content").insert(0, "b\n");
 	});
 	expect(await mgr.projectedText("deg2.md")).toBe(`---\n${rawSpan}\ntitle: Hi\n---\nb\n`);
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
+// Raw-map reconciliation on local re-ingest (whole-branch review finding #1).
+// A once-degraded key (backend could not encode it -> stored in frontmatter_raw)
+// that the user edits parses cleanly under the plugin's more-lenient parser, so
+// it becomes a GOOD value in frontmatter/order. The stale raw span must be
+// dropped in the same write, or emitFrontmatter's raws-precedence silently
+// reverts the edit (data corruption, permanent in a pure-CRDT flow).
+// ---------------------------------------------------------------------------
+
+test("local re-ingest of a degraded key drops the stale raw span (edit not reverted)", async () => {
+	const { mgr } = makeManager();
+	const doc = await mgr.getDoc("edit-deg.md");
+	// Backend-degraded state: `date` lives ONLY in frontmatter_raw (old span).
+	doc.transact(() => {
+		doc.getArray<string>("frontmatter_order").push(["date"]);
+		doc.getMap<string>("frontmatter_raw").set("date", "date: 2024-01-01");
+		doc.getText("content").insert(0, "the body\n");
+	});
+	mgr.markSynced("edit-deg.md");
+	// User edits the value; the plugin's lenient parse turns `date` into a GOOD
+	// value, so it lands in frontmatter + order via applyFrontmatterInto.
+	await mgr.applyLocalEdit("edit-deg.md", "---\ndate: 2025-12-31\n---\nthe body\n", true);
+	expect(await mgr.projectedText("edit-deg.md")).toBe("---\ndate: 2025-12-31\n---\nthe body\n");
+	expect(rawFrontmatterOf(doc).date).toBeUndefined();
+	await mgr.destroy();
+});
+
+test("local re-ingest preserves a raw span for a key the parse did NOT re-produce", async () => {
+	const { mgr } = makeManager();
+	const doc = await mgr.getDoc("keep-deg.md");
+	const coordsSpan = "coords: [\n  1,\n  2,\n]";
+	doc.transact(() => {
+		doc.getArray<string>("frontmatter_order").push(["coords", "title"]);
+		doc.getMap<string>("frontmatter").set("title", '"old"');
+		doc.getMap<string>("frontmatter_raw").set("coords", coordsSpan);
+		doc.getText("content").insert(0, "b\n");
+	});
+	mgr.markSynced("keep-deg.md");
+	// Edited disk carries only `title`; the parse re-produces `title` alone. The
+	// delete pass must touch ONLY keys it wrote as good values, leaving the
+	// still-degraded `coords` raw span intact (guards the safe-delete scope).
+	await mgr.applyLocalEdit("keep-deg.md", "---\ntitle: new\n---\nb\n", true);
+	expect(rawFrontmatterOf(doc).coords).toBe(coordsSpan);
 	await mgr.destroy();
 });
 
