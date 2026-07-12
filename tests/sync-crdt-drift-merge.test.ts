@@ -363,4 +363,39 @@ describe("BUG 2: un-pushed disk drift is merged, not clobbered", () => {
 		expect(out).toContain("local");
 		expect(out).toContain("REMOTE");
 	});
+
+	test("crdt topic DOWN: the seeded drift is durably queued (reconnect-window ship guarantee)", async () => {
+		// The reconnect window: the SYNC topic delivered this fan-out but the crdt
+		// topic has not re-joined (`crdtLive()` false), so the seed's live send is
+		// dropped. Once flushFromCrdt advances the baseline to the merged content,
+		// the debounced pushFile echo-skips — the drift would be stranded. The
+		// guard durably queues it so the next flush ships the merged Y.Doc state.
+		const { e, remoteDelta, flushed } = await scenario("bug2-topicdown");
+		e.setCrdtLiveCheck(() => false);
+
+		await (e as any).applyPushedNoteUpdate("id-a", remoteDelta, "HEAD");
+
+		// Local merge still preserved the drift on disk...
+		const out = flushed();
+		expect(out).toContain("local");
+		expect(out).toContain("REMOTE");
+
+		// ...AND a durable crdt-tagged queue entry exists to ship it.
+		const entry = (e as any).queue
+			.all()
+			.find((q: any) => q.noteId === "id-a" && q.crdt === true);
+		expect(entry).toBeDefined();
+	});
+
+	test("crdt topic UP: no redundant queue entry (the live send ships the seed)", async () => {
+		// When the crdt topic is joined, manager.onUpdate ships the seed live over
+		// the channel, so the durable queue must NOT also carry it.
+		const { e, remoteDelta } = await scenario("bug2-topicup");
+		e.setCrdtLiveCheck(() => true);
+
+		await (e as any).applyPushedNoteUpdate("id-a", remoteDelta, "HEAD");
+
+		const queued = (e as any).queue.all().find((q: any) => q.noteId === "id-a");
+		expect(queued).toBeUndefined();
+	});
 });

@@ -897,6 +897,19 @@ export class SyncEngine {
 		if (!this.needsColdReconcile(normalized, disk)) return; // in-sync / no baseline
 		try {
 			await this.crdt.applyLocalEdit(noteId, disk);
+			// The seeded drift ships live via manager.onUpdate -> sendCrdt ONLY
+			// when the crdt topic is joined. In the reconnect window where the sync
+			// topic delivered THIS fan-out but the crdt topic has not re-joined yet
+			// (`!crdtLive()`), that update is dropped — and once the caller's
+			// flushFromCrdt advances the baseline to the merged disk content, the
+			// debounced pushFile echo-skips, stranding the drift until the note's
+			// next edit. Durably queue it (noteId-keyed, dedup) so the next flush
+			// ships the merged Y.Doc state regardless. Mirrors pushFile's own
+			// channel-down handling; `file` is a TFile past the guard above.
+			if (!(this.crdtLive?.() ?? true)) {
+				await this.enqueueCrdtEdit(file, noteId);
+				void this.flushQueue();
+			}
 		} catch (e) {
 			rlog().warn(
 				"crdt",

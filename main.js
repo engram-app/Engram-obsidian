@@ -17787,6 +17787,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Best-effort: never throws into the apply path. The caller has already
    *  established !isLiveBound. */
   async captureDiskDriftBeforeRemote(path, noteId) {
+    var _a, _b;
     if (!this.crdt) return;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     if (!(file instanceof import_obsidian21.TFile)) return;
@@ -17798,7 +17799,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk))
       try {
-        await this.crdt.applyLocalEdit(noteId, disk);
+        await this.crdt.applyLocalEdit(noteId, disk), (_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) == null || _b || (await this.enqueueCrdtEdit(file, noteId), this.flushQueue());
       } catch (e) {
         rlog().warn(
           "crdt",
