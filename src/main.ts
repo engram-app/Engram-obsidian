@@ -47,7 +47,7 @@ import {
 	type SyncPreviewContext,
 	type SyncStatus,
 } from "./types";
-import { RELEASES_URL, checkForPluginUpdate } from "./update-check";
+import { checkForPluginUpdate } from "./update-check";
 
 import { BaseStore } from "./base-store";
 import type { CrdtEnrollment } from "./crdt/enrollment";
@@ -244,16 +244,39 @@ export default class EngramSyncPlugin extends Plugin {
 
 	/** Notify-only update nudge for users who don't enable auto-update. Fetches
 	 *  the published manifest, and if it's ahead of the installed version shows a
-	 *  Notice linking to the release. Never installs — that's Obsidian's job. */
+	 *  clickable Notice that opens the Community plugins tab (where Obsidian's own
+	 *  Update button lives). Never self-installs — that's Obsidian's job, and
+	 *  store policy forbids plugins doing it themselves. */
 	private async nudgeIfUpdateAvailable(): Promise<void> {
 		const latest = await checkForPluginUpdate(this.manifest.version);
 		if (!latest) return;
 		const frag = activeDocument.createDocumentFragment();
 		frag.append(`Engram Vault Sync ${latest} is available. `);
-		const link = frag.createEl("a", { text: "View release", href: RELEASES_URL });
-		link.setAttr("target", "_blank");
-		frag.append(" or update in Settings → Community plugins.");
-		new Notice(frag, 15000);
+		const link = frag.createEl("a", { text: "Update in settings", href: "#" });
+		frag.append(".");
+		const notice = new Notice(frag, 15000);
+		link.addEventListener("click", (e) => {
+			e.preventDefault();
+			this.openCommunityPluginsUpdate();
+			notice.hide();
+		});
+	}
+
+	/** Take the user to the Community plugins settings tab and refresh Obsidian's
+	 *  update check so its own Update button is populated on arrival. All internal
+	 *  APIs are feature-detected; a shape change degrades to a no-op, never a throw. */
+	private openCommunityPluginsUpdate(): void {
+		const app = this.app as unknown as {
+			setting?: { open(): void; openTabById(id: string): void };
+			plugins?: { checkForUpdates?: () => unknown };
+		};
+		try {
+			app.plugins?.checkForUpdates?.();
+		} catch {
+			// best-effort badge refresh; the tab still opens below
+		}
+		app.setting?.open();
+		app.setting?.openTabById("community-plugins");
 	}
 
 	async onload(): Promise<void> {

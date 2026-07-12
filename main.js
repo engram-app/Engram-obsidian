@@ -20310,7 +20310,7 @@ _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
 var SyncEngine = _SyncEngine;
 
 // src/update-check.ts
-var import_obsidian22 = require("obsidian"), MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json", RELEASES_URL = "https://github.com/engram-app/Engram-obsidian/releases/latest";
+var import_obsidian22 = require("obsidian"), MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
 function isNewerVersion(latest, current) {
   var _a, _b;
   let a = latest.split(".").map((n) => Number.parseInt(n, 10) || 0), b = current.split(".").map((n) => Number.parseInt(n, 10) || 0);
@@ -21859,12 +21859,32 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   }
   /** Notify-only update nudge for users who don't enable auto-update. Fetches
    *  the published manifest, and if it's ahead of the installed version shows a
-   *  Notice linking to the release. Never installs — that's Obsidian's job. */
+   *  clickable Notice that opens the Community plugins tab (where Obsidian's own
+   *  Update button lives). Never self-installs — that's Obsidian's job, and
+   *  store policy forbids plugins doing it themselves. */
   async nudgeIfUpdateAvailable() {
     let latest = await checkForPluginUpdate(this.manifest.version);
     if (!latest) return;
     let frag = activeDocument.createDocumentFragment();
-    frag.append(`Engram Vault Sync ${latest} is available. `), frag.createEl("a", { text: "View release", href: RELEASES_URL }).setAttr("target", "_blank"), frag.append(" or update in Settings \u2192 Community plugins."), new import_obsidian26.Notice(frag, 15e3);
+    frag.append(`Engram Vault Sync ${latest} is available. `);
+    let link = frag.createEl("a", { text: "Update in settings", href: "#" });
+    frag.append(".");
+    let notice = new import_obsidian26.Notice(frag, 15e3);
+    link.addEventListener("click", (e) => {
+      e.preventDefault(), this.openCommunityPluginsUpdate(), notice.hide();
+    });
+  }
+  /** Take the user to the Community plugins settings tab and refresh Obsidian's
+   *  update check so its own Update button is populated on arrival. All internal
+   *  APIs are feature-detected; a shape change degrades to a no-op, never a throw. */
+  openCommunityPluginsUpdate() {
+    var _a, _b, _c, _d;
+    let app = this.app;
+    try {
+      (_b = (_a = app.plugins) == null ? void 0 : _a.checkForUpdates) == null || _b.call(_a);
+    } catch (e) {
+    }
+    (_c = app.setting) == null || _c.open(), (_d = app.setting) == null || _d.openTabById("community-plugins");
   }
   async onload() {
     var _a;

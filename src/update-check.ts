@@ -5,9 +5,6 @@ import { requestUrl } from "obsidian";
 export const MANIFEST_URL =
 	"https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
 
-/** GitHub Releases page users land on to grab the update. */
-export const RELEASES_URL = "https://github.com/engram-app/Engram-obsidian/releases/latest";
-
 /** True when `latest` is a strictly higher version than `current`.
  *  ponytail: numeric dot-triple only (our tags are clean, e.g. 1.12.17).
  *  If we ever ship pre-release suffixes (1.13.0-beta.1), swap in a semver lib. */
