@@ -1098,3 +1098,88 @@ describe("push join-gate — stale CRDT latch falls back to REST", () => {
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Sign-out gate — flushQueue must honor syncBlocked
+//
+// On sign-out the engine's WS/CRDT stack is torn down, but a queued edit made
+// while signed in can still flush on offline→online health-check recovery
+// (goOnline → flushQueue). Without gating flush on syncBlocked, that push goes
+// out with an empty bearer and spams the server with auth errors. The gate must
+// hold the queue until auth returns.
+// ---------------------------------------------------------------------------
+
+describe("sign-out gate — flushQueue respects syncBlocked", () => {
+	test("does NOT push queued entries while blocked; keeps them queued", async () => {
+		(mockApi.deleteNote as any).mockClear();
+		const engine = createEngine();
+		await (
+			engine as unknown as { queue: { enqueue: (e: any) => Promise<void> } }
+		).queue.enqueue({
+			path: "Notes/old.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+
+		engine.setSyncBlocked(true);
+		const flushed = await engine.flushQueue();
+
+		expect(flushed).toBe(0);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect((engine as unknown as { queue: { size: number } }).queue.size).toBe(1);
+	});
+
+	test("drains normally once unblocked", async () => {
+		(mockApi.deleteNote as any).mockClear();
+		const engine = createEngine();
+		await (
+			engine as unknown as { queue: { enqueue: (e: any) => Promise<void> } }
+		).queue.enqueue({
+			path: "Notes/old.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+
+		engine.setSyncBlocked(false);
+		const flushed = await engine.flushQueue();
+
+		expect(mockApi.deleteNote).toHaveBeenCalledTimes(1);
+		expect(flushed).toBe(1);
+	});
+
+	test("halts an in-flight drain when the gate closes mid-drain", async () => {
+		const engine = createEngine();
+		const q = (
+			engine as unknown as {
+				queue: { enqueue: (e: any) => Promise<void>; size: number };
+			}
+		).queue;
+		await q.enqueue({
+			path: "Notes/a.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+		await q.enqueue({
+			path: "Notes/b.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+
+		// The first delete signs the user out; the second must NOT go out with the
+		// now-empty bearer — the per-entry gate check must break the drain.
+		(mockApi.deleteNote as any).mockReset().mockImplementation(async () => {
+			engine.setSyncBlocked(true);
+			return { deleted: true, path: "" };
+		});
+
+		const flushed = await engine.flushQueue();
+
+		expect(mockApi.deleteNote).toHaveBeenCalledTimes(1);
+		expect(flushed).toBe(1);
+		expect(q.size).toBe(1);
+	});
+});

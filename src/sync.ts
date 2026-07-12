@@ -6086,6 +6086,13 @@ export class SyncEngine {
 
 		let flushed = 0;
 		for (const entry of entries) {
+			// Sync gate closed (signed out / onboarding not accepted): stop pushing.
+			// Checked per-entry so a drain already in flight when the gate closes
+			// (e.g. sign-out mid-drain) halts instead of finishing the snapshot with
+			// a now-empty bearer — the exact 401 spam this gate prevents. Remaining
+			// entries stay queued and drain when the gate reopens (re-auth →
+			// applySyncGate → fullSync → pushModifiedFiles → flushQueue).
+			if (this.syncBlocked) break;
 			try {
 				if (entry.action === "delete") {
 					try {

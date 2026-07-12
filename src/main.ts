@@ -945,7 +945,15 @@ export default class EngramSyncPlugin extends Plugin {
 		if (this.hasAuthConfigured()) {
 			this.registerVault()
 				.then(async (registered) => {
-					if (!registered) return;
+					if (!registered) {
+						// Registration failed (e.g. vault cap) but auth is present.
+						// Still re-evaluate the gate: a prior sign-out set it closed,
+						// and skipping applySyncGate here would strand the engine
+						// permanently blocked once the user re-auths. applySyncGate
+						// unblocks iff the auth+vault fingerprint is accepted.
+						await this.applySyncGate();
+						return;
+					}
 					const gateOpen = await this.applySyncGate();
 					if (!gateOpen) {
 						return this.doSyncWithFirstSyncCheck();
@@ -978,6 +986,13 @@ export default class EngramSyncPlugin extends Plugin {
 					console.error("Engram Sync: sync after settings change failed", e);
 					rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
 				});
+		} else {
+			// No auth (signed out / API key cleared): quiesce outbound sync.
+			// setupNoteStream above already dropped the WS/CRDT stack; block the
+			// queue engine (gates enqueue + flush) and stop remote-log POSTs so
+			// nothing hits the server with an empty bearer until re-auth.
+			this.syncEngine.setSyncBlocked(true);
+			rlog().setEnabled(false);
 		}
 	}
 
