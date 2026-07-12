@@ -3549,13 +3549,16 @@ export class SyncEngine {
 						// seeded base errs toward a false 409/conflict copy, the safe
 						// direction. Gate on "no base yet", not file existence: the room
 						// delivery can race the file onto disk before this event runs.
+						const np = normalizePath(event.path);
+						// Captured BEFORE the CAS-seed below (which creates an entry):
+						// undefined means this device has NO prior record of the note
+						// (a genuine first delivery, not a converged/raced one).
+						const priorState = this.syncState.get(np);
 						if (event.content_hash !== undefined) {
-							const np = normalizePath(event.path);
-							const prior = this.syncState.get(np);
-							if (prior?.serverHash === undefined) {
+							if (priorState?.serverHash === undefined) {
 								this.syncState.set(np, {
-									hash: prior?.hash ?? fnv1a(""),
-									version: event.version ?? prior?.version,
+									hash: priorState?.hash ?? fnv1a(""),
+									version: event.version ?? priorState?.version,
 									serverHash: event.content_hash,
 								});
 							}
@@ -3564,6 +3567,34 @@ export class SyncEngine {
 							"ws",
 							`CRDT-managed: skipping legacy body apply for ${event.path}`,
 						);
+						// First-delivery materialization (idle, room-free): a never-seen note
+						// (no prior syncState, no local file) that is idle is NOT enrolled here
+						// (fan-out isolation), so it can never join a room. Its live note_yjs_update
+						// fan-out is fire-and-forget and is MISSED if this device was offline when it
+						// fired (a note created before we connected). materializeRelocated below needs
+						// a SYNCED doc so it bails, leaving only the pull-discovery backstop, which
+						// serializes behind slow conflict resolution (9s+ observed) and loses the
+						// delivery-timing race (e2e test_27, and the broader created-before-connect
+						// class). Materialize now from AUTHORITATIVE content, like the pre-fan-out
+						// legacy apply did: inline body if the broadcast carries it, else one getNote
+						// fetch (serialize_note is hash-only in prod). This is real server content, not
+						// an unsynced empty projection, so it sidesteps the #547 premature-empty class.
+						// flushFromCrdt's markRecentlyFlushed suppresses the echo and records the CRDT
+						// baseline; CRDT still owns subsequent live edits. A note with a prior baseline
+						// is left to its convergence path, a live-bound one to its editor/room, and a
+						// synced doc (the rename case) to materializeRelocated below.
+						const synced =
+							typeof this.crdt.isSynced === "function" && this.crdt.isSynced(noteId);
+						if (
+							priorState === undefined &&
+							!synced &&
+							!this.isLiveBound(np) &&
+							!this.app.vault.getAbstractFileByPath(np)
+						) {
+							const body =
+								event.content ?? (await this.api.getNote(event.path)).content;
+							await this.flushFromCrdt(np, body);
+						}
 						// #189: a rename carries no content change, so it never produces a
 						// Y.Doc update — onFlushToDisk never fires for it — and enroll()
 						// above is a per-session no-op for an id this device already

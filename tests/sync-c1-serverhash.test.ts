@@ -32,6 +32,7 @@ const mockApi = {
 		server_time: "2026-01-01T00:00:00Z",
 	}),
 	getManifest: mock().mockResolvedValue(null),
+	getNote: mock().mockResolvedValue({ path: "", content: "" }),
 } as unknown as EngramApi;
 
 const mockApp = {
@@ -67,6 +68,14 @@ function createEngine(): SyncEngine {
 
 beforeEach(() => {
 	(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReset().mockReturnValue(null);
+	(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
+		.mockReset()
+		.mockReturnValue(null);
+	(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
+	(mockApi.getNote as ReturnType<typeof mock>).mockClear().mockResolvedValue({
+		path: "",
+		content: "",
+	});
 });
 
 describe("C1 branch records the CAS base from the WS event", () => {
@@ -198,5 +207,89 @@ describe("C1 branch enrolls a CRDT room ONLY for a live-bound note", () => {
 		} as any);
 
 		expect(enrollment.enroll).toHaveBeenCalledWith("note-id-open");
+	});
+});
+
+describe("C1 branch materializes a first-delivery idle note room-free", () => {
+	// A never-seen IDLE note materialized only via the CRDT room needs its doc
+	// SYNCED to write (materializeRelocated bails otherwise), and an idle note is
+	// deliberately NOT enrolled (fan-out isolation), so it would appear only via
+	// the slower pull backstop — and an EMPTY note (no CRDT update to flush) never
+	// materializes at all (e2e test_27). The broadcast is hash-only, so fetch the
+	// body once and write it room-free; CRDT owns subsequent live edits.
+	function fakeEnrollment() {
+		return { enroll: mock((_id: string) => {}), reset: mock((_id: string) => {}) };
+	}
+
+	test("idle upsert for a note with no local file fetches the body and creates the file", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockReturnValue(true),
+			isSynced: mock().mockReturnValue(false),
+		} as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setCrdtEnrollment(fakeEnrollment() as any);
+		engine.setLiveBoundCheck(() => false);
+		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
+			path: "new.md",
+			content: "",
+		});
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "new.md",
+			id: "note-id-new",
+			content_hash: "srv-h",
+			version: 1,
+		} as any);
+
+		// Empty first delivery still materializes now — not deferred to the pull.
+		expect(mockApi.getNote).toHaveBeenCalledWith("new.md");
+		expect(mockApp.vault.create).toHaveBeenCalled();
+	});
+
+	test("an idle note ALREADY on disk is not re-fetched (the backstop path owns it)", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockReturnValue(true),
+			isSynced: mock().mockReturnValue(false),
+		} as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setCrdtEnrollment(fakeEnrollment() as any);
+		engine.setLiveBoundCheck(() => false);
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue({
+			path: "exists.md",
+		});
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "exists.md",
+			id: "note-id-exists",
+			content_hash: "srv-h",
+			version: 1,
+		} as any);
+
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+	});
+
+	test("a live-bound first delivery is left to its room (no eager write)", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockReturnValue(true),
+			isSynced: mock().mockReturnValue(false),
+		} as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setCrdtEnrollment(fakeEnrollment() as any);
+		engine.setLiveBoundCheck(() => true);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "open.md",
+			id: "note-id-open2",
+			content_hash: "srv-h",
+			version: 1,
+		} as any);
+
+		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 });
