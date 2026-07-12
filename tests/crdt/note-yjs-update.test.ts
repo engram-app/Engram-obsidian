@@ -108,14 +108,21 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual([]); // but the doc stays resident for the editor
 	});
 
-	test("an unconfirmed note is skipped", async () => {
+	test("an unconfirmed-but-mapped note is confirmed and applied (the fan-out IS proof of a server row)", async () => {
+		// A fan-out arriving for a note this device has mapped but not confirmed
+		// is the server authoritatively pushing that note's bytes — proof it has a
+		// row. Dropping it opens the reconnect window where clearConfirmedNoteIds()
+		// un-confirms every note and fanned-out appends are silently skipped until
+		// a slow re-confirmation (>30s missed-open convergence,
+		// test_web_edit_reaches_obsidian_that_missed_room_open). Confirm and apply.
 		const { e, applied } = noteEngine({});
 		// Note deliberately NOT marked confirmed.
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(applied).toEqual([]);
-		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
+		expect((e as any).isNoteConfirmed("id-a")).toBe(true);
 	});
 
 	test("a note_id with no locally known path is skipped", async () => {

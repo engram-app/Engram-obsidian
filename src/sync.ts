@@ -2832,7 +2832,13 @@ export class SyncEngine {
 		if (!this.crdt) return;
 		const path = this.noteIdMap?.pathForId(noteId) ?? null;
 		if (!path) return; // not locally known — first-discovery is pull()'s job
-		if (!this.isNoteConfirmed(noteId)) return;
+		// A fan-out for a mapped note is the server pushing that note's bytes —
+		// authoritative proof it has a row. So confirm it here rather than dropping
+		// it. Without this, a reconnect (clearConfirmedNoteIds un-confirms every
+		// note for write-routing safety) opens a window where fanned-out appends are
+		// silently skipped until a slow re-confirmation — the >30s missed-open case
+		// (test_web_edit_reaches_obsidian_that_missed_room_open).
+		this.confirmNoteId(noteId);
 		if (this.isLiveBound(normalizePath(path))) return; // live channel owns open notes
 		try {
 			// A history-LESS doc (feed-synced, never in IDB) must NOT seed disk drift
