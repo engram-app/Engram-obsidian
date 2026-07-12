@@ -2296,6 +2296,12 @@ export class SyncEngine {
 							}
 							this.noteIdMap?.set(np, forceResp.note.id);
 							this.confirmNoteId(forceResp.note.id);
+							this.recordParseStatus(
+								forceResp.note.path ?? file.path,
+								"note",
+								forceResp.note.parse_status,
+								forceResp.note.parse_reason,
+							);
 						}
 					} else if (resolution.choice === "keep-remote") {
 						const localFile = this.app.vault.getFileByPath(file.path);
@@ -2343,6 +2349,12 @@ export class SyncEngine {
 							}
 							this.noteIdMap?.set(np, mergeResp.note.id);
 							this.confirmNoteId(mergeResp.note.id);
+							this.recordParseStatus(
+								mergeResp.note.path ?? file.path,
+								"note",
+								mergeResp.note.parse_status,
+								mergeResp.note.parse_reason,
+							);
 						}
 					}
 					// skip and keep-both handled by returning false / not pushing

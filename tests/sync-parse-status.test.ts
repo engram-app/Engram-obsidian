@@ -5,6 +5,7 @@
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -122,5 +123,63 @@ describe("SyncEngine.recordParseStatus", () => {
 		});
 		engine.recordParseStatus("notes/a.md", "note", "ok", null);
 		expect(engine.issues.get("notes/a.md")?.category).toBe("server");
+	});
+});
+
+const DEGRADED = {
+	parse_status: "degraded" as const,
+	parse_reason: {
+		code: "frontmatter_invalid_yaml" as const,
+		message: "Frontmatter isn't valid YAML",
+		detail: { key: null, line: 2, snippet: "date:YYYY-MM-DD" },
+	},
+};
+
+/** Drive pushFile's push-side 409 conflict resolution: first pushNote returns
+ *  a version conflict, the resolver picks `choice`, the retry push returns a
+ *  degraded :ok note. baseStore stays null so the 3-way auto-merge is skipped
+ *  and the interactive resolution branch runs. */
+async function pushWithConflictResolution(choice: "keep-local" | "merge"): Promise<SyncEngine> {
+	const engine = makeEngine();
+	(engine as unknown as { baseStore: null }).baseStore = null;
+	const file = new TFile("notes/c.md", 1000);
+	(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReturnValue(file);
+	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("# local");
+	(mockApi.pushNote as ReturnType<typeof mock>)
+		.mockReset()
+		.mockResolvedValueOnce({
+			conflict: true,
+			server_note: {
+				id: "id-1",
+				path: "notes/c.md",
+				title: "c",
+				content: "# remote",
+				folder: "notes",
+				tags: [],
+				mtime: 1,
+				created_at: "2026-01-01T00:00:00Z",
+				updated_at: "2026-01-01T00:00:00Z",
+				version: 5,
+			},
+		})
+		.mockResolvedValueOnce({
+			note: { id: "id-1", path: "notes/c.md", version: 6, content_hash: "h", ...DEGRADED },
+			chunks_indexed: 1,
+		});
+	engine.onConflict = async () =>
+		choice === "merge" ? { choice, mergedContent: "# merged" } : { choice };
+	await (engine as unknown as { pushFile(f: TFile): Promise<boolean> }).pushFile(file);
+	return engine;
+}
+
+describe("recordParseStatus wired into conflict re-push resolution", () => {
+	test("keep-local re-push (forceResp) records a frontmatter issue", async () => {
+		const engine = await pushWithConflictResolution("keep-local");
+		expect(engine.issues.get("notes/c.md")?.category).toBe("frontmatter");
+	});
+
+	test("merge re-push (mergeResp) records a frontmatter issue", async () => {
+		const engine = await pushWithConflictResolution("merge");
+		expect(engine.issues.get("notes/c.md")?.category).toBe("frontmatter");
 	});
 });
