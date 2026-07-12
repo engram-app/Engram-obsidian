@@ -86,7 +86,7 @@ function ensureTrailingNewline(s: string): string {
 }
 
 // Emit a single GOOD key as canonical YAML (its value is a JSON string). One key
-// per call so raw spans can interleave in source order — mirrors the backend
+// per call so raw spans can interleave in source order, mirroring the backend
 // Frontmatter.emit_key/2.
 function emitKey(key: string, valueJson: string): string {
 	const value: unknown = JSON.parse(valueJson);
