@@ -144,6 +144,30 @@ export function shouldReuseLiveStream(
 	return hasStream && everConnected && connectionKey === liveChannelKey;
 }
 
+/** Whether a channel may be built for the identity `getMe()` just authenticated
+ *  as. connectChannel() freezes the channel's topic userId from the getMe() id
+ *  at construction, while the socket later authenticates with this.authProvider's
+ *  token. On an OAuth rebind (settings mutated before the provider caught up —
+ *  including a rebind BACK to a previously-used account where the email-based
+ *  channelConnectionKey coincides, so shouldReuseLiveStream can't tell the
+ *  identities apart) getMe() can resolve against the STALE provider, freezing a
+ *  prior user's id into the topic while the socket authenticates as the current
+ *  user → the backend rejects the crdt: join "unauthorized" with no client-
+ *  visible retry (e2e-clerk test_84, the residual #229/#996 flavor). Refuse to
+ *  build a channel whose authenticated identity disagrees with the identity we
+ *  intend to connect as. Only guarded when an expected email is known (OAuth);
+ *  api-key auth carries no email and is single-identity, so an absent expected
+ *  or authenticated email accepts (can't verify, no worse than before). Case-
+ *  insensitive so a benign casing diff never triggers a false rebuild loop.
+ *  Exported pure so the decision is unit-testable without a plugin instance. */
+export function channelIdentityMatches(
+	expectedEmail: string | undefined,
+	authenticatedEmail: string | undefined,
+): boolean {
+	if (!expectedEmail || !authenticatedEmail) return true;
+	return expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
+}
+
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
@@ -1454,6 +1478,31 @@ export default class EngramSyncPlugin extends Plugin {
 				// was in flight — abort so we don't create an orphan channel.
 				if (epoch !== this.channelEpoch) {
 					rlog().info("channel", "connectChannel aborted — superseded by newer setup");
+					return;
+				}
+				// Identity guard: the topic userId is frozen from this getMe() id at
+				// construction while the socket later authenticates with
+				// this.authProvider's token. If the provider is still a PRIOR
+				// identity's when getMe() resolves (an OAuth rebind that mutated
+				// settings before the provider caught up, incl. a rebind BACK to a
+				// previously-used account where the email-based channelConnectionKey
+				// coincides), building now would mint crdt:<wrongUserId>:<vaultId> and
+				// the backend rejects the join "unauthorized". Retry (epoch-guarded,
+				// capped backoff) until the provider catches up or a newer
+				// setupNoteStream() supersedes. Never adopt a channel whose
+				// authenticated identity disagrees with the one we intend to connect
+				// as. See channelIdentityMatches.
+				if (!channelIdentityMatches(this.settings.userEmail, user.email)) {
+					rlog().warn(
+						"channel",
+						`connectChannel identity mismatch: getMe()=${user.email} but connecting as ${this.settings.userEmail}; provider not yet swapped, retrying`,
+					);
+					if (epoch === this.channelEpoch) {
+						window.setTimeout(
+							() => this.connectChannel(attempt + 1, epoch),
+							connectRetryDelayMs(attempt),
+						);
+					}
 					return;
 				}
 				const channel = new NoteChannel(
