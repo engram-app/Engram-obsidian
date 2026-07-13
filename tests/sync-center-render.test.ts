@@ -283,4 +283,49 @@ describe("renderSyncCenter — Needs attention cards", () => {
 		expect(text).toContain("Frontmatter isn't valid YAML");
 		expect(text).toContain("date:YYYY-MM-DD");
 	});
+
+	test("a note_processing_failed issue renders under 'Needs attention', not 'Retrying automatically'", () => {
+		const issue: SyncIssue = {
+			path: "notes/broken.md",
+			kind: "note",
+			category: "other",
+			message: "Processing failed",
+			parseReason: {
+				code: "note_processing_failed",
+				message: "Processing failed",
+				detail: null,
+			},
+			firstFailedAt: Date.now(),
+			lastFailedAt: Date.now(),
+			attempts: 1,
+		};
+		const plugin = makeMockPlugin([issue]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const text = allText(parent);
+		expect(text).toContain("1 needs attention");
+		expect(text).not.toContain("1 retrying");
+		expect(text).not.toContain("Temporary errors");
+		expect(text.toLowerCase()).not.toContain("retrying");
+		expect(text).toContain("Note couldn't be processed");
+	});
+
+	test("a plain 'other' push error (no parse reason) still renders under 'Retrying automatically'", () => {
+		const issue: SyncIssue = {
+			path: "notes/push-fail.md",
+			kind: "note",
+			category: "other",
+			status: 500,
+			message: "Request failed, status 500",
+			firstFailedAt: Date.now(),
+			lastFailedAt: Date.now(),
+			attempts: 1,
+		};
+		const plugin = makeMockPlugin([issue]);
+		renderSyncCenter(parent as unknown as HTMLElement, plugin, () => {});
+
+		const text = allText(parent);
+		expect(text).toContain("1 retrying");
+		expect(text).toContain("Temporary errors");
+	});
 });

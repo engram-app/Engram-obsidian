@@ -70,7 +70,7 @@ function groupedByCategory(
 ): Array<[SyncIssueCategory, SyncIssue[]]> {
 	const groups = new Map<SyncIssueCategory, SyncIssue[]>();
 	for (const issue of issues) {
-		if (!dispositions.includes(issueDisposition(issue.category))) continue;
+		if (!dispositions.includes(issueDisposition(issue.category, issue.parseReason))) continue;
 		const bucket = groups.get(issue.category) ?? [];
 		bucket.push(issue);
 		groups.set(issue.category, bucket);
@@ -86,10 +86,14 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	// issues are their own calm "not synced on your plan" tally — never folded
 	// into "needs attention" nor "retrying".
 	const planSkipCount = all.filter(
-		(i) => issueDisposition(i.category) === "informational",
+		(i) => issueDisposition(i.category, i.parseReason) === "informational",
 	).length;
-	const attentionCount = all.filter((i) => issueDisposition(i.category) === "actionable").length;
-	const retryingCount = all.filter((i) => issueDisposition(i.category) === "transient").length;
+	const attentionCount = all.filter(
+		(i) => issueDisposition(i.category, i.parseReason) === "actionable",
+	).length;
+	const retryingCount = all.filter(
+		(i) => issueDisposition(i.category, i.parseReason) === "transient",
+	).length;
 	const ignoredCount = plugin.syncEngine.ignoredFiles.size();
 
 	const dot = header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` });
@@ -283,7 +287,11 @@ function renderAttentionCard(
 	category: SyncIssueCategory,
 	issues: SyncIssue[],
 ): void {
-	const { title, hint } = remediation(category);
+	// Issues grouped here share a disposition (actionable), so for the "other"
+	// category they're all note_processing_failed. Pass the reason through so
+	// the card gets the accurate non-retrying copy instead of the generic
+	// "Sync failed... retrying automatically" default.
+	const { title, hint } = remediation(category, issues[0]?.parseReason);
 	const card = parent.createDiv({ cls: "engram-sync-center-card" });
 
 	const head = card.createDiv({ cls: "engram-sync-center-card-head" });
@@ -371,15 +379,9 @@ function renderFileRow(
 		reason.createSpan({ text: issue.parseReason.message });
 		const snippet = issue.parseReason.detail?.snippet;
 		if (snippet) reason.createEl("code", { text: snippet });
-		// note_processing_failed sits in the transient "Retrying automatically"
-		// section but will not self-heal on identical re-push. Surface the
-		// accurate, non-retrying remediation hint so the framing isn't misleading.
-		if (issue.parseReason.code === "note_processing_failed") {
-			reason.createEl("p", {
-				cls: "engram-sync-center-card-hint",
-				text: remediation(issue.category, issue.parseReason).hint,
-			});
-		}
+		// note_processing_failed now has its own accurate, non-retrying card in
+		// the "Needs attention" section (issueDisposition treats it as
+		// actionable), so no per-row hint duplication is needed here.
 	}
 
 	const actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });

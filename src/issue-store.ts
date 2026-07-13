@@ -203,7 +203,17 @@ export function shouldRetryAfterFailure(classified: CategorizedError, attempts: 
  *  Drives the Sync Center split and the "Retry all now" filter. */
 export type IssueDisposition = "informational" | "actionable" | "transient";
 
-export function issueDisposition(category: SyncIssueCategory): IssueDisposition {
+export function issueDisposition(
+	category: SyncIssueCategory,
+	parseReason?: ParseReason | null,
+): IssueDisposition {
+	// A per-entry server-side processing failure is bucketed under "other" but,
+	// unlike a genuine transient error, will NOT self-heal on an identical
+	// re-push. Render it as actionable so it doesn't sit under "Retrying
+	// automatically" with copy that contradicts its own behavior (review minor
+	// #3). Every other "other" issue (e.g. a real 5xx push error) is unaffected
+	// and stays transient via the switch below.
+	if (parseReason?.code === "note_processing_failed") return "actionable";
 	switch (category) {
 		case "needs_pro":
 		case "quota":

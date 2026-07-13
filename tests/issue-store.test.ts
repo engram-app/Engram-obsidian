@@ -338,6 +338,25 @@ describe("issueDisposition", () => {
 		expect(issueDisposition("other")).toBe("transient");
 	});
 
+	test("note_processing_failed is actionable, not transient", () => {
+		// A server-side per-entry processing failure won't self-heal on an
+		// identical re-push, so it must not sit under "Retrying automatically"
+		// even though its category is the transient "other" bucket.
+		const reason = {
+			code: "note_processing_failed" as const,
+			message: "Processing failed",
+			detail: null,
+		};
+		expect(issueDisposition("other", reason)).toBe("actionable");
+	});
+
+	test("a plain 'other' issue with no parse reason stays transient", () => {
+		// A real transient push error (e.g. a 5xx mapped to "other") must keep
+		// auto-retrying. Only the note_processing_failed code changes disposition.
+		expect(issueDisposition("other")).toBe("transient");
+		expect(issueDisposition("other", null)).toBe("transient");
+	});
+
 	test("a 402 limit error does not flap the plugin offline", () => {
 		expect(
 			shouldGoOffline(
