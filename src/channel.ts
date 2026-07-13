@@ -62,6 +62,25 @@ export function fullJitterDelay(windowMs: number, rng: () => number = Math.rando
 	return rng() * windowMs;
 }
 
+/** Whether the channel's frozen topic userId no longer matches the currently-
+ *  authenticated identity, so a reconnect must re-derive it before rejoining.
+ *  On an OAuth rebind BACK to a prior identity (A -> B -> A) the email-based
+ *  channelConnectionKey coincides, so setupNoteStream REUSES the live channel and
+ *  swaps its auth provider without re-deriving `this.userId`; the next reconnect
+ *  would rejoin `crdt:<staleUserId>:<vaultId>` while the socket authenticates as
+ *  the current user, and the backend rejects it "unauthorized" (e2e-clerk
+ *  test_84). Ids are case-sensitive UUIDs, so this does NOT fold case (unlike the
+ *  email-based channelIdentityMatches). An absent authenticated id means getMe()
+ *  could not verify, so treat as not-stale (no worse than before). Pure so the
+ *  decision is unit-testable without a live socket. */
+export function topicUserIdIsStale(
+	currentUserId: string,
+	authenticatedUserId: string | undefined | null,
+): boolean {
+	if (!authenticatedUserId) return false;
+	return currentUserId !== authenticatedUserId;
+}
+
 /** Warn threshold for an outbound frame's serialized size, in bytes (JSON string
  *  length is used as a fine proxy for actual byte size). Bandit's default
  *  transport `max_frame_size` is ~8 MB - a frame anywhere near that limit gets
@@ -131,6 +150,17 @@ export class NoteChannel {
 	 *  and a join-class failure by definition happens AFTER a successful open.
 	 *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
 	private joinFailureBackoffMs = 1000;
+	/** True once the socket has opened at least once this channel's lifetime. Gates
+	 *  the reconnect-only identity re-derivation (see openSocketInner): a fresh
+	 *  build already carries the correct userId from connectChannel's getMe(), so
+	 *  only RE-opens need re-verification. */
+	private hasOpened = false;
+	/** Set when the auth provider is swapped on a KEPT channel (an OAuth rebind
+	 *  that setupNoteStream reused rather than rebuilt). Signals that `this.userId`
+	 *  may be stale relative to the new identity, so the next reconnect must
+	 *  re-derive it from getMe() before rejoining `crdt:` (else the join is
+	 *  refused "unauthorized", e2e-clerk test_84). Cleared once verified. */
+	private identityMaybeStale = false;
 	private baseUrl: string;
 	private apiKey: string;
 	private userId: string;
@@ -212,6 +242,11 @@ export class NoteChannel {
 
 	setAuthProvider(provider: AuthProvider): void {
 		this.authProvider = provider;
+		// A provider swap on a kept channel may mean the identity changed (an OAuth
+		// rebind setupNoteStream reused instead of rebuilt). Mark the frozen userId
+		// as possibly stale so the next reconnect re-derives it before rejoining
+		// crdt:. A fresh build clears this on its first open.
+		this.identityMaybeStale = true;
 		rlog().info("channel", `setAuthProvider — type=${provider.constructor.name}`);
 	}
 
@@ -410,6 +445,36 @@ export class NoteChannel {
 			return;
 		}
 
+		// Reconnect-only identity guard (e2e-clerk test_84). A rebind BACK to a prior
+		// identity reuses this channel (the email-based channelConnectionKey coincides)
+		// and swaps its auth provider without re-deriving `this.userId`. Left as-is the
+		// reconnect below would rejoin crdt:<staleUserId>:<vaultId> while the socket
+		// authenticates as the current user, and the backend rejects it "unauthorized"
+		// with no client-visible retry. Re-derive the id from the same getMe() the
+		// build path uses and self-heal the topic before rejoining. Only on a RE-open
+		// after a provider swap: a fresh build already carries the correct id, and a
+		// plain network blip did not change identity. A probe failure (offline) or a
+		// missing id leaves the id untouched, no worse than before.
+		if (this.hasOpened && this.identityMaybeStale && this.authProbe) {
+			this.identityMaybeStale = false;
+			try {
+				const me = (await this.authProbe()) as { id?: string } | null;
+				const freshId = me?.id;
+				if (freshId && topicUserIdIsStale(this.userId, freshId)) {
+					rlog().warn(
+						"channel",
+						`reconnect identity refresh: topic userId ${this.userId} -> ${freshId} (provider swapped on a reused channel); rejoining under the authenticated id`,
+					);
+					this.userId = freshId;
+				}
+			} catch (e) {
+				rlog().info(
+					"channel",
+					`reconnect identity probe failed, keeping userId: ${errMsg(e)}`,
+				);
+			}
+		}
+
 		rlog().info(
 			"channel",
 			`openSocket — token.length=${token.length} source=${source} userId=${this.userId} vaultId=${this.vaultId ?? "null"}`,
@@ -441,6 +506,11 @@ export class NoteChannel {
 
 		this.ws.onopen = () => {
 			opened = true;
+			this.hasOpened = true;
+			// Identity verified for this socket (fresh build carried the correct id;
+			// a swapped reconnect just re-derived it above). Clear so a later network
+			// blip doesn't pay for a needless getMe.
+			this.identityMaybeStale = false;
 			this.reconnectMs = 1000;
 			// Clear any pending heartbeat from a previous connection so the first
 			// tick of the new connection doesn't incorrectly detect a timeout.

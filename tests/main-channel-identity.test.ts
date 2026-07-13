@@ -19,6 +19,7 @@
  * (settings.userEmail); retry until the provider catches up.
  */
 import { describe, expect, test } from "bun:test";
+import { topicUserIdIsStale } from "../src/channel";
 import { channelIdentityMatches } from "../src/main";
 
 describe("channelIdentityMatches", () => {
@@ -46,5 +47,41 @@ describe("channelIdentityMatches", () => {
 	test("accepts when getMe returned no email (cannot verify, no worse than before)", () => {
 		expect(channelIdentityMatches("a@example.com", undefined)).toBe(true);
 		expect(channelIdentityMatches("a@example.com", "")).toBe(true);
+	});
+});
+
+/**
+ * Tests: topicUserIdIsStale (channel.ts), the RECONNECT-path identity guard.
+ *
+ * Second half of the test_84 unauthorized bug. The build-time channelIdentityMatches
+ * guard only covers freshly BUILT channels. On a rebind BACK to a prior identity A
+ * (A -> B -> A) the email-based channelConnectionKey coincides, so
+ * shouldReuseLiveStream KEEPS the live NoteChannel instead of rebuilding it. The
+ * plugin then swaps the auth provider onto that kept channel (setAuthProvider) but
+ * never re-derives its frozen `this.userId`, so the next socket reconnect rejoins
+ * `crdt:<staleUserId>:<vaultId>` while the socket authenticates as the current user,
+ * and the backend rejects it "unauthorized". Before rejoining after a provider swap
+ * the channel re-derives its userId from getMe(); topicUserIdIsStale decides when a
+ * refresh is required. Ids are case-sensitive UUIDs (unlike emails), so no casing
+ * fold here.
+ */
+describe("topicUserIdIsStale", () => {
+	test("stale when the channel's frozen id disagrees with the authenticated id", () => {
+		// Rebind-back reused a channel minted as user B; getMe() now authenticates
+		// as A. Rejoining crdt:<B> would be refused unauthorized, so must refresh.
+		expect(topicUserIdIsStale("user-b", "user-a")).toBe(true);
+	});
+
+	test("not stale when the ids agree (the healthy reconnect, no needless refresh)", () => {
+		expect(topicUserIdIsStale("user-a", "user-a")).toBe(false);
+	});
+
+	test("case-sensitive: UUID ids are not folded", () => {
+		expect(topicUserIdIsStale("USER-A", "user-a")).toBe(true);
+	});
+
+	test("not stale when getMe returned no id (cannot verify, no worse than before)", () => {
+		expect(topicUserIdIsStale("user-a", undefined)).toBe(false);
+		expect(topicUserIdIsStale("user-a", "")).toBe(false);
 	});
 });
