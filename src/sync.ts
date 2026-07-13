@@ -6172,7 +6172,7 @@ export class SyncEngine {
 	 *  them. Wired to "Retry all now". */
 	async retryFailedNow(): Promise<number> {
 		for (const issue of this.issues.all()) {
-			if (issueDisposition(issue.category) !== "transient") continue;
+			if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
 			const file = this.app.vault.getFileByPath(normalizePath(issue.path));
 			if (!file) {
 				// File no longer exists locally — the failure is moot.
