@@ -792,7 +792,7 @@ function withClearedAuth(settings) {
   };
 }
 function cloudTabAction(settings, cloudUrl) {
-  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
+  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? "prompt-switch" : "render" : "auto-switch";
 }
 async function applyApiUrlChange(target, newUrl, save) {
   var _a;
@@ -16712,8 +16712,8 @@ async function applyVaultSwitch(plugin, value, name) {
 async function renderAccountTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
   if (action === "prompt-switch") {
-    new import_obsidian18.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
-      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`
+    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
     ).addButton(
       (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
         await applyApiUrlChange(

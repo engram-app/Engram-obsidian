@@ -18,9 +18,9 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 	// diagnostic on PR #162 caught this in CI).
 	if (action === "prompt-switch") {
 		new Setting(containerEl)
-			.setName("Currently signed in to a self-hosted instance")
+			.setName("Currently set to a self-hosted instance")
 			.setDesc(
-				`Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`,
+				`Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`,
 			)
 			.addButton((btn) =>
 				btn

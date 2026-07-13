@@ -108,10 +108,12 @@ export interface ApiUrlSwitchTarget {
 /** What renderAccountTab should do given the current settings and cloud URL.
  *
  *  - ``render``: already on cloud (or path-only difference) — just render the tab.
- *  - ``prompt-switch``: on a different backend AND has stored credentials.
- *    Render an explicit "Switch to Engram cloud" button; do NOT auto-wipe.
- *  - ``auto-switch``: on a different backend with NO credentials to lose —
- *    safe to silently apply the cloud URL.
+ *  - ``prompt-switch``: a different backend is configured (a self-host URL,
+ *    with or without credentials). Render an explicit "Switch to Engram cloud"
+ *    button; do NOT auto-wipe. A typed self-host URL is real user input even
+ *    before credentials exist, so rendering the Cloud tab must never clobber it.
+ *  - ``auto-switch``: only a truly fresh install (apiUrl never set) — no URL and
+ *    no creds to lose, so silently adopt the cloud URL.
  *
  *  Why this exists: ``renderAccountTab`` used to auto-call ``applyApiUrlChange``
  *  on every tab activation. For self-hosted users with valid credentials,
@@ -127,8 +129,11 @@ export function cloudTabAction(
 	if (!settings.apiUrl) return "auto-switch";
 	// Same-origin (even with /api path difference) — no apply needed.
 	if (!isBackendChange(settings.apiUrl, cloudUrl)) return "render";
-	const hasAuth = Boolean(settings.apiKey || settings.refreshToken);
-	return hasAuth ? "prompt-switch" : "auto-switch";
+	// A different backend is configured (e.g. a self-host URL entered before
+	// credentials). Never silently overwrite it — prompt for an explicit switch,
+	// whether or not creds are stored. Auto-switch is reserved for the empty-URL
+	// fresh install above; anything else is real user input to preserve.
+	return "prompt-switch";
 }
 
 /** Update `target.settings.apiUrl` and, if the new URL points at a different
