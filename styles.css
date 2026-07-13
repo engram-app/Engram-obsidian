@@ -1397,6 +1397,18 @@ body.is-mobile .engram-support-buttons > a {
 	margin-top: 2px;
 }
 
+.engram-sync-center-issue-reason {
+	color: var(--text-muted);
+	font-size: 11px;
+	margin-top: 2px;
+}
+
+.engram-sync-center-issue-reason code {
+	font-family: var(--font-monospace);
+	font-size: 11px;
+	margin-left: 4px;
+}
+
 .engram-sync-center-issue-actions {
 	display: flex;
 	gap: 4px;

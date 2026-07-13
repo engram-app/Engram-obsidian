@@ -104,6 +104,20 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	waitlistPromptSeen: false,
 };
 
+/** Structured reason a note's frontmatter failed to parse cleanly. Mirrors the
+ *  backend `parse_reason` shape (snake_case on the wire). `snippet` is already
+ *  capped <=200 chars server-side. */
+export interface ParseReasonDetail {
+	key: string | null;
+	line: number | null;
+	snippet: string;
+}
+export interface ParseReason {
+	code: "frontmatter_invalid_yaml" | "frontmatter_unparseable_key" | "note_processing_failed";
+	message: string;
+	detail: ParseReasonDetail | null;
+}
+
 /** A note as returned by POST /notes */
 export interface NoteResponse {
 	note: {
@@ -119,6 +133,8 @@ export interface NoteResponse {
 		version?: number;
 		/** Opaque server-side content hash (HMAC) — store per path, never compute locally. */
 		content_hash?: string;
+		parse_status?: "ok" | "degraded";
+		parse_reason?: ParseReason | null;
 	};
 	chunks_indexed: number;
 }
@@ -166,6 +182,8 @@ export interface SyncNoteChange {
 	updated_at: string;
 	deleted: boolean;
 	version?: number;
+	parse_status?: "ok" | "degraded";
+	parse_reason?: ParseReason | null;
 }
 
 /** An attachment entry from GET /sync/changes — metadata only, no bytes. */
@@ -346,6 +364,8 @@ export interface NoteDetail {
 	created_at: string;
 	updated_at: string;
 	version?: number;
+	parse_status?: "ok" | "degraded";
+	parse_reason?: ParseReason | null;
 }
 
 /** Attachment metadata as returned by POST /attachments */
@@ -435,6 +455,7 @@ export type SyncIssueCategory =
 	| "conflict"
 	| "needs_pro"
 	| "quota"
+	| "frontmatter"
 	| "other";
 
 /** A file the sync engine could not push or pull. Persisted across reloads
@@ -451,6 +472,8 @@ export interface SyncIssue {
 	sizeBytes?: number;
 	/** Billing/upgrade URL — set when category is "needs_pro". */
 	upgradeUrl?: string;
+	/** Structured parse failure detail — set when category is "frontmatter". */
+	parseReason?: ParseReason;
 	firstFailedAt: number;
 	lastFailedAt: number;
 	attempts: number;
@@ -513,6 +536,8 @@ export interface BatchUpsertResult {
 	server_path?: string;
 	server_note?: VersionConflictResponse["server_note"];
 	errors?: unknown;
+	parse_status?: "ok" | "degraded";
+	parse_reason?: ParseReason | null;
 }
 
 /** Response from POST /notes/batch. */
@@ -539,6 +564,8 @@ export interface VersionConflictResponse {
 		created_at: string;
 		updated_at: string;
 		version: number;
+		parse_status?: "ok" | "degraded";
+		parse_reason?: ParseReason | null;
 	};
 }
 

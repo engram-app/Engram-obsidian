@@ -86,6 +86,21 @@ describe("emitFrontmatter", () => {
 			values: { title: '"Hi"' },
 		});
 	});
+	// A degraded key lives in `raws` (out-of-band verbatim span), NOT `values`.
+	// emit must interleave it in source order and NEVER drop it — mirrors the
+	// backend Frontmatter.emit/3.
+	test("renders a degraded key's raw span verbatim, interleaved in source order", () => {
+		const order = ["title", "date"];
+		const values = { title: '"Hi"' };
+		const raws = { date: "date: 2024-01-01" };
+		expect(emitFrontmatter(order, values, raws)).toBe("title: Hi\ndate: 2024-01-01\n");
+	});
+	test("preserves a multi-line raw span byte-for-byte (degraded first)", () => {
+		const order = ["coords", "title"];
+		const values = { title: '"Hi"' };
+		const raws = { coords: "coords: [\n  1,\n  2,\n]" };
+		expect(emitFrontmatter(order, values, raws)).toBe("coords: [\n  1,\n  2,\n]\ntitle: Hi\n");
+	});
 });
 
 describe("projectNote", () => {
@@ -96,6 +111,13 @@ describe("projectNote", () => {
 	});
 	test("empty frontmatter -> body only", () => {
 		expect(projectNote([], {}, "body\n")).toBe("body\n");
+	});
+	test("materializes both good and degraded keys in source order", () => {
+		expect(
+			projectNote(["title", "date"], { title: '"Hi"' }, "body\n", {
+				date: "date: 2024-01-01",
+			}),
+		).toBe("---\ntitle: Hi\ndate: 2024-01-01\n---\nbody\n");
 	});
 	test("split then project round-trips a real note", () => {
 		const raw = "---\ntitle: Hi\ntags:\n  - a\n---\nthe body\n";
