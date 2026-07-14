@@ -16263,7 +16263,7 @@ function plannedPhases(choice, plan) {
 var TICK_INTERVAL_MS = 50;
 function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
   let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
-  return { current: Math.min(engineCurrent, total), total };
+  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
 }
 function settingsBarCounts(progress, planned, prevTotal) {
   var _a;
@@ -16274,7 +16274,11 @@ function settingsBarCounts(progress, planned, prevTotal) {
     progress.total,
     prevTotal
   );
-  return total > 0 ? { current, total, pct: Math.min(100, Math.round(current / total * 100)) } : { current: progress.current, total: 0, pct: 0 };
+  return {
+    current,
+    total,
+    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
+  };
 }
 var SyncProgressModal = class extends import_obsidian13.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
@@ -16397,7 +16401,7 @@ var SyncProgressModal = class extends import_obsidian13.Modal {
       let els = this.rowEls.get(row.phase);
       if (!els) continue;
       let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
-      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(`${row.current} / ${row.total}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
     }
   }
   onClose() {
@@ -16949,7 +16953,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
         progressContainer.removeClass("is-active"), prevTotals.clear();
         return;
       }
-      progressContainer.addClass("is-active");
+      progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
       let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
         progress,
         planned,

@@ -150,8 +150,12 @@ const TICK_INTERVAL_MS = 50;
  *  — if actual uploads exceed the prediction (files created mid-sync) the total
  *  grows to the real count so the row agrees with the completion recap, rather
  *  than pinning at the plan and disagreeing. Actual uploads are honest and can't
- *  balloon like the engine's examine-count, so raising the floor is safe. Pure
- *  for testing. */
+ *  balloon like the engine's examine-count, so raising the floor is safe.
+ *
+ *  `total === 0` is indeterminate (a plan-less phase whose engine total is
+ *  unknown, e.g. an incremental cursor pull): `current` is left un-clamped so
+ *  callers can still show the running count as activity — clamping it to a 0
+ *  total would freeze the display at "0". Pure for testing. */
 export function rowCounts(
 	planned: boolean,
 	plannedTotal: number,
@@ -160,7 +164,7 @@ export function rowCounts(
 	prevTotal: number,
 ): { current: number; total: number } {
 	const total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
-	return { current: Math.min(engineCurrent, total), total };
+	return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
 }
 
 /** Resolve what the settings-pane progress bar should show for one engine
@@ -191,10 +195,11 @@ export function settingsBarCounts(
 		progress.total,
 		prevTotal,
 	);
-	if (total > 0) {
-		return { current, total, pct: Math.min(100, Math.round((current / total) * 100)) };
-	}
-	return { current: progress.current, total: 0, pct: 0 };
+	return {
+		current,
+		total,
+		pct: total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0,
+	};
 }
 
 interface RowState {
@@ -456,7 +461,9 @@ export class SyncProgressModal extends Modal {
 				row.total > 0 ? Math.round((row.current / row.total) * 100) : row.done ? 100 : 0;
 			els.barInner.style.width = `${pct}%`;
 			els.barInner.toggleClass("is-complete", row.done);
-			els.countEl.setText(`${row.current} / ${row.total}`);
+			// total 0 = indeterminate (unknown-length pull): show the running count
+			// as activity rather than a frozen "0 / 0" or a misleading "3 / 0".
+			els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`);
 			els.statusEl.setText(row.done ? "✓" : row.seen ? "⟳" : "·");
 		}
 	}

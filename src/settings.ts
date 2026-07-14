@@ -60,6 +60,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 				prevTotals.clear();
 				return;
 			}
+			// A new sync's first event (container was inactive): drop any denominators
+			// left over from a prior sync that ended without a "complete" (e.g. it
+			// errored), so a stale total can't leak into this run's fallback rows.
+			if (!progressContainer.hasClass("is-active")) prevTotals.clear();
 			progressContainer.addClass("is-active");
 			// Route through the same plan-aware, clamped logic as the modal so
 			// this bar can't sit stuck-low, pin at a fake 100%, or overshoot.

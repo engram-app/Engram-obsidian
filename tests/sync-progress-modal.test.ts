@@ -301,6 +301,14 @@ describe("rowCounts — denominator does not balloon mid-sync", () => {
 	test("fallback row keeps its previous total when the engine reports 0", () => {
 		expect(rowCounts(false, 0, 4, 0, 12)).toEqual({ current: 4, total: 12 });
 	});
+
+	test("indeterminate fallback (total resolves to 0) keeps the raw count, not a clamped 0", () => {
+		// A plan-less phase whose engine total is 0 (incremental cursor pull) and
+		// no prior total: don't clamp current to the 0 denominator — the modal's
+		// fallback row and the settings bar both need the running count to show
+		// activity, else the display freezes at "0".
+		expect(rowCounts(false, 0, 3, 0, 0)).toEqual({ current: 3, total: 0 });
+	});
 });
 
 describe("settingsBarCounts — the settings-pane bar matches the plan-aware modal", () => {
