@@ -91,3 +91,25 @@ describe("BeaconBuffer", () => {
 		expect(JSON.parse(calls[0].opts.body).spans).toHaveLength(20);
 	});
 });
+
+describe("beacon path attributes (2026-07-14 deaf-note observability)", () => {
+	const { beaconNoteId, beaconRoute } = require("../src/api");
+
+	test("beaconNoteId extracts the first UUID from a request path", () => {
+		expect(beaconNoteId("/notes/019f45c5-7818-771b-9242-9ae8c7fd214f/updates")).toBe(
+			"019f45c5-7818-771b-9242-9ae8c7fd214f",
+		);
+		expect(beaconNoteId("/sync/changes")).toBeNull();
+	});
+
+	test("beaconRoute collapses UUIDs to :id and drops the query", () => {
+		expect(beaconRoute("/notes/019f45c5-7818-771b-9242-9ae8c7fd214f/updates?since=abc")).toBe(
+			"/notes/:id/updates",
+		);
+		expect(beaconRoute("/vault/heads")).toBe("/vault/heads");
+	});
+
+	test("beaconRoute stays within the 64-byte sanitizer bound", () => {
+		expect(beaconRoute(`/x/${"a".repeat(100)}`).length).toBeLessThanOrEqual(64);
+	});
+});

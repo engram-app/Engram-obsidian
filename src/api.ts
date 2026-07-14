@@ -208,6 +208,7 @@ export class EngramApi {
 			// fails the request above, including on the error path, so a failed
 			// push still yields a trace.
 			if (trace) {
+				const noteId = beaconNoteId(path);
 				this.beacon.enqueue({
 					trace_id: trace.traceId,
 					parent_span_id: trace.spanId,
@@ -217,6 +218,12 @@ export class EngramApi {
 					attributes: {
 						"engram.surface": "obsidian",
 						"engram.event_type": method.toLowerCase(),
+						// Which note and which route — the 2026-07-14 deaf-note hunt
+						// stalled on beacons that carried neither. note_id is a
+						// non-sensitive UUID; route has UUIDs collapsed to :id so its
+						// cardinality stays bounded.
+						...(noteId ? { "engram.note_id": noteId } : {}),
+						"engram.route": beaconRoute(path),
 					},
 				});
 			}
@@ -539,6 +546,23 @@ export class EngramApi {
  *  402. The body may arrive as `.json` (parsed) or `.text` (raw) depending on
  *  platform; we try both, defaulting safe values when either is missing so the
  *  caller always gets a typed error rather than a confusing decode crash. */
+const UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+
+/** First UUID in a request path — the note/attachment the call is about, or
+ *  null. UUIDs are non-sensitive; paths are never sent raw (see beaconRoute). */
+export function beaconNoteId(path: string): string | null {
+	UUID_SEGMENT.lastIndex = 0;
+	return UUID_SEGMENT.exec(path)?.[0]?.toLowerCase() ?? null;
+}
+
+/** Request path with UUID segments collapsed to `:id` and the query dropped —
+ *  a bounded-cardinality route label safe for span attributes (<=64 bytes per
+ *  the server-side BeaconSanitizer contract). */
+export function beaconRoute(path: string): string {
+	const bare = path.split("?")[0] ?? path;
+	return bare.replace(UUID_SEGMENT, ":id").slice(0, 64);
+}
+
 function parseLimitExceededError(e: unknown): LimitExceededError {
 	const err = e as { json?: unknown; text?: string };
 	let body: Record<string, unknown> = {};

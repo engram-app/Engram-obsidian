@@ -61,13 +61,6 @@ import type {
  *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
 export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
-/** Max forced re-handshakes for a live-bound note that stays diverged against
- *  the SAME server hash, before we record convergence and stop. Bounds the
- *  re-handshake so a genuinely-stuck note cannot loop forever (the 2026-07-09
- *  storm), while still RETRYING a dropped STEP1/STEP2 handshake a few times
- *  rather than treating one fire-and-forget attempt as delivered. */
-export const CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
-
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -652,9 +645,9 @@ export class SyncEngine {
 
 	/** Per-note re-handshake attempt tracking for the live-bound catch-up path,
 	 *  keyed by note_id. `hash` is the server content_hash being retried; a new
-	 *  hash starts a fresh episode. Bounds the re-handshake (see
-	 *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
-	 *  dropped handshake is still retried before we record convergence. */
+	 *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
+	 *  number): convergence comes from the deterministic REST delta pull, and a
+	 *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
 	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
 	private isNoteConfirmed(noteId: string | null): boolean {
@@ -2900,7 +2893,14 @@ export class SyncEngine {
 		// silently skipped until a slow re-confirmation — the >30s missed-open case
 		// (test_web_edit_reaches_obsidian_that_missed_room_open).
 		this.confirmNoteId(noteId);
-		if (this.isLiveBound(normalizePath(path))) return; // live channel owns open notes
+		if (this.isLiveBound(normalizePath(path))) {
+			// The live room owns open notes — but say so. Silent discards made the
+			// 2026-07-14 deaf-note incident invisible: every fan-out frame for the
+			// stuck note was dropped here with no trace. info-level: stored in the
+			// client_logs table (queryable per device), not shipped to Loki.
+			rlog().info("crdt", `fan-out skip (live-bound, room owns it): ${path}`);
+			return;
+		}
 		try {
 			// A history-LESS doc (feed-synced, never in IDB) must NOT seed disk drift
 			// (doubles the baseline) nor apply the bare delta (incomplete). Adopt full
@@ -2955,6 +2955,37 @@ export class SyncEngine {
 			// apply is left for retry, not hibernated.
 			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
 			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+		}
+	}
+
+	/** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
+	 *  since our real state vector over REST and apply it to the live Y.Doc —
+	 *  the editor binding paints it, no disk write. Returns true only when the
+	 *  doc verifiably reached server state (applied, no pending gap), so the
+	 *  caller records convergence for delivered data ONLY. Best-effort:
+	 *  isolates its own failure, never throws. */
+	private async restConvergeLiveBound(path: string, noteId: string): Promise<boolean> {
+		if (!this.crdt) return false;
+		try {
+			const since = toB64(await this.crdt.encodeStateVector(noteId));
+			const { update, head } = await this.api.getUpdates(noteId, since);
+			await this.crdt.applyRemoteUpdate(noteId, update);
+			const gapped =
+				typeof this.crdt.hasPendingGap === "function" &&
+				(await this.crdt.hasPendingGap(noteId));
+			if (gapped) {
+				rlog().warn(
+					"crdt",
+					`REST converge: pending gap remains for ${path} — retrying next poll`,
+				);
+				return false;
+			}
+			this.setCrdtHead(path, head);
+			rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`);
+			return true;
+		} catch (e) {
+			rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`);
+			return false;
 		}
 	}
 
@@ -4241,9 +4272,19 @@ export class SyncEngine {
 				if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
 						// An open, bound editor is the sole CRDT writer for the note —
-						// writing disk under it would fight the binding. Deliver the
-						// missed ops through a fresh handshake instead: reset lifts the
-						// once-per-session enrollment guard, enroll re-fires STEP1.
+						// writing disk under it would fight the binding. Two recovery
+						// legs, both through the Y.Doc (the binding paints the editor):
+						//   1. reset+enroll re-fires STEP1 so the room subscription is
+						//      re-registered for FUTURE live updates;
+						//   2. a REST delta pull converges the doc NOW, deterministically.
+						// Leg 2 replaced the bounded give-up that recorded convergence
+						// after 3 failed re-handshakes WITHOUT the data ever arriving —
+						// that stopped the 2026-07-09 re-handshake storm by trading it
+						// for a silent data hole: a live-bound note whose room broadcast
+						// was lost went permanently deaf (2026-07-14 incident). REST
+						// converge terminates the loop by actually delivering the ops,
+						// so no give-up is needed; a REST failure retries at the poll
+						// cadence (5 min per note — bounded, not a storm).
 						const key = noteId ?? normalized;
 						const prevAttempt = this.crdtRehandshakeAttempts.get(key);
 						const attempts =
@@ -4252,22 +4293,21 @@ export class SyncEngine {
 								: 1;
 						rlog().warn(
 							"pull",
-							`CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`,
+							`CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`,
 						);
 						if (noteId && this.crdtEnrollment) {
 							this.crdtEnrollment.reset(noteId);
 							this.crdtEnrollment.enroll(noteId);
 						}
-						if (attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
-							// Bounded give-up: record convergence so the poll STOPS re-handshaking.
-							// Advancing serverHash breaks the old every-5min-forever loop (the
-							// 2026-07-09 storm engine); the attempt cap first RETRIES a possibly-
-							// dropped STEP1/STEP2 a few times so a lost handshake is not silently
-							// treated as delivered. We did NOT write disk (the editor owns the
-							// body), so record the REAL local content hash — NOT a 0 sentinel, which
-							// a later cold-note check would misread as a local divergence and
-							// spuriously route to the conflict flow.
+						const converged = noteId
+							? await this.restConvergeLiveBound(normalized, noteId)
+							: false;
+						if (converged) {
 							this.crdtRehandshakeAttempts.delete(key);
+							// We did NOT write disk (the editor owns the body), so record
+							// the REAL local content hash — NOT a 0 sentinel, which a later
+							// cold-note check would misread as a local divergence and
+							// spuriously route to the conflict flow.
 							const boundFile = this.app.vault.getFileByPath(normalized);
 							const localHash =
 								stored?.hash ??
@@ -4278,8 +4318,8 @@ export class SyncEngine {
 								version: change.version,
 							});
 						} else {
-							// Keep serverHash UNrecorded so the next poll re-handshakes again if the
-							// ops still have not landed — retry, do not assume delivery.
+							// Keep serverHash UNrecorded so the next poll retries — never
+							// record convergence for data that has not arrived.
 							this.crdtRehandshakeAttempts.set(key, {
 								hash: change.content_hash,
 								attempts,

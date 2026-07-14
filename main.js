@@ -13664,7 +13664,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
    *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
   sendCrdt(docId, b64) {
     let t = this.crdtTopic;
-    return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
+    return !t || !this.crdtJoined ? (rlog().warn(
+      "channel",
+      `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`
+    ), !1) : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
@@ -17253,7 +17256,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -17522,9 +17525,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.confirmedNoteIds = /* @__PURE__ */ new Set();
     /** Per-note re-handshake attempt tracking for the live-bound catch-up path,
      *  keyed by note_id. `hash` is the server content_hash being retried; a new
-     *  hash starts a fresh episode. Bounds the re-handshake (see
-     *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
-     *  dropped handshake is still retried before we record convergence. */
+     *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
+     *  number): convergence comes from the deterministic REST delta pull, and a
+     *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
     this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
@@ -18990,7 +18993,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (!this.crdt) return;
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (path && (this.confirmNoteId(noteId), !this.isLiveBound((0, import_obsidian21.normalizePath)(path))))
+    if (path) {
+      if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path))) {
+        rlog().info("crdt", `fan-out skip (live-bound, room owns it): ${path}`);
+        return;
+      }
       try {
         if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)
           if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
@@ -19010,6 +19017,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
       }
+    }
+  }
+  /** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
+   *  since our real state vector over REST and apply it to the live Y.Doc —
+   *  the editor binding paints it, no disk write. Returns true only when the
+   *  doc verifiably reached server state (applied, no pending gap), so the
+   *  caller records convergence for delivered data ONLY. Best-effort:
+   *  isolates its own failure, never throws. */
+  async restConvergeLiveBound(path, noteId) {
+    if (!this.crdt) return !1;
+    try {
+      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
+      return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().warn(
+        "crdt",
+        `REST converge: pending gap remains for ${path} \u2014 retrying next poll`
+      ), !1) : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
+    } catch (e) {
+      return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), !1;
+    }
   }
   /** Pull remote changes and apply to the vault via the ordered cursor feed.
    *
@@ -19612,8 +19638,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
             if (rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`
-            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
+              `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
+            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
               this.crdtRehandshakeAttempts.delete(key);
               let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
