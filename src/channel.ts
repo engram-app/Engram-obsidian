@@ -722,6 +722,14 @@ export class NoteChannel {
 						this.onPlanState?.(plan);
 					}
 				} else if (topic === this.crdtTopic && !this.crdtJoined) {
+					// NOTE: the backend now ACKs every routed crdt_msg with an ok reply
+					// (2026-07-14), so "ok on this topic while !crdtJoined" is no longer
+					// unambiguously the join ack. The only aliasing window is an
+					// in-flight message ack landing between disconnect()'s crdtJoined
+					// reset and the socket actually closing; a spurious flip there is
+					// undone by the onclose crdtJoined reset (#191), so ref-matching
+					// would be gold-plating. sendCrdt refuses while !crdtJoined, so no
+					// message acks exist before the true join ack on a fresh socket.
 					// The crdt: topic join succeeded — the backend is CRDT-capable.
 					// Activate CRDT routing in the SyncEngine via the onCrdtJoined
 					// callback. Until this fires, all markdown saves use the legacy

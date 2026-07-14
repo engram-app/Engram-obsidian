@@ -13134,17 +13134,26 @@ var EngramApi = class _EngramApi {
         body: body !== void 0 ? JSON.stringify(body) : void 0
       });
     } finally {
-      trace && this.beacon.enqueue({
-        trace_id: trace.traceId,
-        parent_span_id: trace.spanId,
-        name: "obsidian.push",
-        start_us: startUs,
-        end_us: Date.now() * 1e3,
-        attributes: {
-          "engram.surface": "obsidian",
-          "engram.event_type": method.toLowerCase()
-        }
-      });
+      if (trace) {
+        let noteId = beaconNoteId(path);
+        this.beacon.enqueue({
+          trace_id: trace.traceId,
+          parent_span_id: trace.spanId,
+          name: "obsidian.push",
+          start_us: startUs,
+          end_us: Date.now() * 1e3,
+          attributes: {
+            "engram.surface": "obsidian",
+            "engram.event_type": method.toLowerCase(),
+            // Which note and which route — the 2026-07-14 deaf-note hunt
+            // stalled on beacons that carried neither. note_id is a
+            // non-sensitive UUID; route has UUIDs collapsed to :id so its
+            // cardinality stays bounded.
+            ...noteId ? { "engram.note_id": noteId } : {},
+            "engram.route": beaconRoute(path)
+          }
+        });
+      }
     }
   }
   /** Health check — no auth required. */
@@ -13343,7 +13352,15 @@ var EngramApi = class _EngramApi {
     var _a;
     return ((_a = (await this.request("GET", "/folders/explicit")).json.folders) != null ? _a : []).map((f) => f.name);
   }
-};
+}, UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+function beaconNoteId(path) {
+  var _a, _b, _c;
+  return UUID_SEGMENT.lastIndex = 0, (_c = (_b = (_a = UUID_SEGMENT.exec(path)) == null ? void 0 : _a[0]) == null ? void 0 : _b.toLowerCase()) != null ? _c : null;
+}
+function beaconRoute(path) {
+  var _a;
+  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").slice(0, 64);
+}
 function parseLimitExceededError(e) {
   let err = e, body = {};
   if (err.json && typeof err.json == "object")
