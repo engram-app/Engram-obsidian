@@ -728,6 +728,7 @@ var require_diff_match_patch = __commonJS({
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
+  channelIdentityMatches: () => channelIdentityMatches,
   default: () => EngramSyncPlugin,
   shouldReuseLiveStream: () => shouldReuseLiveStream
 });
@@ -12350,28 +12351,38 @@ function topLevelKeyOrder(block, map3) {
   }
   return order;
 }
-function emitFrontmatter(order, values) {
-  let present = order.filter((k) => Object.prototype.hasOwnProperty.call(values, k));
-  if (present.length === 0) return "";
-  let obj = {};
-  for (let k of present) obj[k] = JSON.parse(values[k]);
-  let out = stringify3(obj);
-  return out.endsWith(`
-`) ? out : `${out}
+function ensureTrailingNewline(s) {
+  return s === "" ? "" : s.endsWith(`
+`) ? s : `${s}
 `;
 }
-function projectNote(order, values, body) {
-  let block = emitFrontmatter(order, values);
+function emitKey(key, valueJson) {
+  let value = JSON.parse(valueJson);
+  return ensureTrailingNewline(stringify3({ [key]: value }));
+}
+function emitFrontmatter(order, values, raws = {}) {
+  let has = (m, k) => Object.prototype.hasOwnProperty.call(m, k), present = order.filter((k) => has(raws, k) || has(values, k));
+  if (present.length === 0) return "";
+  let out = "";
+  for (let key of present)
+    out += has(raws, key) ? ensureTrailingNewline(raws[key]) : emitKey(key, values[key]);
+  return ensureTrailingNewline(out);
+}
+function projectNote(order, values, body, raws = {}) {
+  let block = emitFrontmatter(order, values, raws);
   return block === "" ? body : `${FENCE}
 ${block}${FENCE}
 ${body}`;
 }
 
 // src/crdt/manager.ts
-var REMOTE_ORIGIN = "remote", FRONTMATTER_KEY = "frontmatter", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
+var REMOTE_ORIGIN = "remote", FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
 function frontmatterOf(doc2) {
   let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
   return { order, values };
+}
+function rawFrontmatterOf(doc2) {
+  return doc2.getMap(RAW_FRONTMATTER_KEY).toJSON();
 }
 var _CrdtManager = class _CrdtManager {
   constructor(opts) {
@@ -12597,7 +12608,7 @@ var _CrdtManager = class _CrdtManager {
   /** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
   async projectedText(noteId) {
     let e = await this.entry(noteId), { order, values } = frontmatterOf(e.doc);
-    return projectNote(order, values, e.text.toJSON());
+    return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
   }
   /**
    * Close and clean up a single doc entry (destroys the Y.Doc and the
@@ -12667,11 +12678,14 @@ var _CrdtManager = class _CrdtManager {
     let e = await this.entry(noteId), encoded = encodeStateAsUpdate(e.doc), clientIds = decodeStateVector(encodeStateVector(e.doc)).size;
     if (encoded.length < _CrdtManager.MAX_CONTENT_BYTES || clientIds < _CrdtManager.MAX_CLIENT_IDS)
       return !1;
-    let plaintext = e.text.toJSON(), { order, values } = frontmatterOf(e.doc), id2 = this.docId(noteId);
+    let plaintext = e.text.toJSON(), { order, values } = frontmatterOf(e.doc), raws = rawFrontmatterOf(e.doc), id2 = this.docId(noteId);
     e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2);
     let fresh = await this.entry(noteId);
     return fresh.doc.transact(() => {
-      this.applyFrontmatterInto(fresh.doc, order, values), fresh.text.insert(0, plaintext);
+      this.applyFrontmatterInto(fresh.doc, order, values);
+      let rawMap = fresh.doc.getMap(RAW_FRONTMATTER_KEY);
+      for (let [k, v] of Object.entries(raws)) rawMap.set(k, v);
+      fresh.text.insert(0, plaintext);
     }), !0;
   }
   // ---------------------------------------------------------------------------
@@ -12690,10 +12704,10 @@ var _CrdtManager = class _CrdtManager {
    * Pass an empty `order` + `values` to clear frontmatter.
    */
   applyFrontmatterInto(doc2, order, values) {
-    let map3 = doc2.getMap(FRONTMATTER_KEY), arr = doc2.getArray(ORDER_KEY), current = map3.toJSON();
+    let map3 = doc2.getMap(FRONTMATTER_KEY), arr = doc2.getArray(ORDER_KEY), rawMap = doc2.getMap(RAW_FRONTMATTER_KEY), current = map3.toJSON();
     doc2.transact(() => {
       for (let [k, v] of Object.entries(values))
-        current[k] !== v && map3.set(k, v);
+        current[k] !== v && map3.set(k, v), rawMap.has(k) && rawMap.delete(k);
       for (let k of Object.keys(current))
         k in values || map3.delete(k);
       arr.length > 0 && arr.delete(0, arr.length), order.length > 0 && arr.insert(0, order);
@@ -12723,10 +12737,12 @@ var _CrdtManager = class _CrdtManager {
       origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
-      let { order, values } = frontmatterOf(doc2), body = text2.toJSON();
+      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON();
       this.pendingFlush.set(
         id2,
-        Promise.resolve(this.opts.onFlushToDisk(noteId, projectNote(order, values, body)))
+        Promise.resolve(
+          this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
+        )
       );
     });
     let ready = persistence.whenSynced.then(() => {
@@ -13492,6 +13508,9 @@ function clampReconnectJitter(raw) {
 function fullJitterDelay(windowMs, rng = Math.random) {
   return rng() * windowMs;
 }
+function topicUserIdIsStale(currentUserId, authenticatedUserId) {
+  return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
+}
 var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
     this.ws = null;
@@ -13544,6 +13563,17 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  and a join-class failure by definition happens AFTER a successful open.
      *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
     this.joinFailureBackoffMs = 1e3;
+    /** True once the socket has opened at least once this channel's lifetime. Gates
+     *  the reconnect-only identity re-derivation (see openSocketInner): a fresh
+     *  build already carries the correct userId from connectChannel's getMe(), so
+     *  only RE-opens need re-verification. */
+    this.hasOpened = !1;
+    /** Set when the auth provider is swapped on a KEPT channel (an OAuth rebind
+     *  that setupNoteStream reused rather than rebuilt). Signals that `this.userId`
+     *  may be stale relative to the new identity, so the next reconnect must
+     *  re-derive it from getMe() before rejoining `crdt:` (else the join is
+     *  refused "unauthorized", e2e-clerk test_84). Cleared once verified. */
+    this.identityMaybeStale = !1;
     /** Current connection id, minted fresh per physical socket. */
     this.connId = null;
     this.authProvider = null;
@@ -13604,7 +13634,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     );
   }
   setAuthProvider(provider) {
-    this.authProvider = provider, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
+    this.authProvider = provider, this.identityMaybeStale = !0, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
   }
   /** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
    *  channel fires this instead of guessing the token is stale; the api client
@@ -13710,6 +13740,21 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
       return;
     }
+    if (this.hasOpened && this.identityMaybeStale && this.authProbe) {
+      this.identityMaybeStale = !1;
+      try {
+        let me = await this.authProbe(), freshId = me == null ? void 0 : me.id;
+        freshId && topicUserIdIsStale(this.userId, freshId) && (rlog().warn(
+          "channel",
+          `reconnect identity refresh: topic userId ${this.userId} -> ${freshId} (provider swapped on a reused channel); rejoining under the authenticated id`
+        ), this.userId = freshId);
+      } catch (e) {
+        rlog().info(
+          "channel",
+          `reconnect identity probe failed, keeping userId: ${errMsg(e)}`
+        );
+      }
+    }
     rlog().info(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
@@ -13728,7 +13773,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       return;
     }
     this.ws.onopen = () => {
-      opened = !0, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+      opened = !0, this.hasOpened = !0, this.identityMaybeStale = !1, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
@@ -15131,7 +15176,8 @@ var RETRY_CAP = 5;
 function shouldRetryAfterFailure(classified, attempts) {
   return classified.terminal ? !1 : attempts < RETRY_CAP;
 }
-function issueDisposition(category) {
+function issueDisposition(category, parseReason) {
+  if ((parseReason == null ? void 0 : parseReason.code) === "note_processing_failed") return "actionable";
   switch (category) {
     case "needs_pro":
     case "quota":
@@ -15139,12 +15185,18 @@ function issueDisposition(category) {
     case "too_large":
     case "auth":
     case "conflict":
+    case "frontmatter":
       return "actionable";
     default:
       return "transient";
   }
 }
-function remediation(category) {
+function remediation(category, reason) {
+  if ((reason == null ? void 0 : reason.code) === "note_processing_failed")
+    return {
+      title: "Note couldn't be processed",
+      hint: "The server couldn't process this note. Check its contents, then edit and save to try again."
+    };
   switch (category) {
     case "needs_pro":
       return {
@@ -15171,6 +15223,11 @@ function remediation(category) {
         title: "Unresolved conflict",
         hint: "Open the file to resolve the conflict, then sync again."
       };
+    case "frontmatter":
+      return {
+        title: "Frontmatter needs a fix",
+        hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line."
+      };
     case "server":
       return {
         title: "Server error",
@@ -15187,6 +15244,12 @@ function remediation(category) {
         hint: "An unexpected error \u2014 retrying automatically."
       };
   }
+}
+function parseStatusToIssue(parseStatus, parseReason) {
+  var _a;
+  if (parseStatus !== "degraded") return null;
+  let category = (parseReason == null ? void 0 : parseReason.code) === "note_processing_failed" ? "other" : "frontmatter", message = (_a = parseReason == null ? void 0 : parseReason.message) != null ? _a : "Frontmatter could not be parsed";
+  return parseReason ? { category, message, parseReason } : { category, message };
 }
 var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
 function healthCheckDelay(failures) {
@@ -15880,6 +15943,7 @@ function sectionHeading(parent, title) {
 var CATEGORY_ORDER = [
   "needs_pro",
   "quota",
+  "frontmatter",
   "too_large",
   "auth",
   "conflict",
@@ -15889,6 +15953,7 @@ var CATEGORY_ORDER = [
 ], CATEGORY_ICON = {
   needs_pro: "\u{1F512}",
   quota: "\u{1F5C4}",
+  frontmatter: "\u{1F4DD}",
   too_large: "\u{1F4E6}",
   auth: "\u{1F511}",
   conflict: "\u26A1"
@@ -15900,7 +15965,7 @@ function groupedByCategory(issues, dispositions) {
   var _a;
   let groups = /* @__PURE__ */ new Map();
   for (let issue of issues) {
-    if (!dispositions.includes(issueDisposition(issue.category))) continue;
+    if (!dispositions.includes(issueDisposition(issue.category, issue.parseReason))) continue;
     let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
     bucket.push(issue), groups.set(issue.category, bucket);
   }
@@ -15908,8 +15973,12 @@ function groupedByCategory(issues, dispositions) {
 }
 function renderHeader(parent, plugin) {
   let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
-    (i) => issueDisposition(i.category) === "informational"
-  ).length, attentionCount = all2.filter((i) => issueDisposition(i.category) === "actionable").length, retryingCount = all2.filter((i) => issueDisposition(i.category) === "transient").length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+    (i) => issueDisposition(i.category, i.parseReason) === "informational"
+  ).length, attentionCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "actionable"
+  ).length, retryingCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "transient"
+  ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
   header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
 }
 function renderActions(parent, plugin, refresh) {
@@ -15998,9 +16067,9 @@ function renderNeedsAttention(parent, plugin, refresh) {
     renderAttentionCard(body, plugin, refresh, category, list);
 }
 function renderAttentionCard(parent, plugin, refresh, category, issues) {
-  var _a;
-  let { title, hint } = remediation(category), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u26A0" }), head.createSpan({
+  var _a, _b;
+  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0" }), head.createSpan({
     cls: "engram-sync-center-card-title",
     text: `${title} (${issues.length})`
   }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
@@ -16036,10 +16105,16 @@ function renderRetrying(parent, plugin, refresh) {
     for (let issue of issues) renderFileRow(list, plugin, refresh, issue);
 }
 function renderFileRow(parent, plugin, refresh, issue) {
+  var _a;
   let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" });
   main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
   let meta = main.createDiv({ cls: "engram-sync-center-issue-meta" }), parts = [];
-  issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 "));
+  if (issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 ")), issue.parseReason) {
+    let reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
+    reason.createSpan({ text: issue.parseReason.message });
+    let snippet = (_a = issue.parseReason.detail) == null ? void 0 : _a.snippet;
+    snippet && reason.createEl("code", { text: snippet });
+  }
   let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
   actions.createEl("button", { text: "Open", cls: "mod-cta" }).addEventListener("click", () => openFile(plugin, issue.path)), actions.createEl("button", { text: "Ignore" }).addEventListener("click", () => {
     ignoreFilePermanently(plugin, issue.path, refresh);
@@ -17219,7 +17294,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -17270,6 +17345,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.settings = settings;
     this.saveData = saveData;
     this.debounceTimers = /* @__PURE__ */ new Map();
+    /** Paths that newly degraded (ok/none -> frontmatter issue) since the last
+     *  flush, awaiting the debounced Notice below. */
+    this.pendingDegraded = /* @__PURE__ */ new Set();
+    this.degradedNoticeTimer = null;
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
@@ -18373,7 +18452,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -18395,7 +18474,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
-    let isBinary = this.isBinaryFile(file), success = !1;
+    let isBinary = this.isBinaryFile(file), success = !1, pushedNoteParse;
     devLog().log(
       "push",
       `start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`
@@ -18520,7 +18599,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash,
                 version: forceResp.note.version,
                 serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_o = this.baseStore) == null || _o.set(np, content, forceResp.note.version)), (_p = this.noteIdMap) == null || _p.set(np, forceResp.note.id), this.confirmNoteId(forceResp.note.id);
+              }), forceResp.note.version != null && ((_o = this.baseStore) == null || _o.set(np, content, forceResp.note.version)), (_p = this.noteIdMap) == null || _p.set(np, forceResp.note.id), this.confirmNoteId(forceResp.note.id), this.recordParseStatus(
+                (_q = forceResp.note.path) != null ? _q : file.path,
+                "note",
+                forceResp.note.parse_status,
+                forceResp.note.parse_reason
+              );
             }
           } else if (resolution.choice === "keep-remote") {
             let localFile = this.app.vault.getFileByPath(file.path);
@@ -18531,7 +18615,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(serverNote.content),
                 version: serverNote.version,
                 serverHash: serverNote.content_hash
-              }), (_q = this.baseStore) == null || _q.set(np, serverNote.content, serverNote.version), (_r = this.noteIdMap) == null || _r.set(np, serverNote.id), this.confirmNoteId(serverNote.id);
+              }), (_r = this.baseStore) == null || _r.set(np, serverNote.content, serverNote.version), (_s = this.noteIdMap) == null || _s.set(np, serverNote.id), this.confirmNoteId(serverNote.id), this.recordParseStatus(
+                serverNote.path,
+                "note",
+                serverNote.parse_status,
+                serverNote.parse_reason
+              );
             }
           } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
             let mergeResp = await this.api.pushNote(
@@ -18545,11 +18634,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 hash: fnv1a(resolution.mergedContent),
                 version: mergeResp.note.version,
                 serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_s = this.baseStore) == null || _s.set(
+              }), mergeResp.note.version != null && ((_t2 = this.baseStore) == null || _t2.set(
                 np,
                 resolution.mergedContent,
                 mergeResp.note.version
-              )), (_t2 = this.noteIdMap) == null || _t2.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id);
+              )), (_u = this.noteIdMap) == null || _u.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id), this.recordParseStatus(
+                (_v = mergeResp.note.path) != null ? _v : file.path,
+                "note",
+                mergeResp.note.parse_status,
+                mergeResp.note.parse_reason
+              );
             }
           }
           return !1;
@@ -18569,15 +18663,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_u = this.baseStore) == null || _u.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_v = this.baseStore) == null || _v.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_w = this.noteIdMap) == null || _w.delete((0, import_obsidian21.normalizePath)(file.path)), (_x = this.noteIdMap) == null || _x.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
+          }), (_w = this.baseStore) == null || _w.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_x = this.baseStore) == null || _x.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_y = this.noteIdMap) == null || _y.delete((0, import_obsidian21.normalizePath)(file.path)), (_z = this.noteIdMap) == null || _z.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_y = this.baseStore) == null || _y.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_z = this.noteIdMap) == null || _z.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
+          }), serverVersion != null && ((_A = this.baseStore) == null || _A.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_B = this.noteIdMap) == null || _B.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
+        pushedNoteParse = {
+          path: (_C = resp.note.path) != null ? _C : file.path,
+          parseStatus: resp.note.parse_status,
+          parseReason: resp.note.parse_reason
+        };
       }
-      success = !0, this.issues.clear(file.path), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
+      success = !0, this.issues.clear(file.path), pushedNoteParse && this.recordParseStatus(
+        pushedNoteParse.path,
+        "note",
+        pushedNoteParse.parseStatus,
+        pushedNoteParse.parseReason
+      ), devLog().log("push", `ok: ${file.path}`), rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`), this.goOnline();
     } catch (e) {
       let msg = errMsg(e), classified = categorizeError(e);
       issueDisposition(classified.category) !== "informational" && console.error("Engram Sync: failed to push %s", file.path, e);
@@ -18596,8 +18700,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_B = (_A = this.issues.get(file.path)) == null ? void 0 : _A.attempts) != null ? _B : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_C = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_E = (_D = this.issues.get(file.path)) == null ? void 0 : _D.attempts) != null ? _E : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_F = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -18607,7 +18711,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_D = this.settings.vaultId) != null ? _D : void 0
+        vaultId: (_G = this.settings.vaultId) != null ? _G : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(file.path), this.releasePushSlot(), success && this.markRecentlyPushed(file.path), this.emitStatus();
@@ -19357,7 +19461,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         c.id,
         c.path,
         Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id);
+      ), (_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id), this.shouldIgnore(c.path) || this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
     }
     let nc = {
       path: c.path,
@@ -20051,7 +20155,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Record a successful batch-push result: sync state, base store, issue
    *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
   async recordBatchPushOk(file, content, hash, result) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f;
     let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
     if (serverPath) {
       let localFile = this.app.vault.getFileByPath(file.path);
@@ -20077,7 +20181,67 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let np = (0, import_obsidian21.normalizePath)(serverPath != null ? serverPath : file.path);
       (_e = this.noteIdMap) == null || _e.set(np, result.id), this.confirmNoteId(result.id);
     }
-    this.issues.clear(file.path);
+    this.issues.clear(file.path), this.recordParseStatus(
+      (_f = result.server_path) != null ? _f : file.path,
+      "note",
+      result.parse_status,
+      result.parse_reason
+    );
+  }
+  /** Record or clear a note's frontmatter parse issue from a backend
+   *  parse_status/parse_reason. Called on every push success + feed apply. When
+   *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
+   *  (a real error issue recorded elsewhere must survive). Fires a debounced
+   *  Notice ONLY on the ok->degraded transition into the "frontmatter"
+   *  category (a note that newly degrades with a user-fixable frontmatter
+   *  problem), so a steady-state degraded vault stays quiet, a re-recorded
+   *  already-degraded note does not re-notify, and a generic "other"
+   *  category failure (e.g. note_processing_failed) never enters the
+   *  Notice path at all. */
+  recordParseStatus(path, kind, parseStatus, parseReason) {
+    var _a;
+    let mapped = parseStatusToIssue(parseStatus, parseReason);
+    if (!mapped) {
+      let existing = this.issues.get(path);
+      existing && (existing.category === "frontmatter" || existing.parseReason) && this.issues.clear(path);
+      return;
+    }
+    let wasDegraded = ((_a = this.issues.get(path)) == null ? void 0 : _a.category) === "frontmatter", now = Date.now();
+    this.issues.record({
+      path,
+      kind,
+      category: mapped.category,
+      message: mapped.message,
+      parseReason: mapped.parseReason,
+      firstFailedAt: now,
+      lastFailedAt: now,
+      attempts: 1
+    }), !wasDegraded && mapped.category === "frontmatter" && (this.pendingDegraded.add(path), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = window.setTimeout(
+      () => this.flushDegradedNotice(),
+      DEGRADED_NOTICE_DEBOUNCE_MS
+    ));
+  }
+  /** Flush the pending degraded-transition burst into a single Notice.
+   *  Single note: names the file with an "Open note" link. Multiple: a
+   *  count pointing at Sync Center. Mirrors the clickable-Notice pattern in
+   *  limit-toast.ts. */
+  flushDegradedNotice() {
+    this.degradedNoticeTimer = null;
+    let paths = [...this.pendingDegraded];
+    if (this.pendingDegraded.clear(), paths.length !== 0)
+      if (paths.length === 1) {
+        let [path] = paths, noticeEl = new import_obsidian21.Notice(
+          `Engram: frontmatter problem in "${path.split("/").pop()}"`,
+          DEGRADED_NOTICE_DURATION_MS
+        ).noticeEl, link = noticeEl == null ? void 0 : noticeEl.createEl("a", { text: "Open note" });
+        link == null || link.addEventListener("click", () => {
+          this.app.workspace.openLinkText(path, "");
+        });
+      } else
+        new import_obsidian21.Notice(
+          `Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
+          DEGRADED_NOTICE_DURATION_MS
+        );
   }
   /** Single source of truth for the "pushing" progress event. Both push paths
    *  (pushModifiedFiles and pushAll) emit the identical shape; routing them
@@ -20477,7 +20641,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async retryFailedNow() {
     var _a;
     for (let issue of this.issues.all()) {
-      if (issueDisposition(issue.category) !== "transient") continue;
+      if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
       let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(issue.path));
       if (!file) {
         this.issues.clear(issue.path);
@@ -20659,7 +20823,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.wipedRemote.clear();
     for (let timer of this.remotelyDeleted.values())
       window.clearTimeout(timer);
-    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
@@ -22128,6 +22292,9 @@ async function generateClientId(app) {
 function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChannelKey) {
   return hasStream && everConnected && connectionKey === liveChannelKey;
 }
+function channelIdentityMatches(expectedEmail, authenticatedEmail) {
+  return !expectedEmail || !authenticatedEmail ? !0 : expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
+}
 var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin {
   constructor() {
     super(...arguments);
@@ -22783,6 +22950,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     ), this.api.getMe().then(async (user) => {
       if (epoch !== this.channelEpoch) {
         rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
+        return;
+      }
+      if (!channelIdentityMatches(this.settings.userEmail, user.email)) {
+        rlog().warn(
+          "channel",
+          `connectChannel identity mismatch: getMe()=${user.email} but connecting as ${this.settings.userEmail}; provider not yet swapped, retrying`
+        ), epoch === this.channelEpoch && window.setTimeout(
+          () => this.connectChannel(attempt + 1, epoch),
+          connectRetryDelayMs(attempt)
+        );
         return;
       }
       let channel = new NoteChannel(

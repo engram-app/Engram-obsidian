@@ -18,6 +18,7 @@ import {
 	categorizeError,
 	healthCheckDelay,
 	issueDisposition,
+	parseStatusToIssue,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
 } from "./issue-store";
@@ -37,6 +38,7 @@ import type {
 	ManifestResponse,
 	NoteChange,
 	NoteStreamEvent,
+	ParseReason,
 	QueueEntry,
 	ReconcileResult,
 	SyncChange,
@@ -200,6 +202,11 @@ const ECHO_COOLDOWN_MS = 5000;
  *  on #970 backends a long TTL cannot swallow another device's real delete. */
 const WIPE_ECHO_COOLDOWN_MS = 10 * 60_000;
 
+/** Debounce window for the ok->degraded transition Notice: aggregates a
+ *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
+const DEGRADED_NOTICE_DEBOUNCE_MS = 1500;
+const DEGRADED_NOTICE_DURATION_MS = 10_000;
+
 /** Paths that are always ignored regardless of user settings.
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
@@ -270,6 +277,10 @@ const MIME_TYPES: Record<string, string> = {
 
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
+	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
+	 *  flush, awaiting the debounced Notice below. */
+	private pendingDegraded: Set<string> = new Set();
+	private degradedNoticeTimer: number | null = null;
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
@@ -1945,6 +1956,12 @@ export class SyncEngine {
 
 		const isBinary = this.isBinaryFile(file);
 		let success = false;
+		// Set in the note branch below so recordParseStatus can run AFTER the
+		// shared issues.clear(file.path) — resp (and thus parse_status) is only
+		// in scope inside that branch, but the clear is shared with attachments.
+		let pushedNoteParse:
+			| { path: string; parseStatus?: "ok" | "degraded"; parseReason?: ParseReason | null }
+			| undefined;
 		devLog().log(
 			"push",
 			`start ${isBinary ? "attachment" : "note"}: ${file.path} (active=${this.activePushCount})`,
@@ -2288,6 +2305,12 @@ export class SyncEngine {
 							}
 							this.noteIdMap?.set(np, forceResp.note.id);
 							this.confirmNoteId(forceResp.note.id);
+							this.recordParseStatus(
+								forceResp.note.path ?? file.path,
+								"note",
+								forceResp.note.parse_status,
+								forceResp.note.parse_reason,
+							);
 						}
 					} else if (resolution.choice === "keep-remote") {
 						const localFile = this.app.vault.getFileByPath(file.path);
@@ -2302,6 +2325,12 @@ export class SyncEngine {
 							this.baseStore?.set(np, serverNote.content, serverNote.version);
 							this.noteIdMap?.set(np, serverNote.id);
 							this.confirmNoteId(serverNote.id);
+							this.recordParseStatus(
+								serverNote.path,
+								"note",
+								serverNote.parse_status,
+								serverNote.parse_reason,
+							);
 						}
 					} else if (resolution.choice === "merge" && resolution.mergedContent != null) {
 						const mergeResp = await this.api.pushNote(
@@ -2329,6 +2358,12 @@ export class SyncEngine {
 							}
 							this.noteIdMap?.set(np, mergeResp.note.id);
 							this.confirmNoteId(mergeResp.note.id);
+							this.recordParseStatus(
+								mergeResp.note.path ?? file.path,
+								"note",
+								mergeResp.note.parse_status,
+								mergeResp.note.parse_reason,
+							);
 						}
 					}
 					// skip and keep-both handled by returning false / not pushing
@@ -2384,9 +2419,22 @@ export class SyncEngine {
 					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
 					this.confirmNoteId(resp.note.id);
 				}
+				pushedNoteParse = {
+					path: resp.note.path ?? file.path,
+					parseStatus: resp.note.parse_status,
+					parseReason: resp.note.parse_reason,
+				};
 			}
 			success = true;
 			this.issues.clear(file.path);
+			if (pushedNoteParse) {
+				this.recordParseStatus(
+					pushedNoteParse.path,
+					"note",
+					pushedNoteParse.parseStatus,
+					pushedNoteParse.parseReason,
+				);
+			}
 			devLog().log("push", `ok: ${file.path}`);
 			rlog().info("push", `Push ok: ${file.path} | type=${isBinary ? "attachment" : "note"}`);
 			this.goOnline();
@@ -3870,6 +3918,17 @@ export class SyncEngine {
 			// un-confirm: the id itself is retired (a recreate mints a fresh one),
 			// so there's nothing to revoke.
 			this.confirmNoteId(c.id);
+			// A note degraded on ANOTHER device surfaces here too: the feed carries
+			// parse_status/parse_reason on the raw SyncNoteChange, but the NoteChange
+			// mapping below deliberately drops them (that shape is also fed by the
+			// legacy GET /notes/changes, which never had these fields). Read them off
+			// `c` before the mapping erases them. Deleted entries skip this (a
+			// tombstone has no parse status). Ignored paths skip it too: applyChange
+			// below drops them, so a Sync Center card for an ignored note would be
+			// misleading (review minor #5).
+			if (!this.shouldIgnore(c.path)) {
+				this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
+			}
 		}
 		const nc: NoteChange = {
 			path: c.path,
@@ -5258,6 +5317,84 @@ export class SyncEngine {
 			this.confirmNoteId(result.id);
 		}
 		this.issues.clear(file.path);
+		this.recordParseStatus(
+			result.server_path ?? file.path,
+			"note",
+			result.parse_status,
+			result.parse_reason,
+		);
+	}
+
+	/** Record or clear a note's frontmatter parse issue from a backend
+	 *  parse_status/parse_reason. Called on every push success + feed apply. When
+	 *  the note parses cleanly we clear ONLY a prior frontmatter issue for the path
+	 *  (a real error issue recorded elsewhere must survive). Fires a debounced
+	 *  Notice ONLY on the ok->degraded transition into the "frontmatter"
+	 *  category (a note that newly degrades with a user-fixable frontmatter
+	 *  problem), so a steady-state degraded vault stays quiet, a re-recorded
+	 *  already-degraded note does not re-notify, and a generic "other"
+	 *  category failure (e.g. note_processing_failed) never enters the
+	 *  Notice path at all. */
+	recordParseStatus(
+		path: string,
+		kind: "note" | "attachment",
+		parseStatus: "ok" | "degraded" | undefined,
+		parseReason: ParseReason | null | undefined,
+	): void {
+		const mapped = parseStatusToIssue(parseStatus, parseReason);
+		if (!mapped) {
+			const existing = this.issues.get(path);
+			if (existing && (existing.category === "frontmatter" || existing.parseReason)) {
+				this.issues.clear(path);
+			}
+			return;
+		}
+		const wasDegraded = this.issues.get(path)?.category === "frontmatter";
+		const now = Date.now();
+		this.issues.record({
+			path,
+			kind,
+			category: mapped.category,
+			message: mapped.message,
+			parseReason: mapped.parseReason,
+			firstFailedAt: now,
+			lastFailedAt: now,
+			attempts: 1,
+		});
+		if (!wasDegraded && mapped.category === "frontmatter") {
+			this.pendingDegraded.add(path);
+			if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+			this.degradedNoticeTimer = window.setTimeout(
+				() => this.flushDegradedNotice(),
+				DEGRADED_NOTICE_DEBOUNCE_MS,
+			);
+		}
+	}
+
+	/** Flush the pending degraded-transition burst into a single Notice.
+	 *  Single note: names the file with an "Open note" link. Multiple: a
+	 *  count pointing at Sync Center. Mirrors the clickable-Notice pattern in
+	 *  limit-toast.ts. */
+	private flushDegradedNotice(): void {
+		this.degradedNoticeTimer = null;
+		const paths = [...this.pendingDegraded];
+		this.pendingDegraded.clear();
+		if (paths.length === 0) return;
+		if (paths.length === 1) {
+			const [path] = paths as [string];
+			const notice = new Notice(
+				`Engram: frontmatter problem in "${path.split("/").pop()}"`,
+				DEGRADED_NOTICE_DURATION_MS,
+			);
+			const noticeEl = (notice as unknown as { noticeEl?: HTMLElement }).noticeEl;
+			const link = noticeEl?.createEl("a", { text: "Open note" });
+			link?.addEventListener("click", () => void this.app.workspace.openLinkText(path, ""));
+		} else {
+			new Notice(
+				`Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
+				DEGRADED_NOTICE_DURATION_MS,
+			);
+		}
 	}
 
 	/** Single source of truth for the "pushing" progress event. Both push paths
@@ -6051,7 +6188,7 @@ export class SyncEngine {
 	 *  them. Wired to "Retry all now". */
 	async retryFailedNow(): Promise<number> {
 		for (const issue of this.issues.all()) {
-			if (issueDisposition(issue.category) !== "transient") continue;
+			if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
 			const file = this.app.vault.getFileByPath(normalizePath(issue.path));
 			if (!file) {
 				// File no longer exists locally — the failure is moot.
@@ -6357,6 +6494,9 @@ export class SyncEngine {
 		}
 		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+		this.degradedNoticeTimer = null;
+		this.pendingDegraded.clear();
 		this.stopHealthCheck();
 		this.queue.destroy();
 	}

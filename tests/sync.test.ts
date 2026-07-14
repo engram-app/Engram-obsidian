@@ -1846,6 +1846,22 @@ describe("SyncEngine offline queue integration", () => {
 			lastFailedAt: 1,
 			attempts: 1,
 		});
+		// ...and a note_processing_failed issue: bucketed under "other" but
+		// actionable (won't self-heal on identical re-push), so retry must skip it.
+		engine.issues.record({
+			path: "Notes/Poison.md",
+			kind: "note",
+			category: "other",
+			message: "x",
+			parseReason: {
+				code: "note_processing_failed",
+				message: "could not process",
+				detail: null,
+			},
+			firstFailedAt: 1,
+			lastFailedAt: 1,
+			attempts: 1,
+		});
 		mockApp.vault.getFileByPath.mockReturnValue(new TFile("Notes/Parked.md", 100));
 		mockApp.vault.cachedRead.mockResolvedValue("content");
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
@@ -1854,6 +1870,7 @@ describe("SyncEngine offline queue integration", () => {
 
 		expect(engine.issues.get("Notes/Parked.md")).toBeUndefined(); // retried + cleared
 		expect(engine.issues.get("Big.pdf")).toBeDefined(); // left for the user to act on
+		expect(engine.issues.get("Notes/Poison.md")).toBeDefined(); // not re-enqueued
 	});
 
 	test("flushQueue processes entries oldest-first", async () => {

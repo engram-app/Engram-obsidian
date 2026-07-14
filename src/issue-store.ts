@@ -1,5 +1,5 @@
 import { LimitExceededError } from "./limit-error";
-import type { SyncIssue, SyncIssueCategory } from "./types";
+import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
 /** Persistent store of sync failures keyed by file path.
  *
@@ -203,7 +203,17 @@ export function shouldRetryAfterFailure(classified: CategorizedError, attempts: 
  *  Drives the Sync Center split and the "Retry all now" filter. */
 export type IssueDisposition = "informational" | "actionable" | "transient";
 
-export function issueDisposition(category: SyncIssueCategory): IssueDisposition {
+export function issueDisposition(
+	category: SyncIssueCategory,
+	parseReason?: ParseReason | null,
+): IssueDisposition {
+	// A per-entry server-side processing failure is bucketed under "other" but,
+	// unlike a genuine transient error, will NOT self-heal on an identical
+	// re-push. Render it as actionable so it doesn't sit under "Retrying
+	// automatically" with copy that contradicts its own behavior (review minor
+	// #3). Every other "other" issue (e.g. a real 5xx push error) is unaffected
+	// and stays transient via the switch below.
+	if (parseReason?.code === "note_processing_failed") return "actionable";
 	switch (category) {
 		case "needs_pro":
 		case "quota":
@@ -211,6 +221,7 @@ export function issueDisposition(category: SyncIssueCategory): IssueDisposition 
 		case "too_large":
 		case "auth":
 		case "conflict":
+		case "frontmatter":
 			return "actionable";
 		default:
 			return "transient";
@@ -220,7 +231,20 @@ export function issueDisposition(category: SyncIssueCategory): IssueDisposition 
 /** Plain-language explanation + what-to-do for each failure category, shown on
  *  the Sync Center cards so a failure is understandable without decoding HTTP
  *  status codes. */
-export function remediation(category: SyncIssueCategory): { title: string; hint: string } {
+export function remediation(
+	category: SyncIssueCategory,
+	reason?: ParseReason | null,
+): { title: string; hint: string } {
+	// A per-entry server-side processing failure is bucketed under "other" but,
+	// unlike a genuine transient error, will NOT self-heal on an identical
+	// re-push. Give it accurate, non-retrying copy so we don't tell the user it
+	// is "retrying automatically" (review minor #3).
+	if (reason?.code === "note_processing_failed") {
+		return {
+			title: "Note couldn't be processed",
+			hint: "The server couldn't process this note. Check its contents, then edit and save to try again.",
+		};
+	}
 	switch (category) {
 		case "needs_pro":
 			return {
@@ -247,6 +271,11 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 				title: "Unresolved conflict",
 				hint: "Open the file to resolve the conflict, then sync again.",
 			};
+		case "frontmatter":
+			return {
+				title: "Frontmatter needs a fix",
+				hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line.",
+			};
 		case "server":
 			return {
 				title: "Server error",
@@ -263,6 +292,21 @@ export function remediation(category: SyncIssueCategory): { title: string; hint:
 				hint: "An unexpected error — retrying automatically.",
 			};
 	}
+}
+
+/** Turn a backend parse_status/parse_reason into the fields of a SyncIssue,
+ *  or null when the note parsed cleanly. frontmatter_* codes are the
+ *  actionable "frontmatter" category; note_processing_failed is a generic
+ *  batch failure -> the transient "other" bucket. */
+export function parseStatusToIssue(
+	parseStatus: "ok" | "degraded" | undefined,
+	parseReason: ParseReason | null | undefined,
+): { category: SyncIssueCategory; message: string; parseReason?: ParseReason } | null {
+	if (parseStatus !== "degraded") return null;
+	const category: SyncIssueCategory =
+		parseReason?.code === "note_processing_failed" ? "other" : "frontmatter";
+	const message = parseReason?.message ?? "Frontmatter could not be parsed";
+	return parseReason ? { category, message, parseReason } : { category, message };
 }
 
 const HEALTH_CHECK_BASE_MS = 5_000;

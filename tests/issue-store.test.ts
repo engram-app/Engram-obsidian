@@ -6,6 +6,7 @@ import {
 	healthCheckDelay,
 	issueDisposition,
 	limitReasonToCategory,
+	parseStatusToIssue,
 	remediation,
 	shouldGoOffline,
 	shouldRetryAfterFailure,
@@ -337,6 +338,25 @@ describe("issueDisposition", () => {
 		expect(issueDisposition("other")).toBe("transient");
 	});
 
+	test("note_processing_failed is actionable, not transient", () => {
+		// A server-side per-entry processing failure won't self-heal on an
+		// identical re-push, so it must not sit under "Retrying automatically"
+		// even though its category is the transient "other" bucket.
+		const reason = {
+			code: "note_processing_failed" as const,
+			message: "Processing failed",
+			detail: null,
+		};
+		expect(issueDisposition("other", reason)).toBe("actionable");
+	});
+
+	test("a plain 'other' issue with no parse reason stays transient", () => {
+		// A real transient push error (e.g. a 5xx mapped to "other") must keep
+		// auto-retrying. Only the note_processing_failed code changes disposition.
+		expect(issueDisposition("other")).toBe("transient");
+		expect(issueDisposition("other", null)).toBe("transient");
+	});
+
 	test("a 402 limit error does not flap the plugin offline", () => {
 		expect(
 			shouldGoOffline(
@@ -382,5 +402,76 @@ describe("healthCheckDelay (exponential backoff)", () => {
 		expect(healthCheckDelay(1)).toBe(10_000);
 		expect(healthCheckDelay(2)).toBe(20_000);
 		expect(healthCheckDelay(10)).toBe(60_000); // capped
+	});
+});
+
+describe("frontmatter parse issues", () => {
+	test("frontmatter category is actionable", () => {
+		expect(issueDisposition("frontmatter")).toBe("actionable");
+	});
+
+	test("remediation copy exists for frontmatter (no em dash)", () => {
+		const { title, hint } = remediation("frontmatter");
+		expect(title.length).toBeGreaterThan(0);
+		expect(hint.length).toBeGreaterThan(0);
+		expect(`${title} ${hint}`).not.toContain("—");
+	});
+
+	test("parseStatusToIssue returns null when ok", () => {
+		expect(parseStatusToIssue("ok", null)).toBeNull();
+		expect(parseStatusToIssue(undefined, undefined)).toBeNull();
+	});
+
+	test("maps frontmatter_invalid_yaml to frontmatter category with reason", () => {
+		const reason = {
+			code: "frontmatter_invalid_yaml",
+			message: "Frontmatter isn't valid YAML",
+			detail: { key: null, line: 2, snippet: "date:YYYY-MM-DD" },
+		};
+		const got = parseStatusToIssue("degraded", reason);
+		expect(got).not.toBeNull();
+		expect(got?.category).toBe("frontmatter");
+		expect(got?.message).toBe("Frontmatter isn't valid YAML");
+		expect(got?.parseReason).toEqual(reason);
+	});
+
+	test("maps frontmatter_unparseable_key to frontmatter category", () => {
+		const reason = {
+			code: "frontmatter_unparseable_key",
+			message: "A frontmatter value could not be parsed",
+			detail: { key: "tags", line: 3, snippet: "tags: [unclosed" },
+		};
+		expect(parseStatusToIssue("degraded", reason)?.category).toBe("frontmatter");
+	});
+
+	test("maps note_processing_failed to other category (generic failure)", () => {
+		const reason = {
+			code: "note_processing_failed",
+			message: "Processing failed",
+			detail: null,
+		};
+		expect(parseStatusToIssue("degraded", reason)?.category).toBe("other");
+	});
+
+	test("note_processing_failed remediation is accurate and does not claim auto-retry", () => {
+		const reason = {
+			code: "note_processing_failed" as const,
+			message: "Processing failed",
+			detail: null,
+		};
+		const { title, hint } = remediation("other", reason);
+		expect(title.length).toBeGreaterThan(0);
+		expect(hint.length).toBeGreaterThan(0);
+		expect(`${title} ${hint}`).not.toContain("—");
+		// A per-entry server-side failure will not self-heal on identical re-push,
+		// so the generic transient "retrying automatically" copy is misleading.
+		expect(hint.toLowerCase()).not.toContain("retrying");
+		expect(hint).not.toBe(remediation("other").hint);
+	});
+
+	test("degraded with null reason still yields a frontmatter issue", () => {
+		const got = parseStatusToIssue("degraded", null);
+		expect(got?.category).toBe("frontmatter");
+		expect(got?.message.length).toBeGreaterThan(0);
 	});
 });
