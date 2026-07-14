@@ -17,6 +17,7 @@ import {
 	plannedPhases,
 	renderCompletionSummary,
 	rowCounts,
+	settingsBarCounts,
 } from "../src/sync-progress-modal";
 import type { SyncPlan } from "../src/types";
 
@@ -277,9 +278,19 @@ describe("rowCounts — denominator does not balloon mid-sync", () => {
 		expect(rowCounts(true, 5, 3, 50, 5)).toEqual({ current: 3, total: 5 });
 	});
 
-	test("planned row clamps current so actual uploads never overshoot the total", () => {
-		// Plan under-counted (7 really uploaded vs 5 predicted) → clamp to 5.
-		expect(rowCounts(true, 5, 7, 50, 5)).toEqual({ current: 5, total: 5 });
+	test("planned row grows the denominator when actual uploads exceed the plan", () => {
+		// Plan under-counted (7 really uploaded vs 5 predicted) → the plan is a
+		// floor, so the row reports 7/7 and agrees with the completion recap
+		// (which counts the real 7). Actual uploads can't balloon like the
+		// engine's examine-count, so raising the floor is safe.
+		expect(rowCounts(true, 5, 7, 50, 5)).toEqual({ current: 7, total: 7 });
+	});
+
+	test("planned row still ignores the engine's inflated total when under the plan", () => {
+		// current (3) < plan (5): the engine's 50 examine-count is ignored; the
+		// plan floor holds. Guards against the Math.max change reintroducing the
+		// balloon via engineTotal.
+		expect(rowCounts(true, 5, 3, 50, 5)).toEqual({ current: 3, total: 5 });
 	});
 
 	test("unforeseen (fallback) row adopts the engine total", () => {
@@ -289,5 +300,49 @@ describe("rowCounts — denominator does not balloon mid-sync", () => {
 
 	test("fallback row keeps its previous total when the engine reports 0", () => {
 		expect(rowCounts(false, 0, 4, 0, 12)).toEqual({ current: 4, total: 12 });
+	});
+});
+
+describe("settingsBarCounts — the settings-pane bar matches the plan-aware modal", () => {
+	const phase = (total: number): { phase: "pulling"; label: string; total: number } => ({
+		phase: "pulling",
+		label: "Downloading",
+		total,
+	});
+
+	test("plan present: uses the manifest-diff total, ignoring the engine's inflated total", () => {
+		// Engine examines 50 files but only 3 of the planned 5 uploaded so far.
+		expect(settingsBarCounts({ current: 3, total: 50 }, phase(5), 5)).toEqual({
+			current: 3,
+			total: 5,
+			pct: 60,
+		});
+	});
+
+	test("no plan, known engine total: clamps current so the bar can't exceed 100%", () => {
+		// The "25 / 20" overshoot (bootstrap applied > manifest knownTotal).
+		expect(settingsBarCounts({ current: 25, total: 20 }, undefined, 0)).toEqual({
+			current: 20,
+			total: 20,
+			pct: 100,
+		});
+	});
+
+	test("no honest denominator (total 0): indeterminate — activity count, empty bar, no fake 100%", () => {
+		// Incremental cursor pull emits total 0; the old code fabricated
+		// total==current → a permanent 100% bar. Show the count, leave the bar empty.
+		expect(settingsBarCounts({ current: 7, total: 0 }, undefined, 0)).toEqual({
+			current: 7,
+			total: 0,
+			pct: 0,
+		});
+	});
+
+	test("no plan, engine total present: honest ratio", () => {
+		expect(settingsBarCounts({ current: 10, total: 50 }, undefined, 0)).toEqual({
+			current: 10,
+			total: 50,
+			pct: 20,
+		});
 	});
 });

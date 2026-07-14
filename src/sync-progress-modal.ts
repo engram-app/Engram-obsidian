@@ -145,8 +145,13 @@ const TICK_INTERVAL_MS = 50;
  *  `!planned` (a phase the plan didn't predict): trust the engine's total,
  *  falling back to the row's previous total when the engine reports 0.
  *
- *  `current` (the engine now reports *actual uploads*, not files processed) is
- *  clamped so it can never overshoot the denominator. Pure for testing. */
+ *  `current` (the engine now reports *actual uploads*, not files processed) can
+ *  never overshoot the denominator: on a planned row the plan is only a *floor*
+ *  — if actual uploads exceed the prediction (files created mid-sync) the total
+ *  grows to the real count so the row agrees with the completion recap, rather
+ *  than pinning at the plan and disagreeing. Actual uploads are honest and can't
+ *  balloon like the engine's examine-count, so raising the floor is safe. Pure
+ *  for testing. */
 export function rowCounts(
 	planned: boolean,
 	plannedTotal: number,
@@ -154,8 +159,42 @@ export function rowCounts(
 	engineTotal: number,
 	prevTotal: number,
 ): { current: number; total: number } {
-	const total = planned ? plannedTotal : engineTotal || prevTotal;
+	const total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
 	return { current: Math.min(engineCurrent, total), total };
+}
+
+/** Resolve what the settings-pane progress bar should show for one engine
+ *  event, so that secondary bar matches the plan-aware modal instead of
+ *  rendering the raw `current/total` (which mixes units — `current` is actual
+ *  work, `total` is files-examined — and could sit stuck-low, pin at 100%, or
+ *  overshoot past 100%).
+ *
+ *  - `planned` set (a manual sync stashed its plan): route through `rowCounts`
+ *    so the bar uses the honest manifest-diff denominator and clamps, exactly
+ *    like the modal row.
+ *  - engine total known (>0), no plan: clamp `current` to it (kills the
+ *    "25 / 20" overshoot).
+ *  - no honest denominator (0 — e.g. an incremental cursor pull whose total is
+ *    unknown until the stream ends): indeterminate. Show the running count as
+ *    activity with an empty bar, never a fabricated 100%.
+ *
+ *  Pure for testing. */
+export function settingsBarCounts(
+	progress: Pick<SyncProgress, "current" | "total">,
+	planned: PlannedPhase | undefined,
+	prevTotal: number,
+): { current: number; total: number; pct: number } {
+	const { current, total } = rowCounts(
+		Boolean(planned),
+		planned?.total ?? 0,
+		progress.current,
+		progress.total,
+		prevTotal,
+	);
+	if (total > 0) {
+		return { current, total, pct: Math.min(100, Math.round((current / total) * 100)) };
+	}
+	return { current: progress.current, total: 0, pct: 0 };
 }
 
 interface RowState {

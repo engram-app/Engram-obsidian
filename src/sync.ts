@@ -4022,13 +4022,15 @@ export class SyncEngine {
 			// Foreground (manual) sync only: report real downloads-so-far so the
 			// modal's Download row climbs instead of sitting frozen until done.
 			// `total` is only read by the settings bar (the modal keeps the plan
-			// total); bootstrap passes a real manifest count, an incremental delta
-			// has none so falls back to `applied` (never a misleading N/0).
+			// total). Bootstrap passes a real manifest count; an incremental delta
+			// has no honest total, so emit 0 — the settings bar renders that as
+			// indeterminate (activity count, empty bar) rather than the old
+			// total==current which fabricated a permanent 100% bar.
 			if (emitProgress) {
 				this.onSyncProgress?.({
 					phase: "pulling",
 					current: applied,
-					total: knownTotal ?? applied,
+					total: knownTotal ?? 0,
 					failed: 0,
 				});
 			}
@@ -4802,13 +4804,17 @@ export class SyncEngine {
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
-		// pushModifiedFiles already flushed the plan-skip tally into
-		// lastBatchSkipped, so surface it here as `skipped` (disjoint from
-		// failed — informational skips never increment the failure counter).
+		// The recap's "N synced" reads `current`, so it must count BOTH legs —
+		// a download-only sync (pushed=0) still synced `pulled` notes and must
+		// not report "Nothing needed syncing". pushModifiedFiles already flushed
+		// the plan-skip tally into lastBatchSkipped, so surface it here as
+		// `skipped` (disjoint from failed — informational skips never increment
+		// the failure counter).
+		const synced = pulled + pushed;
 		this.onSyncProgress?.({
 			phase: "complete",
-			current: pushed,
-			total: pushed,
+			current: synced,
+			total: synced,
 			failed: 0,
 			skipped: this.lastBatchSkipped,
 		});
@@ -5254,6 +5260,18 @@ export class SyncEngine {
 		this.issues.clear(file.path);
 	}
 
+	/** Single source of truth for the "pushing" progress event. Both push paths
+	 *  (pushModifiedFiles and pushAll) emit the identical shape; routing them
+	 *  through one helper stops the two from drifting when the reporting changes. */
+	private emitPushing(
+		current: number,
+		total: number,
+		failed: number,
+		currentPath?: string,
+	): void {
+		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
+	}
+
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -5277,7 +5295,7 @@ export class SyncEngine {
 		// shows progress too (the engine emits nothing otherwise).
 		const total = toSync.length;
 		if (total > 0) {
-			this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
+			this.emitPushing(0, total, 0);
 		}
 
 		// Protocol rev: notes via the batch endpoint (echo suppression inside),
@@ -5289,12 +5307,7 @@ export class SyncEngine {
 			noteFiles,
 			false,
 			(pushedSoFar, failedSoFar) => {
-				this.onSyncProgress?.({
-					phase: "pushing",
-					current: pushedSoFar,
-					total,
-					failed: failedSoFar,
-				});
+				this.emitPushing(pushedSoFar, total, failedSoFar);
 			},
 		);
 
@@ -5310,12 +5323,7 @@ export class SyncEngine {
 			const batch = perFile.slice(i, i + 10);
 			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
 			pushed += results.filter(Boolean).length;
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: pushed,
-				total,
-				failed: 0,
-			});
+			this.emitPushing(pushed, total, 0);
 		}
 
 		this.flushAttachmentLimitedToast();
@@ -5606,7 +5614,7 @@ export class SyncEngine {
 		devLog().log("push", `pushAll: ${total} files`);
 		rlog().info("push", `PushAll started — ${total} files`);
 
-		this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
+		this.emitPushing(0, total, 0);
 
 		// Protocol rev: notes go through POST /notes/batch (100 per request);
 		// attachments keep the per-file path. Pre-rev backends (or a sticky
@@ -5618,12 +5626,7 @@ export class SyncEngine {
 			noteFiles,
 			true,
 			(pushedSoFar, failedSoFar) => {
-				this.onSyncProgress?.({
-					phase: "pushing",
-					current: pushedSoFar,
-					total,
-					failed: failedSoFar,
-				});
+				this.emitPushing(pushedSoFar, total, failedSoFar);
 			},
 		);
 
@@ -5657,13 +5660,7 @@ export class SyncEngine {
 				}),
 			);
 			pushed += results.filter(Boolean).length;
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: pushed,
-				total,
-				failed,
-				currentPath: batch[batch.length - 1]!.path,
-			});
+			this.emitPushing(pushed, total, failed, batch[batch.length - 1]!.path);
 		}
 
 		// Flush first so the terminal "complete" can report the plan-skipped

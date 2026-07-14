@@ -4,7 +4,7 @@
 import { type App, PluginSettingTab } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import type EngramSyncPlugin from "./main";
-import { SyncProgressModal } from "./sync-progress-modal";
+import { SyncProgressModal, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
 import { renderAccountTab } from "./tabs/account-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
@@ -51,14 +51,25 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		const progressBarOuter = progressContainer.createDiv({ cls: "engram-progress-bar-outer" });
 		const progressBarInner = progressBarOuter.createDiv({ cls: "engram-progress-bar-inner" });
 
+		// Per-phase previous denominator, so a fallback (plan-less) row keeps its
+		// total when the engine momentarily reports 0. Cleared on completion.
+		const prevTotals = new Map<string, number>();
 		this.plugin.syncEngine.onSyncProgress = (progress) => {
 			if (progress.phase === "complete") {
 				progressContainer.removeClass("is-active");
+				prevTotals.clear();
 				return;
 			}
 			progressContainer.addClass("is-active");
-			const pct =
-				progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+			// Route through the same plan-aware, clamped logic as the modal so
+			// this bar can't sit stuck-low, pin at a fake 100%, or overshoot.
+			const planned = this.plugin.activeSyncPhases?.find((p) => p.phase === progress.phase);
+			const { current, total, pct } = settingsBarCounts(
+				progress,
+				planned,
+				prevTotals.get(progress.phase) ?? 0,
+			);
+			prevTotals.set(progress.phase, total);
 			const phaseLabel =
 				progress.phase === "deleting"
 					? "Deleting local files"
@@ -67,8 +78,13 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 						: progress.phase === "pulling"
 							? "Pulling notes"
 							: "Syncing attachments";
+			const failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
+			// total 0 = indeterminate (unknown-length incremental pull): show the
+			// running count as activity, no misleading "N / 0".
 			progressLabel.setText(
-				`${phaseLabel}... ${progress.current}/${progress.total}${progress.failed > 0 ? ` (${progress.failed} failed)` : ""}`,
+				total > 0
+					? `${phaseLabel}... ${current}/${total}${failedSuffix}`
+					: `${phaseLabel}... ${current}${failedSuffix}`,
 			);
 			progressBarInner.style.width = `${pct}%`;
 		};

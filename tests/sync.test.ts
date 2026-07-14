@@ -893,6 +893,30 @@ describe("SyncEngine.pull (fresh install)", () => {
 		expect(pulling).toEqual([1, 2]);
 	});
 
+	test("fullSync completion recap counts downloads, not just uploads", async () => {
+		const engine = createEngine();
+		let completeCurrent: number | null = null;
+		engine.onSyncProgress = (p) => {
+			if (p.phase === "complete") completeCurrent = p.current;
+		};
+
+		// Download-only sync: 2 notes pulled, nothing local to push.
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" }),
+				syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" }),
+			]),
+		);
+
+		const { pulled, pushed } = await engine.fullSync();
+
+		expect(pulled).toBe(2);
+		expect(pushed).toBe(0);
+		// The recap reads `current`; a download-only sync must report the 2
+		// pulled, not pushed=0 → "Already up to date. Nothing needed syncing."
+		expect(completeCurrent).toBe(2);
+	});
+
 	test("standalone pull() stays silent (no download progress on background pulls)", async () => {
 		const engine = createEngine();
 		const phases: string[] = [];

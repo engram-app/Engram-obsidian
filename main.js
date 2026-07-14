@@ -16187,8 +16187,19 @@ function plannedPhases(choice, plan) {
 }
 var TICK_INTERVAL_MS = 50;
 function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
-  let total = planned ? plannedTotal : engineTotal || prevTotal;
+  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
   return { current: Math.min(engineCurrent, total), total };
+}
+function settingsBarCounts(progress, planned, prevTotal) {
+  var _a;
+  let { current, total } = rowCounts(
+    !!planned,
+    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
+    progress.current,
+    progress.total,
+    prevTotal
+  );
+  return total > 0 ? { current, total, pct: Math.min(100, Math.round(current / total * 100)) } : { current: progress.current, total: 0, pct: 0 };
 }
 var SyncProgressModal = class extends import_obsidian13.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
@@ -16856,16 +16867,23 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
       text: "Syncing...",
       cls: "engram-progress-label"
-    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" });
+    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
     this.plugin.syncEngine.onSyncProgress = (progress) => {
+      var _a, _b;
       if (progress.phase === "complete") {
-        progressContainer.removeClass("is-active");
+        progressContainer.removeClass("is-active"), prevTotals.clear();
         return;
       }
       progressContainer.addClass("is-active");
-      let pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0, phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments";
+      let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
+        progress,
+        planned,
+        (_b = prevTotals.get(progress.phase)) != null ? _b : 0
+      );
+      prevTotals.set(progress.phase, total);
+      let phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments", failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
       progressLabel.setText(
-        `${phaseLabel}... ${progress.current}/${progress.total}${progress.failed > 0 ? ` (${progress.failed} failed)` : ""}`
+        total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
       ), progressBarInner.style.width = `${pct}%`;
     };
     let tabs = [
@@ -19428,7 +19446,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), emitProgress && ((_a = this.onSyncProgress) == null || _a.call(this, {
         phase: "pulling",
         current: applied,
-        total: knownTotal != null ? knownTotal : applied,
+        total: knownTotal != null ? knownTotal : 0,
         failed: 0
       })), !resp.has_more || !resp.next_cursor) break;
       cursor = resp.next_cursor;
@@ -19822,11 +19840,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
     await this.invalidateIfVaultChanged();
-    let prePullSync = this.lastSync, pulled = await this.pull(!0), pushed = await this.pushModifiedFiles(prePullSync);
+    let prePullSync = this.lastSync, pulled = await this.pull(!0), pushed = await this.pushModifiedFiles(prePullSync), synced = pulled + pushed;
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
-      current: pushed,
-      total: pushed,
+      current: synced,
+      total: synced,
       failed: 0,
       skipped: this.lastBatchSkipped
     }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
@@ -20061,34 +20079,29 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     this.issues.clear(file.path);
   }
+  /** Single source of truth for the "pushing" progress event. Both push paths
+   *  (pushModifiedFiles and pushAll) emit the identical shape; routing them
+   *  through one helper stops the two from drifting when the reporting changes. */
+  emitPushing(current, total, failed, currentPath) {
+    var _a;
+    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
+  }
   async pushModifiedFiles(sinceTimestamp) {
-    var _a, _b;
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
-    total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
+    total > 0 && this.emitPushing(0, total, 0);
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
       noteFiles,
       !1,
       (pushedSoFar, failedSoFar) => {
-        var _a2;
-        (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-          phase: "pushing",
-          current: pushedSoFar,
-          total,
-          failed: failedSoFar
-        });
+        this.emitPushing(pushedSoFar, total, failedSoFar);
       }
     ), perFile;
     batchOutcome ? (pushed += batchOutcome.pushed, perFile = attachFiles) : perFile = toSync;
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
-        phase: "pushing",
-        current: pushed,
-        total,
-        failed: 0
-      });
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, 0);
     }
     return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
@@ -20207,7 +20220,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
   }
   async pushAll(opts = {}) {
-    var _a, _b, _c, _d;
+    var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pushAll short-circuited \u2014 gate closed"), 0;
     (_a = this.syncLog) == null || _a.clear();
@@ -20221,18 +20234,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       toSync = toSync.filter((f) => snap.has((0, import_obsidian21.normalizePath)(f.path)));
     }
     let pushed = 0, failed = 0, total = toSync.length;
-    devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
+    devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
     let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
       noteFiles,
       !0,
       (pushedSoFar, failedSoFar) => {
-        var _a2;
-        (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-          phase: "pushing",
-          current: pushedSoFar,
-          total,
-          failed: failedSoFar
-        });
+        this.emitPushing(pushedSoFar, total, failedSoFar);
       }
     ), perFile;
     batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, perFile = attachFiles) : perFile = toSync;
@@ -20249,15 +20256,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
         })
       );
-      pushed += results.filter(Boolean).length, (_c = this.onSyncProgress) == null || _c.call(this, {
-        phase: "pushing",
-        current: pushed,
-        total,
-        failed,
-        currentPath: batch[batch.length - 1].path
-      });
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, batch[batch.length - 1].path);
     }
-    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_d = this.onSyncProgress) == null || _d.call(this, {
+    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_b = this.onSyncProgress) == null || _b.call(this, {
       phase: "complete",
       current: pushed,
       total,
@@ -22181,6 +22182,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  panel to keep its top status row in sync with sync engine + WebSocket
      *  connection state without requiring tab navigation. Single-slot. */
     this.onStatusBarChange = null;
+    /** Planned phases for the in-progress manual sync (set by
+     *  runSyncWithProgress). Lets the settings-pane progress bar render the same
+     *  plan-aware, clamped counts as the modal instead of the raw examine-count
+     *  denominator. Null between syncs and during background syncs (no plan). */
+    this.activeSyncPhases = null;
     this.baseStore = null;
     this.explicitFolders = null;
     this.crdtManager = null;
@@ -22969,7 +22975,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       phases,
       webUrl: engramWebUrl(this.settings.apiUrl)
     }), prev = this.syncEngine.onSyncProgress;
-    this.syncEngine.onSyncProgress = (progress) => {
+    this.activeSyncPhases = phases != null ? phases : null, this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();
     try {
@@ -22977,7 +22983,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     } catch (e) {
       throw modal.close(), e;
     } finally {
-      this.syncEngine.onSyncProgress = prev;
+      this.syncEngine.onSyncProgress = prev, this.activeSyncPhases = null;
     }
   }
   /** True when both `apiUrl` and at least one of `apiKey` (self-hosted /
