@@ -4312,7 +4312,11 @@ export class SyncEngine {
 							const localHash =
 								stored?.hash ??
 								(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+							// Spread the existing entry: restConvergeLiveBound just recorded
+							// crdtHead into it, and a bare replacement would wipe that head,
+							// defeating coldReceive's cost gate (getCrdtHead === serverHead).
 							this.syncState.set(normalized, {
+								...(this.syncState.get(normalized) ?? {}),
 								hash: localHash,
 								serverHash: change.content_hash,
 								version: change.version,

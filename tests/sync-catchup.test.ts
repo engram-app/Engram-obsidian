@@ -349,6 +349,57 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 		// Editor owns the body (no disk write) → the real local hash is preserved.
 		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(7);
+		// The converged head must SURVIVE the convergence record — a bare
+		// syncState replacement wiped it, defeating coldReceive's cost gate.
+		expect(engine.exportSyncState()["owned.md"]?.crdtHead).toBe("head-1");
+	});
+
+	test("live-bound divergence for an UNMAPPED note (no note_id): quietly retries, never throws, never fakes convergence", async () => {
+		const { engine, applyRemoteUpdate } = crdtEngine();
+		const localFile = new TFile("unmapped.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "unmapped.md");
+		engine.importSyncState({
+			"unmapped.md": { hash: 7, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "unmapped.md",
+			action: "upsert",
+			content: "diverged body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["unmapped.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("live-bound divergence: encodeStateVector throwing is isolated — retry next poll, no convergence recorded", async () => {
+		const { engine, encodeStateVector, applyRemoteUpdate } = crdtEngine();
+		encodeStateVector.mockRejectedValue(new Error("doc destroyed mid-open"));
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "diverged body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
 	test("live-bound divergence: REST catch-up FAILURE never fakes convergence — serverHash stays unrecorded so every poll retries", async () => {
