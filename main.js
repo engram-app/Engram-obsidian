@@ -728,6 +728,7 @@ var require_diff_match_patch = __commonJS({
 // src/main.ts
 var main_exports = {};
 __export(main_exports, {
+  channelIdentityMatches: () => channelIdentityMatches,
   default: () => EngramSyncPlugin,
   shouldReuseLiveStream: () => shouldReuseLiveStream
 });
@@ -792,7 +793,7 @@ function withClearedAuth(settings) {
   };
 }
 function cloudTabAction(settings, cloudUrl) {
-  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? !!(settings.apiKey || settings.refreshToken) ? "prompt-switch" : "auto-switch" : "render" : "auto-switch";
+  return settings.apiUrl ? isBackendChange(settings.apiUrl, cloudUrl) ? "prompt-switch" : "render" : "auto-switch";
 }
 async function applyApiUrlChange(target, newUrl, save) {
   var _a;
@@ -13507,6 +13508,9 @@ function clampReconnectJitter(raw) {
 function fullJitterDelay(windowMs, rng = Math.random) {
   return rng() * windowMs;
 }
+function topicUserIdIsStale(currentUserId, authenticatedUserId) {
+  return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
+}
 var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
     this.ws = null;
@@ -13559,6 +13563,17 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  and a join-class failure by definition happens AFTER a successful open.
      *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
     this.joinFailureBackoffMs = 1e3;
+    /** True once the socket has opened at least once this channel's lifetime. Gates
+     *  the reconnect-only identity re-derivation (see openSocketInner): a fresh
+     *  build already carries the correct userId from connectChannel's getMe(), so
+     *  only RE-opens need re-verification. */
+    this.hasOpened = !1;
+    /** Set when the auth provider is swapped on a KEPT channel (an OAuth rebind
+     *  that setupNoteStream reused rather than rebuilt). Signals that `this.userId`
+     *  may be stale relative to the new identity, so the next reconnect must
+     *  re-derive it from getMe() before rejoining `crdt:` (else the join is
+     *  refused "unauthorized", e2e-clerk test_84). Cleared once verified. */
+    this.identityMaybeStale = !1;
     /** Current connection id, minted fresh per physical socket. */
     this.connId = null;
     this.authProvider = null;
@@ -13619,7 +13634,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     );
   }
   setAuthProvider(provider) {
-    this.authProvider = provider, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
+    this.authProvider = provider, this.identityMaybeStale = !0, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
   }
   /** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
    *  channel fires this instead of guessing the token is stale; the api client
@@ -13725,6 +13740,21 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
       return;
     }
+    if (this.hasOpened && this.identityMaybeStale && this.authProbe) {
+      this.identityMaybeStale = !1;
+      try {
+        let me = await this.authProbe(), freshId = me == null ? void 0 : me.id;
+        freshId && topicUserIdIsStale(this.userId, freshId) && (rlog().warn(
+          "channel",
+          `reconnect identity refresh: topic userId ${this.userId} -> ${freshId} (provider swapped on a reused channel); rejoining under the authenticated id`
+        ), this.userId = freshId);
+      } catch (e) {
+        rlog().info(
+          "channel",
+          `reconnect identity probe failed, keeping userId: ${errMsg(e)}`
+        );
+      }
+    }
     rlog().info(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
@@ -13743,7 +13773,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       return;
     }
     this.ws.onopen = () => {
-      opened = !0, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+      opened = !0, this.hasOpened = !0, this.identityMaybeStale = !1, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
@@ -15146,7 +15176,8 @@ var RETRY_CAP = 5;
 function shouldRetryAfterFailure(classified, attempts) {
   return classified.terminal ? !1 : attempts < RETRY_CAP;
 }
-function issueDisposition(category) {
+function issueDisposition(category, parseReason) {
+  if ((parseReason == null ? void 0 : parseReason.code) === "note_processing_failed") return "actionable";
   switch (category) {
     case "needs_pro":
     case "quota":
@@ -15934,7 +15965,7 @@ function groupedByCategory(issues, dispositions) {
   var _a;
   let groups = /* @__PURE__ */ new Map();
   for (let issue of issues) {
-    if (!dispositions.includes(issueDisposition(issue.category))) continue;
+    if (!dispositions.includes(issueDisposition(issue.category, issue.parseReason))) continue;
     let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
     bucket.push(issue), groups.set(issue.category, bucket);
   }
@@ -15942,8 +15973,12 @@ function groupedByCategory(issues, dispositions) {
 }
 function renderHeader(parent, plugin) {
   let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
-    (i) => issueDisposition(i.category) === "informational"
-  ).length, attentionCount = all2.filter((i) => issueDisposition(i.category) === "actionable").length, retryingCount = all2.filter((i) => issueDisposition(i.category) === "transient").length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+    (i) => issueDisposition(i.category, i.parseReason) === "informational"
+  ).length, attentionCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "actionable"
+  ).length, retryingCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "transient"
+  ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
   header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
 }
 function renderActions(parent, plugin, refresh) {
@@ -16032,9 +16067,9 @@ function renderNeedsAttention(parent, plugin, refresh) {
     renderAttentionCard(body, plugin, refresh, category, list);
 }
 function renderAttentionCard(parent, plugin, refresh, category, issues) {
-  var _a;
-  let { title, hint } = remediation(category), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u26A0" }), head.createSpan({
+  var _a, _b;
+  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0" }), head.createSpan({
     cls: "engram-sync-center-card-title",
     text: `${title} (${issues.length})`
   }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
@@ -16078,10 +16113,7 @@ function renderFileRow(parent, plugin, refresh, issue) {
     let reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
     reason.createSpan({ text: issue.parseReason.message });
     let snippet = (_a = issue.parseReason.detail) == null ? void 0 : _a.snippet;
-    snippet && reason.createEl("code", { text: snippet }), issue.parseReason.code === "note_processing_failed" && reason.createEl("p", {
-      cls: "engram-sync-center-card-hint",
-      text: remediation(issue.category, issue.parseReason).hint
-    });
+    snippet && reason.createEl("code", { text: snippet });
   }
   let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
   actions.createEl("button", { text: "Open", cls: "mod-cta" }).addEventListener("click", () => openFile(plugin, issue.path)), actions.createEl("button", { text: "Ignore" }).addEventListener("click", () => {
@@ -16228,7 +16260,27 @@ function plannedPhases(choice, plan) {
   let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
   return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
 }
-var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.Modal {
+var TICK_INTERVAL_MS = 50;
+function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
+  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
+  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
+}
+function settingsBarCounts(progress, planned, prevTotal) {
+  var _a;
+  let { current, total } = rowCounts(
+    !!planned,
+    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
+    progress.current,
+    progress.total,
+    prevTotal
+  );
+  return {
+    current,
+    total,
+    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
+  };
+}
+var SyncProgressModal = class extends import_obsidian13.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
    *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
    *  on completion so the user can verify their vault. All optional so callers
@@ -16252,6 +16304,7 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       phase: p.phase,
       label: p.label,
       plannedTotal: p.total,
+      planned: !0,
       current: 0,
       total: p.total,
       failed: 0,
@@ -16309,12 +16362,21 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       phase: progress.phase,
       label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
       plannedTotal: progress.total,
+      planned: !1,
       current: 0,
       total: progress.total,
       failed: 0,
       seen: !1,
       done: !1
-    }, this.rows.push(row), this.createRow(row)), row.seen = !0, row.current = progress.current, row.total = progress.total || row.total, row.failed = progress.failed;
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
+    let counts = rowCounts(
+      row.planned,
+      row.plannedTotal,
+      progress.current,
+      progress.total,
+      row.total
+    );
+    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
     for (let other of this.rows)
       other !== row && other.seen && (other.done = !0);
     this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
@@ -16339,7 +16401,7 @@ var TICK_INTERVAL_MS = 50, SyncProgressModal = class extends import_obsidian13.M
       let els = this.rowEls.get(row.phase);
       if (!els) continue;
       let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
-      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(`${row.current} / ${row.total}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
     }
   }
   onClose() {
@@ -16740,8 +16802,8 @@ async function applyVaultSwitch(plugin, value, name) {
 async function renderAccountTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
   if (action === "prompt-switch") {
-    new import_obsidian18.Setting(containerEl).setName("Currently signed in to a self-hosted instance").setDesc(
-      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud clears your stored credentials for that instance.`
+    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
     ).addButton(
       (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
         await applyApiUrlChange(
@@ -16884,16 +16946,23 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
       text: "Syncing...",
       cls: "engram-progress-label"
-    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" });
+    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
     this.plugin.syncEngine.onSyncProgress = (progress) => {
+      var _a, _b;
       if (progress.phase === "complete") {
-        progressContainer.removeClass("is-active");
+        progressContainer.removeClass("is-active"), prevTotals.clear();
         return;
       }
-      progressContainer.addClass("is-active");
-      let pct = progress.total > 0 ? Math.round(progress.current / progress.total * 100) : 0, phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments";
+      progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
+      let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
+        progress,
+        planned,
+        (_b = prevTotals.get(progress.phase)) != null ? _b : 0
+      );
+      prevTotals.set(progress.phase, total);
+      let phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments", failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
       progressLabel.setText(
-        `${phaseLabel}... ${progress.current}/${progress.total}${progress.failed > 0 ? ` (${progress.failed} failed)` : ""}`
+        total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
       ), progressBarInner.style.width = `${pct}%`;
     };
     let tabs = [
@@ -18959,7 +19028,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materializes server-marked empty folders and hydrates the
    *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
    *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-  async pull() {
+  async pull(emitProgress = !1) {
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
@@ -18970,13 +19039,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.getSyncCursor() !== null && this.syncStateVaultId !== null && this.settings.vaultId != null && this.syncStateVaultId !== this.settings.vaultId && await this.invalidateIfVaultChanged();
       let applied;
       if (!this.getSyncCursor())
-        applied = await this.bootstrap();
+        applied = await this.bootstrap(emitProgress);
       else
         try {
-          applied = await this.pullViaCursor((_b = this.getSyncCursor()) != null ? _b : void 0);
+          applied = await this.pullViaCursor(
+            (_b = this.getSyncCursor()) != null ? _b : void 0,
+            emitProgress
+          );
         } catch (e) {
           if (e instanceof HistoryExpiredError)
-            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap();
+            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap(emitProgress);
           else
             throw e;
         }
@@ -19139,7 +19211,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           r === "ok" ? applied++ : r === "error" && failed++;
         (_g = this.onSyncProgress) == null || _g.call(this, {
           phase: "pulling",
-          current: Math.min(i + batch.length, noteChanges.length),
+          current: applied,
           total,
           failed,
           currentPath: lastPath
@@ -19167,13 +19239,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           r === "ok" ? applied++ : r === "error" && failed++;
         (_h = this.onSyncProgress) == null || _h.call(this, {
           phase: "pulling",
-          current: noteCount + Math.min(i + batch.length, attachChanges.length),
+          current: applied,
           total,
           failed,
           currentPath: lastPath
         });
       }
-      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: total, total, failed });
+      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: applied, total, failed });
       let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
       return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
         "pull",
@@ -19413,11 +19485,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  (delete server-deleted, push offline-created — disambiguated by the
    *  syncState baseline), then a genesis cursor pull delivers/refreshes content
    *  (3-way merging diverged files via applyChange). Returns count applied. */
-  async bootstrap() {
+  async bootstrap(emitProgress = !1) {
     var _a;
     rlog().info("pull", "Bootstrap \u2014 manifest reconcile + genesis cursor pull");
     let manifest = await this.api.getManifest();
-    if (!manifest) return this.pullViaCursor(void 0);
+    if (!manifest) return this.pullViaCursor(void 0, emitProgress);
     let serverPaths = /* @__PURE__ */ new Set([
       ...manifest.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
       ...manifest.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
@@ -19439,7 +19511,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else
           toPush.push(file);
     }
-    let applied = await this.pullViaCursor(void 0);
+    let knownTotal = manifest.notes.length + manifest.attachments.length, applied = await this.pullViaCursor(void 0, emitProgress, knownTotal);
     this.getSyncCursor() === null && typeof manifest.change_seq == "number" && (this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID)), await this.saveData({ syncCursor: this.getSyncCursor() }));
     for (let file of toPush)
       try {
@@ -19457,7 +19529,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  server returns from seq 0). Applies each entry, persists the cursor after
    *  every page (at-least-once; applies are idempotent), returns count applied.
    *  Throws HistoryExpiredError on 410. */
-  async pullViaCursor(startCursor) {
+  async pullViaCursor(startCursor, emitProgress = !1, knownTotal) {
+    var _a;
     let cursor = startCursor, applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
@@ -19478,7 +19551,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         }
       let last2 = resp.changes[resp.changes.length - 1];
-      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), !resp.has_more || !resp.next_cursor) break;
+      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), emitProgress && ((_a = this.onSyncProgress) == null || _a.call(this, {
+        phase: "pulling",
+        current: applied,
+        total: knownTotal != null ? knownTotal : 0,
+        failed: 0
+      })), !resp.has_more || !resp.next_cursor) break;
       cursor = resp.next_cursor;
     }
     return applied;
@@ -19870,11 +19948,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
     await this.invalidateIfVaultChanged();
-    let prePullSync = this.lastSync, pulled = await this.pull(), pushed = await this.pushModifiedFiles(prePullSync);
+    let prePullSync = this.lastSync, pulled = await this.pull(!0), pushed = await this.pushModifiedFiles(prePullSync), synced = pulled + pushed;
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
-      current: pushed,
-      total: pushed,
+      current: synced,
+      total: synced,
       failed: 0,
       skipped: this.lastBatchSkipped
     }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
@@ -19916,13 +19994,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async pushNotesViaBatch(files, force, onProgress) {
     var _a, _b, _c, _d;
     if (this.batchPushUnsupported) return null;
-    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, done = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
+    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
       var _a2, _b2, _c2;
       if (chunk.length === 0) return "ok";
       let entries = [];
       for (let e of chunk) {
         if (this.shouldDeferMint((0, import_obsidian21.normalizePath)(e.file.path))) {
-          done++, rlog().info(
+          rlog().info(
             "push",
             `Mint refused (engine-flushed file, id relocated away): ${e.file.path}`
           ), this.logEntry("skip", e.file.path, "skipped", void 0, "mint-deferred");
@@ -19948,7 +20026,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         ), byPath = new Map(resp.results.map((r) => [r.path, r]));
         for (let e of entries) {
           let r = byPath.get(e.file.path);
-          if (done++, !r) {
+          if (!r) {
             failed++, this.logEntry("push", e.file.path, "error", "missing batch result");
             continue;
           }
@@ -19990,7 +20068,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `Batch push failed (${errMsg(err)}) \u2014 queueing ${entries.length} files`
         );
         for (let e of entries)
-          failed++, done++, await this.enqueueChange({
+          failed++, await this.enqueueChange({
             path: e.file.path,
             action: "upsert",
             kind: "note",
@@ -20007,7 +20085,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let i = 0; i < files.length; i++) {
       let file = files[i], noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
       if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-        done++, this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
+        this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
         continue;
       }
       if (file.stat.size <= MAX_CRDT_NOTE_BYTES && noteId && this.crdt && this.crdtOpsAvailable() && this.isCrdtManagedOffline(file.path, noteId)) {
@@ -20021,7 +20099,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         )) {
-          done++, await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
+          await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
           continue;
         }
       }
@@ -20031,7 +20109,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
       if (!force && existing !== void 0 && hash === existing.hash) {
-        done++, this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
+        this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
         continue;
       }
       if (chunk.length >= BATCH_MAX_NOTES || chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET) {
@@ -20047,9 +20125,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               timestamp: Date.now(),
               vaultId: (_c = this.settings.vaultId) != null ? _c : void 0
             });
-          return onProgress == null || onProgress(done, failed), { pushed, failed };
+          return onProgress == null || onProgress(pushed, failed), { pushed, failed };
         }
-        onProgress == null || onProgress(done, failed);
+        onProgress == null || onProgress(pushed, failed);
       }
       chunk.push({ file, content, hash, version: existing == null ? void 0 : existing.version }), chunkBytes += content.length;
     }
@@ -20065,17 +20143,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           timestamp: Date.now(),
           vaultId: (_d = this.settings.vaultId) != null ? _d : void 0
         });
-      return onProgress == null || onProgress(done, failed), { pushed, failed };
+      return onProgress == null || onProgress(pushed, failed), { pushed, failed };
     }
-    onProgress == null || onProgress(done, failed);
+    onProgress == null || onProgress(pushed, failed);
     for (let file of oversized) {
       try {
-        let ok = await this.pushFile(file, force);
-        done++, ok && (pushed++, this.logEntry("push", file.path, "ok"));
+        await this.pushFile(file, force) && (pushed++, this.logEntry("push", file.path, "ok"));
       } catch (e) {
-        done++, failed++, this.logEntry("push", file.path, "error", errMsg(e));
+        failed++, this.logEntry("push", file.path, "error", errMsg(e));
       }
-      onProgress == null || onProgress(done, failed);
+      onProgress == null || onProgress(pushed, failed);
     }
     return this.flushQueue(), { pushed, failed };
   }
@@ -20170,30 +20247,29 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           DEGRADED_NOTICE_DURATION_MS
         );
   }
+  /** Single source of truth for the "pushing" progress event. Both push paths
+   *  (pushModifiedFiles and pushAll) emit the identical shape; routing them
+   *  through one helper stops the two from drifting when the reporting changes. */
+  emitPushing(current, total, failed, currentPath) {
+    var _a;
+    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
+  }
   async pushModifiedFiles(sinceTimestamp) {
-    var _a, _b;
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
-    total > 0 && ((_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current: 0, total, failed: 0 }));
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !1, (done, failedSoFar) => {
-      var _a2;
-      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-        phase: "pushing",
-        current: Math.min(done, total),
-        total,
-        failed: failedSoFar
-      });
-    }), perFile, doneOffset = 0;
-    batchOutcome ? (pushed += batchOutcome.pushed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    total > 0 && this.emitPushing(0, total, 0);
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
+      noteFiles,
+      !1,
+      (pushedSoFar, failedSoFar) => {
+        this.emitPushing(pushedSoFar, total, failedSoFar);
+      }
+    ), perFile;
+    batchOutcome ? (pushed += batchOutcome.pushed, perFile = attachFiles) : perFile = toSync;
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length, (_b = this.onSyncProgress) == null || _b.call(this, {
-        phase: "pushing",
-        current: Math.min(doneOffset + i + batch.length, total),
-        total,
-        failed: 0
-      });
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, 0);
     }
     return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
@@ -20312,7 +20388,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
   }
   async pushAll(opts = {}) {
-    var _a, _b, _c, _d;
+    var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pushAll short-circuited \u2014 gate closed"), 0;
     (_a = this.syncLog) == null || _a.clear();
@@ -20326,17 +20402,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       toSync = toSync.filter((f) => snap.has((0, import_obsidian21.normalizePath)(f.path)));
     }
     let pushed = 0, failed = 0, total = toSync.length;
-    devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pushing", current: 0, total, failed: 0 });
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(noteFiles, !0, (done, failedSoFar) => {
-      var _a2;
-      (_a2 = this.onSyncProgress) == null || _a2.call(this, {
-        phase: "pushing",
-        current: done,
-        total,
-        failed: failedSoFar
-      });
-    }), perFile, doneOffset = 0;
-    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, doneOffset = noteFiles.length, perFile = attachFiles) : perFile = toSync;
+    devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
+      noteFiles,
+      !0,
+      (pushedSoFar, failedSoFar) => {
+        this.emitPushing(pushedSoFar, total, failedSoFar);
+      }
+    ), perFile;
+    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, perFile = attachFiles) : perFile = toSync;
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(
         batch.map(async (f) => {
@@ -20350,15 +20424,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
         })
       );
-      pushed += results.filter(Boolean).length, (_c = this.onSyncProgress) == null || _c.call(this, {
-        phase: "pushing",
-        current: doneOffset + i + batch.length,
-        total,
-        failed,
-        currentPath: batch[batch.length - 1].path
-      });
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, batch[batch.length - 1].path);
     }
-    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_d = this.onSyncProgress) == null || _d.call(this, {
+    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_b = this.onSyncProgress) == null || _b.call(this, {
       phase: "complete",
       current: pushed,
       total,
@@ -20577,7 +20645,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async retryFailedNow() {
     var _a;
     for (let issue of this.issues.all()) {
-      if (issueDisposition(issue.category) !== "transient") continue;
+      if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
       let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(issue.path));
       if (!file) {
         this.issues.clear(issue.path);
@@ -22228,6 +22296,9 @@ async function generateClientId(app) {
 function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChannelKey) {
   return hasStream && everConnected && connectionKey === liveChannelKey;
 }
+function channelIdentityMatches(expectedEmail, authenticatedEmail) {
+  return !expectedEmail || !authenticatedEmail ? !0 : expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
+}
 var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin {
   constructor() {
     super(...arguments);
@@ -22282,6 +22353,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  panel to keep its top status row in sync with sync engine + WebSocket
      *  connection state without requiring tab navigation. Single-slot. */
     this.onStatusBarChange = null;
+    /** Planned phases for the in-progress manual sync (set by
+     *  runSyncWithProgress). Lets the settings-pane progress bar render the same
+     *  plan-aware, clamped counts as the modal instead of the raw examine-count
+     *  denominator. Null between syncs and during background syncs (no plan). */
+    this.activeSyncPhases = null;
     this.baseStore = null;
     this.explicitFolders = null;
     this.crdtManager = null;
@@ -22880,6 +22956,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
         return;
       }
+      if (!channelIdentityMatches(this.settings.userEmail, user.email)) {
+        rlog().warn(
+          "channel",
+          `connectChannel identity mismatch: getMe()=${user.email} but connecting as ${this.settings.userEmail}; provider not yet swapped, retrying`
+        ), epoch === this.channelEpoch && window.setTimeout(
+          () => this.connectChannel(attempt + 1, epoch),
+          connectRetryDelayMs(attempt)
+        );
+        return;
+      }
       let channel = new NoteChannel(
         this.settings.apiUrl,
         this.settings.apiKey,
@@ -23070,7 +23156,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       phases,
       webUrl: engramWebUrl(this.settings.apiUrl)
     }), prev = this.syncEngine.onSyncProgress;
-    this.syncEngine.onSyncProgress = (progress) => {
+    this.activeSyncPhases = phases != null ? phases : null, this.syncEngine.onSyncProgress = (progress) => {
       modal.update(progress), prev == null || prev(progress);
     }, modal.open();
     try {
@@ -23078,7 +23164,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     } catch (e) {
       throw modal.close(), e;
     } finally {
-      this.syncEngine.onSyncProgress = prev;
+      this.syncEngine.onSyncProgress = prev, this.activeSyncPhases = null;
     }
   }
   /** True when both `apiUrl` and at least one of `apiKey` (self-hosted /

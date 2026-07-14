@@ -37,7 +37,12 @@ import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
 import { SyncEngine, reconcileColdStart } from "./sync";
 import { SyncPreviewModal } from "./sync-preview-modal";
-import { SyncProgressModal, describePlannedWork, plannedPhases } from "./sync-progress-modal";
+import {
+	type PlannedPhase,
+	SyncProgressModal,
+	describePlannedWork,
+	plannedPhases,
+} from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
 import {
 	DEFAULT_SETTINGS,
@@ -223,6 +228,12 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  panel to keep its top status row in sync with sync engine + WebSocket
 	 *  connection state without requiring tab navigation. Single-slot. */
 	onStatusBarChange: (() => void) | null = null;
+
+	/** Planned phases for the in-progress manual sync (set by
+	 *  runSyncWithProgress). Lets the settings-pane progress bar render the same
+	 *  plan-aware, clamped counts as the modal instead of the raw examine-count
+	 *  denominator. Null between syncs and during background syncs (no plan). */
+	activeSyncPhases: PlannedPhase[] | null = null;
 
 	/** Whether the WebSocket channel is currently connected (for settings UI). */
 	isLiveConnected(): boolean {
@@ -1917,6 +1928,9 @@ export default class EngramSyncPlugin extends Plugin {
 			webUrl: engramWebUrl(this.settings.apiUrl),
 		});
 		const prev = this.syncEngine.onSyncProgress;
+		// Stash the plan so the settings-pane bar (prev callback) renders the same
+		// plan-aware counts as the modal, not the raw examine-count denominator.
+		this.activeSyncPhases = phases ?? null;
 		this.syncEngine.onSyncProgress = (progress) => {
 			modal.update(progress);
 			prev?.(progress);
@@ -1931,6 +1945,7 @@ export default class EngramSyncPlugin extends Plugin {
 			throw e;
 		} finally {
 			this.syncEngine.onSyncProgress = prev;
+			this.activeSyncPhases = null;
 		}
 	}
 

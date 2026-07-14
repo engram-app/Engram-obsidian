@@ -2975,7 +2975,7 @@ export class SyncEngine {
 	 *  materializes server-marked empty folders and hydrates the
 	 *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
 	 *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-	async pull(): Promise<number> {
+	async pull(emitProgress = false): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pull short-circuited — gate closed");
 			return 0;
@@ -3017,16 +3017,19 @@ export class SyncEngine {
 
 			let applied: number;
 			if (!this.getSyncCursor()) {
-				applied = await this.bootstrap();
+				applied = await this.bootstrap(emitProgress);
 			} else {
 				try {
-					applied = await this.pullViaCursor(this.getSyncCursor() ?? undefined);
+					applied = await this.pullViaCursor(
+						this.getSyncCursor() ?? undefined,
+						emitProgress,
+					);
 				} catch (e) {
 					if (e instanceof HistoryExpiredError) {
 						rlog().warn("pull", "HISTORY_EXPIRED — re-bootstrapping");
 						this.setSyncCursor(null);
 						await this.saveData({ syncCursor: null });
-						applied = await this.bootstrap();
+						applied = await this.bootstrap(emitProgress);
 					} else {
 						throw e;
 					}
@@ -3302,7 +3305,7 @@ export class SyncEngine {
 				}
 				this.onSyncProgress?.({
 					phase: "pulling",
-					current: Math.min(i + batch.length, noteChanges.length),
+					current: applied,
 					total,
 					failed,
 					currentPath: lastPath,
@@ -3343,14 +3346,14 @@ export class SyncEngine {
 				}
 				this.onSyncProgress?.({
 					phase: "pulling",
-					current: noteCount + Math.min(i + batch.length, attachChanges.length),
+					current: applied,
 					total,
 					failed,
 					currentPath: lastPath,
 				});
 			}
 
-			this.onSyncProgress?.({ phase: "complete", current: total, total, failed });
+			this.onSyncProgress?.({ phase: "complete", current: applied, total, failed });
 
 			// Update lastSync to server time
 			const serverTime =
@@ -3946,12 +3949,12 @@ export class SyncEngine {
 	 *  (delete server-deleted, push offline-created — disambiguated by the
 	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
 	 *  (3-way merging diverged files via applyChange). Returns count applied. */
-	private async bootstrap(): Promise<number> {
+	private async bootstrap(emitProgress = false): Promise<number> {
 		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
 		const manifest = await this.api.getManifest();
 
 		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
-		if (!manifest) return this.pullViaCursor(undefined);
+		if (!manifest) return this.pullViaCursor(undefined, emitProgress);
 
 		const serverPaths = new Set<string>([
 			...manifest.notes.map((n) => normalizePath(n.path)),
@@ -3992,7 +3995,10 @@ export class SyncEngine {
 		}
 
 		// Content delivery: genesis pull (full content + tombstones, ordered).
-		const applied = await this.pullViaCursor(undefined);
+		// The manifest gives us a real up-front total for the progress bar (a
+		// genesis pull, unlike an incremental delta, knows its own size).
+		const knownTotal = manifest.notes.length + manifest.attachments.length;
+		const applied = await this.pullViaCursor(undefined, emitProgress, knownTotal);
 
 		// §E: an empty vault's genesis pull delivers no entries, so the cursor is
 		// still null. Seed it from the manifest's change_seq so the NEXT pull
@@ -4029,7 +4035,11 @@ export class SyncEngine {
 	 *  server returns from seq 0). Applies each entry, persists the cursor after
 	 *  every page (at-least-once; applies are idempotent), returns count applied.
 	 *  Throws HistoryExpiredError on 410. */
-	private async pullViaCursor(startCursor: string | undefined): Promise<number> {
+	private async pullViaCursor(
+		startCursor: string | undefined,
+		emitProgress = false,
+		knownTotal?: number,
+	): Promise<number> {
 		let cursor = startCursor;
 		let applied = 0;
 
@@ -4067,6 +4077,22 @@ export class SyncEngine {
 				this.setSyncCursor(encodeCursor(last.seq, last.id));
 			}
 			await this.saveData({ syncCursor: this.getSyncCursor() });
+
+			// Foreground (manual) sync only: report real downloads-so-far so the
+			// modal's Download row climbs instead of sitting frozen until done.
+			// `total` is only read by the settings bar (the modal keeps the plan
+			// total). Bootstrap passes a real manifest count; an incremental delta
+			// has no honest total, so emit 0 — the settings bar renders that as
+			// indeterminate (activity count, empty bar) rather than the old
+			// total==current which fabricated a permanent 100% bar.
+			if (emitProgress) {
+				this.onSyncProgress?.({
+					phase: "pulling",
+					current: applied,
+					total: knownTotal ?? 0,
+					failed: 0,
+				});
+			}
 
 			if (!resp.has_more || !resp.next_cursor) break;
 			cursor = resp.next_cursor;
@@ -4833,17 +4859,21 @@ export class SyncEngine {
 		// the old and new lastSync values.
 		const prePullSync = this.lastSync;
 
-		const pulled = await this.pull();
+		const pulled = await this.pull(true);
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").
-		// pushModifiedFiles already flushed the plan-skip tally into
-		// lastBatchSkipped, so surface it here as `skipped` (disjoint from
-		// failed — informational skips never increment the failure counter).
+		// The recap's "N synced" reads `current`, so it must count BOTH legs —
+		// a download-only sync (pushed=0) still synced `pulled` notes and must
+		// not report "Nothing needed syncing". pushModifiedFiles already flushed
+		// the plan-skip tally into lastBatchSkipped, so surface it here as
+		// `skipped` (disjoint from failed — informational skips never increment
+		// the failure counter).
+		const synced = pulled + pushed;
 		this.onSyncProgress?.({
 			phase: "complete",
-			current: pushed,
-			total: pushed,
+			current: synced,
+			total: synced,
 			failed: 0,
 			skipped: this.lastBatchSkipped,
 		});
@@ -4920,7 +4950,7 @@ export class SyncEngine {
 	private async pushNotesViaBatch(
 		files: TFile[],
 		force: boolean,
-		onProgress?: (done: number, failed: number) => void,
+		onProgress?: (pushed: number, failed: number) => void,
 	): Promise<{ pushed: number; failed: number } | null> {
 		if (this.batchPushUnsupported) return null;
 
@@ -4937,7 +4967,6 @@ export class SyncEngine {
 
 		let pushed = 0;
 		let failed = 0;
-		let done = 0;
 
 		type Entry = { file: TFile; content: string; hash: number; version?: number };
 		let chunk: Entry[] = [];
@@ -4953,7 +4982,6 @@ export class SyncEngine {
 			const entries: Entry[] = [];
 			for (const e of chunk) {
 				if (this.shouldDeferMint(normalizePath(e.file.path))) {
-					done++;
 					rlog().info(
 						"push",
 						`Mint refused (engine-flushed file, id relocated away): ${e.file.path}`,
@@ -4993,7 +5021,6 @@ export class SyncEngine {
 
 				for (const e of entries) {
 					const r = byPath.get(e.file.path);
-					done++;
 					if (!r) {
 						failed++;
 						this.logEntry("push", e.file.path, "error", "missing batch result");
@@ -5061,7 +5088,6 @@ export class SyncEngine {
 				);
 				for (const e of entries) {
 					failed++;
-					done++;
 					await this.enqueueChange({
 						path: e.file.path,
 						action: "upsert",
@@ -5101,7 +5127,6 @@ export class SyncEngine {
 			// count, the same measure routeModify caps on.
 			const noteId = this.noteIdMap?.get(file.path) ?? null;
 			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
 				continue;
 			}
@@ -5139,7 +5164,6 @@ export class SyncEngine {
 				// push, silently losing the edit. On decline, fall through to the
 				// normal batch push below (mirrors pushFile's `if (consumed)`).
 				if (consumed) {
-					done++;
 					await this.enqueueCrdtEdit(file, noteId);
 					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
 					continue;
@@ -5153,7 +5177,6 @@ export class SyncEngine {
 			const hash = fnv1a(content);
 			const existing = this.syncState.get(normalizePath(file.path));
 			if (!force && existing !== undefined && hash === existing.hash) {
-				done++;
 				this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
 				continue;
 			}
@@ -5177,10 +5200,10 @@ export class SyncEngine {
 							vaultId: this.settings.vaultId ?? undefined,
 						});
 					}
-					onProgress?.(done, failed);
+					onProgress?.(pushed, failed);
 					return { pushed, failed };
 				}
-				onProgress?.(done, failed);
+				onProgress?.(pushed, failed);
 			}
 
 			chunk.push({ file, content, hash, version: existing?.version });
@@ -5201,27 +5224,25 @@ export class SyncEngine {
 					vaultId: this.settings.vaultId ?? undefined,
 				});
 			}
-			onProgress?.(done, failed);
+			onProgress?.(pushed, failed);
 			return { pushed, failed };
 		}
-		onProgress?.(done, failed);
+		onProgress?.(pushed, failed);
 
 		// Oversized notes: single-note path → server 413 → proper terminal
 		// too_large issue with sizeBytes.
 		for (const file of oversized) {
 			try {
 				const ok = await this.pushFile(file, force);
-				done++;
 				if (ok) {
 					pushed++;
 					this.logEntry("push", file.path, "ok");
 				}
 			} catch (e) {
-				done++;
 				failed++;
 				this.logEntry("push", file.path, "error", errMsg(e));
 			}
-			onProgress?.(done, failed);
+			onProgress?.(pushed, failed);
 		}
 
 		// Deliver any channel-down CRDT entries the loop just enqueued (Task 5).
@@ -5376,6 +5397,18 @@ export class SyncEngine {
 		}
 	}
 
+	/** Single source of truth for the "pushing" progress event. Both push paths
+	 *  (pushModifiedFiles and pushAll) emit the identical shape; routing them
+	 *  through one helper stops the two from drifting when the reporting changes. */
+	private emitPushing(
+		current: number,
+		total: number,
+		failed: number,
+		currentPath?: string,
+	): void {
+		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
+	}
+
 	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -5399,7 +5432,7 @@ export class SyncEngine {
 		// shows progress too (the engine emits nothing otherwise).
 		const total = toSync.length;
 		if (total > 0) {
-			this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
+			this.emitPushing(0, total, 0);
 		}
 
 		// Protocol rev: notes via the batch endpoint (echo suppression inside),
@@ -5407,20 +5440,17 @@ export class SyncEngine {
 		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
 		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
 
-		const batchOutcome = await this.pushNotesViaBatch(noteFiles, false, (done, failedSoFar) => {
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: Math.min(done, total),
-				total,
-				failed: failedSoFar,
-			});
-		});
+		const batchOutcome = await this.pushNotesViaBatch(
+			noteFiles,
+			false,
+			(pushedSoFar, failedSoFar) => {
+				this.emitPushing(pushedSoFar, total, failedSoFar);
+			},
+		);
 
 		let perFile: TFile[];
-		let doneOffset = 0;
 		if (batchOutcome) {
 			pushed += batchOutcome.pushed;
-			doneOffset = noteFiles.length;
 			perFile = attachFiles;
 		} else {
 			perFile = toSync;
@@ -5430,12 +5460,7 @@ export class SyncEngine {
 			const batch = perFile.slice(i, i + 10);
 			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
 			pushed += results.filter(Boolean).length;
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: Math.min(doneOffset + i + batch.length, total),
-				total,
-				failed: 0,
-			});
+			this.emitPushing(pushed, total, 0);
 		}
 
 		this.flushAttachmentLimitedToast();
@@ -5726,7 +5751,7 @@ export class SyncEngine {
 		devLog().log("push", `pushAll: ${total} files`);
 		rlog().info("push", `PushAll started — ${total} files`);
 
-		this.onSyncProgress?.({ phase: "pushing", current: 0, total, failed: 0 });
+		this.emitPushing(0, total, 0);
 
 		// Protocol rev: notes go through POST /notes/batch (100 per request);
 		// attachments keep the per-file path. Pre-rev backends (or a sticky
@@ -5734,21 +5759,18 @@ export class SyncEngine {
 		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
 		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
 
-		const batchOutcome = await this.pushNotesViaBatch(noteFiles, true, (done, failedSoFar) => {
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: done,
-				total,
-				failed: failedSoFar,
-			});
-		});
+		const batchOutcome = await this.pushNotesViaBatch(
+			noteFiles,
+			true,
+			(pushedSoFar, failedSoFar) => {
+				this.emitPushing(pushedSoFar, total, failedSoFar);
+			},
+		);
 
 		let perFile: TFile[];
-		let doneOffset = 0;
 		if (batchOutcome) {
 			pushed += batchOutcome.pushed;
 			failed += batchOutcome.failed;
-			doneOffset = noteFiles.length;
 			perFile = attachFiles;
 		} else {
 			perFile = toSync;
@@ -5775,13 +5797,7 @@ export class SyncEngine {
 				}),
 			);
 			pushed += results.filter(Boolean).length;
-			this.onSyncProgress?.({
-				phase: "pushing",
-				current: doneOffset + i + batch.length,
-				total,
-				failed,
-				currentPath: batch[batch.length - 1]!.path,
-			});
+			this.emitPushing(pushed, total, failed, batch[batch.length - 1]!.path);
 		}
 
 		// Flush first so the terminal "complete" can report the plan-skipped

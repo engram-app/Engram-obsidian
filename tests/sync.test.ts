@@ -867,6 +867,70 @@ describe("SyncEngine.pull (fresh install)", () => {
 		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
 	});
 
+	test("fullSync emits climbing download progress across cursor pages", async () => {
+		const engine = createEngine();
+		const pulling: number[] = [];
+		engine.onSyncProgress = (p) => {
+			if (p.phase === "pulling") pulling.push(p.current);
+		};
+
+		// Two-page genesis feed: page 1 has_more, page 2 terminal.
+		(mockApi.getSyncChanges as jest.Mock)
+			.mockResolvedValueOnce({
+				changes: [syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" })],
+				next_cursor: "C2",
+				has_more: true,
+			})
+			.mockResolvedValueOnce({
+				changes: [syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" })],
+				next_cursor: null,
+				has_more: false,
+			});
+
+		await engine.fullSync();
+
+		// One pulling event per applied page, current = real downloads so far.
+		expect(pulling).toEqual([1, 2]);
+	});
+
+	test("fullSync completion recap counts downloads, not just uploads", async () => {
+		const engine = createEngine();
+		let completeCurrent: number | null = null;
+		engine.onSyncProgress = (p) => {
+			if (p.phase === "complete") completeCurrent = p.current;
+		};
+
+		// Download-only sync: 2 notes pulled, nothing local to push.
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([
+				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" }),
+				syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" }),
+			]),
+		);
+
+		const { pulled, pushed } = await engine.fullSync();
+
+		expect(pulled).toBe(2);
+		expect(pushed).toBe(0);
+		// The recap reads `current`; a download-only sync must report the 2
+		// pulled, not pushed=0 → "Already up to date. Nothing needed syncing."
+		expect(completeCurrent).toBe(2);
+	});
+
+	test("standalone pull() stays silent (no download progress on background pulls)", async () => {
+		const engine = createEngine();
+		const phases: string[] = [];
+		engine.onSyncProgress = (p) => phases.push(p.phase);
+
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([syncNoteEntry()]));
+
+		await engine.pull();
+
+		// pull() defaults emitProgress off → no "pulling" events → settings bar
+		// never lights up (and so never gets stuck "active" with no completion).
+		expect(phases).not.toContain("pulling");
+	});
+
 	test("first pull bootstraps; the persisted cursor makes the next pull incremental", async () => {
 		const engine = createEngine();
 

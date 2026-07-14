@@ -316,13 +316,16 @@ describe("cloudTabAction", () => {
 		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
 	});
 
-	test("self-hosted with no creds: safe to silently switch to cloud", () => {
+	test("self-hosted with no creds: prompt, never silently overwrite the typed URL", () => {
 		const settings = fullSettings({
 			apiUrl: "http://localhost:8100",
 			apiKey: "",
 			refreshToken: undefined,
 		});
-		expect(cloudTabAction(settings, CLOUD)).toBe("auto-switch");
+		// A configured self-host URL (even before credentials exist) is real
+		// user input — merely rendering the Cloud tab must not clobber it with
+		// the cloud URL. Prompt for an explicit switch instead.
+		expect(cloudTabAction(settings, CLOUD)).toBe("prompt-switch");
 	});
 
 	test("fresh install (no apiUrl) with no creds: auto-switch to cloud", () => {

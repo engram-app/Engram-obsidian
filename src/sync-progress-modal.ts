@@ -132,10 +132,83 @@ export function plannedPhases(choice: SyncChoice, plan: SyncPlan): PlannedPhase[
 /** How often to flush buffered progress to the DOM (ms). */
 const TICK_INTERVAL_MS = 50;
 
+/** Resolve the {current, total} a progress row should display.
+ *
+ *  `planned` (row was seeded from the plan): keep `plannedTotal` as the
+ *  denominator. The engine's live `total` counts every file it *examines* —
+ *  hash-unchanged and CRDT-owned files are counted there and then skipped, so
+ *  when `syncState` is stale that number can be many times the plan's
+ *  manifest-diff count and would make the denominator balloon mid-sync (the
+ *  "Uploading 5" → "Uploading 50" jump). The plan number is the honest "files
+ *  that will actually sync" count, so it wins.
+ *
+ *  `!planned` (a phase the plan didn't predict): trust the engine's total,
+ *  falling back to the row's previous total when the engine reports 0.
+ *
+ *  `current` (the engine now reports *actual uploads*, not files processed) can
+ *  never overshoot the denominator: on a planned row the plan is only a *floor*
+ *  — if actual uploads exceed the prediction (files created mid-sync) the total
+ *  grows to the real count so the row agrees with the completion recap, rather
+ *  than pinning at the plan and disagreeing. Actual uploads are honest and can't
+ *  balloon like the engine's examine-count, so raising the floor is safe.
+ *
+ *  `total === 0` is indeterminate (a plan-less phase whose engine total is
+ *  unknown, e.g. an incremental cursor pull): `current` is left un-clamped so
+ *  callers can still show the running count as activity — clamping it to a 0
+ *  total would freeze the display at "0". Pure for testing. */
+export function rowCounts(
+	planned: boolean,
+	plannedTotal: number,
+	engineCurrent: number,
+	engineTotal: number,
+	prevTotal: number,
+): { current: number; total: number } {
+	const total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
+	return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
+}
+
+/** Resolve what the settings-pane progress bar should show for one engine
+ *  event, so that secondary bar matches the plan-aware modal instead of
+ *  rendering the raw `current/total` (which mixes units — `current` is actual
+ *  work, `total` is files-examined — and could sit stuck-low, pin at 100%, or
+ *  overshoot past 100%).
+ *
+ *  - `planned` set (a manual sync stashed its plan): route through `rowCounts`
+ *    so the bar uses the honest manifest-diff denominator and clamps, exactly
+ *    like the modal row.
+ *  - engine total known (>0), no plan: clamp `current` to it (kills the
+ *    "25 / 20" overshoot).
+ *  - no honest denominator (0 — e.g. an incremental cursor pull whose total is
+ *    unknown until the stream ends): indeterminate. Show the running count as
+ *    activity with an empty bar, never a fabricated 100%.
+ *
+ *  Pure for testing. */
+export function settingsBarCounts(
+	progress: Pick<SyncProgress, "current" | "total">,
+	planned: PlannedPhase | undefined,
+	prevTotal: number,
+): { current: number; total: number; pct: number } {
+	const { current, total } = rowCounts(
+		Boolean(planned),
+		planned?.total ?? 0,
+		progress.current,
+		progress.total,
+		prevTotal,
+	);
+	return {
+		current,
+		total,
+		pct: total > 0 ? Math.min(100, Math.round((current / total) * 100)) : 0,
+	};
+}
+
 interface RowState {
 	phase: SyncProgress["phase"];
 	label: string;
 	plannedTotal: number;
+	/** True when this row was seeded from the plan (so its denominator is the
+	 *  honest manifest-diff count, not the engine's larger examine-count). */
+	planned: boolean;
 	current: number;
 	total: number;
 	failed: number;
@@ -204,6 +277,7 @@ export class SyncProgressModal extends Modal {
 			phase: p.phase,
 			label: p.label,
 			plannedTotal: p.total,
+			planned: true,
 			current: 0,
 			total: p.total,
 			failed: 0,
@@ -302,6 +376,7 @@ export class SyncProgressModal extends Modal {
 				phase: progress.phase,
 				label: PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase,
 				plannedTotal: progress.total,
+				planned: false,
 				current: 0,
 				total: progress.total,
 				failed: 0,
@@ -313,8 +388,15 @@ export class SyncProgressModal extends Modal {
 		}
 
 		row.seen = true;
-		row.current = progress.current;
-		row.total = progress.total || row.total;
+		const counts = rowCounts(
+			row.planned,
+			row.plannedTotal,
+			progress.current,
+			progress.total,
+			row.total,
+		);
+		row.current = counts.current;
+		row.total = counts.total;
 		row.failed = progress.failed;
 
 		// Any other phase that has already run is now finished.
@@ -379,7 +461,9 @@ export class SyncProgressModal extends Modal {
 				row.total > 0 ? Math.round((row.current / row.total) * 100) : row.done ? 100 : 0;
 			els.barInner.style.width = `${pct}%`;
 			els.barInner.toggleClass("is-complete", row.done);
-			els.countEl.setText(`${row.current} / ${row.total}`);
+			// total 0 = indeterminate (unknown-length pull): show the running count
+			// as activity rather than a frozen "0 / 0" or a misleading "3 / 0".
+			els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`);
 			els.statusEl.setText(row.done ? "✓" : row.seen ? "⟳" : "·");
 		}
 	}
