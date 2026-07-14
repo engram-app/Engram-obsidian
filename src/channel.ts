@@ -305,7 +305,15 @@ export class NoteChannel {
 	 *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
 	sendCrdt(docId: string, b64: string): boolean {
 		const t = this.crdtTopic;
-		if (!t || !this.crdtJoined) return false;
+		if (!t || !this.crdtJoined) {
+			// A refused frame is a lost STEP1/update from the caller's view — say
+			// so, or a not-yet-joined window reads as a mystery deaf note later.
+			rlog().warn(
+				"channel",
+				`sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`,
+			);
+			return false;
+		}
 		// join_ref MUST be the crdt: topic's join_ref. Phoenix routes channel
 		// messages by (topic, join_ref); sending null here means the server can't
 		// match the joined channel and silently drops the frame (every CRDT update
@@ -714,6 +722,14 @@ export class NoteChannel {
 						this.onPlanState?.(plan);
 					}
 				} else if (topic === this.crdtTopic && !this.crdtJoined) {
+					// NOTE: the backend now ACKs every routed crdt_msg with an ok reply
+					// (2026-07-14), so "ok on this topic while !crdtJoined" is no longer
+					// unambiguously the join ack. The only aliasing window is an
+					// in-flight message ack landing between disconnect()'s crdtJoined
+					// reset and the socket actually closing; a spurious flip there is
+					// undone by the onclose crdtJoined reset (#191), so ref-matching
+					// would be gold-plating. sendCrdt refuses while !crdtJoined, so no
+					// message acks exist before the true join ack on a fresh socket.
 					// The crdt: topic join succeeded — the backend is CRDT-capable.
 					// Activate CRDT routing in the SyncEngine via the onCrdtJoined
 					// callback. Until this fires, all markdown saves use the legacy

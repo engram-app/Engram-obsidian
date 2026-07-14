@@ -13134,17 +13134,26 @@ var EngramApi = class _EngramApi {
         body: body !== void 0 ? JSON.stringify(body) : void 0
       });
     } finally {
-      trace && this.beacon.enqueue({
-        trace_id: trace.traceId,
-        parent_span_id: trace.spanId,
-        name: "obsidian.push",
-        start_us: startUs,
-        end_us: Date.now() * 1e3,
-        attributes: {
-          "engram.surface": "obsidian",
-          "engram.event_type": method.toLowerCase()
-        }
-      });
+      if (trace) {
+        let noteId = beaconNoteId(path);
+        this.beacon.enqueue({
+          trace_id: trace.traceId,
+          parent_span_id: trace.spanId,
+          name: "obsidian.push",
+          start_us: startUs,
+          end_us: Date.now() * 1e3,
+          attributes: {
+            "engram.surface": "obsidian",
+            "engram.event_type": method.toLowerCase(),
+            // Which note and which route — the 2026-07-14 deaf-note hunt
+            // stalled on beacons that carried neither. note_id is a
+            // non-sensitive UUID; route has UUIDs collapsed to :id so its
+            // cardinality stays bounded.
+            ...noteId ? { "engram.note_id": noteId } : {},
+            "engram.route": beaconRoute(path)
+          }
+        });
+      }
     }
   }
   /** Health check — no auth required. */
@@ -13343,7 +13352,15 @@ var EngramApi = class _EngramApi {
     var _a;
     return ((_a = (await this.request("GET", "/folders/explicit")).json.folders) != null ? _a : []).map((f) => f.name);
   }
-};
+}, UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+function beaconNoteId(path) {
+  var _a, _b, _c;
+  return UUID_SEGMENT.lastIndex = 0, (_c = (_b = (_a = UUID_SEGMENT.exec(path)) == null ? void 0 : _a[0]) == null ? void 0 : _b.toLowerCase()) != null ? _c : null;
+}
+function beaconRoute(path) {
+  var _a;
+  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").slice(0, 64);
+}
 function parseLimitExceededError(e) {
   let err = e, body = {};
   if (err.json && typeof err.json == "object")
@@ -13664,7 +13681,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
    *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
   sendCrdt(docId, b64) {
     let t = this.crdtTopic;
-    return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
+    return !t || !this.crdtJoined ? (rlog().warn(
+      "channel",
+      `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`
+    ), !1) : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
@@ -17253,7 +17273,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_REHANDSHAKE_MAX_ATTEMPTS = 3;
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -17522,9 +17542,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.confirmedNoteIds = /* @__PURE__ */ new Set();
     /** Per-note re-handshake attempt tracking for the live-bound catch-up path,
      *  keyed by note_id. `hash` is the server content_hash being retried; a new
-     *  hash starts a fresh episode. Bounds the re-handshake (see
-     *  CRDT_REHANDSHAKE_MAX_ATTEMPTS) so a stuck note stops storming but a
-     *  dropped handshake is still retried before we record convergence. */
+     *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
+     *  number): convergence comes from the deterministic REST delta pull, and a
+     *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
     this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
@@ -18990,7 +19010,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (!this.crdt) return;
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (path && (this.confirmNoteId(noteId), !this.isLiveBound((0, import_obsidian21.normalizePath)(path))))
+    if (path) {
+      if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path))) {
+        rlog().info("crdt", `fan-out skip (live-bound, room owns it): ${path}`);
+        return;
+      }
       try {
         if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)
           if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
@@ -19010,6 +19034,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
       }
+    }
+  }
+  /** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
+   *  since our real state vector over REST and apply it to the live Y.Doc —
+   *  the editor binding paints it, no disk write. Returns true only when the
+   *  doc verifiably reached server state (applied, no pending gap), so the
+   *  caller records convergence for delivered data ONLY. Best-effort:
+   *  isolates its own failure, never throws. */
+  async restConvergeLiveBound(path, noteId) {
+    if (!this.crdt) return !1;
+    try {
+      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
+      return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().warn(
+        "crdt",
+        `REST converge: pending gap remains for ${path} \u2014 retrying next poll`
+      ), !1) : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
+    } catch (e) {
+      return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), !1;
+    }
   }
   /** Pull remote changes and apply to the vault via the ordered cursor feed.
    *
@@ -19565,7 +19608,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -19612,11 +19655,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
             if (rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, re-handshake ${attempts}/${CRDT_REHANDSHAKE_MAX_ATTEMPTS} ${change.path}`
-            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), attempts >= CRDT_REHANDSHAKE_MAX_ATTEMPTS) {
+              `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
+            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
               this.crdtRehandshakeAttempts.delete(key);
               let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
+                ...(_i = this.syncState.get(normalized)) != null ? _i : {},
                 hash: localHash,
                 serverHash: change.content_hash,
                 version: change.version
@@ -19665,14 +19709,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_i = this.baseStore) == null ? void 0 : _i.get(normalized);
+        let pullBase = (_j = this.baseStore) == null ? void 0 : _j.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_j = this.baseStore) == null || _j.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -19723,7 +19767,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_k = this.baseStore) == null || _k.set(
+            }), change.version != null && ((_l = this.baseStore) == null || _l.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -19745,7 +19789,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_l = this.baseStore) == null || _l.set(
+            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -19768,12 +19812,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_m = this.baseStore) == null || _m.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -19792,7 +19836,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
