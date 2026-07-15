@@ -18553,7 +18553,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }), issueDisposition(gate.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_a = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = gate.message)), devLog().log("push", `skip (pre-gate ${gate.category}): ${file.path}`), !1;
       }
     }
-    await this.acquirePushSlot(), this.pushing.add(file.path), this.lastError = "", this.emitStatus();
+    await this.acquirePushSlot();
+    let pushedPath = file.path;
+    this.pushing.add(pushedPath), this.lastError = "", this.emitStatus();
     let isBinary = this.isBinaryFile(file), success = !1, pushedNoteParse;
     devLog().log(
       "push",
@@ -18615,19 +18617,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId));
         }
         let baseHash = existing == null ? void 0 : existing.serverHash, resp = baseHash !== void 0 ? await this.api.pushNote(
-          file.path,
+          pushedPath,
           content,
           mtime,
           existing == null ? void 0 : existing.version,
           noteId != null ? noteId : void 0,
           baseHash
         ) : noteId ? await this.api.pushNote(
-          file.path,
+          pushedPath,
           content,
           mtime,
           existing == null ? void 0 : existing.version,
           noteId
-        ) : await this.api.pushNote(file.path, content, mtime, existing == null ? void 0 : existing.version);
+        ) : await this.api.pushNote(
+          pushedPath,
+          content,
+          mtime,
+          existing == null ? void 0 : existing.version
+        );
         if ("conflict" in resp) {
           if (resp.reason === "recently_deleted")
             return rlog().info(
@@ -18736,32 +18743,40 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return !1;
         }
         let serverPath = resp.note.path, serverVersion = resp.note.version;
-        if (serverPath && serverPath !== file.path) {
-          let localFile = this.app.vault.getFileByPath(file.path);
-          localFile && (await this.app.vault.rename(localFile, serverPath), devLog().log(
+        if (file.path !== pushedPath)
+          devLog().log(
             "push",
-            `renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`
+            `sanitize-rename skipped: file moved during push (${pushedPath} \u2192 ${file.path})`
           ), rlog().info(
             "push",
-            `Renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`
+            `Sanitize-rename skipped: file moved during push (${pushedPath} \u2192 ${file.path})`
+          );
+        else if (serverPath && serverPath !== pushedPath) {
+          let localFile = this.app.vault.getFileByPath(pushedPath);
+          localFile && (await this.app.vault.rename(localFile, serverPath), devLog().log(
+            "push",
+            `renamed: ${pushedPath} \u2192 ${serverPath} (server sanitized)`
+          ), rlog().info(
+            "push",
+            `Renamed: ${pushedPath} \u2192 ${serverPath} (server sanitized)`
           ), new import_obsidian21.Notice(
-            `Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), {
+            `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
+          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
-          }), (_w = this.baseStore) == null || _w.delete((0, import_obsidian21.normalizePath)(file.path)), serverVersion != null && ((_x = this.baseStore) == null || _x.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_y = this.noteIdMap) == null || _y.delete((0, import_obsidian21.normalizePath)(file.path)), (_z = this.noteIdMap) == null || _z.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
+          }), (_w = this.baseStore) == null || _w.delete((0, import_obsidian21.normalizePath)(pushedPath)), serverVersion != null && ((_x = this.baseStore) == null || _x.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_y = this.noteIdMap) == null || _y.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_z = this.noteIdMap) == null || _z.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
         } else
           this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             hash,
             version: serverVersion,
             serverHash: resp.note.content_hash
           }), serverVersion != null && ((_A = this.baseStore) == null || _A.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_B = this.noteIdMap) == null || _B.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
-        pushedNoteParse = {
-          path: (_C = resp.note.path) != null ? _C : file.path,
+        file.path === pushedPath && (pushedNoteParse = {
+          path: (_C = resp.note.path) != null ? _C : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
-        };
+        });
       }
       success = !0, this.issues.clear(file.path), pushedNoteParse && this.recordParseStatus(
         pushedNoteParse.path,
@@ -18801,7 +18816,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         vaultId: (_G = this.settings.vaultId) != null ? _G : void 0
       }), this.maybeGoOffline(e);
     } finally {
-      this.pushing.delete(file.path), this.releasePushSlot(), success && this.markRecentlyPushed(file.path), this.emitStatus();
+      this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
     }
     return success;
   }
@@ -20116,14 +20131,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         entries.push(e);
       }
       if (chunk = [], chunkBytes = 0, entries.length === 0) return "ok";
-      for (let e of entries) this.pushing.add(e.file.path);
+      let sent = entries.map((e) => ({ ...e, pushedPath: e.file.path }));
+      for (let e of sent) this.pushing.add(e.pushedPath);
       try {
         let resp = await this.api.pushNotesBatch(
-          entries.map((e) => {
+          sent.map((e) => {
             var _a3, _b3;
-            let np = (0, import_obsidian21.normalizePath)(e.file.path), noteId = (_b3 = (_a3 = this.noteIdMap) == null ? void 0 : _a3.get(np)) != null ? _b3 : null;
+            let np = (0, import_obsidian21.normalizePath)(e.pushedPath), noteId = (_b3 = (_a3 = this.noteIdMap) == null ? void 0 : _a3.get(np)) != null ? _b3 : null;
             return !noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(np, noteId)), {
-              path: e.file.path,
+              path: e.pushedPath,
               content: e.content,
               mtime: e.file.stat.mtime / 1e3,
               version: e.version,
@@ -20131,16 +20147,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             };
           })
         ), byPath = new Map(resp.results.map((r) => [r.path, r]));
-        for (let e of entries) {
-          let r = byPath.get(e.file.path);
+        for (let e of sent) {
+          let r = byPath.get(e.pushedPath);
           if (!r) {
-            failed++, this.logEntry("push", e.file.path, "error", "missing batch result");
+            failed++, this.logEntry("push", e.pushedPath, "error", "missing batch result");
             continue;
           }
           if (r.status === "ok")
-            await this.recordBatchPushOk(e.file, e.content, e.hash, r), pushed++, this.logEntry("push", e.file.path, "ok");
+            await this.recordBatchPushOk(e.file, e.content, e.hash, r, e.pushedPath), pushed++, this.logEntry("push", e.pushedPath, "ok");
           else if (r.status === "conflict")
-            this.pushing.delete(e.file.path), await this.pushFile(e.file, !0) && pushed++;
+            this.pushing.delete(e.pushedPath), await this.pushFile(e.file, !0) && pushed++;
           else if (((_a2 = r.errors) == null ? void 0 : _a2.reason) === "recently_deleted")
             rlog().info(
               "push",
@@ -20185,8 +20201,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           });
         return this.maybeGoOffline(err), "transport";
       } finally {
-        for (let e of entries)
-          this.pushing.delete(e.file.path), this.markRecentlyPushed(e.file.path);
+        for (let e of sent)
+          this.pushing.delete(e.pushedPath), this.markRecentlyPushed(e.pushedPath);
       }
     };
     for (let i = 0; i < files.length; i++) {
@@ -20264,9 +20280,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Record a successful batch-push result: sync state, base store, issue
    *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
-  async recordBatchPushOk(file, content, hash, result) {
+  async recordBatchPushOk(file, content, hash, result, pushedPath) {
     var _a, _b, _c, _d, _e, _f;
-    let serverPath = result.server_path && result.server_path !== file.path ? result.server_path : void 0;
+    if (file.path !== pushedPath) {
+      rlog().info(
+        "push",
+        `Sanitize-rename skipped: file moved during batch push (${pushedPath} \u2192 ${file.path})`
+      );
+      return;
+    }
+    let serverPath = result.server_path && result.server_path !== pushedPath ? result.server_path : void 0;
     if (serverPath) {
       let localFile = this.app.vault.getFileByPath(file.path);
       localFile && (await this.app.vault.rename(localFile, serverPath), rlog().info("push", `Renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`), new import_obsidian21.Notice(

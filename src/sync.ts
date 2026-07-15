@@ -1998,7 +1998,13 @@ export class SyncEngine {
 		}
 
 		await this.acquirePushSlot();
-		this.pushing.add(file.path);
+		// Snapshot the path for the lifetime of this push. TFile.path is LIVE —
+		// a user rename landing while the request is in flight mutates it, and
+		// every identity decision below (pushing-set hygiene, the wire path, the
+		// server-sanitized-rename check) must be made against the path we
+		// actually pushed, not wherever the file lives by reply time (#245).
+		const pushedPath = file.path;
+		this.pushing.add(pushedPath);
 		this.lastError = "";
 		this.emitStatus();
 
@@ -2250,7 +2256,7 @@ export class SyncEngine {
 				const resp =
 					baseHash !== undefined
 						? await this.api.pushNote(
-								file.path,
+								pushedPath,
 								content,
 								mtime,
 								existing?.version,
@@ -2259,13 +2265,18 @@ export class SyncEngine {
 							)
 						: noteId
 							? await this.api.pushNote(
-									file.path,
+									pushedPath,
 									content,
 									mtime,
 									existing?.version,
 									noteId,
 								)
-							: await this.api.pushNote(file.path, content, mtime, existing?.version);
+							: await this.api.pushNote(
+									pushedPath,
+									content,
+									mtime,
+									existing?.version,
+								);
 
 				// 409 = version conflict — server has a newer version
 				if ("conflict" in resp) {
@@ -2432,35 +2443,50 @@ export class SyncEngine {
 				// If so, rename the local file to match.
 				const serverPath = resp.note.path;
 				const serverVersion = resp.note.version;
-				if (serverPath && serverPath !== file.path) {
-					const localFile = this.app.vault.getFileByPath(file.path);
+				if (file.path !== pushedPath) {
+					// The file was renamed locally while this push was in flight.
+					// The reply describes the OLD location: treating the path
+					// mismatch as server sanitization would rename the file BACK
+					// and silently lose the user's rename (#245, run 29392015897).
+					// Record nothing under either path — handleRename already
+					// tombstoned the old path and owns pushing the new one.
+					devLog().log(
+						"push",
+						`sanitize-rename skipped: file moved during push (${pushedPath} → ${file.path})`,
+					);
+					rlog().info(
+						"push",
+						`Sanitize-rename skipped: file moved during push (${pushedPath} → ${file.path})`,
+					);
+				} else if (serverPath && serverPath !== pushedPath) {
+					const localFile = this.app.vault.getFileByPath(pushedPath);
 					if (localFile) {
 						await this.app.vault.rename(localFile, serverPath);
 						devLog().log(
 							"push",
-							`renamed: ${file.path} → ${serverPath} (server sanitized)`,
+							`renamed: ${pushedPath} → ${serverPath} (server sanitized)`,
 						);
 						rlog().info(
 							"push",
-							`Renamed: ${file.path} → ${serverPath} (server sanitized)`,
+							`Renamed: ${pushedPath} → ${serverPath} (server sanitized)`,
 						);
 						new Notice(
-							`Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`,
+							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
 						);
 					}
-					this.syncState.delete(normalizePath(file.path));
+					this.syncState.delete(normalizePath(pushedPath));
 					this.syncState.set(normalizePath(serverPath), {
 						hash,
 						version: serverVersion,
 						serverHash: resp.note.content_hash,
 					});
-					this.baseStore?.delete(normalizePath(file.path));
+					this.baseStore?.delete(normalizePath(pushedPath));
 					if (serverVersion != null) {
 						this.baseStore?.set(normalizePath(serverPath), content, serverVersion);
 					}
 					// Learn/confirm the id at its final (sanitized) path — the server
 					// is authoritative even when client_id was sent.
-					this.noteIdMap?.delete(normalizePath(file.path));
+					this.noteIdMap?.delete(normalizePath(pushedPath));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
 					this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content);
 					this.confirmNoteId(resp.note.id);
@@ -2477,11 +2503,13 @@ export class SyncEngine {
 					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
 					this.confirmNoteId(resp.note.id);
 				}
-				pushedNoteParse = {
-					path: resp.note.path ?? file.path,
-					parseStatus: resp.note.parse_status,
-					parseReason: resp.note.parse_reason,
-				};
+				if (file.path === pushedPath) {
+					pushedNoteParse = {
+						path: resp.note.path ?? pushedPath,
+						parseStatus: resp.note.parse_status,
+						parseReason: resp.note.parse_reason,
+					};
+				}
 			}
 			success = true;
 			this.issues.clear(file.path);
@@ -2558,7 +2586,10 @@ export class SyncEngine {
 			// offline — a per-file 5xx leaves the backend reachable.
 			this.maybeGoOffline(e);
 		} finally {
-			this.pushing.delete(file.path);
+			// Delete the SNAPSHOT, not the live path — if the file moved during
+			// the push, deleting file.path would leave the old path stuck in the
+			// pushing set forever (blocking future pushes + WS echo handling).
+			this.pushing.delete(pushedPath);
 			this.releasePushSlot();
 			// Keep path suppressed for a cooldown period after push completes.
 			// WebSocket events often arrive after the push finishes, and without this
@@ -2571,7 +2602,12 @@ export class SyncEngine {
 			// no self-echo to suppress. Opening the window on those no-ops used to
 			// let it swallow a legitimately-arriving second remote update within the
 			// cooldown (Engram#944).
-			if (success) this.markRecentlyPushed(file.path);
+			// Snapshot path, not file.path: the self-echo arrives under the path we
+			// SENT. After a mid-flight rename, marking the live path would leave the
+			// old path's echo unsuppressed (recreating the renamed-away file) and
+			// wrongly swallow a genuine remote update to the new path (Engram#944
+			// class). Mirrors the batch path, which marks e.pushedPath.
+			if (success) this.markRecentlyPushed(pushedPath);
 			this.emitStatus();
 		}
 		return success;
@@ -5137,21 +5173,26 @@ export class SyncEngine {
 			chunkBytes = 0;
 			if (entries.length === 0) return "ok";
 
-			for (const e of entries) this.pushing.add(e.file.path);
+			// Snapshot each entry's path for the lifetime of the request —
+			// TFile.path is LIVE, so a rename landing mid-request would otherwise
+			// desync result matching, the pushing set, and the sanitize check
+			// against what was actually sent (#245).
+			const sent = entries.map((e) => ({ ...e, pushedPath: e.file.path }));
+			for (const e of sent) this.pushing.add(e.pushedPath);
 			try {
 				const resp = await this.api.pushNotesBatch(
-					entries.map((e) => {
+					sent.map((e) => {
 						// Mint-and-send the client id, mirroring pushFile: a clean create
 						// keeps our uuidv7; a create-race is corrected when the response
 						// echoes the winning id (recordBatchPushOk adopts it).
-						const np = normalizePath(e.file.path);
+						const np = normalizePath(e.pushedPath);
 						let noteId = this.noteIdMap?.get(np) ?? null;
 						if (!noteId && this.noteIdMap) {
 							noteId = uuid7();
 							this.noteIdMap.set(np, noteId);
 						}
 						return {
-							path: e.file.path,
+							path: e.pushedPath,
 							content: e.content,
 							mtime: e.file.stat.mtime / 1000,
 							version: e.version,
@@ -5161,22 +5202,22 @@ export class SyncEngine {
 				);
 				const byPath = new Map(resp.results.map((r) => [r.path, r]));
 
-				for (const e of entries) {
-					const r = byPath.get(e.file.path);
+				for (const e of sent) {
+					const r = byPath.get(e.pushedPath);
 					if (!r) {
 						failed++;
-						this.logEntry("push", e.file.path, "error", "missing batch result");
+						this.logEntry("push", e.pushedPath, "error", "missing batch result");
 						continue;
 					}
 					if (r.status === "ok") {
-						await this.recordBatchPushOk(e.file, e.content, e.hash, r);
+						await this.recordBatchPushOk(e.file, e.content, e.hash, r, e.pushedPath);
 						pushed++;
-						this.logEntry("push", e.file.path, "ok");
+						this.logEntry("push", e.pushedPath, "ok");
 					} else if (r.status === "conflict") {
 						// Hand the file to the single-note flow, which owns 3-way
 						// merge + interactive resolution. It re-pushes with the
 						// stored version, gets the same 409, and resolves.
-						this.pushing.delete(e.file.path);
+						this.pushing.delete(e.pushedPath);
 						const ok = await this.pushFile(e.file, true);
 						if (ok) pushed++;
 					} else if (
@@ -5244,9 +5285,9 @@ export class SyncEngine {
 				this.maybeGoOffline(err);
 				return "transport";
 			} finally {
-				for (const e of entries) {
-					this.pushing.delete(e.file.path);
-					this.markRecentlyPushed(e.file.path);
+				for (const e of sent) {
+					this.pushing.delete(e.pushedPath);
+					this.markRecentlyPushed(e.pushedPath);
 				}
 			}
 		};
@@ -5408,9 +5449,23 @@ export class SyncEngine {
 		content: string,
 		hash: number,
 		result: BatchUpsertResult,
+		pushedPath: string,
 	): Promise<void> {
+		if (file.path !== pushedPath) {
+			// The file was renamed locally while the batch was in flight; the
+			// result describes the OLD location. Renaming back or recording state
+			// under either path would revert/poison the user's rename (#245) —
+			// handleRename already owns the new path.
+			rlog().info(
+				"push",
+				`Sanitize-rename skipped: file moved during batch push (${pushedPath} → ${file.path})`,
+			);
+			return;
+		}
 		const serverPath =
-			result.server_path && result.server_path !== file.path ? result.server_path : undefined;
+			result.server_path && result.server_path !== pushedPath
+				? result.server_path
+				: undefined;
 
 		if (serverPath) {
 			const localFile = this.app.vault.getFileByPath(file.path);
