@@ -16638,7 +16638,13 @@ var EmailCaptureModal = class extends import_obsidian15.Modal {
   render() {
     let { contentEl } = this;
     if (contentEl.empty(), this.state.view === "success") {
-      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" });
+      let join = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+      join.createSpan({ text: "In the meantime, come say hi on " }), join.createEl("a", {
+        text: "Discord",
+        href: ENGRAM_DISCORD_URL,
+        attr: { target: "_blank", rel: "noopener" }
+      }), join.createSpan({ text: "." }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
       return;
     }
     contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet." }), contentEl.createEl("p", {
@@ -16655,6 +16661,10 @@ var EmailCaptureModal = class extends import_obsidian15.Modal {
     }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
       text: "GitHub",
       href: ENGRAM_GITHUB_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "Discord",
+      href: ENGRAM_DISCORD_URL,
       attr: { target: "_blank", rel: "noopener" }
     }), renderEmailCaptureForm({
       parent: contentEl,
