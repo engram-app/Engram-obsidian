@@ -73,10 +73,17 @@ export function exceedsCrdtNoteLimit(content: string, maxBytes: number): boolean
 
 export async function routeModify(
 	file: { isMarkdown: boolean; noteId: string; readContent: () => Promise<string> },
-	crdt: { applyLocalEdit: (noteId: string, content: string) => Promise<boolean> },
+	crdt: {
+		applyLocalEdit: (
+			noteId: string,
+			content: string,
+			hasLca?: boolean,
+			reread?: () => Promise<string>,
+		) => Promise<string | null>;
+	},
 	maxBytes: number,
-): Promise<boolean> {
-	if (!file.isMarkdown) return false;
+): Promise<string | null> {
+	if (!file.isMarkdown) return null;
 	const content = await file.readContent();
 	// Oversized notes must NOT enter the Yjs doc. The channel transmits each
 	// update as a base64 crdt_msg (~+33%), so a multi-MB note becomes a
@@ -85,12 +92,26 @@ export async function routeModify(
 	// re-crashes on every reconnect, killing all sync for the vault. Fall through
 	// to the legacy push path, which the server gates with a 413.
 	if (exceedsCrdtNoteLimit(content, maxBytes)) {
-		return false;
+		return null;
 	}
-	// applyLocalEdit returns false when the handshake gate declines seeding
-	// (empty doc, no LCA, STEP2 not yet received). The legacy push path then
-	// owns the write convergently (backend PR #846) until the STEP2 arrives.
-	return await crdt.applyLocalEdit(file.noteId, content);
+	// readContent doubles as the stale-snapshot reread: when a remote update
+	// merges between this read and the diff, the manager re-reads instead of
+	// diffing a snapshot that would delete the remote ops (e2e test_83). The
+	// wrapper re-enforces the size cap on every reread — the file can grow
+	// past MAX_CRDT_NOTE_BYTES between the check above and the manager's
+	// re-read (review sync.ts:2099); the throw makes the manager report
+	// NOT-consumed so the legacy path (413-gated server-side) owns the edit.
+	const cappedReread = async (): Promise<string> => {
+		const fresh = await file.readContent();
+		if (exceedsCrdtNoteLimit(fresh, maxBytes)) {
+			throw new Error("reread exceeds MAX_CRDT_NOTE_BYTES");
+		}
+		return fresh;
+	};
+	// Returns the exact content the manager consumed (which the caller stamps
+	// as its echo baseline), or null when declined/not consumed — the legacy
+	// push path then owns the write convergently (backend PR #846).
+	return await crdt.applyLocalEdit(file.noteId, content, undefined, cappedReread);
 }
 
 /** At startup, the on-disk file may have changed while the app was closed
@@ -108,13 +129,24 @@ export async function routeModify(
 export async function reconcileColdStart(
 	// `path` is retained purely for log messages (a note_id is meaningless to a
 	// human reading the console); every CRDT call below routes on `noteId`.
-	file: { path: string; noteId: string; diskContent: string },
+	// `reread` is the live disk read forwarded to the manager's stale-snapshot
+	// guard: startup is the LONGEST entry-await window in the codebase
+	// (IndexedDB whenSynced replay), and a frozen diskContent diffed after a
+	// concurrent remote merge would delete the remote ops (review sync.ts:153,
+	// same class as the pushFile/test_83 fix).
+	file: { path: string; noteId: string; diskContent: string; reread?: () => Promise<string> },
 	crdt: {
-		// Returns boolean (consumed/declined) but the value is intentionally
-		// ignored here — a DECLINED write (handshake gate) is treated identically
-		// to a successful write: the legacy fullSync / pushModifiedFiles path owns
-		// those files until their STEP2 handshake completes.
-		applyLocalEdit: (noteId: string, content: string) => Promise<boolean | undefined>;
+		// Returns the consumed content (or null when declined) but the value is
+		// intentionally ignored here — a DECLINED write (handshake gate) is
+		// treated identically to a successful write: the legacy fullSync /
+		// pushModifiedFiles path owns those files until their STEP2 handshake
+		// completes.
+		applyLocalEdit: (
+			noteId: string,
+			content: string,
+			hasLca?: boolean,
+			reread?: () => Promise<string>,
+		) => Promise<string | null | boolean | undefined>;
 		getText: (noteId: string) => Promise<string>;
 		projectedText: (noteId: string) => Promise<string>;
 		enroll?: (noteId: string) => void;
@@ -140,7 +172,14 @@ export async function reconcileColdStart(
 	}
 	if (current === file.diskContent) return; // already in sync
 	try {
-		await crdt.applyLocalEdit(file.noteId, file.diskContent);
+		// Positional-args pattern: only pass the trailing reread when the caller
+		// supplied one — an explicit trailing `undefined` changes
+		// Function.arguments.length, which existing tests pin exactly.
+		if (file.reread) {
+			await crdt.applyLocalEdit(file.noteId, file.diskContent, undefined, file.reread);
+		} else {
+			await crdt.applyLocalEdit(file.noteId, file.diskContent);
+		}
 	} catch (e) {
 		// Storage write failure: do not masquerade as corruption. The CRDT
 		// handshake will converge the state once connectivity is restored.
@@ -341,6 +380,14 @@ export class SyncEngine {
 	 *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
 	 *  data) and is adopted without wiping. */
 	private syncStateVaultId: string | null = null;
+
+	/** This user's server content_hash for EMPTY content, learned from the
+	 *  first fetch that proves a hash maps to "" (the hash is a per-user HMAC —
+	 *  underivable client-side but deterministic). Lets the ingress guard trust
+	 *  inline-empty bodies carrying this exact hash instead of re-fetching
+	 *  every genuinely empty note. Session-scoped; a stale value after a DEK
+	 *  rotation or account swap stops matching and falls back to the GET. */
+	private emptyContentHash: string | null = null;
 
 	/** Optional base content store for 3-way merge (Step 2+). */
 	baseStore: BaseStore | null = null;
@@ -900,7 +947,12 @@ export class SyncEngine {
 		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return;
 		if (!this.needsColdReconcile(normalized, disk)) return; // in-sync / no baseline
 		try {
-			await this.crdt.applyLocalEdit(noteId, disk);
+			// Live reread: `disk` is a frozen snapshot and the manager's entry
+			// await can span a concurrent remote merge — same stale-snapshot
+			// revert class as pushFile/test_83 (review sync.ts:153 altitude).
+			await this.crdt.applyLocalEdit(noteId, disk, undefined, () =>
+				this.app.vault.cachedRead(file),
+			);
 			// The seeded drift ships live via manager.onUpdate -> sendCrdt ONLY
 			// when the crdt topic is joined. In the reconnect window where the sync
 			// topic delivered THIS fan-out but the crdt topic has not re-joined yet
@@ -1055,6 +1107,9 @@ export class SyncEngine {
 			if (merge.clean) {
 				try {
 					// Doc is history-full → applyLocalEdit diffs (no seed, no double).
+					// No reread on purpose: `merge.merged` is COMPUTED (non-disk)
+					// content — a disk reread here would be wrong by construction
+					// (frozen semantics per the applyLocalEdit contract).
 					await this.crdt.applyLocalEdit(noteId, merge.merged);
 					await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId));
 					this.baseStore?.set(normalized, merge.merged, base.version);
@@ -2083,12 +2138,15 @@ export class SyncEngine {
 						{
 							isMarkdown: file.extension === "md",
 							noteId,
-							readContent: async () => content,
+							// A LIVE read, not the frozen `content` above: routeModify
+							// forwards this as the manager's stale-snapshot reread, and a
+							// frozen closure would defeat that guard (e2e test_83).
+							readContent: () => this.app.vault.cachedRead(file),
 						},
 						this.crdt,
 						MAX_CRDT_NOTE_BYTES,
 					);
-					if (consumed) {
+					if (consumed !== null) {
 						// Record the transmitted content's hash as the echo-hash baseline
 						// (final review IMPORTANT-4). Without this, the hoisted echo-hash
 						// gate above keeps comparing against the last-FLUSHED baseline
@@ -2096,8 +2154,15 @@ export class SyncEngine {
 						// edit followed by an undo back to that stale baseline hash-
 						// matches and is echo-skipped, so the revert never reaches the
 						// Y.Doc. Merges onto any existing entry (mirrors recordCrdtBaseline)
-						// so version/serverHash survive.
-						this.syncState.set(normalizePath(file.path), { ...existing, hash });
+						// so version/serverHash survive. Hash what the manager actually
+						// CONSUMED, not this function's pre-guard disk read — with a
+						// live reread those differ whenever a remote merge landed
+						// mid-guard, and stamping the stale hash would echo-skip a later
+						// revert back to that exact content (review sync.ts:2113).
+						this.syncState.set(normalizePath(file.path), {
+							...existing,
+							hash: fnv1a(consumed),
+						});
 						// Register the doc with the server even when applyLocalEdit produced
 						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
 						// is a no-op, so nothing is transmitted and the note would never reach
@@ -3432,6 +3497,31 @@ export class SyncEngine {
 
 		const isAttachment = event.kind === "attachment";
 
+		// Never trust inline-EMPTY content when a content_hash is present (e2e
+		// test_34 "received=yes materialized=no"): the folder-rename cascade
+		// broadcasts meta-projected rows whose nil content the backend fabricates
+		// as "" while content_hash carries the REAL body hash. Taking "" as
+		// authoritative materializes a 0-byte file whose CAS seed (hash("") +
+		// real serverHash) then reads "converged" to every backstop, so the empty
+		// file sticks forever. Strip the inline body here so EVERY consumer below
+		// (CRDT first-delivery and the legacy inline-apply) falls through to its
+		// fetch branch and writes verified bytes. A genuinely empty note costs
+		// one GET — once, per session: content_hash is a per-user HMAC we cannot
+		// derive, but it IS deterministic, so after one fetch proves a hash maps
+		// to "" (emptyContentHash), inline "" beside that exact hash is
+		// trustworthy and skips the roundtrip. A stale learned value (DEK
+		// rotation, account swap) simply stops matching and falls back to the
+		// GET — the failure direction is a wasted fetch, never a 0-byte write.
+		if (
+			event.event_type === "upsert" &&
+			event.content === "" &&
+			event.content_hash &&
+			event.content_hash !== this.emptyContentHash
+		) {
+			rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`);
+			event.content = undefined;
+		}
+
 		// Id-keyed relocation must run BEFORE echo suppression: an echo-skipped
 		// upsert at the NEW path would otherwise leave this device's CRDT room
 		// bound to the OLD path, which then perpetually resurrects it (e2e
@@ -3686,8 +3776,16 @@ export class SyncEngine {
 							!this.isLiveBound(np) &&
 							!this.app.vault.getAbstractFileByPath(np)
 						) {
-							const body =
-								event.content ?? (await this.api.getNote(event.path)).content;
+							let body = event.content;
+							if (body === undefined) {
+								body = (await this.api.getNote(event.path)).content;
+								// Learned empty-hash (see the ingress guard): one fetch
+								// proving this user's hash-of-"" retires the GET for
+								// every later inline-empty upsert with the same hash.
+								if (body === "" && event.content_hash) {
+									this.emptyContentHash = event.content_hash;
+								}
+							}
 							await this.flushFromCrdt(np, body);
 						}
 						// #189: a rename carries no content change, so it never produces a
@@ -5191,12 +5289,13 @@ export class SyncEngine {
 				this.crdtOpsAvailable() &&
 				this.isCrdtManagedOffline(file.path, noteId)
 			) {
-				const content = await this.app.vault.cachedRead(file);
 				const consumed = await routeModify(
 					{
 						isMarkdown: file.extension === "md",
 						noteId,
-						readContent: async () => content,
+						// Live read (see pushFile): frozen content would defeat the
+						// manager's stale-snapshot reread guard.
+						readContent: () => this.app.vault.cachedRead(file),
 					},
 					this.crdt,
 					MAX_CRDT_NOTE_BYTES,
@@ -5206,8 +5305,9 @@ export class SyncEngine {
 				// empty doc awaiting STEP2) left the Y.Doc empty — enqueuing a
 				// crdt entry anyway would POST an EMPTY update and skip the REST
 				// push, silently losing the edit. On decline, fall through to the
-				// normal batch push below (mirrors pushFile's `if (consumed)`).
-				if (consumed) {
+				// normal batch push below (mirrors pushFile's consumed check).
+				// `!== null`: "" is a legitimately consumed empty note.
+				if (consumed !== null) {
 					await this.enqueueCrdtEdit(file, noteId);
 					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
 					continue;

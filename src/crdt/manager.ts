@@ -109,6 +109,10 @@ interface Entry {
 	text: Y.Text;
 	/** Resolves once IndexeddbPersistence has replayed stored updates. */
 	ready: Promise<void>;
+	/** Ticks on every REMOTE_ORIGIN apply (applyRemoteUpdate AND the room's
+	 *  readSyncMessage — both land on the same doc listener). Lets
+	 *  applyLocalEdit detect that a disk snapshot predates a remote merge. */
+	remoteSeq: number;
 }
 
 export class CrdtManager {
@@ -266,17 +270,33 @@ export class CrdtManager {
 	 * Both code paths run with the default (`undefined`) origin so the resulting
 	 * update IS forwarded to the server via `onUpdate`.
 	 *
-	 * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
-	 * diffed, or adopted). The one non-writing path is the adopt-first gate
-	 * below, which still returns `true` ("handled, nothing to push") so the
-	 * caller never mass-re-pushes known-synced files via the legacy path on a
+	 * **Returns** the exact content string the CRDT layer consumed (seeded,
+	 * diffed, or adopted) — callers stamp their echo/dedup baselines from THIS
+	 * value, never from their own pre-call disk snapshot, because with `reread`
+	 * the consumed content can legitimately differ from the snapshot (a remote
+	 * merge landed mid-guard). Returns `null` when the edit was NOT consumed
+	 * (reread failed, or the stale-snapshot guard gave up under a live remote
+	 * storm) — the caller's legacy/REST path owns the edit. The adopt-first
+	 * gate below still consumes ("handled, nothing to push") so the caller
+	 * never mass-re-pushes known-synced files via the legacy path on a
 	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
+	 *
+	 * Contract: a caller applying DISK content MUST pass `reread` (a live read
+	 * of the same file) so the stale-snapshot guard can retry against a moved
+	 * doc. Omitting `reread` is reserved for callers deliberately injecting
+	 * NON-disk content (drift-merge results, server-fetched bodies), where a
+	 * disk reread would be wrong by construction.
 	 */
-	async applyLocalEdit(noteId: string, diskContent: string, hasLca?: boolean): Promise<boolean> {
+	async applyLocalEdit(
+		noteId: string,
+		diskContent: string,
+		hasLca?: boolean,
+		reread?: () => Promise<string>,
+	): Promise<string | null> {
 		const id = this.docId(noteId);
 		this.beginOp(id); // synchronous, before the first await — fences closeDoc
 		try {
-			return await this.applyLocalEditInner(noteId, diskContent, hasLca);
+			return await this.applyLocalEditInner(noteId, diskContent, hasLca, reread);
 		} finally {
 			this.endOp(id);
 		}
@@ -286,8 +306,63 @@ export class CrdtManager {
 		noteId: string,
 		diskContent: string,
 		hasLca?: boolean,
-	): Promise<boolean> {
+		reread?: () => Promise<string>,
+	): Promise<string | null> {
 		const e = await this.entry(noteId);
+		let content = diskContent;
+
+		// Stale-snapshot revert guard (e2e test_83 "v3 via Obsidian" -> "v via
+		// Obsidian" corruption): `diskContent` was read from disk BEFORE this
+		// call resolved the entry (debounce + the entry await above). A remote
+		// update merged in that window is absent from the snapshot, so diffing
+		// it in would surgically DELETE the remote ops from the doc — and the
+		// deletion propagates to the server and every device. When the caller
+		// can re-read, diff only a read the doc held still across: await any
+		// pending remote flush (so disk reflects the merge), capture remoteSeq,
+		// re-read, and accept only if no remote apply interleaved. The diff
+		// itself is synchronous, so nothing can move the doc after the check.
+		if (reread) {
+			const id = this.docId(noteId);
+			let stable = false;
+			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
+				// Capture seq BEFORE awaiting the flush: a remote update landing
+				// DURING that await ticks remoteSeq while its own disk flush is
+				// still in flight — captured after, it would count as "stable"
+				// against a reread that predates the merge (review manager.ts:318).
+				const seq = e.remoteSeq;
+				let flushOk = true;
+				const flush = this.pendingFlush.get(id);
+				if (flush) {
+					try {
+						await flush;
+					} catch {
+						// Disk may not reflect the merge; this attempt cannot be
+						// trusted. The entry self-cleans on settle (see the update
+						// listener), so the retry doesn't re-await the same failure.
+						flushOk = false;
+					}
+				}
+				try {
+					content = await reread();
+				} catch {
+					// Cap-exceeded (routeModify's reread throws past
+					// MAX_CRDT_NOTE_BYTES) or an unreadable file: never diff a
+					// stale snapshot instead — NOT consumed, REST owns the edit.
+					return null;
+				}
+				stable = flushOk && e.remoteSeq === seq;
+			}
+			if (!stable) {
+				// ponytail: 3 consecutive mid-read remote merges = live storm.
+				// Skip the (stale) diff rather than corrupt — and report NOT
+				// consumed so the caller's REST fallback ships the edit and no
+				// echo baseline is stamped for content that never entered the
+				// doc (review manager.ts:322: "consumed" here silently lost the
+				// edit when the storm's flushes were disk-identical).
+				return null;
+			}
+		}
+
 		const lca = hasLca ?? this.textHasHistory(e.text);
 
 		// Adopt-first seed gate (#161): a history-less doc whose disk content is
@@ -298,24 +373,26 @@ export class CrdtManager {
 		// lineage; later real edits diff in on that shared history. Returns
 		// `true` ("handled, nothing to push") — a legacy fallback here would
 		// mass re-push every known-synced file on a fresh-IDB cold start.
-		if (!lca && this.opts.isUnchangedSynced?.(noteId, diskContent)) {
-			return true;
+		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) {
+			return content;
 		}
 
-		const { fmBlock, body: splitBody } = splitFrontmatter(diskContent);
+		const { fmBlock, body: splitBody } = splitFrontmatter(content);
 		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
 		const order = parsed ? parsed.order : [];
 		const values = parsed ? parsed.values : {};
 		// Malformed/absent frontmatter: treat the whole raw string as body.
-		const body = parsed !== null ? splitBody : diskContent;
+		const body = parsed !== null ? splitBody : content;
 
-		// Apply frontmatter into Y.Map + Y.Array inside a single transaction.
-		this.applyFrontmatterInto(e.doc, order, values);
-
-		// Route body through the existing seed-once + minimal-diff gate.
-		if (seedOnce(e.text, body, lca)) return true;
-		diffIntoYText(e.text, body);
-		return true;
+		// ONE transaction for frontmatter + body: bare ops each ship as their
+		// own update, letting receivers observe (and flush) a truncated
+		// intermediate state of a single logical edit (e2e test_83).
+		e.doc.transact(() => {
+			this.applyFrontmatterInto(e.doc, order, values);
+			// Route body through the existing seed-once + minimal-diff gate.
+			if (!seedOnce(e.text, body, lca)) diffIntoYText(e.text, body);
+		});
+		return content;
 	}
 
 	/**
@@ -631,6 +708,9 @@ export class CrdtManager {
 		// goes on the wire and keys the in-memory `docs` map.
 		const persistence = new IndexeddbPersistence(this.storeName(noteId), doc);
 		const text = doc.getText(CONTENT_KEY);
+		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
+		// Created BEFORE the listeners below so they can tick entry.remoteSeq.
+		const entry: Entry = { doc, persistence, text, ready, remoteSeq: 0 };
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
@@ -649,6 +729,7 @@ export class CrdtManager {
 		// and body Y.Text so disk always gets a complete, valid markdown file.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
 			if (origin !== REMOTE_ORIGIN) return;
+			entry.remoteSeq += 1;
 			const { order, values } = frontmatterOf(doc);
 			const raws = rawFrontmatterOf(doc);
 			const body = text.toJSON();
@@ -656,16 +737,23 @@ export class CrdtManager {
 			// awaits it so a write failure rejects the apply and the caller leaves
 			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
 			// return from a test double into an awaitable.
-			this.pendingFlush.set(
-				id,
-				Promise.resolve(
-					this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
-				),
+			const flush = Promise.resolve(
+				this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
 			);
+			this.pendingFlush.set(id, flush);
+			// Room-path updates (crdt/channel readSyncMessage applies straight to
+			// the doc) never consume this entry the way applyRemoteUpdate does —
+			// self-clean on settle so ONE rejected flush can't sit in the map and
+			// poison every later applyLocalEdit await for this note (review
+			// manager.ts:317). The catch also marks the rejection handled;
+			// applyRemoteUpdate re-awaits the same promise and still observes it.
+			void flush
+				.catch(() => undefined)
+				.finally(() => {
+					if (this.pendingFlush.get(id) === flush) this.pendingFlush.delete(id);
+				});
 		});
 
-		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
-		const entry: Entry = { doc, persistence, text, ready };
 		this.docs.set(id, entry);
 		await ready;
 		return entry;

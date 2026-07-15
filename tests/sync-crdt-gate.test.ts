@@ -675,7 +675,7 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 		const engine = createEngine();
 		// applyLocalEdit must return true so routeModify treats the edit as consumed
 		// and does not fall through to pushNote (handshake-gate fix).
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		// rest-first fix: only a server-confirmed note routes through CRDT.
 		const noteIdMap = new NoteIdMap();
@@ -741,7 +741,7 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		// Simulate the sequence from main.ts: manager is wired only after join.
 		// applyLocalEdit must return true so routeModify treats the edit as consumed
 		// and does not fall through to pushNote (handshake-gate fix).
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		const manager = { applyLocalEdit } as any;
 
 		// Before join: manager not set

@@ -188,7 +188,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		const encodeStateVector = mock().mockResolvedValue(new Uint8Array([0]));
 		const hasPendingGap = mock().mockResolvedValue(false);
 		engine.setCrdtManager({
-			applyLocalEdit: mock().mockReturnValue(true),
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			applyRemoteUpdate,
 			encodeStateVector,
 			hasPendingGap,
@@ -584,7 +584,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 describe("bind-time convergence — verifyConvergenceOnOpen", () => {
 	test("manifest hash differs from last-synced serverHash → forced re-handshake", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		const map = new NoteIdMap();
 		map.set("open-me.md", "note-id-9");
 		engine.setNoteIdMap(map);
@@ -608,7 +610,9 @@ describe("bind-time convergence — verifyConvergenceOnOpen", () => {
 
 	test("hashes agree → no re-handshake", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		const map = new NoteIdMap();
 		map.set("open-me.md", "note-id-9");
 		engine.setNoteIdMap(map);

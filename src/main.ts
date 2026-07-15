@@ -863,6 +863,11 @@ export default class EngramSyncPlugin extends Plugin {
 									path: file.path,
 									noteId,
 									diskContent,
+									// Live reread for the manager's stale-snapshot guard:
+									// startup spans the longest entry-await (IndexedDB
+									// replay); a frozen diskContent diffed after a
+									// concurrent remote merge would revert the merge.
+									reread: () => this.app.vault.cachedRead(file),
 								},
 								{
 									applyLocalEdit: crdt.applyLocalEdit.bind(crdt),

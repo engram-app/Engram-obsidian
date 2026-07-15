@@ -23,6 +23,11 @@ export function seedOnce(text: Y.Text, disk: string, hasLca: boolean): boolean {
  * diff-match-patch operates on JS string indices (UTF-16), which matches Y.Text's
  * native UTF-16 offset model, so multibyte codepoints (emoji, CJK surrogate
  * pairs) are handled correctly without any offset translation.
+ *
+ * The whole op loop runs in ONE transaction: each bare insert/delete is its
+ * own implicit transaction, so one logical edit would otherwise ship as
+ * several independently-observable updates — receivers could flush a
+ * truncated intermediate state to disk (e2e test_83 corruption class).
  */
 export function diffIntoYText(text: Y.Text, incoming: string): void {
 	const current = text.toJSON();
@@ -31,15 +36,19 @@ export function diffIntoYText(text: Y.Text, incoming: string): void {
 	const diffs = dmp.diff_main(current, incoming);
 	dmp.diff_cleanupSemantic(diffs);
 
-	let cursor = 0;
-	for (const [op, data] of diffs) {
-		if (op === 0) {
-			cursor += data.length; // EQUAL — advance cursor
-		} else if (op === 1) {
-			text.insert(cursor, data); // INSERT
-			cursor += data.length;
-		} else {
-			text.delete(cursor, data.length); // DELETE — cursor stays
+	const apply = (): void => {
+		let cursor = 0;
+		for (const [op, data] of diffs) {
+			if (op === 0) {
+				cursor += data.length; // EQUAL — advance cursor
+			} else if (op === 1) {
+				text.insert(cursor, data); // INSERT
+				cursor += data.length;
+			} else {
+				text.delete(cursor, data.length); // DELETE — cursor stays
+			}
 		}
-	}
+	};
+	if (text.doc) text.doc.transact(apply);
+	else apply();
 }

@@ -254,7 +254,7 @@ describe("wipeRemote self-echo suppression", () => {
 			removeDoc: mock(async () => {
 				order.push("removeDoc");
 			}),
-			applyLocalEdit: mock(async () => true),
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
 		};
 		engine.setCrdtManager(crdt as any);
 		engine.setCrdtEditorDetach(() => {
@@ -302,7 +302,10 @@ describe("wipeRemote self-echo suppression", () => {
 	test("wipeRemote clears server bindings so the re-push mints fresh", async () => {
 		const noteIdMap = identityNoteIdMap("Notes/Keep.md");
 		const engine = createEngine(noteIdMap);
-		const crdt = { removeDoc: mock(async () => {}), applyLocalEdit: mock(async () => true) };
+		const crdt = {
+			removeDoc: mock(async () => {}),
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		};
 		const enrollment = { enroll: mock(), reset: mock() };
 		engine.setCrdtManager(crdt as any);
 		engine.setCrdtEnrollment(enrollment as any);

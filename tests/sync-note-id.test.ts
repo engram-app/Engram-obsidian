@@ -426,7 +426,7 @@ describe("handleRename re-keys the map, id unchanged", () => {
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
@@ -469,7 +469,7 @@ describe("clearConfirmedNoteIds biases the next write back to REST", () => {
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
@@ -1380,7 +1380,7 @@ describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
@@ -1420,7 +1420,7 @@ describe("pushFile echo suppression covers the CRDT-managed branch (e2e test_37 
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);
@@ -1461,7 +1461,7 @@ describe("a successful CRDT push updates the echo-hash baseline (final review IM
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		engine.setNoteIdMap(noteIdMap);
-		const applyLocalEdit = mock(async () => true);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
 		engine.setCrdtEnrollment({ enroll: mock(() => {}) } as any);
 		engine.setCrdtLiveCheck(() => true);

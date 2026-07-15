@@ -127,7 +127,7 @@ function identityNoteIdMap(...paths: string[]): NoteIdMap {
 function fakeCrdt() {
 	return {
 		removeDoc: mock(async (_path: string) => {}),
-		applyLocalEdit: mock(async () => true),
+		applyLocalEdit: mock(async (_id: string, c: string) => c),
 	};
 }
 

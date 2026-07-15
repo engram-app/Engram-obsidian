@@ -81,7 +81,9 @@ beforeEach(() => {
 describe("C1 branch records the CAS base from the WS event", () => {
 	test("upsert event for a CRDT-managed note stores serverHash + version", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		const map = new NoteIdMap();
 		engine.setNoteIdMap(map);
 
@@ -109,7 +111,9 @@ describe("C1 branch records the CAS base from the WS event", () => {
 		// verifyConvergenceOnOpen) reads "converged" and the stale body sticks
 		// silently. Seed a base only when none exists.
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		const map = new NoteIdMap();
 		map.set("received.md", "note-id-1");
 		engine.setNoteIdMap(map);
@@ -137,7 +141,9 @@ describe("C1 branch records the CAS base from the WS event", () => {
 		// event processes. The gate must key on "no CAS base yet", not on file
 		// existence — otherwise the raced ordering re-opens the blind-push hole.
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		const map = new NoteIdMap();
 		map.set("received.md", "note-id-1");
 		engine.setNoteIdMap(map);
@@ -173,7 +179,9 @@ describe("C1 branch enrolls a CRDT room ONLY for a live-bound note", () => {
 
 	test("idle (not live-bound) upsert does NOT enroll a room", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
 		const enrollment = fakeEnrollment();
 		engine.setCrdtEnrollment(enrollment as any);
@@ -192,7 +200,9 @@ describe("C1 branch enrolls a CRDT room ONLY for a live-bound note", () => {
 
 	test("live-bound upsert DOES enroll the room", async () => {
 		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock().mockReturnValue(true) } as any);
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
 		const enrollment = fakeEnrollment();
 		engine.setCrdtEnrollment(enrollment as any);
@@ -224,7 +234,7 @@ describe("C1 branch materializes a first-delivery idle note room-free", () => {
 	test("idle upsert for a note with no local file fetches the body and creates the file", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
-			applyLocalEdit: mock().mockReturnValue(true),
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			isSynced: mock().mockReturnValue(false),
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
@@ -251,7 +261,7 @@ describe("C1 branch materializes a first-delivery idle note room-free", () => {
 	test("an idle note ALREADY on disk is not re-fetched (the backstop path owns it)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
-			applyLocalEdit: mock().mockReturnValue(true),
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			isSynced: mock().mockReturnValue(false),
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
@@ -275,7 +285,7 @@ describe("C1 branch materializes a first-delivery idle note room-free", () => {
 	test("a live-bound first delivery is left to its room (no eager write)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
-			applyLocalEdit: mock().mockReturnValue(true),
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			isSynced: mock().mockReturnValue(false),
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
