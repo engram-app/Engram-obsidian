@@ -1,6 +1,6 @@
 // src/email-capture-modal.ts
 import { type App, Modal } from "obsidian";
-import { ENGRAM_GITHUB_URL, ENGRAM_MARKETING_URL } from "./tabs/urls";
+import { ENGRAM_DISCORD_URL, ENGRAM_GITHUB_URL, ENGRAM_MARKETING_URL } from "./tabs/urls";
 import { submitWaitlistEmail } from "./waitlist";
 
 /** Pragmatic email shape check: one @, a dot in the domain, no spaces. Mirrors
@@ -142,6 +142,14 @@ export class EmailCaptureModal extends Modal {
 
 		if (this.state.view === "success") {
 			contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! 🎉" });
+			const join = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+			join.createSpan({ text: "In the meantime, come say hi on " });
+			join.createEl("a", {
+				text: "Discord",
+				href: ENGRAM_DISCORD_URL,
+				attr: { target: "_blank", rel: "noopener" },
+			});
+			join.createSpan({ text: "." });
 			const close = contentEl.createEl("button", { text: "Close", cls: "mod-cta" });
 			close.addEventListener("click", () => this.close());
 			return;
@@ -170,6 +178,12 @@ export class EmailCaptureModal extends Modal {
 		links.createEl("a", {
 			text: "GitHub",
 			href: ENGRAM_GITHUB_URL,
+			attr: { target: "_blank", rel: "noopener" },
+		});
+		links.createSpan({ text: " · " });
+		links.createEl("a", {
+			text: "Discord",
+			href: ENGRAM_DISCORD_URL,
 			attr: { target: "_blank", rel: "noopener" },
 		});
 

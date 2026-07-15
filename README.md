@@ -10,7 +10,7 @@ Semantic + keyword + hybrid search · MCP-native · desktop & mobile · no telem
 
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
-[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/)
+[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 </div>
 
@@ -63,6 +63,7 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 - **[User guide](docs/user-guide.md)**: AI assistants, conflicts, the Sync Center, troubleshooting.
 - **[Developer guide](DEV.md)**: build from source, architecture, releases.
 - **Something wrong?** [Open an issue](https://github.com/engram-app/Engram-obsidian/issues).
+- **Join the community.** Chat with users and devs on [Discord](https://discord.gg/NKWcU2mm7N).
 - **Like it?** Support development via [GitHub Sponsors](https://github.com/sponsors/engram-app) or [Ko-fi](https://ko-fi.com/engrams_sync). Optional and appreciated.
 
 ## License

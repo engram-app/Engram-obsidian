@@ -2,6 +2,7 @@ import { Setting } from "obsidian";
 import { EmailCaptureState, renderEmailCaptureForm } from "../email-capture-modal";
 import type { TabContext } from "./types";
 import {
+	ENGRAM_DISCORD_URL,
 	ENGRAM_DOCS_URL,
 	ENGRAM_ISSUES_URL,
 	ENGRAM_MARKETING_URL,
@@ -128,4 +129,5 @@ export function renderAboutTab(ctx: TabContext): void {
 	externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL);
 	externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL);
 	externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
+	externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
 }
