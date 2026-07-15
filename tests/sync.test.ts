@@ -3099,6 +3099,44 @@ describe("Path sanitization on push", () => {
 		expect(mockApp.vault.rename).toHaveBeenCalledWith(file, "Notes/test.md");
 	});
 
+	test("does not revert a local rename that lands while the push is in flight (#245)", async () => {
+		const file = new TFile("Notes/RenameOld.md", Date.now());
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# body");
+		(mockApp.vault.getFileByPath as jest.Mock).mockImplementation((p: string) =>
+			p === file.path ? file : null,
+		);
+		(mockApi.pushNote as jest.Mock).mockImplementationOnce(async (path: string) => {
+			// The user renames the file while the push request is in flight.
+			// TFile.path is live, so by reply time it no longer matches the
+			// path that was pushed.
+			file.path = "Notes/RenameNew.md";
+			return {
+				note: {
+					id: "note-1",
+					user_id: "user-1",
+					path, // server echoes the path it was given — no sanitization
+					title: "RenameOld",
+					folder: "Notes",
+					tags: [],
+					mtime: 1709234567,
+					created_at: "2026-01-01T00:00:00Z",
+					updated_at: "2026-01-01T00:00:00Z",
+				},
+				chunks_indexed: 1,
+			};
+		});
+
+		const engine = createEngine({ debounceMs: 10 });
+		engine.handleModify(file);
+		await new Promise((r) => setTimeout(r, 100));
+
+		// The reply's old path must NOT be mistaken for server sanitization —
+		// renaming back would silently revert the user's rename (issue #245,
+		// run 29392015897).
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+		expect(file.path).toBe("Notes/RenameNew.md");
+	});
+
 	test("does not rename when server path matches original", async () => {
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {

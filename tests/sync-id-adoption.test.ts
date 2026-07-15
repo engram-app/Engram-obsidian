@@ -135,6 +135,43 @@ describe("batch push adopts the authoritative note id (create-race heal)", () =>
 	});
 });
 
+describe("batch push does not revert a mid-flight local rename (#245)", () => {
+	test("skips the sanitize-rename and state recording when the file moved during the batch", async () => {
+		const engine = createEngine();
+		const file = new TFile("RenameOld.md");
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
+			.mockReset()
+			.mockImplementation((p: string) => (p === file.path ? file : null));
+		(mockApi.pushNotesBatch as ReturnType<typeof mock>)
+			.mockReset()
+			.mockImplementation(async (entries: Array<{ path: string }>) => {
+				// The user renames the file while the batch request is in flight.
+				file.path = "RenameNew.md";
+				return {
+					results: entries.map((e) => ({
+						path: e.path,
+						status: "ok",
+						id: "srv-id",
+						version: 1,
+						content_hash: "srv-h",
+						server_path: e.path, // no sanitization — echoes the pushed path
+					})),
+				};
+			});
+
+		const pushed = await engine.pushAll();
+
+		// Pre-fix failure modes: (a) server_path (RenameOld) !== live file.path
+		// (RenameNew) reads as "server sanitized" and renames the file BACK,
+		// losing the rename; (b) the result row is matched by LIVE path, misses,
+		// and a successful push is mis-counted as "missing batch result" failed.
+		expect(mockApp.vault.rename).not.toHaveBeenCalled();
+		expect(file.path).toBe("RenameNew.md");
+		expect(pushed).toBe(1);
+	});
+});
+
 describe("offline-queue replay adopts the authoritative note id", () => {
 	test("sends the minted id and adopts resp.note.id into the map + confirms it", async () => {
 		const engine = createEngine();
