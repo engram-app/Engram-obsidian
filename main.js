@@ -13090,8 +13090,11 @@ var EngramApi = class _EngramApi {
     /** Deadline for note/metadata requests. Instance fields (not consts) so
      *  tests can shrink them; attachments get a longer one — a large upload on
      *  a slow link legitimately outlives the note deadline. */
-    this.requestTimeoutMs = 3e4;
+    this.requestTimeoutMs = 15e3;
     this.attachmentTimeoutMs = 12e4;
+    /** In-flight sendRequest calls, so a channel-disconnect signal can probe
+     *  for wedged connections and fail them early (see failWedgedRequests). */
+    this.inflight = /* @__PURE__ */ new Set();
     this.vaultId = null;
     this.deviceId = null;
     this.authProvider = null;
@@ -13185,18 +13188,26 @@ var EngramApi = class _EngramApi {
       ...extraHeaders
     }, activeVaultId = this.getActiveVaultId();
     activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
+    let transfer = path.startsWith("/attachments") && !path.startsWith("/attachments/changes") && (method === "POST" || method === "GET"), raw = (0, import_obsidian.requestUrl)({
+      url: `${this.baseUrl}${path}`,
+      method,
+      headers,
+      body: body !== void 0 ? JSON.stringify(body) : void 0
+    }), abandonReject = () => {
+    }, abandoned = new Promise((_, rej) => {
+      abandonReject = rej;
+    }), entry = { startedAt: Date.now(), abandon: abandonReject };
+    this.inflight.add(entry);
     try {
       return await withTimeout(
-        (0, import_obsidian.requestUrl)({
-          url: `${this.baseUrl}${path}`,
-          method,
-          headers,
-          body: body !== void 0 ? JSON.stringify(body) : void 0
-        }),
-        path.startsWith("/attachments") ? this.attachmentTimeoutMs : this.requestTimeoutMs
+        Promise.race([raw, abandoned]),
+        transfer ? this.attachmentTimeoutMs : this.requestTimeoutMs
       );
+    } catch (e) {
+      throw e instanceof RequestTimeoutError && raw.catch(() => {
+      }), e;
     } finally {
-      if (trace) {
+      if (this.inflight.delete(entry), trace) {
         let noteId = beaconNoteId(path);
         this.beacon.enqueue({
           trace_id: trace.traceId,
@@ -13217,6 +13228,22 @@ var EngramApi = class _EngramApi {
         });
       }
     }
+  }
+  /** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
+   *  answers while they still hang — proof the connection they rode is wedged
+   *  (half-open after a deploy drain), not that the server is down. Called on
+   *  channel disconnect (the earliest wedge signal the plugin gets), so
+   *  recovery runs in ~probe time instead of the full request deadline. If
+   *  the probe fails, the server may be genuinely unreachable: leave the
+   *  requests to their normal deadline. Returns how many were failed. */
+  async failWedgedRequests(maxAgeMs = 4e3) {
+    let now = Date.now(), stale = [...this.inflight].filter((e) => now - e.startedAt >= maxAgeMs);
+    if (stale.length === 0 || !await this.health())
+      return 0;
+    let failed = 0;
+    for (let e of stale)
+      this.inflight.has(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
+    return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
   }
   /** Health check — no auth required. Bounded like every other request: the
    *  offline health-check loop awaits this, so a wedged probe would freeze
@@ -23159,7 +23186,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
         var _a2;
-        this.liveConnected = connected, connected && (this.everConnected = !0), this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
+        this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
           var _a3, _b2;
           if (!this.crdtMapReconciled)
             try {

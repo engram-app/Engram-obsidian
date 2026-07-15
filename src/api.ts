@@ -64,8 +64,12 @@ export class EngramApi {
 	/** Deadline for note/metadata requests. Instance fields (not consts) so
 	 *  tests can shrink them; attachments get a longer one — a large upload on
 	 *  a slow link legitimately outlives the note deadline. */
-	requestTimeoutMs = 30_000;
+	requestTimeoutMs = 15_000;
 	attachmentTimeoutMs = 120_000;
+
+	/** In-flight sendRequest calls, so a channel-disconnect signal can probe
+	 *  for wedged connections and fail them early (see failWedgedRequests). */
+	private readonly inflight = new Set<{ startedAt: number; abandon: (e: Error) => void }>();
 
 	private vaultId: string | null = null;
 	private deviceId: string | null = null;
@@ -233,17 +237,40 @@ export class EngramApi {
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
 		}
+		// Only actual byte transfers earn the long deadline: attachment upload
+		// (POST /attachments) and download (GET /attachments/<path>). Metadata
+		// calls on the same prefix (DELETE, /attachments/changes) are as small
+		// as any note call and take the short deadline.
+		const transfer =
+			path.startsWith("/attachments") &&
+			!path.startsWith("/attachments/changes") &&
+			(method === "POST" || method === "GET");
+		const raw = requestUrl({
+			url: `${this.baseUrl}${path}`,
+			method,
+			headers,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+		});
+		let abandonReject: (e: Error) => void = () => {};
+		const abandoned = new Promise<never>((_, rej) => {
+			abandonReject = rej;
+		});
+		const entry = { startedAt: Date.now(), abandon: abandonReject };
+		this.inflight.add(entry);
 		try {
 			return await withTimeout(
-				requestUrl({
-					url: `${this.baseUrl}${path}`,
-					method,
-					headers,
-					body: body !== undefined ? JSON.stringify(body) : undefined,
-				}),
-				path.startsWith("/attachments") ? this.attachmentTimeoutMs : this.requestTimeoutMs,
+				Promise.race([raw, abandoned]),
+				transfer ? this.attachmentTimeoutMs : this.requestTimeoutMs,
 			);
+		} catch (e) {
+			// Abandon path mirrors the timeout path: the zombie requestUrl can
+			// still settle later — mark its rejection handled.
+			if (e instanceof RequestTimeoutError) {
+				raw.catch(() => {});
+			}
+			throw e;
 		} finally {
+			this.inflight.delete(entry);
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
 			// (the buffer batches/flushes on its own timer), and never blocks or
 			// fails the request above, including on the error path, so a failed
@@ -269,6 +296,35 @@ export class EngramApi {
 				});
 			}
 		}
+	}
+
+	/** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
+	 *  answers while they still hang — proof the connection they rode is wedged
+	 *  (half-open after a deploy drain), not that the server is down. Called on
+	 *  channel disconnect (the earliest wedge signal the plugin gets), so
+	 *  recovery runs in ~probe time instead of the full request deadline. If
+	 *  the probe fails, the server may be genuinely unreachable: leave the
+	 *  requests to their normal deadline. Returns how many were failed. */
+	async failWedgedRequests(maxAgeMs = 4_000): Promise<number> {
+		const now = Date.now();
+		const stale = [...this.inflight].filter((e) => now - e.startedAt >= maxAgeMs);
+		if (stale.length === 0) {
+			return 0;
+		}
+		if (!(await this.health())) {
+			return 0;
+		}
+		let failed = 0;
+		for (const e of stale) {
+			if (this.inflight.has(e)) {
+				e.abandon(new RequestTimeoutError(maxAgeMs));
+				failed++;
+			}
+		}
+		if (failed > 0) {
+			rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`);
+		}
+		return failed;
 	}
 
 	/** Health check — no auth required. Bounded like every other request: the

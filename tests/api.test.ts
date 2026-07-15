@@ -1079,3 +1079,75 @@ describe("request timeout", () => {
 		expect(healthy).toBe(false);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Wedge detector (issue #244 follow-up): on channel disconnect, a fresh
+// /health probe that answers while older in-flight requests still hang proves
+// the CONNECTION is wedged (half-open after a drain), not the server — fail
+// those requests now instead of waiting out the full deadline.
+// ---------------------------------------------------------------------------
+
+describe("failWedgedRequests", () => {
+	const never = () => new Promise<never>(() => {});
+
+	function api(): EngramApi {
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 5_000; // far away — early rejection must come from the probe
+		return a;
+	}
+
+	test("rejects stale in-flight requests when the health probe answers", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = api();
+		const pending = a.getMe();
+		const settled = pending.catch((e) => e);
+		await Bun.sleep(1); // let sendRequest pass its async preamble and register
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(1);
+		expect(await settled).toBeInstanceOf(RequestTimeoutError);
+	});
+
+	test("leaves requests alone when the server is unreachable (real outage)", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.reject(new Error("down")) : never(),
+		);
+		const a = api();
+		let settled = false;
+		a.getMe().catch(() => {
+			settled = true;
+		});
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+
+	test("leaves young requests alone", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = api();
+		let settled = false;
+		a.getMe().catch(() => {
+			settled = true;
+		});
+		const failed = await a.failWedgedRequests(60_000);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+});
+
+describe("attachment deadline scope", () => {
+	test("attachment metadata (DELETE) uses the note deadline, not the transfer one", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.attachmentTimeoutMs = 100_000;
+		const start = Date.now();
+		await expect(a.deleteAttachment("x.png")).rejects.toThrow(RequestTimeoutError);
+		expect(Date.now() - start).toBeLessThan(5_000);
+	});
+});
