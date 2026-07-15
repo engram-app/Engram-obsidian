@@ -1614,6 +1614,7 @@ export class SyncEngine {
 		// But real user edits can happen too — queue them for post-pull push.
 		if (this.pulling) {
 			this.pendingPostPullPushes.add(file.path);
+			this.schedulePostPullDrain();
 			return;
 		}
 		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
@@ -3213,9 +3214,33 @@ export class SyncEngine {
 		}
 	}
 
+	/** Ceiling on how long an edit may sit in pendingPostPullPushes while a
+	 *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
+	 *  on a half-open connection — kept `pulling` true for 60s+, and deferred
+	 *  edits never pushed, so sync looked dead. Instance field so tests can
+	 *  shrink it. */
+	postPullMaxDeferMs = 5_000;
+	private postPullDrainTimer: number | null = null;
+
+	/** Arm a one-shot bounded drain for the deferral above. Draining early is
+	 *  safe: pushFile's echo-hash gate filters sync-write echoes either way —
+	 *  the deferral only saves redundant echo traffic, it is not a correctness
+	 *  gate. The normal end-of-pull drain clears this timer. */
+	private schedulePostPullDrain(): void {
+		if (this.postPullDrainTimer !== null) return;
+		this.postPullDrainTimer = window.setTimeout(() => {
+			this.postPullDrainTimer = null;
+			void this.flushPostPullPushes();
+		}, this.postPullMaxDeferMs);
+	}
+
 	/** Push any files that were modified during pull. Echo suppression will
 	 *  naturally skip sync-engine writes; only real user edits get pushed. */
 	private async flushPostPullPushes(): Promise<void> {
+		if (this.postPullDrainTimer !== null) {
+			window.clearTimeout(this.postPullDrainTimer);
+			this.postPullDrainTimer = null;
+		}
 		if (this.pendingPostPullPushes.size === 0) return;
 		const paths = [...this.pendingPostPullPushes];
 		this.pendingPostPullPushes.clear();
@@ -6693,6 +6718,10 @@ export class SyncEngine {
 		}
 		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.postPullDrainTimer !== null) {
+			window.clearTimeout(this.postPullDrainTimer);
+			this.postPullDrainTimer = null;
+		}
 		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();

@@ -3,7 +3,12 @@
  */
 import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
-import { EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "../src/api";
+import {
+	EngramApi,
+	RequestTimeoutError,
+	arrayBufferToBase64,
+	base64ToArrayBuffer,
+} from "../src/api";
 import type { AuthProvider } from "../src/auth";
 import { toB64 } from "../src/crdt/channel";
 import { LimitExceededError } from "../src/limit-error";
@@ -1016,5 +1021,58 @@ describe("path encoding for by-path URL methods", () => {
 		await api().deleteNote("Notes/Sub/Deep.md");
 		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
 		expect(lastUrl()).not.toContain("%2F");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Request timeout (issue #244 — a wedged requestUrl on a half-open connection
+// hung forever, holding `pulling`/push slots and stalling sync both ways)
+// ---------------------------------------------------------------------------
+
+describe("request timeout", () => {
+	const never = () => new Promise<never>(() => {});
+
+	function timedApi(): EngramApi {
+		const api = new EngramApi("http://host", "key");
+		api.requestTimeoutMs = 20;
+		api.attachmentTimeoutMs = 40;
+		return api;
+	}
+
+	test("a request that never settles rejects with RequestTimeoutError", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const start = Date.now();
+		await expect(timedApi().getMe()).rejects.toThrow(RequestTimeoutError);
+		// Bound the wait: the reject must come from the 20ms timer, not a fluke.
+		await Bun.sleep(30);
+		expect(Date.now() - start).toBeLessThan(500);
+	});
+
+	test("attachment paths use the longer attachment timeout", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const api = timedApi();
+		let settledAt: number | null = null;
+		const p = api.pushAttachment("a.png", "AAAA", "image/png", 1).catch(() => {
+			settledAt = Date.now();
+		});
+		const start = Date.now();
+		await Bun.sleep(30);
+		expect(settledAt).toBeNull(); // still pending past the note timeout
+		await p;
+		expect(settledAt).not.toBeNull();
+		expect((settledAt ?? 0) - start).toBeGreaterThanOrEqual(35);
+	});
+
+	test("a fast response is unaffected", async () => {
+		mockRequestUrl.mockResolvedValue({ status: 200, json: { user: { id: "u", email: "e" } } });
+		const user = await timedApi().getMe();
+		expect(user.id).toBe("u");
+	});
+
+	test("health() is also bounded", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const api = timedApi();
+		const healthy = await api.health();
+		expect(healthy).toBe(false);
 	});
 });

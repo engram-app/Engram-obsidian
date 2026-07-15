@@ -28,7 +28,45 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 
+/** A request exceeded its deadline. requestUrl() cannot be aborted, so the
+ *  underlying request is ABANDONED, not cancelled — a late server-side apply
+ *  is possible and handled by the normal echo/conflict machinery. Carries no
+ *  `status`, so existing callers classify it like connection loss (issue #244:
+ *  a wedged half-open request hung forever, pinning `pulling` and stalling
+ *  sync in both directions until plugin reload). */
+export class RequestTimeoutError extends Error {
+	constructor(ms: number) {
+		super(`Request timed out after ${ms}ms`);
+		this.name = "RequestTimeoutError";
+	}
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+	let timer: number | undefined;
+	const deadline = new Promise<never>((_, reject) => {
+		timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
+	});
+	try {
+		// race (not re-wrap) so a requestUrl rejection propagates UNCHANGED —
+		// callers classify on its `.status` (402 limit parse, 401 token retry).
+		return await Promise.race([p, deadline]);
+	} catch (e) {
+		// The abandoned request can still settle later; without a handler its
+		// eventual rejection surfaces as an unhandled-rejection console error.
+		if (e instanceof RequestTimeoutError) p.catch(() => {});
+		throw e;
+	} finally {
+		window.clearTimeout(timer);
+	}
+}
+
 export class EngramApi {
+	/** Deadline for note/metadata requests. Instance fields (not consts) so
+	 *  tests can shrink them; attachments get a longer one — a large upload on
+	 *  a slow link legitimately outlives the note deadline. */
+	requestTimeoutMs = 30_000;
+	attachmentTimeoutMs = 120_000;
+
 	private vaultId: string | null = null;
 	private deviceId: string | null = null;
 	private authProvider: AuthProvider | null = null;
@@ -196,12 +234,15 @@ export class EngramApi {
 			headers["Content-Type"] = "application/json";
 		}
 		try {
-			return await requestUrl({
-				url: `${this.baseUrl}${path}`,
-				method,
-				headers,
-				body: body !== undefined ? JSON.stringify(body) : undefined,
-			});
+			return await withTimeout(
+				requestUrl({
+					url: `${this.baseUrl}${path}`,
+					method,
+					headers,
+					body: body !== undefined ? JSON.stringify(body) : undefined,
+				}),
+				path.startsWith("/attachments") ? this.attachmentTimeoutMs : this.requestTimeoutMs,
+			);
 		} finally {
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
 			// (the buffer batches/flushes on its own timer), and never blocks or
@@ -230,13 +271,18 @@ export class EngramApi {
 		}
 	}
 
-	/** Health check — no auth required. */
+	/** Health check — no auth required. Bounded like every other request: the
+	 *  offline health-check loop awaits this, so a wedged probe would freeze
+	 *  offline recovery. */
 	async health(): Promise<boolean> {
 		try {
-			const resp = await requestUrl({
-				url: `${this.baseUrl}/health`,
-				method: "GET",
-			});
+			const resp = await withTimeout(
+				requestUrl({
+					url: `${this.baseUrl}/health`,
+					method: "GET",
+				}),
+				this.requestTimeoutMs,
+			);
 			return resp.status === 200;
 		} catch {
 			return false;
