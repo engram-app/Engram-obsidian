@@ -7624,9 +7624,12 @@ function diffIntoYText(text2, incoming) {
   if (current === incoming) return;
   let diffs = dmp.diff_main(current, incoming);
   dmp.diff_cleanupSemantic(diffs);
-  let cursor = 0;
-  for (let [op, data] of diffs)
-    op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
+  let apply = () => {
+    let cursor = 0;
+    for (let [op, data] of diffs)
+      op === 0 ? cursor += data.length : op === 1 ? (text2.insert(cursor, data), cursor += data.length) : text2.delete(cursor, data.length);
+  };
+  text2.doc ? text2.doc.transact(apply) : apply();
 }
 
 // node_modules/yaml/browser/dist/nodes/identity.js
@@ -12531,22 +12534,35 @@ var _CrdtManager = class _CrdtManager {
    * caller never mass-re-pushes known-synced files via the legacy path on a
    * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
    */
-  async applyLocalEdit(noteId, diskContent, hasLca) {
+  async applyLocalEdit(noteId, diskContent, hasLca, reread) {
     let id2 = this.docId(noteId);
     this.beginOp(id2);
     try {
-      return await this.applyLocalEditInner(noteId, diskContent, hasLca);
+      return await this.applyLocalEditInner(noteId, diskContent, hasLca, reread);
     } finally {
       this.endOp(id2);
     }
   }
-  async applyLocalEditInner(noteId, diskContent, hasLca) {
+  async applyLocalEditInner(noteId, diskContent, hasLca, reread) {
     var _a, _b;
-    let e = await this.entry(noteId), lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
-    if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, diskContent)))
+    let e = await this.entry(noteId), content = diskContent;
+    if (reread) {
+      let id2 = this.docId(noteId), stable = !1;
+      for (let attempt = 0; attempt < 3 && !stable; attempt++) {
+        await this.pendingFlush.get(id2);
+        let seq3 = e.remoteSeq;
+        content = await reread(), stable = e.remoteSeq === seq3;
+      }
+      if (!stable)
+        return !0;
+    }
+    let lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
+    if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)))
       return !0;
-    let { fmBlock, body: splitBody } = splitFrontmatter(diskContent), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : diskContent;
-    return this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body), !0;
+    let { fmBlock, body: splitBody } = splitFrontmatter(content), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : content;
+    return e.doc.transact(() => {
+      this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body);
+    }), !0;
   }
   /**
    * Apply a binary Yjs update received from the server.
@@ -12729,14 +12745,16 @@ var _CrdtManager = class _CrdtManager {
     let id2 = this.docId(noteId), cached = this.docs.get(id2);
     if (cached)
       return await cached.ready, cached;
-    let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), text2 = doc2.getText(CONTENT_KEY);
-    persistence.on("error", (err) => {
+    let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), text2 = doc2.getText(CONTENT_KEY), ready = persistence.whenSynced.then(() => {
+    }), entry = { doc: doc2, persistence, text: text2, ready, remoteSeq: 0 };
+    return persistence.on("error", (err) => {
       var _a, _b;
       return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, noteId, err);
     }), doc2.on("update", (update, origin) => {
       origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
+      entry.remoteSeq += 1;
       let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON();
       this.pendingFlush.set(
         id2,
@@ -12744,10 +12762,7 @@ var _CrdtManager = class _CrdtManager {
           this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
         )
       );
-    });
-    let ready = persistence.whenSynced.then(() => {
-    }), entry = { doc: doc2, persistence, text: text2, ready };
-    return this.docs.set(id2, entry), await ready, entry;
+    }), this.docs.set(id2, entry), await ready, entry;
   }
   /**
    * Returns true when the Y.Text already carries CRDT history (content
@@ -13900,7 +13915,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           `Channel join error on ${topic}: ${JSON.stringify(payload)}`
         ), topic === this.crdtTopic) {
           let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
-          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2)) : rlog().warn(
+          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", reason === "unauthorized" && (this.identityMaybeStale = !0), (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2)) : rlog().warn(
             "channel",
             `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
           );
@@ -17280,7 +17295,7 @@ function exceedsCrdtNoteLimit(content, maxBytes) {
 async function routeModify(file, crdt, maxBytes) {
   if (!file.isMarkdown) return !1;
   let content = await file.readContent();
-  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.noteId, content);
+  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.noteId, content, void 0, file.readContent);
 }
 async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_NOTE_BYTES) {
   var _a;
@@ -18537,7 +18552,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             {
               isMarkdown: file.extension === "md",
               noteId,
-              readContent: async () => content
+              // A LIVE read, not the frozen `content` above: routeModify
+              // forwards this as the manager's stale-snapshot reread, and a
+              // frozen closure would defeat that guard (e2e test_83).
+              readContent: () => this.app.vault.cachedRead(file)
             },
             this.crdt,
             MAX_CRDT_NOTE_BYTES
@@ -19314,7 +19332,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event = { ...event, content: void 0 }), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
@@ -20132,20 +20150,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
         continue;
       }
-      if (file.stat.size <= MAX_CRDT_NOTE_BYTES && noteId && this.crdt && this.crdtOpsAvailable() && this.isCrdtManagedOffline(file.path, noteId)) {
-        let content2 = await this.app.vault.cachedRead(file);
-        if (await routeModify(
-          {
-            isMarkdown: file.extension === "md",
-            noteId,
-            readContent: async () => content2
-          },
-          this.crdt,
-          MAX_CRDT_NOTE_BYTES
-        )) {
-          await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
-          continue;
-        }
+      if (file.stat.size <= MAX_CRDT_NOTE_BYTES && noteId && this.crdt && this.crdtOpsAvailable() && this.isCrdtManagedOffline(file.path, noteId) && await routeModify(
+        {
+          isMarkdown: file.extension === "md",
+          noteId,
+          // Live read (see pushFile): frozen content would defeat the
+          // manager's stale-snapshot reread guard.
+          readContent: () => this.app.vault.cachedRead(file)
+        },
+        this.crdt,
+        MAX_CRDT_NOTE_BYTES
+      )) {
+        await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
+        continue;
       }
       if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
         oversized.push(file);

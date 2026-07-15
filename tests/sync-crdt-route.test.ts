@@ -42,7 +42,7 @@ describe("routeModify helper", () => {
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
 		// routeModify routes by note_id (Task 6), not path — "id-n" here, never
 		// the file's vault path.
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-n", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-n", "body", undefined, expect.any(Function));
 		expect(pushNote).not.toHaveBeenCalled();
 	});
 
@@ -230,7 +230,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body", undefined, expect.any(Function));
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
@@ -255,7 +255,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body", undefined, expect.any(Function));
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
@@ -336,7 +336,7 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-overview", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-overview", "body", undefined, expect.any(Function));
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 });
@@ -924,7 +924,7 @@ describe("REST-first fix: new-note gate confirms via REST before CRDT", () => {
 		await flush();
 
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith(noteIdMap.get("brand-new.md"), "edited body");
+		expect(applyLocalEdit).toHaveBeenCalledWith(noteIdMap.get("brand-new.md"), "edited body", undefined, expect.any(Function));
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });
@@ -1052,7 +1052,7 @@ describe("batch push durably queues a channel-down CRDT note (seeded, not falsel
 		// Seeded via routeModify -> applyLocalEdit, mirroring pushFile — the
 		// batch-unseeded data-loss finding.
 		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body", undefined, expect.any(Function));
 
 		// Never sent over the batch REST endpoint — the durable queue owns delivery.
 		expect(batch).not.toHaveBeenCalled();
@@ -1417,7 +1417,7 @@ describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never wh
 		engine.handleModify(file);
 		await flush();
 
-		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body");
+		expect(applyLocalEdit).toHaveBeenCalledWith("id-note", "body", undefined, expect.any(Function));
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 

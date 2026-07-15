@@ -73,7 +73,14 @@ export function exceedsCrdtNoteLimit(content: string, maxBytes: number): boolean
 
 export async function routeModify(
 	file: { isMarkdown: boolean; noteId: string; readContent: () => Promise<string> },
-	crdt: { applyLocalEdit: (noteId: string, content: string) => Promise<boolean> },
+	crdt: {
+		applyLocalEdit: (
+			noteId: string,
+			content: string,
+			hasLca?: boolean,
+			reread?: () => Promise<string>,
+		) => Promise<boolean>;
+	},
 	maxBytes: number,
 ): Promise<boolean> {
 	if (!file.isMarkdown) return false;
@@ -90,7 +97,10 @@ export async function routeModify(
 	// applyLocalEdit returns false when the handshake gate declines seeding
 	// (empty doc, no LCA, STEP2 not yet received). The legacy push path then
 	// owns the write convergently (backend PR #846) until the STEP2 arrives.
-	return await crdt.applyLocalEdit(file.noteId, content);
+	// readContent doubles as the stale-snapshot reread: when a remote update
+	// merges between this read and the diff, the manager re-reads instead of
+	// diffing a snapshot that would delete the remote ops (e2e test_83).
+	return await crdt.applyLocalEdit(file.noteId, content, undefined, file.readContent);
 }
 
 /** At startup, the on-disk file may have changed while the app was closed
@@ -2083,7 +2093,10 @@ export class SyncEngine {
 						{
 							isMarkdown: file.extension === "md",
 							noteId,
-							readContent: async () => content,
+							// A LIVE read, not the frozen `content` above: routeModify
+							// forwards this as the manager's stale-snapshot reread, and a
+							// frozen closure would defeat that guard (e2e test_83).
+							readContent: () => this.app.vault.cachedRead(file),
 						},
 						this.crdt,
 						MAX_CRDT_NOTE_BYTES,
@@ -5206,12 +5219,13 @@ export class SyncEngine {
 				this.crdtOpsAvailable() &&
 				this.isCrdtManagedOffline(file.path, noteId)
 			) {
-				const content = await this.app.vault.cachedRead(file);
 				const consumed = await routeModify(
 					{
 						isMarkdown: file.extension === "md",
 						noteId,
-						readContent: async () => content,
+						// Live read (see pushFile): frozen content would defeat the
+						// manager's stale-snapshot reread guard.
+						readContent: () => this.app.vault.cachedRead(file),
 					},
 					this.crdt,
 					MAX_CRDT_NOTE_BYTES,
