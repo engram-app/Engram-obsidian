@@ -778,6 +778,12 @@ export class NoteChannel {
 						// socket close backs off instead of retrying on the flat jitter —
 						// see joinFailureBackoffMs/crdtJoinFailedReason JSDoc above.
 						this.crdtJoinFailedReason = reason ?? "unknown";
+						// "unauthorized" means the frozen topic userId disagrees with the
+						// socket's authenticated user (a caller swapped auth without the
+						// setAuthProvider ordering contract). Arm the reconnect identity
+						// guard so the next backoff cycle re-derives the id and self-heals
+						// instead of rejoining the stale topic forever (e2e test_84).
+						if (reason === "unauthorized") this.identityMaybeStale = true;
 						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
 						// routing was previously active (the T4 folded finding: a REJOIN
 						// error while crdtEverJoined=true would otherwise leave routing
