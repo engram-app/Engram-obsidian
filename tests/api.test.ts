@@ -1035,7 +1035,7 @@ describe("request timeout", () => {
 	function timedApi(): EngramApi {
 		const api = new EngramApi("http://host", "key");
 		api.requestTimeoutMs = 20;
-		api.attachmentTimeoutMs = 40;
+		api.attachmentTimeoutMs = 300;
 		return api;
 	}
 
@@ -1056,11 +1056,14 @@ describe("request timeout", () => {
 			settledAt = Date.now();
 		});
 		const start = Date.now();
-		await Bun.sleep(30);
+		// Probe well past the 20ms note timeout but far short of the 300ms
+		// attachment timer — wide margins so CI-runner jitter can't invert
+		// the ordering (review finding on the original 30ms/40ms pair).
+		await Bun.sleep(80);
 		expect(settledAt).toBeNull(); // still pending past the note timeout
 		await p;
 		expect(settledAt).not.toBeNull();
-		expect((settledAt ?? 0) - start).toBeGreaterThanOrEqual(35);
+		expect((settledAt ?? 0) - start).toBeGreaterThanOrEqual(150);
 	});
 
 	test("a fast response is unaffected", async () => {
