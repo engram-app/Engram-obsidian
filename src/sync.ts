@@ -3457,7 +3457,7 @@ export class SyncEngine {
 		// one GET and still converges to "".
 		if (event.event_type === "upsert" && event.content === "" && event.content_hash) {
 			rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`);
-			event = { ...event, content: undefined };
+			event.content = undefined;
 		}
 
 		// Id-keyed relocation must run BEFORE echo suppression: an echo-skipped

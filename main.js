@@ -19332,7 +19332,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && event.content === "" && event.content_hash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event = { ...event, content: void 0 }), event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
