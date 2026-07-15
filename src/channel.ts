@@ -782,8 +782,17 @@ export class NoteChannel {
 						// socket's authenticated user (a caller swapped auth without the
 						// setAuthProvider ordering contract). Arm the reconnect identity
 						// guard so the next backoff cycle re-derives the id and self-heals
-						// instead of rejoining the stale topic forever (e2e test_84).
-						if (reason === "unauthorized") this.identityMaybeStale = true;
+						// instead of rejoining the stale topic forever (e2e test_84) —
+						// and CYCLE the socket ourselves: the rejection leaves a healthy
+						// socket open, so without a close the reconnect (and the guard)
+						// may never run and CRDT routing stays degraded indefinitely.
+						// Bounded: onclose sees crdtJoinFailedReason set and backs off
+						// exponentially, so a persistent mismatch cannot storm. Only
+						// worth the cycle when an authProbe exists to re-derive with.
+						if (reason === "unauthorized") {
+							this.identityMaybeStale = true;
+							if (this.authProbe) this.ws?.close();
+						}
 						// Fire onCrdtJoinError so main.ts can degrade to legacy if CRDT
 						// routing was previously active (the T4 folded finding: a REJOIN
 						// error while crdtEverJoined=true would otherwise leave routing

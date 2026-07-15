@@ -27,6 +27,7 @@ class MockWebSocket {
 	onmessage: ((evt: { data: string }) => void) | null = null;
 	onerror: ((e: any) => void) | null = null;
 	sent: string[] = [];
+	closed = false;
 	constructor(_url: string) {
 		lastWsInstance = this;
 	}
@@ -34,7 +35,10 @@ class MockWebSocket {
 		this.sent.push(data);
 	}
 	close(): void {
-		this.onclose = null;
+		// Real sockets fire onclose asynchronously after close(); tests fire it
+		// manually. Intentional closes (disconnect()) null onclose FIRST, so
+		// keeping the handler here does not resurrect suppressed reconnects.
+		this.closed = true;
 	}
 }
 const originalWebSocket = (globalThis as any).WebSocket;
@@ -120,6 +124,37 @@ describe("NoteChannel unauthorized-join identity self-heal", () => {
 			.map((m: unknown[]) => m[2] as string);
 		expect(rejoined).toContain("crdt:fresh-user:v1");
 		expect(rejoined).not.toContain(staleTopic);
+		channel.disconnect();
+	});
+
+	test("an unauthorized crdt join cycles the socket itself (heal needs no external close)", async () => {
+		// review finding channel.ts:786: arming identityMaybeStale only helps on
+		// the NEXT socket open, but an unauthorized join neither closes the
+		// socket nor schedules a reconnect — on a healthy socket the self-heal
+		// never fires and CRDT routing stays degraded until an unrelated blip.
+		// The channel must cycle the socket itself; the onclose backoff
+		// (crdtJoinFailedReason set) keeps it bounded.
+		const channel = new NoteChannel("http://localhost:4000", "key", "stale-user", "v1", true);
+		channel.setAuthProbe(async () => ({ id: "fresh-user" }));
+		await channel.connect();
+		lastWsInstance.onopen?.();
+		rejectCrdtJoin(
+			lastWsInstance,
+			crdtJoinRef(lastWsInstance),
+			"unauthorized",
+			"crdt:stale-user:v1",
+		);
+		expect(lastWsInstance.closed).toBe(true);
+		channel.disconnect();
+	});
+
+	test("a generic join rejection does NOT cycle the socket", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		channel.setAuthProbe(async () => ({ id: "u1" }));
+		await channel.connect();
+		lastWsInstance.onopen?.();
+		rejectCrdtJoin(lastWsInstance, crdtJoinRef(lastWsInstance), "rate_limited", "crdt:u1:v1");
+		expect(lastWsInstance.closed).toBe(false);
 		channel.disconnect();
 	});
 
