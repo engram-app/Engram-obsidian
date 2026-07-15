@@ -13076,9 +13076,6 @@ async function withTimeout(p, ms) {
   });
   try {
     return await Promise.race([p, deadline]);
-  } catch (e) {
-    throw e instanceof RequestTimeoutError && p.catch(() => {
-    }), e;
   } finally {
     window.clearTimeout(timer);
   }
@@ -13092,9 +13089,14 @@ var EngramApi = class _EngramApi {
      *  a slow link legitimately outlives the note deadline. */
     this.requestTimeoutMs = 15e3;
     this.attachmentTimeoutMs = 12e4;
+    /** Bulk pages (batch push, change feeds) can carry many full note bodies —
+     *  15s starves a slow link, 120s is a transfer budget they don't need. */
+    this.bulkTimeoutMs = 6e4;
     /** In-flight sendRequest calls, so a channel-disconnect signal can probe
      *  for wedged connections and fail them early (see failWedgedRequests). */
     this.inflight = /* @__PURE__ */ new Set();
+    /** Single-flight latch for failWedgedRequests (see there). */
+    this.wedgeProbeInFlight = !1;
     this.vaultId = null;
     this.deviceId = null;
     this.authProvider = null;
@@ -13188,7 +13190,7 @@ var EngramApi = class _EngramApi {
       ...extraHeaders
     }, activeVaultId = this.getActiveVaultId();
     activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
-    let transfer = path.startsWith("/attachments") && !path.startsWith("/attachments/changes") && (method === "POST" || method === "GET"), raw = (0, import_obsidian.requestUrl)({
+    let attachmentMeta = path === "/attachments/changes" || path.startsWith("/attachments/changes?"), attachmentTransfer = path.startsWith("/attachments") && !attachmentMeta && (method === "POST" || method === "GET"), bulk = path === "/notes/batch" || path.startsWith("/notes/changes?") || path === "/sync/changes" || path.startsWith("/sync/changes?"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : bulk ? this.bulkTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
       url: `${this.baseUrl}${path}`,
       method,
       headers,
@@ -13196,16 +13198,14 @@ var EngramApi = class _EngramApi {
     }), abandonReject = () => {
     }, abandoned = new Promise((_, rej) => {
       abandonReject = rej;
-    }), entry = { startedAt: Date.now(), abandon: abandonReject };
+    }), entry = {
+      startedAt: Date.now(),
+      abandon: abandonReject,
+      shielded: attachmentTransfer
+    };
     this.inflight.add(entry);
     try {
-      return await withTimeout(
-        Promise.race([raw, abandoned]),
-        transfer ? this.attachmentTimeoutMs : this.requestTimeoutMs
-      );
-    } catch (e) {
-      throw e instanceof RequestTimeoutError && raw.catch(() => {
-      }), e;
+      return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
     } finally {
       if (this.inflight.delete(entry), trace) {
         let noteId = beaconNoteId(path);
@@ -13237,13 +13237,22 @@ var EngramApi = class _EngramApi {
    *  the probe fails, the server may be genuinely unreachable: leave the
    *  requests to their normal deadline. Returns how many were failed. */
   async failWedgedRequests(maxAgeMs = 4e3) {
-    let now = Date.now(), stale = [...this.inflight].filter((e) => now - e.startedAt >= maxAgeMs);
-    if (stale.length === 0 || !await this.health())
+    if (this.wedgeProbeInFlight)
       return 0;
-    let failed = 0;
-    for (let e of stale)
-      this.inflight.has(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
-    return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
+    this.wedgeProbeInFlight = !0;
+    try {
+      let now = Date.now(), stale = [...this.inflight].filter(
+        (e) => !e.shielded && now - e.startedAt >= maxAgeMs
+      );
+      if (stale.length === 0 || !await this.health())
+        return 0;
+      let failed = 0;
+      for (let e of stale)
+        this.inflight.delete(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
+      return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
+    } finally {
+      this.wedgeProbeInFlight = !1;
+    }
   }
   /** Health check — no auth required. Bounded like every other request: the
    *  offline health-check loop awaits this, so a wedged probe would freeze
@@ -19760,7 +19769,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -19794,13 +19803,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
+    if (!forceOverwrite && change.version !== void 0) {
+      let known = (_d = this.syncState.get(normalized)) == null ? void 0 : _d.version;
+      if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
+        return rlog().info(
+          "pull",
+          `applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`
+        ), !1;
+    }
     let crdtConflictFallthrough = !1;
     if (this.crdt && normalized.endsWith(".md")) {
-      let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+      let noteId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(normalized)) != null ? _f : null;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        noteId && this.isLiveBound(normalized) && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && this.isLiveBound(normalized) && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
+        noteId && this.isLiveBound(normalized) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId));
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -19810,9 +19827,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
             ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
               this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_i = stored == null ? void 0 : stored.hash) != null ? _i : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
-                ...(_i = this.syncState.get(normalized)) != null ? _i : {},
+                ...(_j = this.syncState.get(normalized)) != null ? _j : {},
                 hash: localHash,
                 serverHash: change.content_hash,
                 version: change.version
@@ -19861,14 +19878,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_j = this.baseStore) == null ? void 0 : _j.get(normalized);
+        let pullBase = (_k = this.baseStore) == null ? void 0 : _k.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -19919,7 +19936,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_l = this.baseStore) == null || _l.set(
+            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -19941,7 +19958,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
+            }), change.version != null && ((_n = this.baseStore) == null || _n.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -19964,12 +19981,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -19988,7 +20005,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_q = this.baseStore) == null || _q.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.

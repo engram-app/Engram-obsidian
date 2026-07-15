@@ -4365,6 +4365,30 @@ export class SyncEngine {
 			throw new Error(`applyChange: missing content for ${change.path}`);
 		}
 
+		// Anti-stale guard (review 2026-07-15, data-loss race): a push landing
+		// DURING a pull — the bounded post-pull drain, or a debounced edit —
+		// bumps syncState past entries this pull fetched BEFORE that push.
+		// Applying such an entry would blind-overwrite the just-pushed edit
+		// (local == baseline, so no conflict fires). Server versions are
+		// monotonic per note: an entry at or below the version we already
+		// synced carries nothing new. Gated on the file existing locally so a
+		// stale syncState row (crash, manual delete) can never mask a real
+		// re-materialization; forceOverwrite (explicit keep-remote) bypasses.
+		if (!forceOverwrite && change.version !== undefined) {
+			const known = this.syncState.get(normalized)?.version;
+			if (
+				known !== undefined &&
+				known >= change.version &&
+				this.app.vault.getFileByPath(normalized)
+			) {
+				rlog().info(
+					"pull",
+					`applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`,
+				);
+				return false;
+			}
+		}
+
 		// C1: CRDT-managed markdown — the crdt: topic owns the body. Skip the
 		// legacy disk-write, threeWayMerge, and ConflictModal for markdown notes
 		// when CRDT is active. This prevents the dual-write hazard where a

@@ -1151,3 +1151,91 @@ describe("attachment deadline scope", () => {
 		expect(Date.now() - start).toBeLessThan(5_000);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Review-wave fixes (2026-07-15): wedge-probe shielding, single-flight,
+// exact /attachments/changes endpoint match, bulk deadline tier.
+// ---------------------------------------------------------------------------
+
+describe("wedge probe shielding + single-flight", () => {
+	const never = () => new Promise<never>(() => {});
+
+	test("a slow attachment transfer is never wedge-aborted", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = new EngramApi("http://host", "key");
+		let settled = false;
+		a.pushAttachment("big.png", "AAAA", "image/png", 1).catch(() => {
+			settled = true;
+		});
+		await Bun.sleep(1);
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+
+	test("concurrent probes are single-flight (no double abandon/count)", async () => {
+		let healthResolve: (v: unknown) => void = () => {};
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health")
+				? new Promise((r) => {
+						healthResolve = r;
+					})
+				: never(),
+		);
+		const a = new EngramApi("http://host", "key");
+		const settled = a.getMe().catch((e) => e);
+		await Bun.sleep(1);
+		const p1 = a.failWedgedRequests(0);
+		const p2 = a.failWedgedRequests(0); // in-flight → immediate 0
+		healthResolve({ status: 200 });
+		expect(await p2).toBe(0);
+		expect(await p1).toBe(1);
+		expect(await settled).toBeInstanceOf(RequestTimeoutError);
+	});
+});
+
+describe("deadline classification", () => {
+	test("an attachment literally named changes.pdf gets the transfer deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 20;
+		a.attachmentTimeoutMs = 300;
+		let settledAt: number | null = null;
+		const p = a.getAttachment("changes.pdf").catch(() => {
+			settledAt = Date.now();
+		});
+		await Bun.sleep(80); // past note+bulk deadlines, well short of transfer
+		expect(settledAt).toBeNull();
+		await p;
+		expect(settledAt).not.toBeNull();
+	});
+
+	test("the /attachments/changes metadata feed keeps the short deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.attachmentTimeoutMs = 100_000;
+		await expect(a.getAttachmentChanges("2026-01-01T00:00:00Z")).rejects.toThrow(
+			RequestTimeoutError,
+		);
+	});
+
+	test("bulk change pages use the middle deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 300;
+		let settledAt: number | null = null;
+		const p = a.getSyncChanges("cursor-1").catch(() => {
+			settledAt = Date.now();
+		});
+		await Bun.sleep(80); // past the note deadline, short of the bulk one
+		expect(settledAt).toBeNull();
+		await p;
+		expect(settledAt).not.toBeNull();
+	});
+});

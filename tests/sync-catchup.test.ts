@@ -630,3 +630,75 @@ describe("bind-time convergence — verifyConvergenceOnOpen", () => {
 		expect(reset).not.toHaveBeenCalled();
 	});
 });
+
+describe("anti-stale apply guard (review 2026-07-15 — mid-pull push overwrite race)", () => {
+	test("a change at or below the already-synced version is skipped", async () => {
+		const engine = createEngine();
+		const localFile = new TFile("note.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		// A mid-pull push (bounded drain) bumped syncState to v5; this pull's
+		// snapshot still carries the pre-push v4 body.
+		engine.importSyncState({
+			"note.md": { hash: fnv1a("fresh local edit"), version: 5, serverHash: "h5" },
+		});
+
+		const applied = await engine.applyChange({
+			path: "note.md",
+			content: "stale pre-push body",
+			content_hash: "h4",
+			version: 4,
+			mtime: 10,
+		} as any);
+
+		expect(applied).toBe(false);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(mockApp.vault.process).not.toHaveBeenCalled();
+	});
+
+	test("a NEWER version still applies", async () => {
+		const engine = createEngine();
+		const localFile = new TFile("note.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("body");
+		engine.importSyncState({
+			"note.md": { hash: fnv1a("body"), version: 5, serverHash: "h5" },
+		});
+
+		const applied = await engine.applyChange({
+			path: "note.md",
+			content: "newer remote body",
+			content_hash: "h6",
+			version: 6,
+			mtime: 20,
+		} as any);
+
+		expect(applied).toBe(true);
+		// modifyFile prefers vault.process (atomic in-place write).
+		expect(mockApp.vault.process).toHaveBeenCalled();
+	});
+
+	test("forceOverwrite (explicit keep-remote) bypasses the guard", async () => {
+		const engine = createEngine();
+		const localFile = new TFile("note.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("body");
+		engine.importSyncState({
+			"note.md": { hash: fnv1a("body"), version: 5, serverHash: "h5" },
+		});
+
+		const applied = await engine.applyChange(
+			{
+				path: "note.md",
+				content: "remote body the user chose",
+				content_hash: "h4",
+				version: 4,
+				mtime: 10,
+			} as any,
+			true,
+		);
+
+		expect(applied).toBe(true);
+	});
+});

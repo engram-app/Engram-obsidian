@@ -49,12 +49,9 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	try {
 		// race (not re-wrap) so a requestUrl rejection propagates UNCHANGED —
 		// callers classify on its `.status` (402 limit parse, 401 token retry).
+		// A loser's late rejection can never surface as unhandled: race itself
+		// attaches a reaction to every contender.
 		return await Promise.race([p, deadline]);
-	} catch (e) {
-		// The abandoned request can still settle later; without a handler its
-		// eventual rejection surfaces as an unhandled-rejection console error.
-		if (e instanceof RequestTimeoutError) p.catch(() => {});
-		throw e;
 	} finally {
 		window.clearTimeout(timer);
 	}
@@ -66,10 +63,20 @@ export class EngramApi {
 	 *  a slow link legitimately outlives the note deadline. */
 	requestTimeoutMs = 15_000;
 	attachmentTimeoutMs = 120_000;
+	/** Bulk pages (batch push, change feeds) can carry many full note bodies —
+	 *  15s starves a slow link, 120s is a transfer budget they don't need. */
+	bulkTimeoutMs = 60_000;
 
 	/** In-flight sendRequest calls, so a channel-disconnect signal can probe
 	 *  for wedged connections and fail them early (see failWedgedRequests). */
-	private readonly inflight = new Set<{ startedAt: number; abandon: (e: Error) => void }>();
+	private readonly inflight = new Set<{
+		startedAt: number;
+		abandon: (e: Error) => void;
+		shielded: boolean;
+	}>();
+
+	/** Single-flight latch for failWedgedRequests (see there). */
+	private wedgeProbeInFlight = false;
 
 	private vaultId: string | null = null;
 	private deviceId: string | null = null;
@@ -237,14 +244,31 @@ export class EngramApi {
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
 		}
-		// Only actual byte transfers earn the long deadline: attachment upload
-		// (POST /attachments) and download (GET /attachments/<path>). Metadata
-		// calls on the same prefix (DELETE, /attachments/changes) are as small
-		// as any note call and take the short deadline.
-		const transfer =
+		// Deadline classes. Only actual attachment byte transfers earn 120s:
+		// upload (POST /attachments) and download (GET /attachments/<path>).
+		// The EXACT-endpoint check matters — "/attachments/changes" is the
+		// metadata feed, but "/attachments/changes.pdf" is a real file download
+		// (a prefix match starved any attachment literally named changes*).
+		// Bulk pages that legitimately carry many full note bodies (batch push,
+		// bootstrap/cursor change pages) get a middle deadline: 15s is too
+		// tight for a slow link, but they stay wedge-abortable (below) so a
+		// wedged pull still recovers in probe time, not 60s.
+		const attachmentMeta =
+			path === "/attachments/changes" || path.startsWith("/attachments/changes?");
+		const attachmentTransfer =
 			path.startsWith("/attachments") &&
-			!path.startsWith("/attachments/changes") &&
+			!attachmentMeta &&
 			(method === "POST" || method === "GET");
+		const bulk =
+			path === "/notes/batch" ||
+			path.startsWith("/notes/changes?") ||
+			path === "/sync/changes" ||
+			path.startsWith("/sync/changes?");
+		const timeoutMs = attachmentTransfer
+			? this.attachmentTimeoutMs
+			: bulk
+				? this.bulkTimeoutMs
+				: this.requestTimeoutMs;
 		const raw = requestUrl({
 			url: `${this.baseUrl}${path}`,
 			method,
@@ -255,20 +279,19 @@ export class EngramApi {
 		const abandoned = new Promise<never>((_, rej) => {
 			abandonReject = rej;
 		});
-		const entry = { startedAt: Date.now(), abandon: abandonReject };
+		// `shielded`: a slow-but-healthy attachment transfer legitimately hangs
+		// past the probe age, so the wedge probe must never abort it — its own
+		// 120s deadline is the only ceiling. (Bulk pages are NOT shielded:
+		// ponytail — a WS flap can abort a slow healthy bulk page, which just
+		// retries; shielding them would regress the wedged-pull fast recovery.)
+		const entry = {
+			startedAt: Date.now(),
+			abandon: abandonReject,
+			shielded: attachmentTransfer,
+		};
 		this.inflight.add(entry);
 		try {
-			return await withTimeout(
-				Promise.race([raw, abandoned]),
-				transfer ? this.attachmentTimeoutMs : this.requestTimeoutMs,
-			);
-		} catch (e) {
-			// Abandon path mirrors the timeout path: the zombie requestUrl can
-			// still settle later — mark its rejection handled.
-			if (e instanceof RequestTimeoutError) {
-				raw.catch(() => {});
-			}
-			throw e;
+			return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
 		} finally {
 			this.inflight.delete(entry);
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
@@ -306,25 +329,40 @@ export class EngramApi {
 	 *  the probe fails, the server may be genuinely unreachable: leave the
 	 *  requests to their normal deadline. Returns how many were failed. */
 	async failWedgedRequests(maxAgeMs = 4_000): Promise<number> {
-		const now = Date.now();
-		const stale = [...this.inflight].filter((e) => now - e.startedAt >= maxAgeMs);
-		if (stale.length === 0) {
+		// Single-flight: reconnect flaps fire this repeatedly; concurrent probes
+		// would double-count the same stale entries.
+		if (this.wedgeProbeInFlight) {
 			return 0;
 		}
-		if (!(await this.health())) {
-			return 0;
-		}
-		let failed = 0;
-		for (const e of stale) {
-			if (this.inflight.has(e)) {
-				e.abandon(new RequestTimeoutError(maxAgeMs));
-				failed++;
+		this.wedgeProbeInFlight = true;
+		try {
+			const now = Date.now();
+			const stale = [...this.inflight].filter(
+				(e) => !e.shielded && now - e.startedAt >= maxAgeMs,
+			);
+			if (stale.length === 0) {
+				return 0;
 			}
+			if (!(await this.health())) {
+				return 0;
+			}
+			let failed = 0;
+			for (const e of stale) {
+				// Delete BEFORE abandoning: sendRequest's finally-cleanup runs a
+				// microtask later, so without this a racing settle could be
+				// double-counted.
+				if (this.inflight.delete(e)) {
+					e.abandon(new RequestTimeoutError(maxAgeMs));
+					failed++;
+				}
+			}
+			if (failed > 0) {
+				rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`);
+			}
+			return failed;
+		} finally {
+			this.wedgeProbeInFlight = false;
 		}
-		if (failed > 0) {
-			rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`);
-		}
-		return failed;
 	}
 
 	/** Health check — no auth required. Bounded like every other request: the
