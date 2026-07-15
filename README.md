@@ -10,7 +10,7 @@ Semantic + keyword + hybrid search · MCP-native · desktop & mobile · no telem
 
 **[Start free at engram.page →](https://engram.page)** · No credit card, ready in minutes.
 
-[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/)
+[Setup](#setup) · [Connect your AI](#connect-your-ai) · [API](https://engram.page/docs/api) · [User guide](docs/user-guide.md) · [Self-host](https://engram.page/docs/self-host/) · [Discord](https://discord.gg/NKWcU2mm7N)
 
 </div>
 
