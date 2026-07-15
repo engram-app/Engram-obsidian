@@ -46,3 +46,6 @@ export const ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram";
 
 /** Plugin issue tracker. */
 export const ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+
+/** Community Discord — support, questions, and issue reports from users + devs. */
+export const ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N";

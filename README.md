@@ -63,6 +63,7 @@ Point your client at the Engram MCP server (`https://mcp.engram.page` on the hos
 - **[User guide](docs/user-guide.md)**: AI assistants, conflicts, the Sync Center, troubleshooting.
 - **[Developer guide](DEV.md)**: build from source, architecture, releases.
 - **Something wrong?** [Open an issue](https://github.com/engram-app/Engram-obsidian/issues).
+- **Join the community.** Chat with users and devs on [Discord](https://discord.gg/NKWcU2mm7N).
 - **Like it?** Support development via [GitHub Sponsors](https://github.com/sponsors/engram-app) or [Ko-fi](https://ko-fi.com/engrams_sync). Optional and appreciated.
 
 ## License

@@ -743,7 +743,7 @@ var ENGRAM_CLOUD_URL = "https://api.engram.page", ENGRAM_APP_URL = "https://app.
 function engramWebUrl(apiUrl) {
   return apiUrl === ENGRAM_CLOUD_URL ? ENGRAM_APP_URL : apiUrl;
 }
-var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues";
+var LEGACY_CLOUD_HOSTS = ["app.engram.page"], ENGRAM_MARKETING_URL = "https://engram.page", ENGRAM_DOCS_URL = "https://engram.page/docs", ENGRAM_PRICING_URL = "https://engram.page/pricing", ENGRAM_MCP_URL = "https://engram.page/docs/integrations", ENGRAM_SELFHOST_URL = "https://github.com/engram-app/engram", ENGRAM_GITHUB_URL = "https://github.com/engram-app/engram", ENGRAM_ISSUES_URL = "https://github.com/engram-app/Engram-obsidian/issues", ENGRAM_DISCORD_URL = "https://discord.gg/NKWcU2mm7N";
 
 // src/auth-state.ts
 function migrateCloudApiUrl(apiUrl, cloudUrl) {
@@ -16657,7 +16657,7 @@ function renderAboutTab(ctx) {
   let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
   externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
   let links = containerEl.createEl("ul", { cls: "engram-about-links" });
-  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL);
+  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL), externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
 }
 
 // src/tabs/account-tab.ts
