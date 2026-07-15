@@ -3432,6 +3432,21 @@ export class SyncEngine {
 
 		const isAttachment = event.kind === "attachment";
 
+		// Never trust inline-EMPTY content when a content_hash is present (e2e
+		// test_34 "received=yes materialized=no"): the folder-rename cascade
+		// broadcasts meta-projected rows whose nil content the backend fabricates
+		// as "" while content_hash carries the REAL body hash. Taking "" as
+		// authoritative materializes a 0-byte file whose CAS seed (hash("") +
+		// real serverHash) then reads "converged" to every backstop, so the empty
+		// file sticks forever. Strip the inline body here so EVERY consumer below
+		// (CRDT first-delivery and the legacy inline-apply) falls through to its
+		// fetch branch and writes verified bytes. A genuinely empty note costs
+		// one GET and still converges to "".
+		if (event.event_type === "upsert" && event.content === "" && event.content_hash) {
+			rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`);
+			event = { ...event, content: undefined };
+		}
+
 		// Id-keyed relocation must run BEFORE echo suppression: an echo-skipped
 		// upsert at the NEW path would otherwise leave this device's CRDT room
 		// bound to the OLD path, which then perpetually resurrects it (e2e
