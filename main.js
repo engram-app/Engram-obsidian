@@ -13065,10 +13065,33 @@ async function destroyRemoteLog() {
 }
 
 // src/api.ts
+var RequestTimeoutError = class extends Error {
+  constructor(ms) {
+    super(`Request timed out after ${ms}ms`), this.name = "RequestTimeoutError";
+  }
+};
+async function withTimeout(p, ms) {
+  let timer, deadline = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
+  });
+  try {
+    return await Promise.race([p, deadline]);
+  } catch (e) {
+    throw e instanceof RequestTimeoutError && p.catch(() => {
+    }), e;
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 var EngramApi = class _EngramApi {
   constructor(baseUrl, apiKey) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
+    /** Deadline for note/metadata requests. Instance fields (not consts) so
+     *  tests can shrink them; attachments get a longer one — a large upload on
+     *  a slow link legitimately outlives the note deadline. */
+    this.requestTimeoutMs = 3e4;
+    this.attachmentTimeoutMs = 12e4;
     this.vaultId = null;
     this.deviceId = null;
     this.authProvider = null;
@@ -13163,12 +13186,15 @@ var EngramApi = class _EngramApi {
     }, activeVaultId = this.getActiveVaultId();
     activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
     try {
-      return await (0, import_obsidian.requestUrl)({
-        url: `${this.baseUrl}${path}`,
-        method,
-        headers,
-        body: body !== void 0 ? JSON.stringify(body) : void 0
-      });
+      return await withTimeout(
+        (0, import_obsidian.requestUrl)({
+          url: `${this.baseUrl}${path}`,
+          method,
+          headers,
+          body: body !== void 0 ? JSON.stringify(body) : void 0
+        }),
+        path.startsWith("/attachments") ? this.attachmentTimeoutMs : this.requestTimeoutMs
+      );
     } finally {
       if (trace) {
         let noteId = beaconNoteId(path);
@@ -13192,13 +13218,18 @@ var EngramApi = class _EngramApi {
       }
     }
   }
-  /** Health check — no auth required. */
+  /** Health check — no auth required. Bounded like every other request: the
+   *  offline health-check loop awaits this, so a wedged probe would freeze
+   *  offline recovery. */
   async health() {
     try {
-      return (await (0, import_obsidian.requestUrl)({
-        url: `${this.baseUrl}/health`,
-        method: "GET"
-      })).status === 200;
+      return (await withTimeout(
+        (0, import_obsidian.requestUrl)({
+          url: `${this.baseUrl}/health`,
+          method: "GET"
+        }),
+        this.requestTimeoutMs
+      )).status === 200;
     } catch (e) {
       return !1;
     }
@@ -17657,6 +17688,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
+    /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
+     *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
+     *  on a half-open connection — kept `pulling` true for 60s+, and deferred
+     *  edits never pushed, so sync looked dead. Instance field so tests can
+     *  shrink it. */
+    this.postPullMaxDeferMs = 5e3;
+    this.postPullDrainTimer = null;
     /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
      *  `newPath`, the server moved one row (a rename resurrects the same note_id
      *  at a new path). Neither delivery channel is guaranteed to carry a delete
@@ -18375,7 +18413,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!this.ready || !this.isSyncable(file) || this.shouldIgnore(file.path)) return;
     if (this.pulling) {
-      this.pendingPostPullPushes.add(file.path);
+      this.pendingPostPullPushes.add(file.path), this.schedulePostPullDrain();
       return;
     }
     let crdtManaged = !!this.crdt && this.isMarkdown(file);
@@ -19195,10 +19233,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes(), this.pullPending && (this.pullPending = !1, this.pull());
     }
   }
+  /** Arm a one-shot bounded drain for the deferral above. Draining early is
+   *  safe: pushFile's echo-hash gate filters sync-write echoes either way —
+   *  the deferral only saves redundant echo traffic, it is not a correctness
+   *  gate. The normal end-of-pull drain clears this timer. */
+  schedulePostPullDrain() {
+    this.postPullDrainTimer === null && (this.postPullDrainTimer = window.setTimeout(() => {
+      this.postPullDrainTimer = null, this.flushPostPullPushes();
+    }, this.postPullMaxDeferMs));
+  }
   /** Push any files that were modified during pull. Echo suppression will
    *  naturally skip sync-engine writes; only real user edits get pushed. */
   async flushPostPullPushes() {
-    if (this.pendingPostPullPushes.size === 0) return;
+    if (this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
     let paths = [...this.pendingPostPullPushes];
     this.pendingPostPullPushes.clear(), devLog().log("push", `flushing ${paths.length} post-pull pushes`), rlog().info("push", `Post-pull flush: ${paths.length} files`);
     for (let path of paths) {
@@ -20956,7 +21003,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.wipedRemote.clear();
     for (let timer of this.remotelyDeleted.values())
       window.clearTimeout(timer);
-    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
