@@ -84,7 +84,7 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 	test("CRDT first-delivery: content:'' + content_hash fetches the real body", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
-			applyLocalEdit: mock().mockReturnValue(true),
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			isSynced: mock().mockReturnValue(false),
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
@@ -133,6 +133,49 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		for (const call of (mockApp.vault.create as ReturnType<typeof mock>).mock.calls) {
 			expect(call[1]).not.toBe("");
 		}
+	});
+
+	test("a learned empty-content hash retires the extra GET for genuinely empty notes", async () => {
+		// review finding sync.ts:3460: content_hash is a per-user HMAC the
+		// client cannot derive, so the guard taxes every truly-empty note with
+		// a GET forever. But the hash is deterministic per user: once ONE fetch
+		// proves a hash maps to "", later inline-empty events carrying that
+		// exact hash are trustworthy and skip the roundtrip.
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockReturnValue("x"),
+			isSynced: mock().mockReturnValue(false),
+		} as any);
+		engine.setNoteIdMap(new NoteIdMap());
+		engine.setLiveBoundCheck(() => false);
+		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
+			path: "a.md",
+			content: "",
+		});
+
+		// First empty note: distrusted, fetched, and the empty hash is learned.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "a.md",
+			id: "note-id-a",
+			content: "",
+			content_hash: "H-empty",
+			version: 1,
+		} as any);
+		expect(mockApi.getNote).toHaveBeenCalledTimes(1);
+
+		// Second empty note with the SAME hash: trusted inline, no extra GET.
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "b.md",
+			id: "note-id-b",
+			content: "",
+			content_hash: "H-empty",
+			version: 1,
+		} as any);
+		expect(mockApi.getNote).toHaveBeenCalledTimes(1);
+		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls;
+		expect(created.map((c: unknown[]) => c[0])).toContain("b.md");
 	});
 
 	test("a genuinely empty inline body WITHOUT a content_hash is left alone", async () => {

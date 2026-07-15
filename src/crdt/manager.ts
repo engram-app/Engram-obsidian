@@ -270,18 +270,29 @@ export class CrdtManager {
 	 * Both code paths run with the default (`undefined`) origin so the resulting
 	 * update IS forwarded to the server via `onUpdate`.
 	 *
-	 * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
-	 * diffed, or adopted). The one non-writing path is the adopt-first gate
-	 * below, which still returns `true` ("handled, nothing to push") so the
-	 * caller never mass-re-pushes known-synced files via the legacy path on a
+	 * **Returns** the exact content string the CRDT layer consumed (seeded,
+	 * diffed, or adopted) — callers stamp their echo/dedup baselines from THIS
+	 * value, never from their own pre-call disk snapshot, because with `reread`
+	 * the consumed content can legitimately differ from the snapshot (a remote
+	 * merge landed mid-guard). Returns `null` when the edit was NOT consumed
+	 * (reread failed, or the stale-snapshot guard gave up under a live remote
+	 * storm) — the caller's legacy/REST path owns the edit. The adopt-first
+	 * gate below still consumes ("handled, nothing to push") so the caller
+	 * never mass-re-pushes known-synced files via the legacy path on a
 	 * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
+	 *
+	 * Contract: a caller applying DISK content MUST pass `reread` (a live read
+	 * of the same file) so the stale-snapshot guard can retry against a moved
+	 * doc. Omitting `reread` is reserved for callers deliberately injecting
+	 * NON-disk content (drift-merge results, server-fetched bodies), where a
+	 * disk reread would be wrong by construction.
 	 */
 	async applyLocalEdit(
 		noteId: string,
 		diskContent: string,
 		hasLca?: boolean,
 		reread?: () => Promise<string>,
-	): Promise<boolean> {
+	): Promise<string | null> {
 		const id = this.docId(noteId);
 		this.beginOp(id); // synchronous, before the first await — fences closeDoc
 		try {
@@ -296,7 +307,7 @@ export class CrdtManager {
 		diskContent: string,
 		hasLca?: boolean,
 		reread?: () => Promise<string>,
-	): Promise<boolean> {
+	): Promise<string | null> {
 		const e = await this.entry(noteId);
 		let content = diskContent;
 
@@ -314,16 +325,41 @@ export class CrdtManager {
 			const id = this.docId(noteId);
 			let stable = false;
 			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
-				await this.pendingFlush.get(id);
+				// Capture seq BEFORE awaiting the flush: a remote update landing
+				// DURING that await ticks remoteSeq while its own disk flush is
+				// still in flight — captured after, it would count as "stable"
+				// against a reread that predates the merge (review manager.ts:318).
 				const seq = e.remoteSeq;
-				content = await reread();
-				stable = e.remoteSeq === seq;
+				let flushOk = true;
+				const flush = this.pendingFlush.get(id);
+				if (flush) {
+					try {
+						await flush;
+					} catch {
+						// Disk may not reflect the merge; this attempt cannot be
+						// trusted. The entry self-cleans on settle (see the update
+						// listener), so the retry doesn't re-await the same failure.
+						flushOk = false;
+					}
+				}
+				try {
+					content = await reread();
+				} catch {
+					// Cap-exceeded (routeModify's reread throws past
+					// MAX_CRDT_NOTE_BYTES) or an unreadable file: never diff a
+					// stale snapshot instead — NOT consumed, REST owns the edit.
+					return null;
+				}
+				stable = flushOk && e.remoteSeq === seq;
 			}
 			if (!stable) {
 				// ponytail: 3 consecutive mid-read remote merges = live storm.
-				// Skip the (stale) diff rather than corrupt; the storm's own
-				// remote flush re-enters handleModify with the merged disk state.
-				return true;
+				// Skip the (stale) diff rather than corrupt — and report NOT
+				// consumed so the caller's REST fallback ships the edit and no
+				// echo baseline is stamped for content that never entered the
+				// doc (review manager.ts:322: "consumed" here silently lost the
+				// edit when the storm's flushes were disk-identical).
+				return null;
 			}
 		}
 
@@ -338,7 +374,7 @@ export class CrdtManager {
 		// `true` ("handled, nothing to push") — a legacy fallback here would
 		// mass re-push every known-synced file on a fresh-IDB cold start.
 		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) {
-			return true;
+			return content;
 		}
 
 		const { fmBlock, body: splitBody } = splitFrontmatter(content);
@@ -356,7 +392,7 @@ export class CrdtManager {
 			// Route body through the existing seed-once + minimal-diff gate.
 			if (!seedOnce(e.text, body, lca)) diffIntoYText(e.text, body);
 		});
-		return true;
+		return content;
 	}
 
 	/**
@@ -701,12 +737,21 @@ export class CrdtManager {
 			// awaits it so a write failure rejects the apply and the caller leaves
 			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
 			// return from a test double into an awaitable.
-			this.pendingFlush.set(
-				id,
-				Promise.resolve(
-					this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
-				),
+			const flush = Promise.resolve(
+				this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
 			);
+			this.pendingFlush.set(id, flush);
+			// Room-path updates (crdt/channel readSyncMessage applies straight to
+			// the doc) never consume this entry the way applyRemoteUpdate does —
+			// self-clean on settle so ONE rejected flush can't sit in the map and
+			// poison every later applyLocalEdit await for this note (review
+			// manager.ts:317). The catch also marks the rejection handled;
+			// applyRemoteUpdate re-awaits the same promise and still observes it.
+			void flush
+				.catch(() => undefined)
+				.finally(() => {
+					if (this.pendingFlush.get(id) === flush) this.pendingFlush.delete(id);
+				});
 		});
 
 		this.docs.set(id, entry);

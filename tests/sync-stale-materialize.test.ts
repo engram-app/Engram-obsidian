@@ -66,7 +66,7 @@ function createEngine(app: any): SyncEngine {
 	);
 	engine.setReady();
 	engine.setCrdtManager({
-		applyLocalEdit: mock().mockReturnValue(true),
+		applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 		isSynced: mock().mockReturnValue(true),
 		projectedText: mock().mockResolvedValue("projected body"),
 	} as any);

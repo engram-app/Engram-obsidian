@@ -12528,11 +12528,22 @@ var _CrdtManager = class _CrdtManager {
    * Both code paths run with the default (`undefined`) origin so the resulting
    * update IS forwarded to the server via `onUpdate`.
    *
-   * **Returns** `true` — the CRDT layer always consumes the edit (seeded,
-   * diffed, or adopted). The one non-writing path is the adopt-first gate
-   * below, which still returns `true` ("handled, nothing to push") so the
-   * caller never mass-re-pushes known-synced files via the legacy path on a
+   * **Returns** the exact content string the CRDT layer consumed (seeded,
+   * diffed, or adopted) — callers stamp their echo/dedup baselines from THIS
+   * value, never from their own pre-call disk snapshot, because with `reread`
+   * the consumed content can legitimately differ from the snapshot (a remote
+   * merge landed mid-guard). Returns `null` when the edit was NOT consumed
+   * (reread failed, or the stale-snapshot guard gave up under a live remote
+   * storm) — the caller's legacy/REST path owns the edit. The adopt-first
+   * gate below still consumes ("handled, nothing to push") so the caller
+   * never mass-re-pushes known-synced files via the legacy path on a
    * fresh-IndexedDB cold start; the server's lineage arrives via STEP2.
+   *
+   * Contract: a caller applying DISK content MUST pass `reread` (a live read
+   * of the same file) so the stale-snapshot guard can retry against a moved
+   * doc. Omitting `reread` is reserved for callers deliberately injecting
+   * NON-disk content (drift-merge results, server-fetched bodies), where a
+   * disk reread would be wrong by construction.
    */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
     let id2 = this.docId(noteId);
@@ -12549,20 +12560,30 @@ var _CrdtManager = class _CrdtManager {
     if (reread) {
       let id2 = this.docId(noteId), stable = !1;
       for (let attempt = 0; attempt < 3 && !stable; attempt++) {
-        await this.pendingFlush.get(id2);
-        let seq3 = e.remoteSeq;
-        content = await reread(), stable = e.remoteSeq === seq3;
+        let seq3 = e.remoteSeq, flushOk = !0, flush = this.pendingFlush.get(id2);
+        if (flush)
+          try {
+            await flush;
+          } catch (e2) {
+            flushOk = !1;
+          }
+        try {
+          content = await reread();
+        } catch (e2) {
+          return null;
+        }
+        stable = flushOk && e.remoteSeq === seq3;
       }
       if (!stable)
-        return !0;
+        return null;
     }
     let lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
     if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)))
-      return !0;
+      return content;
     let { fmBlock, body: splitBody } = splitFrontmatter(content), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : content;
     return e.doc.transact(() => {
       this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body);
-    }), !0;
+    }), content;
   }
   /**
    * Apply a binary Yjs update received from the server.
@@ -12755,13 +12776,13 @@ var _CrdtManager = class _CrdtManager {
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
       entry.remoteSeq += 1;
-      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON();
-      this.pendingFlush.set(
-        id2,
-        Promise.resolve(
-          this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
-        )
+      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON(), flush = Promise.resolve(
+        this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
       );
+      this.pendingFlush.set(id2, flush), flush.catch(() => {
+      }).finally(() => {
+        this.pendingFlush.get(id2) === flush && this.pendingFlush.delete(id2);
+      });
     }), this.docs.set(id2, entry), await ready, entry;
   }
   /**
@@ -13878,7 +13899,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     }
   }
   handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -13915,7 +13936,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           `Channel join error on ${topic}: ${JSON.stringify(payload)}`
         ), topic === this.crdtTopic) {
           let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
-          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", reason === "unauthorized" && (this.identityMaybeStale = !0), (_d = this.onCrdtJoinError) == null || _d.call(this, reason, min2)) : rlog().warn(
+          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", reason === "unauthorized" && (this.identityMaybeStale = !0, this.authProbe && ((_d = this.ws) == null || _d.close())), (_e = this.onCrdtJoinError) == null || _e.call(this, reason, min2)) : rlog().warn(
             "channel",
             `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
           );
@@ -13924,30 +13945,30 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       return;
     }
     if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_e = this.onPlanState) == null || _e.call(this, payload);
+      rlog().info("channel", "Received subscription_activated event"), (_f = this.onPlanState) == null || _f.call(this, payload);
       return;
     }
     if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_f = this.onVaultDeleted) == null || _f.call(this);
+      rlog().info("channel", "Received vault_deleted event"), (_g = this.onVaultDeleted) == null || _g.call(this);
       return;
     }
     if (event === "folders.batch") {
-      rlog().info("channel", "Folder markers changed on server"), (_g = this.onFoldersChanged) == null || _g.call(this);
+      rlog().info("channel", "Folder markers changed on server"), (_h = this.onFoldersChanged) == null || _h.call(this);
       return;
     }
     if (event === "crdt_msg" && payload) {
       let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_h = this.onCrdtMessage) == null || _h.call(this, docId, b64));
+      docId && b64 && ((_i = this.onCrdtMessage) == null || _i.call(this, docId, b64));
       return;
     }
     if (event === "note_yjs_update" && payload) {
       let noteId = payload.note_id, b64 = payload.b64, head = payload.head;
-      noteId && b64 && head && ((_i = this.onNoteYjsUpdate) == null || _i.call(this, noteId, b64, head));
+      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_j = this.onCrdtDocReady) == null || _j.call(this, docId));
+      docId && ((_k = this.onCrdtDocReady) == null || _k.call(this, docId));
       return;
     }
     if (event === "note_changed" && payload) {
@@ -13955,7 +13976,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         event_type: p.event_type,
         path: p.path,
         timestamp: Date.now(),
-        kind: (_k = p.kind) != null ? _k : "note",
+        kind: (_l = p.kind) != null ? _l : "note",
         id: p.id,
         device_id: p.device_id,
         content: p.content,
@@ -13967,10 +13988,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
         updated_at: p.updated_at,
         version: p.version
       };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_l = this.onEvent) == null || _l.call(this, streamEvent);
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_m = this.onEvent) == null || _m.call(this, streamEvent);
     }
     if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_m = payload.notes) != null ? _m : [];
+      let notes = (_n = payload.notes) != null ? _n : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes) {
         let streamEvent = {
@@ -13987,7 +14008,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
           updated_at: n.updated_at,
           version: n.version
         };
-        (_n = this.onEvent) == null || _n.call(this, streamEvent);
+        (_o = this.onEvent) == null || _o.call(this, streamEvent);
       }
     }
   }
@@ -17293,9 +17314,17 @@ function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
 async function routeModify(file, crdt, maxBytes) {
-  if (!file.isMarkdown) return !1;
+  if (!file.isMarkdown) return null;
   let content = await file.readContent();
-  return exceedsCrdtNoteLimit(content, maxBytes) ? !1 : await crdt.applyLocalEdit(file.noteId, content, void 0, file.readContent);
+  if (exceedsCrdtNoteLimit(content, maxBytes))
+    return null;
+  let cappedReread = async () => {
+    let fresh = await file.readContent();
+    if (exceedsCrdtNoteLimit(fresh, maxBytes))
+      throw new Error("reread exceeds MAX_CRDT_NOTE_BYTES");
+    return fresh;
+  };
+  return await crdt.applyLocalEdit(file.noteId, content, void 0, cappedReread);
 }
 async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_NOTE_BYTES) {
   var _a;
@@ -17310,7 +17339,7 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
   }
   if (current !== file.diskContent) {
     try {
-      await crdt.applyLocalEdit(file.noteId, file.diskContent);
+      file.reread ? await crdt.applyLocalEdit(file.noteId, file.diskContent, void 0, file.reread) : await crdt.applyLocalEdit(file.noteId, file.diskContent);
     } catch (e) {
       rlog().warn("crdt", `reconcileColdStart: write failed for ${file.path}: ${errMsg(e)}`);
     }
@@ -17453,6 +17482,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
      *  data) and is adopted without wiping. */
     this.syncStateVaultId = null;
+    /** This user's server content_hash for EMPTY content, learned from the
+     *  first fetch that proves a hash maps to "" (the hash is a per-user HMAC —
+     *  underivable client-side but deterministic). Lets the ingress guard trust
+     *  inline-empty bodies carrying this exact hash instead of re-fetching
+     *  every genuinely empty note. Session-scoped; a stale value after a DEK
+     *  rotation or account swap stops matching and falls back to the GET. */
+    this.emptyContentHash = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
     /** Persisted set of server-side "explicit empty folder" markers. Owned by
@@ -17950,7 +17986,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk))
       try {
-        await this.crdt.applyLocalEdit(noteId, disk), (_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) == null || _b || (await this.enqueueCrdtEdit(file, noteId), this.flushQueue());
+        await this.crdt.applyLocalEdit(
+          noteId,
+          disk,
+          void 0,
+          () => this.app.vault.cachedRead(file)
+        ), (_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) == null || _b || (await this.enqueueCrdtEdit(file, noteId), this.flushQueue());
       } catch (e) {
         rlog().warn(
           "crdt",
@@ -18548,7 +18589,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
         let crdtLive = (_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) != null ? _g : !0;
         if (this.crdt && noteId && this.isCrdtManagedOffline(file.path, noteId) && (crdtLive || this.crdtOpsAvailable())) {
-          if (await routeModify(
+          let consumed = await routeModify(
             {
               isMarkdown: file.extension === "md",
               noteId,
@@ -18559,8 +18600,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             this.crdt,
             MAX_CRDT_NOTE_BYTES
-          ))
-            return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { ...existing, hash }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          );
+          if (consumed !== null)
+            return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
+              ...existing,
+              hash: fnv1a(consumed)
+            }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
               "push",
               `crdt edit queued durably (channel down): ${file.path}`
             ), rlog().info(
@@ -19324,7 +19369,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -19332,7 +19377,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && event.content === "" && event.content_hash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
@@ -19421,21 +19466,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             );
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
             if (priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np)) {
-              let body = (_w = event.content) != null ? _w : (await this.api.getNote(event.path)).content;
-              await this.flushFromCrdt(np, body);
+              let body = event.content;
+              body === void 0 && (body = (await this.api.getNote(event.path)).content, body === "" && event.content_hash && (this.emptyContentHash = event.content_hash)), await this.flushFromCrdt(np, body);
             }
             this.materializeRelocated(event.path, noteId);
           }
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_x = event.title) != null ? _x : "",
+            title: (_w = event.title) != null ? _w : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_y = event.folder) != null ? _y : "",
-            tags: (_z = event.tags) != null ? _z : [],
-            mtime: (_A = event.mtime) != null ? _A : Date.now(),
-            updated_at: (_B = event.updated_at) != null ? _B : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_x = event.folder) != null ? _x : "",
+            tags: (_y = event.tags) != null ? _y : [],
+            mtime: (_z = event.mtime) != null ? _z : Date.now(),
+            updated_at: (_A = event.updated_at) != null ? _A : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -19445,13 +19490,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_C = note.content_hash) != null ? _C : event.content_hash,
+            content_hash: (_B = note.content_hash) != null ? _B : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_D = note.version) != null ? _D : event.version
+            version: (_C = note.version) != null ? _C : event.version
           });
         }
       } catch (e) {
@@ -20160,7 +20205,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         },
         this.crdt,
         MAX_CRDT_NOTE_BYTES
-      )) {
+      ) !== null) {
         await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
         continue;
       }
@@ -22721,7 +22766,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
                   {
                     path: file.path,
                     noteId,
-                    diskContent
+                    diskContent,
+                    // Live reread for the manager's stale-snapshot guard:
+                    // startup spans the longest entry-await (IndexedDB
+                    // replay); a frozen diskContent diffed after a
+                    // concurrent remote merge would revert the merge.
+                    reread: () => this.app.vault.cachedRead(file)
                   },
                   {
                     applyLocalEdit: crdt.applyLocalEdit.bind(crdt),

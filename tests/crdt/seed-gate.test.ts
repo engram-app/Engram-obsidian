@@ -42,7 +42,7 @@ describe("seed lifecycle", () => {
 	it("seeds an empty doc on first local edit", async () => {
 		const m = makeManager();
 		const consumed = await m.applyLocalEdit("a.md", "hello world");
-		expect(consumed).toBe(true);
+		expect(consumed).not.toBeNull();
 		expect(await m.getText("a.md")).toBe("hello world");
 		await m.destroy();
 	});
@@ -51,7 +51,7 @@ describe("seed lifecycle", () => {
 		const m = makeManager();
 		m.markSynced("a.md");
 		const consumed = await m.applyLocalEdit("a.md", "hello world");
-		expect(consumed).toBe(true);
+		expect(consumed).not.toBeNull();
 		expect(await m.getText("a.md")).toBe("hello world");
 		await m.destroy();
 	});
@@ -67,7 +67,7 @@ describe("seed lifecycle", () => {
 		const m2 = makeManager(sharedPrefix);
 		// No markSynced — the doc is non-empty, so the diff must land on it.
 		const consumed = await m2.applyLocalEdit("a.md", "hello brave world");
-		expect(consumed).toBe(true);
+		expect(consumed).not.toBeNull();
 		expect(await m2.getText("a.md")).toBe("hello brave world");
 		await m2.destroy();
 	});
@@ -121,7 +121,7 @@ describe("seed lifecycle", () => {
 		// and the diff path runs unconditionally — consumed === true.
 		const m = makeManager();
 		const consumed = await m.applyLocalEdit("f.md", "some content", true);
-		expect(consumed).toBe(true);
+		expect(consumed).not.toBeNull();
 		await m.destroy();
 	});
 });
