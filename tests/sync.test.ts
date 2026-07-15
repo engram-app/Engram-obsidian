@@ -3135,6 +3135,15 @@ describe("Path sanitization on push", () => {
 		// run 29392015897).
 		expect(mockApp.vault.rename).not.toHaveBeenCalled();
 		expect(file.path).toBe("Notes/RenameNew.md");
+
+		// Echo-suppression window must open under the path we SENT, not the live
+		// path: the self-echo arrives as an upsert for RenameOld. Marking the live
+		// path instead would let the old-path echo recreate the renamed-away file
+		// and swallow a genuine remote update to RenameNew (Engram#944 class).
+		const recentlyPushed = (engine as unknown as { recentlyPushed: Map<string, number> })
+			.recentlyPushed;
+		expect(recentlyPushed.has("Notes/RenameOld.md")).toBe(true);
+		expect(recentlyPushed.has("Notes/RenameNew.md")).toBe(false);
 	});
 
 	test("does not rename when server path matches original", async () => {

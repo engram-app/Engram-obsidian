@@ -2602,7 +2602,12 @@ export class SyncEngine {
 			// no self-echo to suppress. Opening the window on those no-ops used to
 			// let it swallow a legitimately-arriving second remote update within the
 			// cooldown (Engram#944).
-			if (success) this.markRecentlyPushed(file.path);
+			// Snapshot path, not file.path: the self-echo arrives under the path we
+			// SENT. After a mid-flight rename, marking the live path would leave the
+			// old path's echo unsuppressed (recreating the renamed-away file) and
+			// wrongly swallow a genuine remote update to the new path (Engram#944
+			// class). Mirrors the batch path, which marks e.pushedPath.
+			if (success) this.markRecentlyPushed(pushedPath);
 			this.emitStatus();
 		}
 		return success;

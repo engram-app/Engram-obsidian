@@ -18816,7 +18816,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         vaultId: (_G = this.settings.vaultId) != null ? _G : void 0
       }), this.maybeGoOffline(e);
     } finally {
-      this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(file.path), this.emitStatus();
+      this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
     }
     return success;
   }
