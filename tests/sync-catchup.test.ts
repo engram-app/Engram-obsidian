@@ -88,16 +88,6 @@ function flush(ms = 50): Promise<void> {
 	return new Promise((r) => setTimeout(r, ms));
 }
 
-function manifestWith(notes: Array<{ id: string; path: string; content_hash: string }>) {
-	(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
-		notes,
-		attachments: [],
-		total_notes: notes.length,
-		total_attachments: 0,
-		change_seq: 1,
-	});
-}
-
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
@@ -581,55 +571,19 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 });
 
-describe("bind-time convergence — verifyConvergenceOnOpen", () => {
-	test("manifest hash differs from last-synced serverHash → forced re-handshake", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({
-			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
-		} as any);
-		const map = new NoteIdMap();
-		map.set("open-me.md", "note-id-9");
-		engine.setNoteIdMap(map);
-		const enroll = mock();
-		const reset = mock();
-		engine.setCrdtEnrollment({ enroll, reset });
-		engine.importSyncState({
-			"open-me.md": { hash: 1, version: 1, serverHash: "what-i-last-saw" },
-		});
-		manifestWith([{ id: "note-id-9", path: "open-me.md", content_hash: "server-moved-on" }]);
-		// Prime the manifest snapshot (reconcile caches owners + hashes).
-		await engine.reconcileNoteIdMapFromManifest();
-
-		await engine.verifyConvergenceOnOpen("open-me.md");
-
-		// Divergence → force a fresh CRDT handshake: reset lifts the
-		// once-per-session guard, enroll re-fires STEP1.
-		expect(reset).toHaveBeenCalledWith("note-id-9");
-		expect(enroll).toHaveBeenCalledWith("note-id-9");
-	});
-
-	test("hashes agree → no re-handshake", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({
-			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
-		} as any);
-		const map = new NoteIdMap();
-		map.set("open-me.md", "note-id-9");
-		engine.setNoteIdMap(map);
-		const enroll = mock();
-		const reset = mock();
-		engine.setCrdtEnrollment({ enroll, reset });
-		engine.importSyncState({
-			"open-me.md": { hash: 1, version: 1, serverHash: "same" },
-		});
-		manifestWith([{ id: "note-id-9", path: "open-me.md", content_hash: "same" }]);
-		await engine.reconcileNoteIdMapFromManifest();
-
-		await engine.verifyConvergenceOnOpen("open-me.md");
-
-		expect(reset).not.toHaveBeenCalled();
-	});
-});
+// The "bind-time convergence — verifyConvergenceOnOpen" describe block that
+// lived here is gone (Plan B1 Task 6): the per-file-open REST manifest-hash
+// check it tested no longer exists (verifyConvergenceOnOpen deleted from
+// src/sync.ts, along with the manifestPathHashes cache it solely read). Its
+// intent — heal a note whose local state diverged from the server without
+// waiting for the user to act — is now served by catchupViaSocket running on
+// every (re)connect instead of once per file-open; that mechanism has its
+// own non-redundant coverage in tests/sync-socket-catchup.test.ts
+// ("pulls deltas only for diverged notes" etc.). Re-pointing these two tests
+// at catchupViaSocket would just duplicate that coverage under a different
+// name — the manifest-hash-vs-serverHash comparison these tests exercised is
+// not a mechanism catchupViaSocket has (it compares crdtHead vs serverHead
+// instead), so there's no meaningful "same intent, new API" retarget to make.
 
 describe("anti-stale apply guard (review 2026-07-15 — mid-pull push overwrite race)", () => {
 	test("a change at or below the already-synced version is skipped", async () => {
