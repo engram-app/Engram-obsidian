@@ -102,6 +102,17 @@ import type { NoteStreamEvent } from "./types";
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
+	/** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
+	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
+	 *  `disconnect()` — the one await-reply path the channel has. */
+	private readonly pendingReplies = new Map<
+		string,
+		{
+			resolve: (r: unknown) => void;
+			reject: (e: Error) => void;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>();
 	private readonly joinRef = "1";
 	private readonly userJoinRef = "2";
 	private readonly crdtJoinRef = "3";
@@ -322,6 +333,28 @@ export class NoteChannel {
 		return true;
 	}
 
+	/** Push a request frame on the crdt topic and resolve when the matching
+	 *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
+	 *  disconnect. The one await-reply path the channel has — everything else is
+	 *  fire-and-forget. */
+	sendRequest(event: string, payload: unknown, timeoutMs = 10000): Promise<unknown> {
+		const t = this.crdtTopic;
+		if (!t || !this.crdtJoined) {
+			return Promise.reject(
+				new Error(`sendRequest refused (crdt topic not joined): ${event}`),
+			);
+		}
+		const ref = String(++this.ref);
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => {
+				this.pendingReplies.delete(ref);
+				reject(new Error(`sendRequest timeout: ${event}`));
+			}, timeoutMs);
+			this.pendingReplies.set(ref, { resolve, reject, timer });
+			this.send([this.crdtJoinRef, ref, t, event, payload]);
+		});
+	}
+
 	async connect(): Promise<void> {
 		if (this.ws) return;
 		this.reconnectMs = 1000;
@@ -336,6 +369,13 @@ export class NoteChannel {
 			this.ws.close();
 			this.ws = null;
 		}
+		// Reject any in-flight sendRequest calls so callers don't hang forever
+		// waiting for a reply that a dead socket will never deliver.
+		for (const [, p] of this.pendingReplies) {
+			clearTimeout(p.timer);
+			p.reject(new Error("channel disconnected"));
+		}
+		this.pendingReplies.clear();
 		// Always reset crdtJoined on intentional disconnect regardless of whether
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
@@ -691,6 +731,21 @@ export class NoteChannel {
 		];
 
 		if (event === "phx_reply") {
+			// A sendRequest awaiting this exact ref takes priority over the
+			// topic-join cascade below — it's a one-shot request/response, not a
+			// join ack, and must not fall through to the join-error logging path.
+			if (ref !== null) {
+				const pending = this.pendingReplies.get(ref);
+				if (pending) {
+					this.pendingReplies.delete(ref);
+					clearTimeout(pending.timer);
+					const status = (payload as { status?: string })?.status;
+					const response = (payload as { response?: unknown })?.response;
+					if (status === "ok") pending.resolve(response);
+					else pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
+					return;
+				}
+			}
 			// Clear the outstanding heartbeat ref when the phoenix topic replies.
 			// We clear on any phoenix phx_reply rather than matching the exact ref
 			// because the topic is unambiguous — only heartbeats produce phoenix
