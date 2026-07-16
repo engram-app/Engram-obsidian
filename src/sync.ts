@@ -453,6 +453,18 @@ export class SyncEngine {
 		this.crdtEditorDetach = fn;
 	}
 
+	/** Rebinds the live editor showing `path` off its current (now orphaned)
+	 *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
+	 *  wired by main.ts). Used after a genesis ADOPT remaps path -> serverId
+	 *  under a live editor: the path is unchanged so refresh()'s bindTo
+	 *  short-circuits. Null in tests/headless — the adopt transfer branch is
+	 *  then skipped (no live editor to preserve) and the disk-seed path runs. */
+	private crdtEditorRebind: ((path: string) => void) | null = null;
+
+	setCrdtEditorRebind(fn: ((path: string) => void) | null): void {
+		this.crdtEditorRebind = fn;
+	}
+
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
 	 *  main.ts (persisted in data.json); wired here so pushFile can mint/send
 	 *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -2282,26 +2294,80 @@ export class SyncEngine {
 							// this genesis path (routeModify runs only AFTER, below, keyed
 							// by effectiveId), so there is nothing to re-key — we simply
 							// seed under the server id from the start.
-							if (serverId && serverId !== noteId) {
+							let consumed: string | null;
+							if (
+								serverId &&
+								serverId !== noteId &&
+								this.crdtEditorRebind &&
+								this.isLiveBound(normalizePath(pushedPath))
+							) {
+								// ADOPT under a LIVE editor. The editor is bound to the MINT
+								// doc, so ySync has propagated the user's live keystrokes
+								// (including any typed during the crdt_create round-trip, and
+								// any not yet flushed to disk) into the mint Y.Text — disk
+								// (cachedRead) can lag them. Seed the serverId doc from the
+								// mint's projected content via applyLocalEdit (DEFAULT origin,
+								// so the update FORWARDS to the server — applyRemoteUpdate's
+								// REMOTE_ORIGIN would keep the edits client-only and they'd
+								// still be lost server-side). THEN rebind the editor off the
+								// orphaned mint onto serverId: because serverId already holds
+								// the content, bindTo's reconcile is a no-op (no visible
+								// buffer change) and future keystrokes flow to serverId. THEN
+								// retire the mint doc. Skips the disk-seed routeModify below:
+								// re-diffing the (staler) disk snapshot into serverId would
+								// clobber the just-transferred in-flight chars.
+								// ponytail: two-lineage doubling is possible in a TRUE
+								// content collision (local new-note text vs the server row's
+								// pre-existing independent Y history) — accepted as
+								// visible/recoverable over silent loss; the warn below makes
+								// it diagnosable. TODO: full adopt-collision conflict
+								// semantics is a focused follow-up.
 								this.noteIdMap?.set(normalizePath(pushedPath), serverId);
+								effectiveId = serverId;
+								const mintText = await this.crdt.projectedText(noteId);
+								const serverHadContent =
+									typeof this.crdt.hasHistory === "function" &&
+									(await this.crdt.hasHistory(serverId));
+								consumed = await this.crdt.applyLocalEdit(serverId, mintText);
+								if (mintText.length > 0 && serverHadContent) {
+									rlog().warn(
+										"crdt",
+										`crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${pushedPath} ${noteId} -> ${serverId}`,
+									);
+								}
 								rlog().info(
 									"crdt",
-									`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+									`crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`,
 								);
-								effectiveId = serverId;
+								// Keystroke-leak window: keystrokes landing in the mint doc
+								// between the projectedText read above and this synchronous
+								// detach are dropped by removeDoc. Microtask-scale; accepted.
+								this.crdtEditorRebind(pushedPath);
+								await this.crdt.removeDoc(noteId);
+								this.crdtEnrollment?.reset(noteId);
+							} else {
+								if (serverId && serverId !== noteId) {
+									this.noteIdMap?.set(normalizePath(pushedPath), serverId);
+									rlog().info(
+										"crdt",
+										`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+									);
+									effectiveId = serverId;
+								}
+								// Seed the body under the effective id: the Y.Doc update
+								// listener forwards it over the channel (crdt_msg). A LIVE
+								// reread, not the frozen `content`, backs the manager's
+								// stale-snapshot guard.
+								consumed = await routeModify(
+									{
+										isMarkdown: true,
+										noteId: effectiveId,
+										readContent: () => this.app.vault.cachedRead(file),
+									},
+									this.crdt,
+									MAX_CRDT_NOTE_BYTES,
+								);
 							}
-							// Seed the body under the effective id: the Y.Doc update listener
-							// forwards it over the channel (crdt_msg). A LIVE reread, not the
-							// frozen `content`, backs the manager's stale-snapshot guard.
-							const consumed = await routeModify(
-								{
-									isMarkdown: true,
-									noteId: effectiveId,
-									readContent: () => this.app.vault.cachedRead(file),
-								},
-								this.crdt,
-								MAX_CRDT_NOTE_BYTES,
-							);
 							this.confirmNoteId(effectiveId);
 							if (consumed !== null) {
 								// Echo baseline from what the manager CONSUMED (mirrors the

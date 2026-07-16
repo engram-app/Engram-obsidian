@@ -1,6 +1,6 @@
 import type { EditorView } from "@codemirror/view";
 import type { App } from "obsidian";
-import { MarkdownView as MdView } from "obsidian";
+import { MarkdownView as MdView, normalizePath } from "obsidian";
 import { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import * as YDoc from "yjs";
@@ -177,6 +177,20 @@ export class CrdtLiveViews {
 				ctrl.release(cm);
 				this.controllers.delete(cm);
 			}
+		}
+	}
+
+	/** Force any editor controller currently showing `path` to re-resolve its
+	 *  note_id and rebind. Used after a genesis ADOPT remaps path -> serverId:
+	 *  the path is unchanged so refresh()'s bindTo short-circuits and the editor
+	 *  stays on the orphaned mint doc. No-op when nothing shows the path. The
+	 *  caller pre-seeds the serverId doc from the mint content, so the rebind's
+	 *  reconcile is a no-op and no in-flight edit is lost. */
+	rebindPath(path: string): void {
+		const norm = normalizePath(path);
+		for (const [cm, ctrl] of this.controllers) {
+			const cur = ctrl.currentPath();
+			if (cur !== null && normalizePath(cur) === norm) ctrl.forceRebind(cm, path);
 		}
 	}
 

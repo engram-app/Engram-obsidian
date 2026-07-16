@@ -256,6 +256,38 @@ describe("EditorController", () => {
 		expect(calls.some((s) => s.startsWith("bind:b.md:"))).toBe(false);
 	});
 
+	it("forceRebind re-binds even when the path is unchanged (defeats the idempotency guard)", async () => {
+		// After a genesis ADOPT remaps path -> serverId, the PATH is unchanged
+		// (only the id under it moved), so a plain bindTo(v, path) would no-op on
+		// the path-equality guard and the editor would stay bound to the orphaned
+		// mint doc. forceRebind detaches (clearing this.path) then re-binds, so
+		// getYText re-resolves to the new id.
+		const d = new Y.Doc();
+		const t1 = d.getText("one");
+		const t2 = d.getText("two");
+		t2.insert(0, "hello world");
+		let current = t1;
+		const calls: string[] = [];
+		const v = fakeView();
+		const c = new EditorController({
+			getYText: async () => current,
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+		});
+		await c.bindTo(v, "a.md");
+		expect(calls.filter((s) => s.startsWith("bind:a.md:")).length).toBe(1);
+		// The id under "a.md" changed (adopt remap): getYText now resolves a
+		// different Y.Text. A plain bindTo("a.md") would short-circuit.
+		current = t2;
+		c.forceRebind(v, "a.md");
+		await new Promise((r) => setTimeout(r, 0));
+		// Old binding released, then a SECOND bind fired (guard defeated).
+		expect(calls.filter((s) => s.startsWith("release:a.md:")).length).toBe(1);
+		expect(calls.filter((s) => s.startsWith("bind:a.md:")).length).toBe(2);
+		expect(c.currentPath()).toBe("a.md");
+	});
+
 	it("drift check releases the binding when the view no longer shows the bound path", async () => {
 		// Relay's view-identity guard (their view.file check): if Obsidian swapped
 		// the file in this view and the rebind was missed, the 3s drift repair
