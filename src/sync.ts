@@ -3021,7 +3021,93 @@ export class SyncEngine {
 	private hibernateIfIdle(path: string, noteId: string): void {
 		if (!this.crdt) return;
 		if (this.isLiveBound(normalizePath(path))) return;
-		this.crdt.closeDoc(noteId);
+		// Best-effort memory reclamation: a failure to free the doc must not throw
+		// into the never-throw convergence loop nor downgrade an already-recorded
+		// head. The doc simply stays resident (bounded; retried next hibernate).
+		try {
+			this.crdt.closeDoc(noteId);
+		} catch (e) {
+			devLog().log("crdt", `hibernateIfIdle: closeDoc ${noteId} failed — ${errMsg(e)}`);
+		}
+	}
+
+	/** Shared per-note convergence apply used by BOTH coldReceive (REST
+	 *  getUpdates) and catchupViaSocket (crdt_catchup_delta). The ONLY difference
+	 *  between the callers is how the delta bytes are obtained — injected as
+	 *  `fetchDelta`. ALL guards live here so the socket path inherits them:
+	 *  confirmed/live-bound/cost gates, the history-less adopt branch (#234),
+	 *  disk-drift capture (BUG 2 / #3), the pending-gap heal, head advance, and
+	 *  hibernate. Isolated: logs its own per-note failure and never throws.
+	 *  Returns "converged" only when the head was advanced for delivered data;
+	 *  "skipped" for a gate short-circuit; "failed" for a caught error / stalled
+	 *  adopt. */
+	private async convergeNoteFromDelta(
+		path: string,
+		noteId: string,
+		serverHead: string,
+		fetchDelta: (
+			noteId: string,
+			sinceB64: string,
+		) => Promise<{ update: Uint8Array; head: string }>,
+	): Promise<"converged" | "skipped" | "failed"> {
+		if (!this.crdt) return "skipped";
+		if (!this.isNoteConfirmed(noteId)) return "skipped";
+		if (this.isLiveBound(normalizePath(path))) return "skipped"; // live channel owns it
+		if (this.getCrdtHead(path) === serverHead) return "skipped"; // cost gate: unchanged
+		try {
+			// A history-LESS doc (feed-synced, never in IDB) doubles on a disk-drift
+			// seed and can't reconstruct from a delta — adopt full server state +
+			// reconcile drift instead (#234). Default to history-full when the
+			// manager lacks hasHistory (partial test doubles) → pre-#234 behavior.
+			const historyFull =
+				typeof this.crdt.hasHistory === "function"
+					? await this.crdt.hasHistory(noteId)
+					: true;
+			if (!historyFull) {
+				const adopted = await this.adoptHistoryLessNote(path, noteId);
+				if (adopted === null) return "failed"; // adopt stalled — retry next poll
+				this.setCrdtHead(path, adopted);
+				this.hibernateIfIdle(path, noteId);
+				return "converged";
+			}
+			// Merge any un-pushed disk drift into the Y.Doc first, so the fetched
+			// remote delta merges with it instead of overwriting it (BUG 2 / #3).
+			// Seeding before encodeStateVector keeps `since` consistent with the
+			// now-updated local state.
+			await this.captureDiskDriftBeforeRemote(path, noteId);
+			// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
+			const since = toB64(await this.crdt.encodeStateVector(noteId));
+			const { update, head } = await fetchDelta(noteId, since);
+			await this.crdt.applyRemoteUpdate(noteId, update);
+			// Gap heal (parity with applyPushedNoteUpdate): if the applied delta
+			// references state this device missed while off the channel, Yjs PENDS
+			// it — the doc has NOT reached `head`. Advancing crdtHead anyway would
+			// make the cost gate skip the note forever. Re-fetch from our REAL state
+			// vector and advance only to a head the doc actually reached.
+			const gapped =
+				typeof this.crdt.hasPendingGap === "function" &&
+				(await this.crdt.hasPendingGap(noteId));
+			if (gapped) {
+				const since2 = toB64(await this.crdt.encodeStateVector(noteId));
+				const { update: full, head: fullHead } = await fetchDelta(noteId, since2);
+				await this.crdt.applyRemoteUpdate(noteId, full);
+				if (!(await this.crdt.hasPendingGap(noteId))) this.setCrdtHead(path, fullHead);
+			} else {
+				this.setCrdtHead(path, head); // crdtHead persists under the vault path
+			}
+			// Idle notes are not channel-enrolled under the fan-out model (P2
+			// removed lazyEnrollment) — this doc was opened just for this
+			// convergence, so free it now that the head is durably recorded. A note
+			// that became live-bound during the awaits above stays resident
+			// (hibernateIfIdle re-checks).
+			this.hibernateIfIdle(path, noteId);
+			return "converged";
+		} catch (e) {
+			// Isolated: log, leave crdtHead unadvanced, retry next poll.
+			devLog().log("crdt", `convergeNoteFromDelta: ${path} failed — ${errMsg(e)}`);
+			rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`);
+			return "failed";
+		}
 	}
 
 	/** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
@@ -3042,48 +3128,13 @@ export class SyncEngine {
 		for (const [noteId, serverHead] of Object.entries(heads)) {
 			const path = this.noteIdMap?.pathForId(noteId) ?? null;
 			if (!path) continue; // not locally known — first-discovery is pull()'s job
-			if (!this.isNoteConfirmed(noteId)) continue;
-			if (this.isLiveBound(path)) continue; // live channel owns open notes
-			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
-			try {
-				// A history-LESS doc (feed-synced, never in IDB) doubles on a disk-drift
-				// seed and can't reconstruct from a delta — adopt full server state +
-				// reconcile drift instead (#234). Default to history-full when the
-				// manager lacks hasHistory (partial test doubles) → pre-#234 behavior.
-				const historyFull =
-					typeof this.crdt.hasHistory === "function"
-						? await this.crdt.hasHistory(noteId)
-						: true;
-				if (!historyFull) {
-					const adopted = await this.adoptHistoryLessNote(path, noteId);
-					if (adopted === null) continue; // adopt failed — retry next poll
-					this.setCrdtHead(path, adopted);
-					converged++;
-					this.hibernateIfIdle(path, noteId);
-					continue;
-				}
-				// Merge any un-pushed disk drift into the Y.Doc first, so the pulled
-				// remote delta merges with it instead of overwriting it (BUG 2).
-				// Seeding before encodeStateVector keeps `since` consistent with the
-				// now-updated local state.
-				await this.captureDiskDriftBeforeRemote(path, noteId);
-				// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
-				const since = toB64(await this.crdt.encodeStateVector(noteId));
-				const { update, head } = await this.api.getUpdates(noteId, since);
-				await this.crdt.applyRemoteUpdate(noteId, update);
-				this.setCrdtHead(path, head); // crdtHead persists under the vault path
-				converged++;
-				// Idle notes are not channel-enrolled under the fan-out model (P2
-				// removed lazyEnrollment) — this doc was opened just for this
-				// convergence, so free it now that the head is durably recorded.
-				// A note that became live-bound during the awaits above stays
-				// resident (hibernateIfIdle re-checks).
-				this.hibernateIfIdle(path, noteId);
-			} catch (e) {
-				// Isolated: log, leave crdtHead unadvanced, retry next poll.
-				devLog().log("crdt", `coldReceive: ${path} failed — ${errMsg(e)}`);
-				rlog().warn("crdt", `Cold-receive failed for ${path}: ${errMsg(e)}`);
-			}
+			const outcome = await this.convergeNoteFromDelta(
+				path,
+				noteId,
+				serverHead,
+				(id, since) => this.api.getUpdates(id, since),
+			);
+			if (outcome === "converged") converged++;
 		}
 		if (converged > 0) {
 			devLog().log("crdt", `coldReceive: converged ${converged} cold note(s)`);
@@ -3130,15 +3181,16 @@ export class SyncEngine {
 		for (const [noteId, serverHead] of Object.entries(heads)) {
 			const path = this.noteIdMap?.pathForId(noteId);
 			if (!path) continue; // not locally known — first-discovery is pull()'s job
-			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
-			try {
-				const sv = toB64(await this.crdt.encodeStateVector(noteId));
-				const { b64, head } = await this.crdtCatchupDelta(noteId, sv);
-				await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
-				this.setCrdtHead(path, head);
-			} catch (e) {
-				rlog().warn("crdt", `socket catchup failed for ${noteId}: ${errMsg(e)}`);
-			}
+			// Same guarded per-note apply as coldReceive — only the delta fetcher
+			// differs (crdt_catchup_delta over the socket vs REST getUpdates). This
+			// is how the socket path inherits the confirmed/live-bound gates, the
+			// history-less adopt (#234), disk-drift capture (#3), and the gap heal.
+			await this.convergeNoteFromDelta(path, noteId, serverHead, (id, sv) =>
+				this.crdtCatchupDelta!(id, sv).then((x) => ({
+					update: fromB64(x.b64),
+					head: x.head,
+				})),
+			);
 		}
 	}
 
