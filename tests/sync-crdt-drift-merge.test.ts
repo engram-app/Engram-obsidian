@@ -42,19 +42,26 @@ function markProbed(engine: SyncEngine): void {
  *  the deleted REST coldReceive() driver; the convergence guarantees it exercised
  *  (history-less adopt, disk-drift merge, keep-both) are identical. */
 async function driveCatchup(engine: SyncEngine): Promise<void> {
-	const api = (
-		engine as unknown as {
-			api: {
-				getVaultHeads: () => Promise<{ heads: Record<string, string> }>;
-				getUpdates: (
-					id: string,
-					sv: string,
-				) => Promise<{ update: Uint8Array; head: string }>;
-			};
-		}
-	).api;
+	const e = engine as unknown as {
+		api: {
+			getVaultHeads: () => Promise<{ heads: Record<string, string> }>;
+			getUpdates: (id: string, sv: string) => Promise<{ update: Uint8Array; head: string }>;
+		};
+		noteIdMap?: { pathForId(id: string): string | null };
+	};
+	const api = e.api;
 	engine.setCrdtCatchup(
-		() => api.getVaultHeads(),
+		// Adapt the legacy id->head test double into the new id->{path,head} head-map
+		// shape; the path is resolved from the engine's noteIdMap (these notes are
+		// already known — discovery is covered separately in sync-socket-catchup).
+		async () => {
+			const { heads } = await api.getVaultHeads();
+			const out: Record<string, { path: string; head: string }> = {};
+			for (const [id, head] of Object.entries(heads)) {
+				out[id] = { path: e.noteIdMap?.pathForId(id) ?? id, head };
+			}
+			return { heads: out };
+		},
 		async (id, sv) => {
 			const { update, head } = await api.getUpdates(id, sv);
 			return { doc_id: id, b64: toB64(update), head };

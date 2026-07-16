@@ -2989,13 +2989,15 @@ export class SyncEngine {
 	 *  per-note failure is logged and skipped, never thrown into the caller, so
 	 *  one bad note can't stall the vault). Unset deps / no crdt manager ->
 	 *  no-op. */
-	private crdtCatchupHeads: (() => Promise<{ heads: Record<string, string> }>) | null = null;
+	private crdtCatchupHeads:
+		| (() => Promise<{ heads: Record<string, { path: string; head: string }> }>)
+		| null = null;
 	private crdtCatchupDelta:
 		| ((docId: string, sv: string) => Promise<{ doc_id: string; b64: string; head: string }>)
 		| null = null;
 
 	setCrdtCatchup(
-		heads: () => Promise<{ heads: Record<string, string> }>,
+		heads: () => Promise<{ heads: Record<string, { path: string; head: string }> }>,
 		delta: (
 			docId: string,
 			sv: string,
@@ -3007,29 +3009,44 @@ export class SyncEngine {
 
 	async catchupViaSocket(): Promise<void> {
 		if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
-		let heads: Record<string, string>;
+		let heads: Record<string, { path: string; head: string }>;
 		try {
 			({ heads } = await this.crdtCatchupHeads());
 		} catch (e) {
-			// Whole-vault heads fetch failed (socket drop, etc). Match coldReceive:
-			// log and return so the method honors its never-throw-into-caller contract.
+			// Whole-vault heads fetch failed (socket drop, etc). Log and return so
+			// the method honors its never-throw-into-caller contract.
 			rlog().warn("crdt", `socket catchup: heads fetch failed — ${errMsg(e)}`);
 			return;
 		}
-		for (const [noteId, serverHead] of Object.entries(heads)) {
-			const path = this.noteIdMap?.pathForId(noteId);
-			if (!path) continue; // not locally known — first-discovery is pull()'s job
-			// Same guarded per-note apply as coldReceive — only the delta fetcher
-			// differs (crdt_catchup_delta over the socket vs REST getUpdates). This
-			// is how the socket path inherits the confirmed/live-bound gates, the
-			// history-less adopt (#234), disk-drift capture (#3), and the gap heal.
-			await this.convergeNoteFromDelta(path, noteId, serverHead, (id, sv) =>
+		let learned = false;
+		for (const [noteId, entry] of Object.entries(heads)) {
+			// The head map carries the server-authoritative path, so this is the
+			// SOLE discovery source: a note this device has never seen (no local
+			// id->path mapping) is learned here and materialized by the converge
+			// below (flushFromCrdt creates a missing file). Prefer the server path
+			// over any local mapping so a rename converges to the new path too.
+			const serverPath = entry.path;
+			if (this.shouldIgnore(serverPath)) continue;
+			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath) {
+				this.noteIdMap.set(serverPath, noteId);
+				learned = true;
+			}
+			// Same guarded per-note apply as the fan-out path — only the delta
+			// fetcher differs (crdt_catchup_delta over the socket vs REST
+			// getUpdates). This is how the socket path inherits the live-bound/cost
+			// gates, the history-less adopt (#234), disk-drift capture (#3), and the
+			// gap heal.
+			await this.convergeNoteFromDelta(serverPath, noteId, entry.head, (id, sv) =>
 				this.crdtCatchupDelta!(id, sv).then((x) => ({
 					update: fromB64(x.b64),
 					head: x.head,
 				})),
 			);
 		}
+		// Persist any id->path mappings learned via discovery so a restart keeps
+		// them (the head map is authoritative, but re-fetching every session is
+		// wasteful and a mid-session offline edit needs the mapping already local).
+		if (learned && this.noteIdMap) await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 	}
 
 	/** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
