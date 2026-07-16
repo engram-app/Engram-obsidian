@@ -1158,6 +1158,43 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 			noteIdMap.get("Notes/rejected.md"),
 		);
 	});
+
+	test("ADOPT + post-create seed throw: must NOT REST-create under the stale mint id (review finding)", async () => {
+		// Unlike the rejection case above, crdt_create here RESOLVES (with adopt:
+		// server already owns the path under a different id) — the server row
+		// exists before the seed throws. Falling through to REST under the local
+		// mint would create a duplicate/misrouted row against a path the server
+		// already owns. The fix treats a post-create throw like the seed-declined
+		// branch: confirm the remapped id and return true (self-heals next edit).
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async () => {
+			throw new Error("seed boom");
+		});
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setLiveBoundCheck(() => true);
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
+		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+
+		const file = new TFile("Notes/collision-throw.md");
+		const result = await (
+			engine as unknown as { pushFile: (f: TFile, force?: boolean) => Promise<boolean> }
+		).pushFile(file);
+
+		// No stale-mint REST create.
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		// The remap stuck: noteIdMap addresses the row the server actually owns.
+		expect(noteIdMap.get("Notes/collision-throw.md")).toBe("server-owns-this");
+		// confirmNoteId + return-true path taken: the note is not lost, and the
+		// next edit self-heals the body over the CRDT-op branch.
+		expect(
+			(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.has(
+				"server-owns-this",
+			),
+		).toBe(true);
+		expect(result).toBe(true);
+	});
 });
 
 // ---------------------------------------------------------------------------
