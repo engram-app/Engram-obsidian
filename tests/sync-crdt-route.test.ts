@@ -236,11 +236,31 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	// Record a server head under the note's path so a "server-known" note routes
 	// through the CRDT path (the confirmed-set no longer gates CRDT routing).
 	const e = engine as unknown as {
-		noteIdMap?: { pathForId(id: string): string | null };
+		noteIdMap?: { pathForId(id: string): string | null; set(p: string, id: string): void };
 		setCrdtHead(path: string, head: string): void;
 	};
-	const p = e.noteIdMap?.pathForId(noteId);
-	if (p) e.setCrdtHead(p, "server-head");
+	let p = e.noteIdMap?.pathForId(noteId);
+	if (!p) {
+		// Test didn't seed a map: mint a path so the CRDT-sole oracle resolves
+		// (a confirmed note IS server-known in production). Synthetic prefix so it
+		// never collides with a real test path.
+		p = `__confirmed__/${noteId}.md`;
+		e.noteIdMap?.set(p, noteId);
+	}
+	e.setCrdtHead(p, "server-head");
+}
+
+/** Mark a note server-known WITHOUT confirming it: sets the id->path mapping and
+ *  a crdtHead (so hasServerNote is true) while leaving confirmedNoteIds empty.
+ *  Simulates the post-reconnect state after clearConfirmedNoteIds() wipes the
+ *  confirmed-set but the note's server head persists (the #230/DI-1 case). */
+function markServerKnown(engine: SyncEngine, path: string, noteId: string): void {
+	const e = engine as unknown as {
+		noteIdMap?: { set(p: string, id: string): void };
+		setCrdtHead(p: string, h: string): void;
+	};
+	e.noteIdMap?.set(path, noteId);
+	e.setCrdtHead(path, "server-head");
 }
 
 /** Mark the one-shot capability probe as already complete, for tests that
@@ -1652,8 +1672,8 @@ describe("discovery pull enrolls only live-bound notes", () => {
 // anti-#230 failure this branch exists to prevent). needsColdReconcile returns
 // false for a baseline-less note, so cold-start SKIPS seeding it; the concern
 // is whether the fullSync/push fallback then routes it LWW. It does not:
-// pushFile and pushNotesViaBatch gate CRDT purely on isNoteConfirmed(noteId),
-// INDEPENDENT of any syncState baseline. This pins that invariant.
+// pushFile and pushNotesViaBatch gate CRDT on hasServerNote(noteId) (the
+// note's crdtHead), not the hash baseline. This pins that invariant.
 //
 // Investigation note: confirmedNoteIds is in-memory only (never serialized via
 // saveData) and cleared on every reconnect (clearConfirmedNoteIds) — so it
@@ -1664,12 +1684,12 @@ describe("discovery pull enrolls only live-bound notes", () => {
 // note still stays on CRDT. Proven below.
 // ---------------------------------------------------------------------------
 
-describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never whole-doc LWW)", () => {
-	test("isCrdtManagedOffline is true for a confirmed note with no baseline", () => {
+describe("BUG 3: a server-known note routes to CRDT even without a hash baseline (never whole-doc LWW)", () => {
+	test("isCrdtManagedOffline is true for a server-known note with no hash baseline", () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-1");
-		// no baseline imported
+		markServerKnown(engine, "p.md", "id-1");
+		// crdtHead set (server-known), no hash baseline imported
 		const managed = (
 			engine as unknown as { isCrdtManagedOffline(p: string, id: string | null): boolean }
 		).isCrdtManagedOffline("p.md", "id-1");
@@ -1696,6 +1716,28 @@ describe("BUG 3: a confirmed note routes to CRDT even with NO baseline (never wh
 
 		// Skipped as crdt-owned — a confirmed note is never whole-doc REST-pushed,
 		// baseline or not.
+		expect(batch).not.toHaveBeenCalled();
+	});
+
+	test("DI-1: a server-known but UNCONFIRMED note (post-reconnect) is skipped by batch, never whole-doc LWW", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
+		// Server-known via crdtHead, confirmedNoteIds EMPTY: the exact state after
+		// clearConfirmedNoteIds() on a reconnect. Pre-fix the batch keyed on the
+		// confirmed-set and REST full-doc pushed this, clobbering a concurrent
+		// remote edit (#230).
+		markServerKnown(engine, "note.md", "id-note");
+		engine.setCrdtLiveCheck(() => true);
+		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
+		batch.mockReset().mockResolvedValue({ results: [] });
+
+		const file = new TFile("note.md");
+		await (
+			engine as unknown as {
+				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
+			}
+		).pushNotesViaBatch([file], false);
+
 		expect(batch).not.toHaveBeenCalled();
 	});
 });

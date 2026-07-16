@@ -13830,7 +13830,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     let t = this.crdtTopic;
     return !t || !this.crdtJoined ? !1 : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_delete", { doc_id: docId }]), !0);
   }
-  /** Vault-level head map for catch-up divergence detection. */
+  /** Vault-level head map for catch-up divergence detection AND first-discovery.
+   *  Each entry carries the note's server head plus its decrypted vault path, so
+   *  a device that has never seen an id can materialize it at that path (the
+   *  head map is the sole discovery source now that REST receive is gone). */
   async crdtCatchupHeads() {
     return await this.sendRequest("crdt_catchup_heads", {});
   }
@@ -18000,28 +18003,29 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
   }
-  // Single source of truth for "this note converges via CRDT ops, not the
-  // whole-doc push". Previously duplicated inline in pushFile and
-  // pushNotesViaBatch; both now call this.
-  //
+  // "This note converges via CRDT ops, not the whole-doc push." Called only by
+  // pushNotesViaBatch now; pushFile routes on hasServerNote directly.
   isCrdtManaged(path, noteId) {
     var _a, _b;
     return this.isCrdtManagedOffline(path, noteId) && ((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null ? _b : !0);
   }
   // Same predicate as isCrdtManaged, minus the live-channel term: true when a
   // note WOULD converge via CRDT ops if the crdt: channel were joined right
-  // now (Task 5, single authority). CRDT is UNCONDITIONAL for a confirmed
-  // note — a cold edit (note edited while its dedicated room is closed) MUST
-  // stay on CRDT so it merges with concurrent remote edits; routing it to
-  // legacy whole-doc REST would be last-write-wins → lost merges (#230).
+  // now (Task 5, single authority). Oracle is hasServerNote — the note's own
+  // CRDT state (crdtHead != null), the SAME oracle pushFile routes on, NOT the
+  // confirmed-set. The confirmed-set is wiped on every reconnect
+  // (clearConfirmedNoteIds); keying batch ownership on it re-routed a
+  // server-known note edited during a disconnect to legacy whole-doc REST,
+  // last-write-wins over a concurrent remote edit → lost merge (#230, DI-1).
+  // crdtHead survives reconnect, so a cold edit stays on CRDT and merges.
   // Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
   // idle note ships its edit channel-up or as a crdt-tagged durable /updates
-  // entry (runFlushQueue's noteId-keyed branch). pushFile/pushNotesViaBatch
-  // use this to keep a channel-down note off the legacy base_hash push; the
-  // crdt-live check is applied separately by the caller to pick channel-op vs
+  // entry (runFlushQueue's noteId-keyed branch). pushNotesViaBatch uses this
+  // to keep a channel-down note off the legacy base_hash push; the crdt-live
+  // check is applied separately by the caller to pick channel-op vs
   // durable-REST transport.
   isCrdtManagedOffline(_path, noteId) {
-    return !!this.crdt && !!noteId && this.isNoteConfirmed(noteId);
+    return !!this.crdt && this.hasServerNote(noteId);
   }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
@@ -18768,7 +18772,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
         file.extension === "md" && rlog().info(
           "push",
-          `route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
+          `route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         );
         let crdtLive = (_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) != null ? _g : !0;
         if (this.crdt && noteId && this.hasServerNote(noteId) && (crdtLive || this.crdtOpsAvailable())) {
@@ -19172,7 +19176,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
   }
   async catchupViaSocket() {
-    var _a;
     if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
     let heads;
     try {
@@ -19181,18 +19184,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().warn("crdt", `socket catchup: heads fetch failed \u2014 ${errMsg(e)}`);
       return;
     }
-    for (let [noteId, serverHead] of Object.entries(heads)) {
-      let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
-      path && await this.convergeNoteFromDelta(
-        path,
+    let learned = !1;
+    for (let [noteId, entry] of Object.entries(heads)) {
+      let serverPath = entry.path;
+      this.shouldIgnore(serverPath) || (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath && (this.noteIdMap.set(serverPath, noteId), learned = !0), await this.convergeNoteFromDelta(
+        serverPath,
         noteId,
-        serverHead,
+        entry.head,
         (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
           update: fromB64(x.b64),
           head: x.head
         }))
-      );
+      ));
     }
+    learned && this.noteIdMap && await this.saveData({ noteIds: this.noteIdMap.toJSON() });
   }
   /** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
    *  to an IDLE note — one with no dedicated CRDT room open right now. Mirrors
