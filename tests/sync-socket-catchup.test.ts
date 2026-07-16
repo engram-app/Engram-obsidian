@@ -76,6 +76,12 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
+/** Mark a note_id as server-confirmed — parity with the REST coldReceive path
+ *  (the shared convergeNoteFromDelta helper gates on isNoteConfirmed). */
+function confirm(engine: SyncEngine, noteId: string): void {
+	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+}
+
 function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
@@ -89,6 +95,8 @@ function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 	map.set("Notes/a.md", "id-a");
 	map.set("Notes/b.md", "id-b");
 	e.setNoteIdMap(map);
+	confirm(e, "id-a");
+	confirm(e, "id-b");
 	return e;
 }
 
@@ -101,6 +109,7 @@ describe("catchupViaSocket", () => {
 				return Promise.resolve();
 			},
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
 		};
 		const engine = makeEngineWithCrdt(crdt);
 		(engine as any).setCrdtHead("Notes/a.md", "same"); // converged
@@ -122,6 +131,7 @@ describe("catchupViaSocket", () => {
 		const crdt = {
 			applyRemoteUpdate: (_id: string, _update: Uint8Array) => Promise.resolve(),
 			encodeStateVector: (_id: string) => Promise.reject(new Error("boom")),
+			closeDoc: () => {},
 		};
 		const engine = makeEngineWithCrdt(crdt);
 
@@ -149,6 +159,94 @@ describe("catchupViaSocket", () => {
 		);
 		// Must resolve (matching coldReceive), not reject — honors the never-throw contract.
 		await expect(engine.catchupViaSocket()).resolves.toBeUndefined();
+	});
+
+	test("captures disk drift BEFORE applying the socket delta (#3 — un-pushed local edit not clobbered)", async () => {
+		// The socket path now routes through the shared guarded apply, so an
+		// un-pushed disk edit is merged into the Y.Doc before the remote delta
+		// (captureDiskDriftBeforeRemote) instead of being overwritten.
+		const order: string[] = [];
+		const crdt = {
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => {
+				order.push("apply");
+				return Promise.resolve();
+			},
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as any).setCrdtHead("Notes/b.md", "old");
+		(engine as any).captureDiskDriftBeforeRemote = async () => {
+			order.push("capture");
+		};
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-b": "new" } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(order).toEqual(["capture", "apply"]); // drift captured before the delta apply
+	});
+
+	test("a history-less note is adopted, not seeded+delta-applied (#234 — no content doubling)", async () => {
+		const applied: string[] = [];
+		let captured = false;
+		let adopted = false;
+		const crdt = {
+			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
+				applied.push(id);
+				return Promise.resolve();
+			},
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
+			hasHistory: (_id: string) => Promise.resolve(false), // never in IDB
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as any).setCrdtHead("Notes/b.md", "old");
+		(engine as any).captureDiskDriftBeforeRemote = async () => {
+			captured = true;
+		};
+		(engine as any).adoptHistoryLessNote = async (_p: string, _id: string) => {
+			adopted = true;
+			return "new";
+		};
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-b": "new" } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(adopted).toBe(true); // routed through adoptHistoryLessNote
+		expect(applied).toEqual([]); // bare delta NOT applied over a history-less doc
+		expect(captured).toBe(false); // and NOT seeded with disk drift (would double)
+		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("new");
+	});
+
+	test("a pending gap re-fetches and leaves the head unadvanced while still gapped", async () => {
+		let deltaCalls = 0;
+		const crdt = {
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
+			hasPendingGap: (_id: string) => Promise.resolve(true), // never heals
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as any).setCrdtHead("Notes/b.md", "old");
+		(engine as any).captureDiskDriftBeforeRemote = async () => {};
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-b": "new" } }),
+			async (docId: string) => {
+				deltaCalls++;
+				return { doc_id: docId, b64: "AAE=", head: "new" };
+			},
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(deltaCalls).toBe(2); // initial delta + gap-heal re-fetch
+		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("old"); // still gapped → NOT advanced
 	});
 
 	test("no-op when catchup deps or crdt manager are unset", async () => {
