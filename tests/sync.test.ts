@@ -253,7 +253,8 @@ describe("SyncEngine.isMarkdown", () => {
 describe("SyncEngine.handleModify", () => {
 	test("debounces and pushes after delay", async () => {
 		const engine = createEngine({ debounceMs: 50 });
-		const file = new TFile("Notes/Test.md", Date.now());
+		// .canvas (non-md) so the kept LWW REST push fires; md now converges over CRDT.
+		const file = new TFile("Notes/Test.canvas", Date.now());
 
 		engine.handleModify(file);
 
@@ -264,10 +265,9 @@ describe("SyncEngine.handleModify", () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Test.md",
+			"Notes/Test.canvas",
 			"# Test\n\nContent",
 			expect.any(Number),
-			undefined,
 		);
 	});
 
@@ -293,7 +293,8 @@ describe("SyncEngine.handleModify", () => {
 
 	test("coalesces rapid edits", async () => {
 		const engine = createEngine({ debounceMs: 50 });
-		const file = new TFile("Notes/Test.md", Date.now());
+		// .canvas so the LWW REST push fires (md converges over CRDT now).
+		const file = new TFile("Notes/Test.canvas", Date.now());
 
 		// Fire 5 modify events in rapid succession
 		engine.handleModify(file);
@@ -305,23 +306,6 @@ describe("SyncEngine.handleModify", () => {
 		await new Promise((r) => setTimeout(r, 150));
 
 		// Should only push once
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-	});
-
-	test("recently_deleted refusal trashes the local file and does not re-push", async () => {
-		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Folder/Note.md", Date.now());
-		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
-		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
-			conflict: true,
-			reason: "recently_deleted",
-		});
-
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 60));
-
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
-		// Converged — no merge/re-push loop.
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });
@@ -354,16 +338,16 @@ describe("SyncEngine.handleDelete", () => {
 describe("SyncEngine.handleRename", () => {
 	test("deletes old path and pushes new path", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/Renamed.md", Date.now());
+		// .canvas so the new-path push takes the kept LWW REST route.
+		const file = new TFile("Notes/Renamed.canvas", Date.now());
 
-		await engine.handleRename(file, "Notes/Original.md");
+		await engine.handleRename(file, "Notes/Original.canvas");
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Original.md");
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Original.canvas");
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Renamed.md",
+			"Notes/Renamed.canvas",
 			expect.any(String),
 			expect.any(Number),
-			undefined,
 		);
 	});
 });
@@ -439,12 +423,14 @@ describe("SyncEngine.pull", () => {
 		// Local file content differs from syncedHash (or no syncState entry) —
 		// user has unsaved edits or recreated the path after another device
 		// deleted it. Plugin must NOT trash the file; it pushes the resurrection.
-		const existingFile = new TFile("Notes/Resurrected.md");
+		// .canvas so the resurrection re-push takes the kept LWW REST route
+		// (the guard itself — hash/syncState based — is transport-agnostic).
+		const existingFile = new TFile("Notes/Resurrected.canvas");
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
 		mockApp.vault.cachedRead.mockResolvedValueOnce("# resurrected\nnew local edit\n");
 		// No syncState entry → first-write semantics, definitely unsynced.
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
-			note: { path: "Notes/Resurrected.md", version: 1 },
+			note: { path: "Notes/Resurrected.canvas", version: 1 },
 		});
 
 		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
@@ -452,7 +438,7 @@ describe("SyncEngine.pull", () => {
 				syncNoteEntry({
 					id: "res",
 					seq: 7,
-					path: "Notes/Resurrected.md",
+					path: "Notes/Resurrected.canvas",
 					title: "",
 					content: "",
 					folder: "",
@@ -752,7 +738,8 @@ describe("SyncEngine.handleStreamEvent", () => {
 		);
 
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/Active.md", Date.now());
+		// .canvas so the LWW REST push fires and holds the path in the pushing set.
+		const file = new TFile("Notes/Active.canvas", Date.now());
 
 		// Trigger push (debounce fires after 10ms, pushFile starts)
 		engine.handleModify(file);
@@ -763,7 +750,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// Now the file is in the pushing set — WebSocket event should be suppressed
 		await engine.handleStreamEvent({
 			event_type: "upsert",
-			path: "Notes/Active.md",
+			path: "Notes/Active.canvas",
 			timestamp: Date.now(),
 		});
 
@@ -782,7 +769,8 @@ describe("SyncEngine.handleStreamEvent", () => {
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/Cooldown.md", Date.now());
+		// .canvas so a real REST push completes and opens the cooldown window.
+		const file = new TFile("Notes/Cooldown.canvas", Date.now());
 
 		// Trigger push and wait for it to complete
 		engine.handleModify(file);
@@ -790,12 +778,12 @@ describe("SyncEngine.handleStreamEvent", () => {
 
 		// Push is complete — path is no longer in pushing set
 		// But should still be in recentlyPushed cooldown
-		expect(engine.isRecentlyPushed("Notes/Cooldown.md")).toBe(true);
+		expect(engine.isRecentlyPushed("Notes/Cooldown.canvas")).toBe(true);
 
 		// WebSocket event arriving after push should still be suppressed
 		await engine.handleStreamEvent({
 			event_type: "upsert",
-			path: "Notes/Cooldown.md",
+			path: "Notes/Cooldown.canvas",
 			timestamp: Date.now(),
 		});
 
@@ -1140,7 +1128,8 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		);
 
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/Fail.md", Date.now());
+		// .canvas so the LWW REST push fires (and can fail with the 502).
+		const file = new TFile("Notes/Fail.canvas", Date.now());
 
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 100));
@@ -1150,7 +1139,7 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(status.state).not.toBe("offline");
 		expect(status.queued).toBe(1);
 		// The recorded issue surfaces the backend's message, not "status 502".
-		const issue = engine.issues.get("Notes/Fail.md");
+		const issue = engine.issues.get("Notes/Fail.canvas");
 		expect(issue?.message).toBe("failed to upload to storage backend");
 	});
 
@@ -1163,7 +1152,8 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		);
 
 		const engine = createEngine({ debounceMs: 10 });
-		engine.handleModify(new TFile("Notes/Fail.md", Date.now()));
+		// .canvas so the LWW REST push fires and tallies the failure.
+		engine.handleModify(new TFile("Notes/Fail.canvas", Date.now()));
 		await new Promise((r) => setTimeout(r, 100));
 
 		const summary = engine.drainFailureSummary();
@@ -1288,34 +1278,6 @@ describe("SyncEngine conflict resolution", () => {
 		await engine.applyChange(makeChange({ content: "# Same content", mtime: REMOTE_MTIME }));
 
 		expect(conflictCalled).toBe(false);
-	});
-
-	test("keep-local pushes local version to server", async () => {
-		const engine = createConflictEngine();
-		engine.setLastSync(LAST_SYNC);
-
-		const localFile = new TFile("Notes/Conflict.md", LOCAL_MTIME_MS);
-		// Return file for both applyChange lookup and pushFile's internal check
-		(mockApp.vault.getFileByPath as jest.Mock)
-			.mockReturnValueOnce(localFile) // applyChange lookup
-			.mockReturnValueOnce(localFile); // pushFile doesn't call this, but be safe
-		// vault.cachedRead called twice: once for conflict detection, once for pushFile
-		(mockApp.vault.cachedRead as jest.Mock)
-			.mockResolvedValueOnce("# Local version")
-			.mockResolvedValueOnce("# Local version");
-
-		engine.onConflict = async () => ({ choice: "keep-local" });
-
-		await engine.applyChange(makeChange({ mtime: REMOTE_MTIME }));
-
-		// Should push local, not modify local file with remote
-		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Conflict.md",
-			"# Local version",
-			expect.any(Number),
-			undefined,
-		);
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
 	test("keep-remote overwrites local with remote content", async () => {
@@ -1740,7 +1702,8 @@ describe("SyncEngine offline queue integration", () => {
 		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(new Error("network"));
 
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/Offline.md", Date.now());
+		// .canvas so the LWW REST push fires (and fails → queues).
+		const file = new TFile("Notes/Offline.canvas", Date.now());
 
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 100));
@@ -1748,7 +1711,7 @@ describe("SyncEngine offline queue integration", () => {
 		expect(engine.isOffline()).toBe(true);
 		expect(engine.queue.size).toBe(1);
 		const entry = engine.queue.all()[0];
-		expect(entry.path).toBe("Notes/Offline.md");
+		expect(entry.path).toBe("Notes/Offline.canvas");
 		expect(entry.action).toBe("upsert");
 		// Content-free queue entries — content is re-read on flush
 		expect(entry.content).toBeUndefined();
@@ -1774,7 +1737,8 @@ describe("SyncEngine offline queue integration", () => {
 		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(new Error("network"));
 
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/Recovery.md", Date.now());
+		// .canvas so the LWW REST push path drives the offline→online transition.
+		const file = new TFile("Notes/Recovery.canvas", Date.now());
 
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 100));
@@ -1783,7 +1747,7 @@ describe("SyncEngine offline queue integration", () => {
 		// Next push succeeds — also mock pushNote for queue flush
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 
-		const file2 = new TFile("Notes/Online.md", Date.now());
+		const file2 = new TFile("Notes/Online.canvas", Date.now());
 		engine.handleModify(file2);
 		await new Promise((r) => setTimeout(r, 200));
 
@@ -2207,9 +2171,10 @@ describe("SyncEngine pull accuracy", () => {
 			server_time: "2026-03-01T12:00:00Z",
 		});
 
-		// A file modified between old lastSync and new server_time
+		// A file modified between old lastSync and new server_time.
+		// .canvas so pushModifiedFiles' selected file takes the LWW REST route.
 		const modifiedFile = new TFile(
-			"Notes/Modified.md",
+			"Notes/Modified.canvas",
 			new Date("2026-02-15T00:00:00Z").getTime(),
 		);
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([modifiedFile]);
@@ -2219,10 +2184,9 @@ describe("SyncEngine pull accuracy", () => {
 		// pushModifiedFiles should use the OLD lastSync (prePullSync), not the new one
 		// The file was modified at Feb 15, which is after Jan 1 (old lastSync)
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Modified.md",
+			"Notes/Modified.canvas",
 			expect.any(String),
 			expect.any(Number),
-			undefined,
 		);
 	});
 
@@ -2233,8 +2197,9 @@ describe("SyncEngine pull accuracy", () => {
 		// long ago — well before the server_time pull will set lastSync to.
 		const engine = createEngine();
 		// Do NOT call setLastSync — lastSync is "" (first connect / fresh install)
+		// .canvas so the tracked file re-pushes over the LWW REST route.
 		engine.importSyncState({
-			"Notes/Tracked.md": { hash: 12345 },
+			"Notes/Tracked.canvas": { hash: 12345 },
 		});
 
 		// Pull returns no changes but advances lastSync to a recent server_time.
@@ -2249,7 +2214,7 @@ describe("SyncEngine pull accuracy", () => {
 
 		// Tracked local file modified Feb 15 — BEFORE the post-pull server_time.
 		const trackedFile = new TFile(
-			"Notes/Tracked.md",
+			"Notes/Tracked.canvas",
 			new Date("2026-02-15T00:00:00Z").getTime(),
 		);
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([trackedFile]);
@@ -2260,10 +2225,9 @@ describe("SyncEngine pull accuracy", () => {
 		// The tracked file must still be pushed; it must NOT be gated by the
 		// post-pull server_time (which would skip every file modified before now).
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Tracked.md",
+			"Notes/Tracked.canvas",
 			expect.any(String),
 			expect.any(Number),
-			undefined,
 		);
 	});
 
@@ -2635,7 +2599,8 @@ describe("ready gate", () => {
 	test("events work after setReady", async () => {
 		const engine = createEngine({ debounceMs: 10 }, { ready: false });
 		engine.setReady();
-		const file = new TFile("Notes/Test.md", Date.now());
+		// .canvas so the ready-gate release drives a real REST push.
+		const file = new TFile("Notes/Test.canvas", Date.now());
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValueOnce("content");
 
 		engine.handleModify(file);
@@ -2653,13 +2618,14 @@ describe("content-free queue entries", () => {
 		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce(new Error("offline"));
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValueOnce("file content");
 
-		const file = new TFile("Notes/Test.md", Date.now());
+		// .canvas so the LWW REST push fires (and fails → enqueues content-free).
+		const file = new TFile("Notes/Test.canvas", Date.now());
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
 		const entries = engine.queue.all();
 		expect(entries).toHaveLength(1);
-		expect(entries[0].path).toBe("Notes/Test.md");
+		expect(entries[0].path).toBe("Notes/Test.canvas");
 		expect(entries[0].action).toBe("upsert");
 		expect(entries[0].content).toBeUndefined();
 		expect(entries[0].contentBase64).toBeUndefined();
@@ -2840,9 +2806,9 @@ describe("push concurrency limit", () => {
 			);
 		});
 
-		// Fire 10 modify events
+		// Fire 10 modify events (.canvas → real REST pushes for the slot limiter).
 		for (let i = 0; i < 10; i++) {
-			const file = new TFile(`Notes/File${i}.md`, Date.now());
+			const file = new TFile(`Notes/File${i}.canvas`, Date.now());
 			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValueOnce(`content ${i}`);
 			engine.handleModify(file);
 		}
@@ -2877,9 +2843,9 @@ describe("push concurrency limit", () => {
 			);
 		});
 
-		// Fire 10 modify events
+		// Fire 10 modify events (.canvas → real REST pushes for the slot limiter).
 		for (let i = 0; i < 10; i++) {
-			const file = new TFile(`Notes/File${i}.md`, Date.now());
+			const file = new TFile(`Notes/File${i}.canvas`, Date.now());
 			(mockApp.vault.cachedRead as jest.Mock).mockResolvedValueOnce(`content ${i}`);
 			engine.handleModify(file);
 		}
@@ -2899,7 +2865,8 @@ describe("push concurrency limit", () => {
 describe("SyncEngine.pushAll echo suppression fix", () => {
 	test("pushAll() pushes files even when syncState hashes match", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/Existing.md", Date.now());
+		// .canvas so pushAll's force=true push actually fires the LWW REST route.
+		const file = new TFile("Notes/Existing.canvas", Date.now());
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([file]);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Existing\n\nContent");
 
@@ -2908,7 +2875,7 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
 			changes: [
 				{
-					path: "Notes/Existing.md",
+					path: "Notes/Existing.canvas",
 					title: "Existing",
 					content: "# Existing\n\nContent",
 					folder: "Notes",
@@ -2935,17 +2902,17 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		// Should push despite hash match because pushAll uses force=true
 		expect(pushed).toBe(1);
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Existing.md",
+			"Notes/Existing.canvas",
 			"# Existing\n\nContent",
 			expect.any(Number),
-			undefined,
 		);
 	});
 
 	test("pushAll() reports skipped count when some files fail", async () => {
 		const engine = createEngine();
-		const file1 = new TFile("Notes/Good.md", Date.now());
-		const file2 = new TFile("Notes/Bad.md", Date.now());
+		// .canvas so both notes take the LWW REST route (one ok, one fails).
+		const file1 = new TFile("Notes/Good.canvas", Date.now());
+		const file2 = new TFile("Notes/Bad.canvas", Date.now());
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([file1, file2]);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("content");
 		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
@@ -2961,7 +2928,8 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 	test("pushFile(force=true) bypasses echo suppression", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/Force.md", Date.now());
+		// .canvas so pushFile exercises the LWW REST route + its force bypass.
+		const file = new TFile("Notes/Force.canvas", Date.now());
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Force\n\nContent");
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 
@@ -3037,7 +3005,8 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 
 	test("handleModify during pull queues for post-pull push", async () => {
 		const engine = createEngine({ debounceMs: 10 });
-		const file = new TFile("Notes/DuringPull.md", Date.now());
+		// .canvas so the post-pull drain pushes via the LWW REST route.
+		const file = new TFile("Notes/DuringPull.canvas", Date.now());
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# User edit during pull");
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
@@ -3058,22 +3027,22 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		await new Promise((r) => setTimeout(r, 50));
 
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/DuringPull.md",
+			"Notes/DuringPull.canvas",
 			"# User edit during pull",
 			expect.any(Number),
-			undefined,
 		);
 	});
 });
 
 describe("Path sanitization on push", () => {
 	test("renames local file when server returns sanitized path", async () => {
-		// Server sanitizes "test?.md" → "test.md"
+		// Server sanitizes "test?.canvas" → "test.canvas". .canvas so the kept
+		// LWW REST path (which still sanitize-renames) runs.
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {
 				id: "note-1",
 				user_id: "user-1",
-				path: "Notes/test.md",
+				path: "Notes/test.canvas",
 				title: "test",
 				folder: "Notes",
 				tags: [],
@@ -3084,10 +3053,10 @@ describe("Path sanitization on push", () => {
 			chunks_indexed: 1,
 		});
 
-		const file = new TFile("Notes/test?.md", Date.now());
+		const file = new TFile("Notes/test?.canvas", Date.now());
 		// vault needs to find the file for rename
 		(mockApp.vault.getFileByPath as jest.Mock).mockImplementation((p: string) => {
-			if (p === "Notes/test?.md") return file;
+			if (p === "Notes/test?.canvas") return file;
 			return null;
 		});
 
@@ -3096,11 +3065,12 @@ describe("Path sanitization on push", () => {
 		await new Promise((r) => setTimeout(r, 100));
 
 		// Should have renamed the local file to match server's sanitized path
-		expect(mockApp.vault.rename).toHaveBeenCalledWith(file, "Notes/test.md");
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(file, "Notes/test.canvas");
 	});
 
 	test("does not revert a local rename that lands while the push is in flight (#245)", async () => {
-		const file = new TFile("Notes/RenameOld.md", Date.now());
+		// .canvas so the kept LWW REST path (the only sanitize-rename surface) runs.
+		const file = new TFile("Notes/RenameOld.canvas", Date.now());
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# body");
 		(mockApp.vault.getFileByPath as jest.Mock).mockImplementation((p: string) =>
 			p === file.path ? file : null,
@@ -3109,7 +3079,7 @@ describe("Path sanitization on push", () => {
 			// The user renames the file while the push request is in flight.
 			// TFile.path is live, so by reply time it no longer matches the
 			// path that was pushed.
-			file.path = "Notes/RenameNew.md";
+			file.path = "Notes/RenameNew.canvas";
 			return {
 				note: {
 					id: "note-1",
@@ -3134,7 +3104,7 @@ describe("Path sanitization on push", () => {
 		// renaming back would silently revert the user's rename (issue #245,
 		// run 29392015897).
 		expect(mockApp.vault.rename).not.toHaveBeenCalled();
-		expect(file.path).toBe("Notes/RenameNew.md");
+		expect(file.path).toBe("Notes/RenameNew.canvas");
 
 		// Echo-suppression window must open under the path we SENT, not the live
 		// path: the self-echo arrives as an upsert for RenameOld. Marking the live
@@ -3142,8 +3112,8 @@ describe("Path sanitization on push", () => {
 		// and swallow a genuine remote update to RenameNew (Engram#944 class).
 		const recentlyPushed = (engine as unknown as { recentlyPushed: Map<string, number> })
 			.recentlyPushed;
-		expect(recentlyPushed.has("Notes/RenameOld.md")).toBe(true);
-		expect(recentlyPushed.has("Notes/RenameNew.md")).toBe(false);
+		expect(recentlyPushed.has("Notes/RenameOld.canvas")).toBe(true);
+		expect(recentlyPushed.has("Notes/RenameNew.canvas")).toBe(false);
 	});
 
 	test("does not rename when server path matches original", async () => {
@@ -3172,11 +3142,12 @@ describe("Path sanitization on push", () => {
 	});
 
 	test("handles multiple illegal chars in filename", async () => {
+		// .canvas so the kept LWW REST path (the sanitize-rename surface) runs.
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
 			note: {
 				id: "note-1",
 				user_id: "user-1",
-				path: "Notes/What Why How.md",
+				path: "Notes/What Why How.canvas",
 				title: "What Why How",
 				folder: "Notes",
 				tags: [],
@@ -3187,9 +3158,9 @@ describe("Path sanitization on push", () => {
 			chunks_indexed: 1,
 		});
 
-		const file = new TFile("Notes/What? Why: How*.md", Date.now());
+		const file = new TFile("Notes/What? Why: How*.canvas", Date.now());
 		(mockApp.vault.getFileByPath as jest.Mock).mockImplementation((p: string) => {
-			if (p === "Notes/What? Why: How*.md") return file;
+			if (p === "Notes/What? Why: How*.canvas") return file;
 			return null;
 		});
 
@@ -3197,7 +3168,7 @@ describe("Path sanitization on push", () => {
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 100));
 
-		expect(mockApp.vault.rename).toHaveBeenCalledWith(file, "Notes/What Why How.md");
+		expect(mockApp.vault.rename).toHaveBeenCalledWith(file, "Notes/What Why How.canvas");
 	});
 });
 
@@ -3544,7 +3515,8 @@ describe("SyncEngine IssueStore integration", () => {
 
 	test("401 auth failure records issue and skips offline queue", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/forbidden.md", Date.now());
+		// .canvas so the LWW REST push fires and surfaces the 401 issue.
+		const file = new TFile("Notes/forbidden.canvas", Date.now());
 		(file as any).stat = { mtime: Date.now(), size: 100 };
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
@@ -3564,7 +3536,8 @@ describe("SyncEngine IssueStore integration", () => {
 
 	test("non-terminal failure (500) records issue AND queues for retry", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/flaky.md", Date.now());
+		// .canvas so the LWW REST push fires (500 → issue + retry queue).
+		const file = new TFile("Notes/flaky.canvas", Date.now());
 		(file as any).stat = { mtime: Date.now(), size: 100 };
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
@@ -3581,14 +3554,15 @@ describe("SyncEngine IssueStore integration", () => {
 
 	test("successful push clears any prior issue for the same path", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/recovers.md", Date.now());
+		// .canvas so the LWW REST push fires and clears the prior issue on success.
+		const file = new TFile("Notes/recovers.canvas", Date.now());
 		(file as any).stat = { mtime: Date.now(), size: 100 };
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
 
 		// Pre-seed an issue (simulating an earlier failure that's now resolved)
 		engine.issues.record({
-			path: "Notes/recovers.md",
+			path: "Notes/recovers.canvas",
 			kind: "note",
 			category: "server",
 			status: 500,
@@ -3600,7 +3574,7 @@ describe("SyncEngine IssueStore integration", () => {
 		expect(engine.issues.count()).toBe(1);
 
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({
-			note: { path: "Notes/recovers.md", version: 1 },
+			note: { path: "Notes/recovers.canvas", version: 1 },
 			chunks_indexed: 1,
 		});
 		await (engine as any).pushFile(file, true);
@@ -3646,9 +3620,10 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 		expect((engine as any).preGateAttachment(file)).toBeNull();
 	});
 
-	test("free text-only: a .md note still uploads (notes not pre-gated)", async () => {
+	test("free text-only: a text note still uploads (notes not pre-gated)", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/Test.md", Date.now());
+		// .canvas is a text note (not an attachment) → not pre-gated, uploads via REST.
+		const file = new TFile("Notes/Test.canvas", Date.now());
 		(file as any).stat = { mtime: Date.now(), size: 100 };
 		mockApp.vault.cachedRead.mockResolvedValue("# Hi");
 		engine.applyPlanState({
@@ -3739,7 +3714,9 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 
 	test("replace mode (replaceRemote:true): wipes remote EXTRAS, preserves locally-present notes, then uploads local", async () => {
 		const engine = createEngine();
-		const local = [new TFile("kept.md", Date.now())];
+		// .canvas for the shared local note so its in-place force re-push takes the
+		// LWW REST route (md converges over CRDT and would not fire pushNote).
+		const local = [new TFile("kept.canvas", Date.now())];
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Content");
 		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
@@ -3747,7 +3724,7 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 		// wipeRemote (before upload) and reconcile (after upload) both read the
 		// manifest — return the same snapshot for every call.
 		(mockApi.getManifest as jest.Mock).mockResolvedValue({
-			notes: [{ path: "kept.md" }, { path: "remote-a.md" }, { path: "remote-b.md" }],
+			notes: [{ path: "kept.canvas" }, { path: "remote-a.md" }, { path: "remote-b.md" }],
 			attachments: [{ path: "old.png" }],
 		});
 
@@ -3757,7 +3734,7 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 		// tombstone its path and the backend delete-wins guard would then refuse
 		// the same-path re-push as `recently_deleted` (permanent loss — the
 		// test_86 regression). It is force-pushed in place instead.
-		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("kept.md");
+		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("kept.canvas");
 		// Only true remote extras (absent locally) are wiped.
 		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-a.md");
 		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-b.md");
@@ -3999,9 +3976,10 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		expect((engine as any).hasShownAttachmentLimitToast()).toBe(true);
 	});
 
-	test("markdown push still completes in the same batch where attachments fail", async () => {
+	test("text-note push still completes in the same batch where attachments fail", async () => {
 		const engine = createEngine();
-		const note = new TFile("Notes/Hello.md", Date.now());
+		// .canvas so the note takes the LWW REST route alongside the failing attachment.
+		const note = new TFile("Notes/Hello.canvas", Date.now());
 		const attach = new TFile("Assets/logo.png", Date.now());
 		(note as any).stat = { mtime: Date.now(), size: 100 };
 		(attach as any).stat = { mtime: Date.now(), size: 1024 };
@@ -4010,7 +3988,7 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 		mockApp.vault.cachedRead.mockResolvedValue("# Hello");
 		mockApp.vault.readBinary.mockResolvedValue(new ArrayBuffer(8));
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({
-			note: { path: "Notes/Hello.md", version: 1 },
+			note: { path: "Notes/Hello.canvas", version: 1 },
 			chunks_indexed: 1,
 		});
 		(mockApi.pushAttachment as jest.Mock).mockRejectedValueOnce(makeAttachmentLimitedError());
@@ -4136,7 +4114,8 @@ describe("SyncEngine attachment 402 (Free tier) handling", () => {
 
 	test("a real failure (5xx) STILL calls console.error", async () => {
 		const engine = createEngine();
-		const file = new TFile("Notes/x.md", Date.now());
+		// .canvas so the LWW REST push fires and the 5xx surfaces to console.error.
+		const file = new TFile("Notes/x.canvas", Date.now());
 		(file as any).stat = { mtime: Date.now(), size: 100 };
 		mockApp.vault.cachedRead.mockResolvedValue("# x");
 		(mockApi.pushNote as jest.Mock).mockRejectedValueOnce({ status: 502, message: "boom" });

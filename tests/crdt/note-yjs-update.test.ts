@@ -15,6 +15,15 @@ import { DEFAULT_SETTINGS } from "../../src/types";
 /** Mark a note_id as server-confirmed — same pattern as tests/sync-cold-receive.test.ts. */
 function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+	// CRDT-sole oracle: hasServerNote(noteId) = getCrdtHead(pathForId(noteId)) != null.
+	// Record a server head under the note's path so a "server-known" note routes
+	// through the CRDT path (the confirmed-set no longer gates CRDT routing).
+	const e = engine as unknown as {
+		noteIdMap?: { pathForId(id: string): string | null };
+		setCrdtHead(path: string, head: string): void;
+	};
+	const p = e.noteIdMap?.pathForId(noteId);
+	if (p) e.setCrdtHead(p, "server-head");
 }
 
 const mockApi = {} as unknown as EngramApi;
@@ -85,7 +94,9 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
 		expect(applied).toEqual([]);
-		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		// Head NOT advanced to the broadcast "SRV" — it stays at the seeded
+		// server-known baseline markConfirmed recorded (CRDT-sole oracle).
+		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
 		expect(closed).toEqual([]);
 	});
 
@@ -143,7 +154,9 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		).resolves.toBeUndefined();
 
 		expect(applied).toEqual([]);
-		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		// Unadvanced past the seeded server-known baseline — the failed apply
+		// never stamped the broadcast head, so the next poll retries.
+		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
 		expect(closed).toEqual([]); // a failed apply is left for retry, not freed
 	});
 });
@@ -219,8 +232,9 @@ describe("applyPushedNoteUpdate — gap heal (missed-open reconnect)", () => {
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
 		// Unadvanced so coldReceive's cost gate re-pulls next poll — never stamped
-		// converged over a doc that has not reached the head.
-		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		// converged over a doc that has not reached the head. Stays at the seeded
+		// server-known baseline, never advanced to "FULL".
+		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
 	});
 
 	test("no gap → advances to the broadcast head without a getUpdates round-trip", async () => {

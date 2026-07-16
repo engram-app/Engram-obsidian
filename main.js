@@ -17447,7 +17447,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -18475,6 +18475,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let key = (0, import_obsidian21.normalizePath)(path), existing = this.syncState.get(key);
     this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
   }
+  /** CRDT-native replacement for the REST-era confirmed-set oracle: true when
+   *  the server is known to already hold a row for this note. `crdtHead` is set
+   *  ONLY by server-delivered heads (convergence/apply) or by a successful
+   *  `crdt_create` (the sentinel below), so `!= null` genuinely means "the
+   *  server has this note." Keyed by note_id so a rename follows the note —
+   *  `crdtHead` lives in syncState under the note's current path, resolved via
+   *  the id map. The note's own CRDT state is the oracle, never a REST-era set. */
+  hasServerNote(noteId) {
+    var _a;
+    if (!noteId) return !1;
+    let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+    return path ? this.getCrdtHead(path) != null : !1;
+  }
   /** Import legacy hash-only format (migration from old plugin versions). */
   importHashes(data) {
     for (let [path, hash] of Object.entries(data))
@@ -18700,7 +18713,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -18758,7 +18771,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         );
         let crdtLive = (_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) != null ? _g : !0;
-        if (this.crdt && noteId && this.isCrdtManagedOffline(file.path, noteId) && (crdtLive || this.crdtOpsAvailable())) {
+        if (this.crdt && noteId && this.hasServerNote(noteId) && (crdtLive || this.crdtOpsAvailable())) {
           let consumed = await routeModify(
             {
               isMarkdown: file.extension === "md",
@@ -18771,20 +18784,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           );
-          if (consumed !== null)
-            return this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
-              ...existing,
-              hash: fnv1a(consumed)
-            }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
-              "push",
-              `crdt edit queued durably (channel down): ${file.path}`
-            ), rlog().info(
-              "push",
-              `CRDT edit queued durably (channel down): ${file.path}`
-            ), !0);
-          file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId));
+          return consumed !== null ? (this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
+            ...existing,
+            hash: fnv1a(consumed)
+          }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+            "push",
+            `crdt edit queued durably (channel down): ${file.path}`
+          ), rlog().info(
+            "push",
+            `CRDT edit queued durably (channel down): ${file.path}`
+          ), !0)) : (file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), !0);
         }
-        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.isNoteConfirmed(noteId) && ((_m = (_l = this.crdtLive) == null ? void 0 : _l.call(this)) == null || _m) && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES)
+        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_m = (_l = this.crdtLive) == null ? void 0 : _l.call(this)) == null || _m) && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES)
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
@@ -18812,9 +18823,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.confirmNoteId(effectiveId), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
                 ...existing,
-                hash: fnv1a(consumed)
+                hash: fnv1a(consumed),
+                crdtHead: CRDT_HEAD_CREATED
               }) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
@@ -18829,172 +18841,34 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "crdt",
                 `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`
-              ), this.confirmNoteId(effectiveId), !0;
+              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), !0;
             }
           } catch (err) {
-            rlog().warn(
+            return rlog().warn(
               "crdt",
-              `crdt_create failed, falling back to REST create: ${pushedPath} | ${String(err)}`
-            );
+              `crdt_create failed (will retry on reconnect): ${pushedPath} | ${String(err)}`
+            ), !1;
           }
-        let baseHash = existing == null ? void 0 : existing.serverHash, resp = baseHash !== void 0 ? await this.api.pushNote(
-          pushedPath,
-          content,
-          mtime,
-          existing == null ? void 0 : existing.version,
-          noteId != null ? noteId : void 0,
-          baseHash
-        ) : noteId ? await this.api.pushNote(
-          pushedPath,
-          content,
-          mtime,
-          existing == null ? void 0 : existing.version,
-          noteId
-        ) : await this.api.pushNote(
-          pushedPath,
-          content,
-          mtime,
-          existing == null ? void 0 : existing.version
-        );
-        if ("conflict" in resp) {
-          if (resp.reason === "recently_deleted")
-            return rlog().info(
-              "push",
-              `recently_deleted \u2014 trashing local ${file.path} to honor remote delete`
-            ), await this.trashRemotelyDeleted(file), !0;
-          let serverNote = resp.server_note;
-          devLog().log(
-            "push",
-            `version conflict: ${file.path} (local=${existing == null ? void 0 : existing.version} server=${serverNote.version})`
-          ), rlog().warn(
-            "conflict",
-            `Version conflict on push: ${file.path} | localVer=${existing == null ? void 0 : existing.version} | serverVer=${serverNote.version}`
-          );
-          let pushBase = (_r = this.baseStore) == null ? void 0 : _r.get((0, import_obsidian21.normalizePath)(file.path));
-          if (pushBase) {
-            let merge2 = threeWayMerge(pushBase.content, content, serverNote.content);
-            if (merge2.clean) {
-              let mergeResp = await this.api.pushNote(
-                file.path,
-                merge2.merged,
-                mtime
-              ), localFile = this.app.vault.getFileByPath(file.path);
-              if (localFile && await this.modifyFile(localFile, merge2.merged), !("conflict" in mergeResp)) {
-                let np = (0, import_obsidian21.normalizePath)(file.path);
-                this.syncState.set(np, {
-                  hash: fnv1a(merge2.merged),
-                  version: mergeResp.note.version,
-                  serverHash: mergeResp.note.content_hash
-                }), mergeResp.note.version != null && ((_s = this.baseStore) == null || _s.set(np, merge2.merged, mergeResp.note.version)), (_t2 = this.noteIdMap) == null || _t2.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id);
-              }
-              return rlog().info(
-                "conflict",
-                `Auto-merged (push): ${file.path} | baseLen=${pushBase.content.length} | localLen=${content.length} | remoteLen=${serverNote.content.length} | mergedLen=${merge2.merged.length}`
-              ), !1;
-            }
-            rlog().info(
-              "conflict",
-              `Auto-merge failed (push): ${file.path} | conflicts=${merge2.conflicts.length} | baseLen=${pushBase.content.length} | localLen=${content.length} | remoteLen=${serverNote.content.length}`
-            );
-          }
-          let resolution = await this.resolveConflict({
-            path: file.path,
-            localContent: content,
-            localMtime: mtime,
-            remoteContent: serverNote.content,
-            remoteMtime: serverNote.mtime,
-            baseContent: pushBase == null ? void 0 : pushBase.content,
-            vaultName: this.app.vault.getName()
-          });
-          if (resolution.choice === "keep-local") {
-            let forceResp = await this.api.pushNote(file.path, content, mtime);
-            if (!("conflict" in forceResp)) {
-              let np = (0, import_obsidian21.normalizePath)(file.path);
-              this.syncState.set(np, {
-                hash,
-                version: forceResp.note.version,
-                serverHash: forceResp.note.content_hash
-              }), forceResp.note.version != null && ((_u = this.baseStore) == null || _u.set(np, content, forceResp.note.version)), (_v = this.noteIdMap) == null || _v.set(np, forceResp.note.id), this.confirmNoteId(forceResp.note.id), this.recordParseStatus(
-                (_w = forceResp.note.path) != null ? _w : file.path,
-                "note",
-                forceResp.note.parse_status,
-                forceResp.note.parse_reason
-              );
-            }
-          } else if (resolution.choice === "keep-remote") {
-            let localFile = this.app.vault.getFileByPath(file.path);
-            if (localFile) {
-              await this.modifyFile(localFile, serverNote.content);
-              let np = (0, import_obsidian21.normalizePath)(file.path);
-              this.syncState.set(np, {
-                hash: fnv1a(serverNote.content),
-                version: serverNote.version,
-                serverHash: serverNote.content_hash
-              }), (_x = this.baseStore) == null || _x.set(np, serverNote.content, serverNote.version), (_y = this.noteIdMap) == null || _y.set(np, serverNote.id), this.confirmNoteId(serverNote.id), this.recordParseStatus(
-                serverNote.path,
-                "note",
-                serverNote.parse_status,
-                serverNote.parse_reason
-              );
-            }
-          } else if (resolution.choice === "merge" && resolution.mergedContent != null) {
-            let mergeResp = await this.api.pushNote(
-              file.path,
-              resolution.mergedContent,
-              mtime
-            ), localFile = this.app.vault.getFileByPath(file.path);
-            if (localFile && await this.modifyFile(localFile, resolution.mergedContent), !("conflict" in mergeResp)) {
-              let np = (0, import_obsidian21.normalizePath)(file.path);
-              this.syncState.set(np, {
-                hash: fnv1a(resolution.mergedContent),
-                version: mergeResp.note.version,
-                serverHash: mergeResp.note.content_hash
-              }), mergeResp.note.version != null && ((_z = this.baseStore) == null || _z.set(
-                np,
-                resolution.mergedContent,
-                mergeResp.note.version
-              )), (_A = this.noteIdMap) == null || _A.set(np, mergeResp.note.id), this.confirmNoteId(mergeResp.note.id), this.recordParseStatus(
-                (_B = mergeResp.note.path) != null ? _B : file.path,
-                "note",
-                mergeResp.note.parse_status,
-                mergeResp.note.parse_reason
-              );
-            }
-          }
+        if (file.extension === "md" && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           return !1;
-        }
-        let serverPath = resp.note.path, serverVersion = resp.note.version;
+        let resp = await this.api.pushNote(pushedPath, content, mtime);
+        if ("conflict" in resp)
+          return !1;
+        let serverPath = resp.note.path;
         if (file.path !== pushedPath)
           devLog().log(
             "push",
             `sanitize-rename skipped: file moved during push (${pushedPath} \u2192 ${file.path})`
-          ), rlog().info(
-            "push",
-            `Sanitize-rename skipped: file moved during push (${pushedPath} \u2192 ${file.path})`
           );
         else if (serverPath && serverPath !== pushedPath) {
           let localFile = this.app.vault.getFileByPath(pushedPath);
-          localFile && (await this.app.vault.rename(localFile, serverPath), devLog().log(
-            "push",
-            `renamed: ${pushedPath} \u2192 ${serverPath} (server sanitized)`
-          ), rlog().info(
-            "push",
-            `Renamed: ${pushedPath} \u2192 ${serverPath} (server sanitized)`
-          ), new import_obsidian21.Notice(
+          localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian21.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), {
-            hash,
-            version: serverVersion,
-            serverHash: resp.note.content_hash
-          }), (_C = this.baseStore) == null || _C.delete((0, import_obsidian21.normalizePath)(pushedPath)), serverVersion != null && ((_D = this.baseStore) == null || _D.set((0, import_obsidian21.normalizePath)(serverPath), content, serverVersion)), (_E = this.noteIdMap) == null || _E.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_F = this.noteIdMap) == null || _F.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content), this.confirmNoteId(resp.note.id);
+          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), { hash }), (_r = this.noteIdMap) == null || _r.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
-            hash,
-            version: serverVersion,
-            serverHash: resp.note.content_hash
-          }), serverVersion != null && ((_G = this.baseStore) == null || _G.set((0, import_obsidian21.normalizePath)(file.path), content, serverVersion)), (_H = this.noteIdMap) == null || _H.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content), this.confirmNoteId(resp.note.id);
+          this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash }), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_I = resp.note.path) != null ? _I : pushedPath,
+          path: (_u = resp.note.path) != null ? _u : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -19023,8 +18897,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_K = (_J = this.issues.get(file.path)) == null ? void 0 : _J.attempts) != null ? _K : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_L = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_w = (_v = this.issues.get(file.path)) == null ? void 0 : _v.attempts) != null ? _w : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_x = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -19034,7 +18908,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_M = this.settings.vaultId) != null ? _M : void 0
+        vaultId: (_y = this.settings.vaultId) != null ? _y : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();

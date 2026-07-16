@@ -345,7 +345,10 @@ describe("batch push", () => {
 
 	test("falls back to per-note pushes when the batch endpoint is missing (404)", async () => {
 		const engine = createEngine();
-		const files = [new TFile("a.md"), new TFile("b.md")];
+		// .canvas notes take the kept LWW single-note REST path (md notes route
+		// CRDT-sole and never REST-push), so they exercise the batch-unsupported
+		// → per-note fallback the same as pre-rev md did.
+		const files = [new TFile("a.canvas"), new TFile("b.canvas")];
 		mockApp.vault.getFiles.mockReturnValue(files);
 		(mockApi.pushNotesBatch as jest.Mock).mockRejectedValueOnce({ status: 404 });
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({
@@ -361,17 +364,19 @@ describe("batch push", () => {
 
 	test("a conflict result falls back to the single-note push flow for that file", async () => {
 		const engine = createEngine();
-		const files = [new TFile("ok.md"), new TFile("conflicted.md")];
+		// .canvas so the single-note fallback takes the kept LWW REST path (md is
+		// CRDT-sole). The batch-conflict → pushFile hand-off itself is unchanged.
+		const files = [new TFile("ok.md"), new TFile("conflicted.canvas")];
 		mockApp.vault.getFiles.mockReturnValue(files);
 		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
 			results: [
 				okResult("ok.md"),
 				{
-					path: "conflicted.md",
+					path: "conflicted.canvas",
 					status: "conflict",
 					server_note: {
 						id: "x",
-						path: "conflicted.md",
+						path: "conflicted.canvas",
 						title: "c",
 						content: "server content",
 						folder: "",
@@ -385,16 +390,15 @@ describe("batch push", () => {
 			],
 		});
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({
-			note: { path: "conflicted.md", version: 10 },
+			note: { path: "conflicted.canvas", version: 10 },
 			chunks_indexed: 0,
 		});
 
 		await engine.pushAll();
 
-		// The conflicted file went through the single-note flow (which owns
-		// 3-way merge + interactive resolution).
+		// The conflicted file went through the single-note flow.
 		const pushNoteCalls = (mockApi.pushNote as jest.Mock).mock.calls;
-		expect(pushNoteCalls.some((c: unknown[]) => c[0] === "conflicted.md")).toBe(true);
+		expect(pushNoteCalls.some((c: unknown[]) => c[0] === "conflicted.canvas")).toBe(true);
 	});
 
 	test("renames the local file when the server sanitized the path", async () => {
@@ -483,6 +487,12 @@ describe("batch push sizing", () => {
 		const small = new TFile("small.md");
 		const huge = new TFile("huge.md", Date.now(), 11 * 1024 * 1024);
 		mockApp.vault.getFiles.mockReturnValue([small, huge]);
+		// The oversized single-note path only REST-pushes when the *content* also
+		// exceeds MAX_CRDT_NOTE_BYTES (4MB) — an in-cap md body routes CRDT-sole
+		// and returns false. Give huge.md a body past the cap so pushFile REST-pushes.
+		mockApp.vault.cachedRead.mockImplementation((f: TFile) =>
+			Promise.resolve(f.path === "huge.md" ? "x".repeat(5 * 1024 * 1024) : "# Test"),
+		);
 		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
 			results: [
 				{

@@ -23,6 +23,15 @@ import { DEFAULT_SETTINGS } from "../src/types";
 
 function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+	// CRDT-sole oracle: hasServerNote(noteId) = getCrdtHead(pathForId(noteId)) != null.
+	// Record a server head under the note's path so a "server-known" note routes
+	// through the CRDT path (the confirmed-set no longer gates CRDT routing).
+	const e = engine as unknown as {
+		noteIdMap?: { pathForId(id: string): string | null };
+		setCrdtHead(path: string, head: string): void;
+	};
+	const p = e.noteIdMap?.pathForId(noteId);
+	if (p) e.setCrdtHead(p, "server-head");
 }
 function markProbed(engine: SyncEngine): void {
 	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;

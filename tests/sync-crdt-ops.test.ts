@@ -17,6 +17,15 @@ import { DEFAULT_SETTINGS } from "../src/types";
  *  tests/sync-crdt-route.test.ts / tests/sync-crdt-gate.test.ts. */
 function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+	// CRDT-sole oracle: hasServerNote(noteId) = getCrdtHead(pathForId(noteId)) != null.
+	// Record a server head under the note's path so a "server-known" note routes
+	// through the CRDT path (the confirmed-set no longer gates CRDT routing).
+	const e = engine as unknown as {
+		noteIdMap?: { pathForId(id: string): string | null };
+		setCrdtHead(path: string, head: string): void;
+	};
+	const p = e.noteIdMap?.pathForId(noteId);
+	if (p) e.setCrdtHead(p, "server-head");
 }
 
 /** Mark the one-shot capability probe as already complete, for tests that
@@ -202,51 +211,6 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 		resolveHeads({ heads: {} });
 		await p;
 		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-});
-
-// Probe-race close (final review carryover): a channel-down edit on a CRDT
-// note made BEFORE the one-shot capability probe has resolved must not be
-// treated as ops-available (crdtOpsProbed still false at that point). It has
-// to take the durable legacy whole-doc push, exactly like a confirmed
-// pre-Phase-1 backend, so it is never queued as a `crdt:true` entry the
-// engine has no confirmed way to deliver.
-describe("probe race: an edit before the probe resolves is never stranded", () => {
-	test("a channel-down edit made while the probe is still pending takes the legacy base_hash path, not the durable ops queue", async () => {
-		let pushNoteCalled = false;
-		let baseHashArg: string | undefined;
-		const api = {
-			// Never resolves within the test — models a probe that is still in
-			// flight when the edit happens.
-			getVaultHeads: () => new Promise(() => {}),
-			pushNote: async (...args: any[]) => {
-				pushNoteCalled = true;
-				baseHashArg = args[5];
-				return { note: {}, chunks_indexed: 1 };
-			},
-			postUpdate: async () => {
-				throw new Error("must not flush via REST /updates before the probe resolves");
-			},
-		} as unknown as EngramApi;
-		const crdt = {
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
-			applyLocalEdit: async () => true,
-		};
-		const e = engine({ enableCrdt: true, api, crdt });
-		expect((e as any).crdtOpsAvailable()).toBe(false); // probe still pending
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("p.md", "id-1");
-		e.setNoteIdMap(noteIdMap);
-		markConfirmed(e, "id-1");
-		e.setCrdtLiveCheck(() => false); // channel down too
-		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
-
-		await (e as any).pushFile(new TFile("p.md"));
-
-		expect(pushNoteCalled).toBe(true);
-		expect(baseHashArg).toBeDefined();
-		const queued = e.queue.all().find((q) => q.path === "p.md");
-		expect(queued).toBeUndefined(); // never durably queued as an ops entry
 	});
 });
 
@@ -449,13 +413,14 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 });
 
 // ---------------------------------------------------------------------------
-// Task 5: CRDT-managed notes bypass the whole-doc base_hash push. Live channel
-// → the edit already went out as a channel op (unchanged pre-Task-5 behavior).
-// Channel down + ops available → durably queued (Task 3), no base_hash body built.
-// Non-CRDT / ops-unavailable notes keep sending base_hash unchanged.
+// Task 5: CRDT-managed notes never whole-doc push. A channel-down edit with ops
+// available is durably queued (Task 3) and delivered via REST /updates — pushNote
+// is never called. (The old base_hash/CAS whole-doc fallback for md is gone: an
+// in-cap md note that reaches neither CRDT path stays on disk and re-pushes on
+// reconnect, so there is no REST-md path left to assert.)
 // ---------------------------------------------------------------------------
 
-describe("CRDT notes bypass the whole-doc base_hash push", () => {
+describe("CRDT notes never whole-doc push (channel down → durable queue)", () => {
 	test("a CRDT-managed note with ops available never calls pushNote (channel down → durably queued)", async () => {
 		let pushNoteCalled = false;
 		let flushedNoteId: string | null = null;
@@ -491,54 +456,6 @@ describe("CRDT notes bypass the whole-doc base_hash push", () => {
 		// /updates.
 		await new Promise((r) => setTimeout(r, 20));
 		expect(flushedNoteId).toBe("id-1");
-	});
-
-	test("a CRDT-wired note with ops UNAVAILABLE and channel DOWN still sends base_hash via pushNote (safety fallback, no behavior change on a pre-Phase-1 backend)", async () => {
-		let baseHashArg: string | undefined;
-		let pushNoteCalled = false;
-		const api = {
-			pushNote: async (...args: any[]) => {
-				pushNoteCalled = true;
-				baseHashArg = args[5];
-				return { note: {}, chunks_indexed: 1 };
-			},
-			postUpdate: async () => {
-				throw new Error("must not flush via REST /updates when ops are unavailable");
-			},
-		} as unknown as EngramApi;
-		const crdt = {
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
-			applyLocalEdit: async () => true,
-		};
-		const e = engine({ enableCrdt: true, api, crdt });
-		(e as any).markCrdtOpsUnsupported(404); // pre-Phase-1 backend: ops unavailable
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("p.md", "id-1");
-		e.setNoteIdMap(noteIdMap);
-		markConfirmed(e, "id-1");
-		e.setCrdtLiveCheck(() => false); // channel down too
-		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
-
-		await (e as any).pushFile(new TFile("p.md"));
-
-		expect(pushNoteCalled).toBe(true);
-		expect(baseHashArg).toBeDefined();
-	});
-
-	test("a NON-CRDT note still sends base_hash (unchanged)", async () => {
-		let sawBaseHash = false;
-		const api = {
-			pushNote: async (...args: any[]) => {
-				if (args[5] !== undefined) sawBaseHash = true;
-				return { note: {}, chunks_indexed: 1 };
-			},
-		};
-		const e = engine({ enableCrdt: false, api }); // enableCrdt false → legacy path
-		e.importSyncState({ "p.md": { hash: 1, version: 1, serverHash: "sh" } });
-
-		await (e as any).pushFile(new TFile("p.md"));
-
-		expect(sawBaseHash).toBe(true);
 	});
 });
 

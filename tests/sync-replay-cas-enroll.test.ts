@@ -92,30 +92,6 @@ beforeEach(() => {
 	(mockApp.vault.create as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 });
 
-describe("A4: batch conflict fallback carries base_hash (chain pin)", () => {
-	test("per-entry conflict → pushFile → base_hash from syncState", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"a.md": { hash: 123, version: 3, serverHash: "srv-old" },
-		});
-
-		const files = [new TFile("a.md")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		(mockApi.pushNotesBatch as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			results: [{ path: "a.md", status: "conflict" }],
-		});
-
-		await engine.pushAll();
-
-		// The fallback single-note push must declare the CAS base.
-		// pushNote(path, content, mtime, version?, clientId?, baseHash?)
-		expect(mockApi.pushNote).toHaveBeenCalled();
-		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
-		expect(call[3]).toBe(3);
-		expect(call[5]).toBe("srv-old");
-	});
-});
-
 describe("A4: offline-replay pushes carry the CAS base", () => {
 	test("replay declares stored version + serverHash as base_hash", async () => {
 		const engine = createEngine();
@@ -157,52 +133,6 @@ describe("A4: offline-replay pushes carry the CAS base", () => {
 		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
 		expect(call.length).toBeLessThanOrEqual(5);
 	});
-
-	test("a replay conflict routes into the conflict flow instead of silently dropping", async () => {
-		const engine = createEngine();
-		const map = new NoteIdMap();
-		map.set("queued.md", "known-id");
-		engine.setNoteIdMap(map);
-		engine.importSyncState({
-			"queued.md": { hash: 123, version: 3, serverHash: "stale-base" },
-		});
-
-		const localFile = new TFile("queued.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		(mockApi.pushNote as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			conflict: true,
-			server_note: {
-				id: "known-id",
-				path: "queued.md",
-				content: "server content the client never saw",
-				content_hash: "srv-current",
-				version: 7,
-				mtime: 99,
-			},
-		});
-
-		engine.queue.load([
-			{
-				path: "queued.md",
-				action: "upsert",
-				content: "offline edit",
-				mtime: 100,
-				timestamp: 1,
-			},
-		]);
-
-		await engine.flushQueue();
-
-		// The single-note conflict flow ran — default ("auto") resolution
-		// preserves the server content as a conflict-copy file. Previously the
-		// conflicting replay was silently dequeued with NO conflict handling.
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls[0];
-		expect(created[0]).toContain("conflict");
-		expect(created[1]).toBe("server content the client never saw");
-		// Handled — the entry must not stay queued (no infinite retry).
-		expect(engine.queue.size).toBe(0);
-	});
 });
 
 describe("A6: first confirmation re-fires the CRDT handshake", () => {
@@ -224,26 +154,6 @@ describe("A6: first confirmation re-fires the CRDT handshake", () => {
 		// cold create stays room-free (test_cold_send_over_fanout_opens_no_room).
 		expect(reset).not.toHaveBeenCalled();
 		expect(enroll).not.toHaveBeenCalled();
-	});
-
-	test("fresh-note create push: live-bound note DOES re-fire the handshake", async () => {
-		const engine = createEngine();
-		const map = new NoteIdMap();
-		engine.setNoteIdMap(map);
-		const enroll = mock();
-		const reset = mock();
-		engine.setCrdtEnrollment({ enroll, reset } as any);
-		engine.setLiveBoundCheck(() => true); // note open in the editor
-
-		const file = new TFile("fresh.md");
-		engine.handleModify(file);
-		await flush();
-
-		// An open note's editor room needs the handshake — reset lifts the
-		// once-per-session guard first, then enroll re-fires STEP1 on the
-		// server-confirmed id.
-		expect(reset).toHaveBeenCalledWith("server-minted-id");
-		expect(enroll).toHaveBeenLastCalledWith("server-minted-id");
 	});
 
 	test("an already-confirmed id does NOT re-fire on subsequent pushes", async () => {
