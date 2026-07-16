@@ -18,7 +18,8 @@ jobs:
           set -euo pipefail
           VERSION=$(jq -r '.version' manifest.json)
           SECTION=$(awk -v v="$VERSION" '
-            $0 ~ "^## \\[?" v "\\]?" {grab=1; next}
+            substr($0,1,length("## [" v "]")) == "## [" v "]" { grab=1; next }
+            substr($0,1,length("## " v " ")) == "## " v " "  { grab=1; next }
             /^## / {grab=0}
             grab {print}
           ' CHANGELOG.md)

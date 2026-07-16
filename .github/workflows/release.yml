@@ -223,5 +223,9 @@ jobs:
           set -euo pipefail
           NOTES=$(gh release view "$VERSION" --repo "${{ github.repository }}" --json body -q .body || echo "")
           CONTENT=$(printf '**Engram Vault Sync %s** released.\n\n%s' "$VERSION" "$NOTES")
-          curl -sS -X POST -H 'Content-Type: application/json' --max-time 5 \
-            --data "$(jq -nc --arg c "$CONTENT" '{content:$c}')" "$WEBHOOK"
+          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --max-time 5 \
+            --data "$(jq -nc --arg c "$CONTENT" '{content:$c}')" "$WEBHOOK")
+          case "$HTTP_STATUS" in
+            2??) echo "Discord announce OK (HTTP $HTTP_STATUS)" ;;
+            *) echo "::warning::Discord announce failed (HTTP $HTTP_STATUS)" ;;
+          esac
