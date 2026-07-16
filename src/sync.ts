@@ -815,6 +815,20 @@ export class SyncEngine {
 		this.crdtCreate = fn;
 	}
 
+	/** Socket-native note delete (Plan B1, Task 4). When wired, a local
+	 *  user-initiated delete of a note with a resolved note_id sends
+	 *  `crdt_delete` instead of a REST `deleteNote`. Fire-and-forget: the
+	 *  channel drops it silently if not joined. Unset, or no resolved id →
+	 *  falls through to the still-functional REST delete (removed in Plan
+	 *  B2). Never fires for a delete APPLIED locally because it arrived FROM
+	 *  the server — handleDelete's remote-echo early-return returns before
+	 *  this is ever reached. */
+	private crdtDelete: ((docId: string) => void) | null = null;
+
+	setCrdtDelete(fn: ((docId: string) => void) | null): void {
+		this.crdtDelete = fn;
+	}
+
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
 	 *  The `crdt` manager latch above is edge-triggered (set on join via
 	 *  onCrdtJoined, cleared on disconnect), so it can go STALE — set, but the
@@ -1736,9 +1750,11 @@ export class SyncEngine {
 
 		try {
 			if (isBinary) {
-				await this.api.deleteAttachment(file.path);
+				await this.api.deleteAttachment(file.path); // attachments stay REST
+			} else if (this.crdtDelete && crdtNoteId) {
+				this.crdtDelete(crdtNoteId);
 			} else {
-				await this.api.deleteNote(file.path);
+				await this.api.deleteNote(file.path); // fallback — removed in Plan B2
 			}
 			this.goOnline();
 			// Tear down the CRDT doc so a note recreated at the same path starts

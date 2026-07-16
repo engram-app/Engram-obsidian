@@ -1198,6 +1198,55 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 4: local note delete routes through crdt_delete (socket-native,
+// fire-and-forget), not REST deleteNote. Attachments are unaffected — they
+// stay on REST deleteAttachment. A delete APPLIED locally because it arrived
+// FROM the server (remotelyDeleted marks the path before the vault trash that
+// fires handleDelete) must NOT echo a crdt_delete back — the server already
+// knows.
+// ---------------------------------------------------------------------------
+
+describe("Task 4: local delete routes through crdt_delete", () => {
+	test("deleting a synced note sends crdt_delete, not REST deleteNote", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/gone.md", "note-uuid");
+		const engine = createEngine(noteIdMap);
+		const deleted: string[] = [];
+		engine.setCrdtDelete((id: string) => {
+			deleted.push(id);
+		});
+
+		const file = new TFile("Notes/gone.md");
+		await engine.handleDelete(file);
+
+		expect(deleted).toEqual(["note-uuid"]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("a remote-applied delete does not echo a crdt_delete", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/gone.md", "note-uuid");
+		const engine = createEngine(noteIdMap);
+		const deleted: string[] = [];
+		engine.setCrdtDelete((id: string) => {
+			deleted.push(id);
+		});
+		// Simulate trashRemotelyDeleted having marked the path before the vault
+		// 'delete' event fires — the remote-echo early-return in handleDelete.
+		(engine as unknown as { remotelyDeleted: Map<string, number> }).remotelyDeleted.set(
+			"Notes/gone.md",
+			0,
+		);
+
+		const file = new TFile("Notes/gone.md");
+		await engine.handleDelete(file);
+
+		expect(deleted).toEqual([]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Teardown fix — setupNoteStream must clear SyncEngine CRDT references
 //
 // Regression pin for the Important-1 review finding: the old teardown relied on
