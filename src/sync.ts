@@ -3117,7 +3117,6 @@ export class SyncEngine {
 		) => Promise<{ update: Uint8Array; head: string }>,
 	): Promise<"converged" | "skipped" | "failed"> {
 		if (!this.crdt) return "skipped";
-		if (!this.isNoteConfirmed(noteId)) return "skipped";
 		if (this.isLiveBound(normalizePath(path))) return "skipped"; // live channel owns it
 		if (this.getCrdtHead(path) === serverHead) return "skipped"; // cost gate: unchanged
 		try {
@@ -3174,39 +3173,6 @@ export class SyncEngine {
 			rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`);
 			return "failed";
 		}
-	}
-
-	/** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
-	 *  Diffs the server head-index against the persisted per-note crdtHead and,
-	 *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
-	 *  flush via applyRemoteUpdate). Best-effort: inert on pre-Phase-1 backends,
-	 *  isolates per-note failures, and never throws. Returns notes converged. */
-	async coldReceive(): Promise<number> {
-		if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return 0;
-		let heads: Record<string, string>;
-		try {
-			({ heads } = await this.api.getVaultHeads());
-		} catch (e) {
-			devLog().log("crdt", `coldReceive: getVaultHeads failed — ${errMsg(e)}`);
-			return 0;
-		}
-		let converged = 0;
-		for (const [noteId, serverHead] of Object.entries(heads)) {
-			const path = this.noteIdMap?.pathForId(noteId) ?? null;
-			if (!path) continue; // not locally known — first-discovery is pull()'s job
-			const outcome = await this.convergeNoteFromDelta(
-				path,
-				noteId,
-				serverHead,
-				(id, since) => this.api.getUpdates(id, since),
-			);
-			if (outcome === "converged") converged++;
-		}
-		if (converged > 0) {
-			devLog().log("crdt", `coldReceive: converged ${converged} cold note(s)`);
-			this.emitStatus();
-		}
-		return converged;
 	}
 
 	/** Socket-native vault catch-up (Plan B1, Task 5): fetch server heads over
@@ -3491,13 +3457,6 @@ export class SyncEngine {
 					e instanceof Error ? e.stack : undefined,
 				);
 			}
-
-			// Phase 3a: piggyback cold-receive on the completed pull so closed
-			// CRDT notes converge in the background. Best-effort — a failure here
-			// must never fail the pull.
-			await this.coldReceive().catch((e) => {
-				devLog().log("crdt", `coldReceive threw (ignored) — ${errMsg(e)}`);
-			});
 
 			return applied;
 		} catch (e) {

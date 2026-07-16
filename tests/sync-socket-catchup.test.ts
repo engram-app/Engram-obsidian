@@ -76,12 +76,6 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
-/** Mark a note_id as server-confirmed — parity with the REST coldReceive path
- *  (the shared convergeNoteFromDelta helper gates on isNoteConfirmed). */
-function confirm(engine: SyncEngine, noteId: string): void {
-	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
-}
-
 function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
@@ -95,8 +89,10 @@ function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 	map.set("Notes/a.md", "id-a");
 	map.set("Notes/b.md", "id-b");
 	e.setNoteIdMap(map);
-	confirm(e, "id-a");
-	confirm(e, "id-b");
+	// No confirmed-set seeding: convergeNoteFromDelta is the sole convergence
+	// path and no longer gates on isNoteConfirmed — a note in the server head
+	// map is server-known by definition. This is exactly the reconnect
+	// catch-up the confirmed gate used to break (a reconnect cleared the set).
 	return e;
 }
 

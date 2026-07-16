@@ -15,6 +15,7 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
+import { toB64 } from "../src/crdt/channel";
 import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine, fnv1a } from "../src/sync";
@@ -25,6 +26,32 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 }
 function markProbed(engine: SyncEngine): void {
 	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
+}
+
+/** Drive the sole CRDT convergence path (catchupViaSocket → convergeNoteFromDelta)
+ *  using the engine's already-wired getVaultHeads/getUpdates test doubles. Replaces
+ *  the deleted REST coldReceive() driver; the convergence guarantees it exercised
+ *  (history-less adopt, disk-drift merge, keep-both) are identical. */
+async function driveCatchup(engine: SyncEngine): Promise<void> {
+	const api = (
+		engine as unknown as {
+			api: {
+				getVaultHeads: () => Promise<{ heads: Record<string, string> }>;
+				getUpdates: (
+					id: string,
+					sv: string,
+				) => Promise<{ update: Uint8Array; head: string }>;
+			};
+		}
+	).api;
+	engine.setCrdtCatchup(
+		() => api.getVaultHeads(),
+		async (id, sv) => {
+			const { update, head } = await api.getUpdates(id, sv);
+			return { doc_id: id, b64: toB64(update), head };
+		},
+	);
+	await engine.catchupViaSocket();
 }
 
 /** Build a shared-base local doc + a remote delta that adds " REMOTE" on that
@@ -242,7 +269,7 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 		await mgr.destroy();
 	});
 
-	test("(v) coldReceive: history-less + NO drift → adopts full server content, not doubled", async () => {
+	test("(v) socket catch-up: history-less + NO drift → adopts full server content, not doubled", async () => {
 		const { e, mgr, disk } = await historyLessScenario({
 			dbPrefix: "hl-cold-nodrift",
 			disk: "BASE",
@@ -250,7 +277,7 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 			serverFull: "BASE REMOTE",
 		});
 
-		expect(await e.coldReceive()).toBe(1);
+		await driveCatchup(e);
 
 		expect(await mgr.getText("id-a")).toBe("BASE REMOTE");
 		expect(disk.get("a.md")).toBe("BASE REMOTE");
@@ -259,7 +286,7 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 		await mgr.destroy();
 	});
 
-	test("(v) coldReceive: history-less + drift + NO LCA → keep-both", async () => {
+	test("(v) socket catch-up: history-less + drift + NO LCA → keep-both", async () => {
 		const { e, mgr, disk } = await historyLessScenario({
 			dbPrefix: "hl-cold-nolca",
 			disk: "BASE local",
@@ -267,7 +294,7 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 			serverFull: "BASE REMOTE",
 		});
 
-		expect(await e.coldReceive()).toBe(1);
+		await driveCatchup(e);
 
 		expect(disk.get("a.md")).toBe("BASE REMOTE");
 		const conflictKey = [...disk.keys()].find((k) => k.includes("(conflict"));
@@ -348,7 +375,7 @@ describe("BUG 2: un-pushed disk drift is merged, not clobbered", () => {
 		expect(out).toContain("REMOTE"); // the remote change applied too
 	});
 
-	test("coldReceive merges the un-pushed local disk edit with the pulled update", async () => {
+	test("socket catch-up merges the un-pushed local disk edit with the pulled update", async () => {
 		const { e, remoteDelta, flushed } = await scenario("bug2-cold");
 		markProbed(e);
 		(e as any).api = {
@@ -356,7 +383,7 @@ describe("BUG 2: un-pushed disk drift is merged, not clobbered", () => {
 			getUpdates: async () => ({ update: remoteDelta, head: "HEAD" }),
 		};
 
-		expect(await e.coldReceive()).toBe(1);
+		await driveCatchup(e);
 
 		const out = flushed();
 		expect(out).not.toBeNull();
