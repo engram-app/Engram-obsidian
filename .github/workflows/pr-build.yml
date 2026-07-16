@@ -21,13 +21,6 @@ jobs:
         run: bun run build
       - name: Test
         run: bun test
-      - name: Attest build provenance
-        uses: actions/attest-build-provenance@v4
-        with:
-          subject-path: |
-            main.js
-            manifest.json
-            styles.css
       - name: Derive per-PR version
         id: v
         env:
@@ -47,6 +40,13 @@ jobs:
           # Asset-only: the committed manifest.json is untouched; we only
           # rewrite the built copy so an installed PR build reports its version.
           tmp=$(mktemp); jq --arg v "$TAG" '.version=$v' manifest.json > "$tmp" && mv "$tmp" manifest.json
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
       - name: Create PR prerelease
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -55,6 +55,21 @@ jobs:
           BRANCH_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
+          # Rerun safety: the tag is deterministic (<version>-pr.<num>.<sha>),
+          # so a rerun for the same PR head sha must clean up any prior
+          # release + tag before recreating them. Tolerant of "doesn't exist yet".
+          EXISTING_ID=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
+            | jq -r '.id // empty')
+          if [ -n "$EXISTING_ID" ]; then
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$EXISTING_ID" || true
+          fi
+          git push origin ":refs/tags/$TAG" || true
+          git tag -d "$TAG" 2>/dev/null || true
+
           git tag "$TAG" "${{ github.event.pull_request.head.sha }}"
           git push origin "$TAG"
           NOTES=$(printf 'PR #%s build from `%s`.\n\nInstall via BRAT **frozen version**: `%s`' "$PR_NUM" "$BRANCH_REF" "$TAG")
