@@ -1002,3 +1002,56 @@ describe("NoteChannel.sendRequest", () => {
 		channel.disconnect();
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Task 2: the four socket-frame senders (crdt_create/delete/catchup_heads/delta)
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel CRDT frame senders", () => {
+	test("crdtCreate returns the server's doc_id (adopt returns a different id)", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCreate("client-id-X", "Notes/n.md");
+		const ref = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_create")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "server-id-Y" } },
+		]);
+		await expect(p).resolves.toBe("server-id-Y");
+
+		channel.disconnect();
+	});
+
+	test("crdtCatchupHeads sends the frame and returns heads", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCatchupHeads();
+		const ref = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_catchup_heads")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { heads: { n1: "h1" } } },
+		]);
+		await expect(p).resolves.toEqual({ heads: { n1: "h1" } });
+
+		channel.disconnect();
+	});
+
+	test("crdtDelete sends a fire-and-forget frame", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		channel.crdtDelete("n1");
+		const f = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((x: unknown[]) => x[3] === "crdt_delete");
+		expect(f[4]).toEqual({ doc_id: "n1" });
+
+		channel.disconnect();
+	});
+});
