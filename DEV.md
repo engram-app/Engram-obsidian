@@ -61,7 +61,7 @@ docs/                  Internals, ops, API audit, submission notes
 
 ## Toolchain
 
-- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm`; the only exception is `npm version patch|minor|major`, which needs npm's lifecycle hooks to run `version-bump.mjs`.
+- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm`.
 - **Bundler:** esbuild (`esbuild.config.mjs`).
 - **Type check:** TypeScript (`tsc -noEmit`); runs as part of `bun run build`.
 - **Lint/format:** Biome (`bun run lint`, `bun run format`) plus an Obsidian-specific ESLint pass (`bun run lint:obsidian`).
@@ -127,7 +127,7 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
 | `ci.yml` | Push to any branch | Build + lint + test, plus backend E2E trigger |
 | `version-check.yml` | PR to `main` | Enforces `manifest.json`/`package.json`/`versions.json` agreement, but only when `manifest.json` is deliberately bumped; otherwise passes without requiring a bump |
 | `pr-build.yml` | Each push to a PR | Publishes a prerelease tagged `X.Y.Z-pr.<num>.<sha>` with build assets, the frozen version BRAT installs for reviewing that PR |
-| `release-please.yml` | Push to `main` | Keeps a standing "Release PR" up to date with the generated CHANGELOG |
+| `release-please.yml` | Push to `main` | Keeps a standing "Release PR" up to date with the generated CHANGELOG; merging it pushes a bare `X.Y.Z` tag |
 | `release.yml` | Push of a bare `X.Y.Z` tag | Publishes the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached, updates `versions.json` |
 
 A rolling **beta** channel (from `main`, tagged `X.Y.Z-beta.N`, installed via BRAT's "add beta plugin") is part of this same release-channels initiative; its workflow lands in a separate commit.
@@ -138,7 +138,7 @@ Do **not** bump `manifest.json` by hand in feature PRs: versions are auto-derive
 
 1. **Land feature PRs as usual.** Each push auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump required.
 2. **Edit the release notes.** `release-please.yml` maintains a Release PR with a generated CHANGELOG; edit that PR's description to adjust the notes before cutting.
-3. **Merge the release-please PR.** This bumps `manifest.json`, `package.json`, and `versions.json`, and pushes the bare `X.Y.Z` tag on the merge commit, which triggers `release.yml` to publish the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached.
+3. **Merge the release-please PR.** This bumps `manifest.json` and `package.json`, and pushes the bare `X.Y.Z` tag on the merge commit, which triggers `release.yml` to publish the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached (and separately updates `versions.json`).
 
 ### Testing a specific PR
 

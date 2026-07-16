@@ -112,7 +112,7 @@ diff/merge, remote logging, plan/limit state, and a set of compliance tests
 
 ## Package Manager
 
-**Use `bun`, not `npm`.** The only exception is `npm version patch|minor|major` which requires npm's lifecycle hooks to run `version-bump.mjs`. All other commands (`install`, `test`, `build`, `run`, `lint`, `audit`) must use `bun`.
+**Use `bun`, not `npm`.** All commands (`install`, `test`, `build`, `run`, `lint`, `audit`) must use `bun`.
 
 ## Build & Install
 
@@ -143,7 +143,7 @@ There's also a rolling **beta** channel (`main` builds published as `X.Y.Z-beta.
 
 1. **Open/merge feature PRs as usual.** Each push to a PR auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump needed.
 2. **Edit the release notes.** `release-please.yml` keeps a Release PR up to date with a generated CHANGELOG; edit that PR's description to adjust the notes.
-3. **Merge the release-please PR.** This bumps `manifest.json`/`versions.json`/`package.json` and pushes the bare `X.Y.Z` tag, which triggers `release.yml` to publish the final GitHub release.
+3. **Merge the release-please PR.** This bumps `manifest.json`/`package.json` and pushes the bare `X.Y.Z` tag, which triggers `release.yml` to publish the final GitHub release (and separately updates `versions.json`).
 
 ### Deploy to Local Vault
 
