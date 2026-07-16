@@ -37,16 +37,17 @@ pre-commit:
 
 pre-push:
   jobs:
-    - name: tests-and-version-bump
+    - name: tests
       run: |
         if [ -n "${CI:-}" ] || [ -n "${GITHUB_ACTIONS:-}" ]; then
           exit 0
         fi
 
         # Fast path: skip `bun test` if no test-affecting files changed vs
-        # origin/main. Doc-only / YAML-only PRs (which still must bump
-        # package.json + manifest.json for the version check below) finish
-        # the hook in seconds instead of ~8s of jest warm-up + run.
+        # origin/main. Doc-only / YAML-only PRs finish the hook in seconds
+        # instead of ~8s of jest warm-up + run. (No version-bump gate: under
+        # the release-please channel model, feature branches must NOT bump
+        # manifest.json/package.json — only the Release PR does.)
         #
         # Trigger set: TS source/tests, bun.lock (deps), tsconfig*.json,
         # esbuild.config.mjs, .githooks/*, and package.json *unless* the
@@ -66,42 +67,3 @@ pre-push:
         else
           bun test
         fi
-
-        current_branch=$(git rev-parse --abbrev-ref HEAD)
-        if [ "$current_branch" = "main" ] || [ "$current_branch" = "HEAD" ]; then
-          exit 0
-        fi
-        if ! git rev-parse --verify --quiet origin/main >/dev/null; then
-          exit 0
-        fi
-
-        # Workflow-only carve-out (mirrors .github/workflows/version-check.yml):
-        # require a version bump only when a shippable path changed vs main.
-        # CI/docs/test/config-only branches push without bumping.
-        SHIPPABLE="$(git diff --name-only origin/main...HEAD -- \
-          src manifest.json styles.css esbuild.config.mjs main.js assets \
-          tsconfig.json package.json bun.lock version-bump.mjs 2>/dev/null || true)"
-        if [ -z "$SHIPPABLE" ]; then
-          echo "✓ pre-push: no shippable paths changed vs main — version bump not required"
-          exit 0
-        fi
-
-        for file in package.json manifest.json; do
-          branch_v=$(node -p "require('./$file').version" 2>/dev/null || true)
-          main_v=$(git show "origin/main:$file" 2>/dev/null \
-            | node -e "let s='';process.stdin.on('data',c=>s+=c).on('end',()=>{try{console.log(JSON.parse(s).version)}catch(_){}})" \
-            || true)
-          if [ -n "$branch_v" ] && [ -n "$main_v" ] && [ "$branch_v" = "$main_v" ]; then
-            cat >&2 <<EOF
-        ✖ pre-push: $file version ($branch_v) has not been bumped from main.
-
-          Bump with: npm version patch --no-git-tag-version
-          (this updates package.json, manifest.json, versions.json together)
-
-          To push WIP without bumping: git push --no-verify
-        EOF
-            exit 1
-          fi
-        done
-
-        echo "✓ pre-push: plugin version differs from main"
