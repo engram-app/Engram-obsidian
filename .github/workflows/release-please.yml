@@ -20,8 +20,121 @@ jobs:
           private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
 
       - uses: googleapis/release-please-action@v4
+        id: release
         with:
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
           # App token so the Release PR + tag satisfy protect-main / protect-tags.
           token: ${{ steps.app-token.outputs.token }}
+
+      # --- everything below only runs when a release was just created ---
+
+      - uses: actions/checkout@v7
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          fetch-depth: 0
+          # App token so the versions.json push-back to protected main succeeds.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - if: steps.release.outputs.release_created == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        if: steps.release.outputs.release_created == 'true'
+        run: bun run build
+
+      - name: Test
+        if: steps.release.outputs.release_created == 'true'
+        run: bun test
+
+      - name: Upload plugin assets to the release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" main.js manifest.json styles.css --clobber
+
+      - name: Verify release is stable
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          META=$(gh release view "$TAG" --json isDraft,isPrerelease)
+          [ "$(echo "$META" | jq -r .isPrerelease)" = "false" ] && [ "$(echo "$META" | jq -r .isDraft)" = "false" ] || { echo "::error::$TAG not published stable"; exit 1; }
+          echo "Verified $TAG is published as stable (prerelease=false, draft=false)"
+
+      - name: Ensure versions.json has this version
+        # Updates versions.json on main via the Contents API (not `git push
+        # origin HEAD:main`): main is protected, and the checked-out TAG
+        # commit's history is not guaranteed fast-forward with main (release-please
+        # pushes to main independently), so a raw push-of-HEAD can silently
+        # no-op or reject. Compare-on-sha PUT is atomic and works regardless
+        # of where main has moved; retries once on a concurrent-update 409.
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          MIN=$(jq -r '.minAppVersion' manifest.json)
+          API="https://api.github.com/repos/${{ github.repository }}/contents/versions.json"
+
+          for attempt in 1 2; do
+            RESP=$(curl --fail -sS \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}?ref=main")
+            SHA=$(echo "$RESP" | jq -r '.sha')
+            CONTENT=$(echo "$RESP" | jq -r '.content' | base64 -d)
+
+            if [ "$(echo "$CONTENT" | jq --arg v "$TAG" 'has($v)')" = "true" ]; then
+              echo "versions.json already has ${TAG} on main — skipping"
+              break
+            fi
+
+            NEW_CONTENT_B64=$(echo "$CONTENT" | jq --arg v "$TAG" --arg m "$MIN" '.[$v]=$m' | base64 -w0)
+            BODY=$(jq -nc \
+              --arg msg "chore(release): versions.json ${TAG} [skip ci]" \
+              --arg content "$NEW_CONTENT_B64" \
+              --arg sha "$SHA" \
+              '{message: $msg, content: $content, sha: $sha, branch: "main"}')
+
+            HTTP_STATUS=$(curl -sS -o /tmp/versions-put-response.json -w '%{http_code}' -X PUT \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}" -d "$BODY")
+
+            if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+              echo "Updated versions.json on main with ${TAG}"
+              break
+            elif [ "$HTTP_STATUS" = "409" ] && [ "$attempt" = "1" ]; then
+              echo "sha conflict updating versions.json — retrying"
+              continue
+            else
+              echo "::error::Failed to update versions.json (HTTP $HTTP_STATUS): $(cat /tmp/versions-put-response.json)"
+              exit 1
+            fi
+          done
+
+      - name: Announce to Discord (#releases)
+        if: steps.release.outputs.release_created == 'true' && env.WEBHOOK != ''
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          NOTES=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body || echo "")
+          CONTENT=$(printf '**Engram Vault Sync %s** released.\n\n%s' "$TAG" "$NOTES")
+          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --max-time 5 \
+            --data "$(jq -nc --arg c "$CONTENT" '{content:$c}')" "$WEBHOOK")
+          case "$HTTP_STATUS" in
+            2??) echo "Discord announce OK (HTTP $HTTP_STATUS)" ;;
+            *) echo "::warning::Discord announce failed (HTTP $HTTP_STATUS)" ;;
+          esac

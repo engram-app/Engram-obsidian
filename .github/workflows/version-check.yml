@@ -29,9 +29,7 @@ jobs:
           echo "Version bumped $MAIN_MANIFEST -> $PR_MANIFEST; enforcing consistency."
           ERRORS=()
           PR_PKG=$(jq -r '.version' package.json)
-          PR_IN_VERSIONS=$(jq --arg v "$PR_MANIFEST" 'has($v)' versions.json)
           [[ "$PR_PKG" == "$PR_MANIFEST" ]] || ERRORS+=("package.json ($PR_PKG) != manifest.json ($PR_MANIFEST)")
-          [[ "$PR_IN_VERSIONS" == "true" ]] || ERRORS+=("versions.json has no entry for $PR_MANIFEST")
           if [[ ${#ERRORS[@]} -gt 0 ]]; then
             printf '::error::%s\n' "${ERRORS[@]}"
             exit 1
