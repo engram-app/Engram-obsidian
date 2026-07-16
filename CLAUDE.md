@@ -62,7 +62,7 @@ A TypeScript sync client. It does NOT parse markdown, generate embeddings, or ta
 
 **Everything goes through a PR. No exceptions, no admin bypass, no "doc-only" shortcuts that stretch into code.**
 
-`main` is protected with `enforce_admins=true`. Required status checks (`build-and-test`, `version-check`, `backend/e2e`) must pass before merge. The release pipeline (`release.yml`) only fires on **PR merge to main** — direct pushes skip it and break the deploy.
+`main` is protected with `enforce_admins=true`. Required status checks (`build-and-test`, `version-check`, `backend/e2e`) must pass before merge. Stable releases are cut by merging the release-please PR into `main`: direct pushes skip the Release PR and break the release flow.
 
 Workflow for any change, including doc updates:
 
@@ -134,8 +134,7 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
 | `ci.yml` | Push to any branch | Build, lint, test + trigger backend E2E |
 | `version-check.yml` | PR to main | Enforces `manifest.json`/`package.json`/`versions.json` consistency, but only when `manifest.json` is deliberately bumped; otherwise a no-op pass |
 | `pr-build.yml` | PR to main (each push) | Publishes a prerelease tagged `X.Y.Z-pr.<num>.<sha>` with build assets, for BRAT frozen-version install by reviewers |
-| `release-please.yml` | Push to main | Maintains a standing "Release PR"; merging it bumps `manifest.json`/`package.json` and pushes a bare `X.Y.Z` tag (`versions.json` is updated by `release.yml`) |
-| `release.yml` | Push of a bare `X.Y.Z` tag | Publishes the stable GitHub release + community-store assets, updates `versions.json` |
+| `release-please.yml` | Push to main | Maintains a standing "Release PR"; on merge, bumps `manifest.json`/`package.json`, cuts the version, creates the release + bare `X.Y.Z` tag, then (gated on its own `release_created` output) builds, attests, and uploads `main.js`/`manifest.json`/`styles.css` to that release, updates `versions.json`, and posts the Discord announce |
 
 There's also a rolling **beta** channel (`main` builds published as `X.Y.Z-beta.N`, installed via BRAT's "add beta plugin") that's part of this same release-channels initiative; its workflow lands in a separate commit.
 
@@ -143,7 +142,7 @@ There's also a rolling **beta** channel (`main` builds published as `X.Y.Z-beta.
 
 1. **Open/merge feature PRs as usual.** Each push to a PR auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump needed.
 2. **Edit the release notes.** `release-please.yml` keeps a Release PR up to date with a generated CHANGELOG; edit that PR's description to adjust the notes.
-3. **Merge the release-please PR.** This bumps `manifest.json`/`package.json` and pushes the bare `X.Y.Z` tag, which triggers `release.yml` to publish the final GitHub release (and separately updates `versions.json`).
+3. **Merge the release-please PR.** This bumps `manifest.json`/`package.json`, cuts the version, and publishes the stable GitHub release directly (build assets, `versions.json`, and the Discord announce), all from the same `release-please.yml` run. There is no separate tag-triggered workflow.
 
 ### Deploy to Local Vault
 
