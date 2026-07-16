@@ -1614,6 +1614,7 @@ export class SyncEngine {
 		// But real user edits can happen too — queue them for post-pull push.
 		if (this.pulling) {
 			this.pendingPostPullPushes.add(file.path);
+			this.schedulePostPullDrain();
 			return;
 		}
 		// Suppress echoes from flushFromCrdt (remote CRDT update → disk write).
@@ -3213,9 +3214,33 @@ export class SyncEngine {
 		}
 	}
 
+	/** Ceiling on how long an edit may sit in pendingPostPullPushes while a
+	 *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
+	 *  on a half-open connection — kept `pulling` true for 60s+, and deferred
+	 *  edits never pushed, so sync looked dead. Instance field so tests can
+	 *  shrink it. */
+	postPullMaxDeferMs = 5_000;
+	private postPullDrainTimer: number | null = null;
+
+	/** Arm a one-shot bounded drain for the deferral above. Draining early is
+	 *  safe: pushFile's echo-hash gate filters sync-write echoes either way —
+	 *  the deferral only saves redundant echo traffic, it is not a correctness
+	 *  gate. The normal end-of-pull drain clears this timer. */
+	private schedulePostPullDrain(): void {
+		if (this.postPullDrainTimer !== null) return;
+		this.postPullDrainTimer = window.setTimeout(() => {
+			this.postPullDrainTimer = null;
+			void this.flushPostPullPushes();
+		}, this.postPullMaxDeferMs);
+	}
+
 	/** Push any files that were modified during pull. Echo suppression will
 	 *  naturally skip sync-engine writes; only real user edits get pushed. */
 	private async flushPostPullPushes(): Promise<void> {
+		if (this.postPullDrainTimer !== null) {
+			window.clearTimeout(this.postPullDrainTimer);
+			this.postPullDrainTimer = null;
+		}
 		if (this.pendingPostPullPushes.size === 0) return;
 		const paths = [...this.pendingPostPullPushes];
 		this.pendingPostPullPushes.clear();
@@ -4338,6 +4363,30 @@ export class SyncEngine {
 		const content = change.content;
 		if (content === undefined) {
 			throw new Error(`applyChange: missing content for ${change.path}`);
+		}
+
+		// Anti-stale guard (review 2026-07-15, data-loss race): a push landing
+		// DURING a pull — the bounded post-pull drain, or a debounced edit —
+		// bumps syncState past entries this pull fetched BEFORE that push.
+		// Applying such an entry would blind-overwrite the just-pushed edit
+		// (local == baseline, so no conflict fires). Server versions are
+		// monotonic per note: an entry at or below the version we already
+		// synced carries nothing new. Gated on the file existing locally so a
+		// stale syncState row (crash, manual delete) can never mask a real
+		// re-materialization; forceOverwrite (explicit keep-remote) bypasses.
+		if (!forceOverwrite && change.version !== undefined) {
+			const known = this.syncState.get(normalized)?.version;
+			if (
+				known !== undefined &&
+				known >= change.version &&
+				this.app.vault.getFileByPath(normalized)
+			) {
+				rlog().info(
+					"pull",
+					`applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`,
+				);
+				return false;
+			}
 		}
 
 		// C1: CRDT-managed markdown — the crdt: topic owns the body. Skip the
@@ -6693,6 +6742,10 @@ export class SyncEngine {
 		}
 		this.remotelyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.postPullDrainTimer !== null) {
+			window.clearTimeout(this.postPullDrainTimer);
+			this.postPullDrainTimer = null;
+		}
 		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();

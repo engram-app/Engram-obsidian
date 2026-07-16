@@ -13065,10 +13065,38 @@ async function destroyRemoteLog() {
 }
 
 // src/api.ts
+var RequestTimeoutError = class extends Error {
+  constructor(ms) {
+    super(`Request timed out after ${ms}ms`), this.name = "RequestTimeoutError";
+  }
+};
+async function withTimeout(p, ms) {
+  let timer, deadline = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
+  });
+  try {
+    return await Promise.race([p, deadline]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
 var EngramApi = class _EngramApi {
   constructor(baseUrl, apiKey) {
     this.baseUrl = baseUrl;
     this.apiKey = apiKey;
+    /** Deadline for note/metadata requests. Instance fields (not consts) so
+     *  tests can shrink them; attachments get a longer one — a large upload on
+     *  a slow link legitimately outlives the note deadline. */
+    this.requestTimeoutMs = 15e3;
+    this.attachmentTimeoutMs = 12e4;
+    /** Bulk pages (batch push, change feeds) can carry many full note bodies —
+     *  15s starves a slow link, 120s is a transfer budget they don't need. */
+    this.bulkTimeoutMs = 6e4;
+    /** In-flight sendRequest calls, so a channel-disconnect signal can probe
+     *  for wedged connections and fail them early (see failWedgedRequests). */
+    this.inflight = /* @__PURE__ */ new Set();
+    /** Single-flight latch for failWedgedRequests (see there). */
+    this.wedgeProbeInFlight = !1;
     this.vaultId = null;
     this.deviceId = null;
     this.authProvider = null;
@@ -13162,15 +13190,24 @@ var EngramApi = class _EngramApi {
       ...extraHeaders
     }, activeVaultId = this.getActiveVaultId();
     activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
+    let attachmentMeta = path === "/attachments/changes" || path.startsWith("/attachments/changes?"), attachmentTransfer = path.startsWith("/attachments") && !attachmentMeta && (method === "POST" || method === "GET"), bulk = path === "/notes/batch" || path.startsWith("/notes/changes?") || path === "/sync/changes" || path.startsWith("/sync/changes?"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : bulk ? this.bulkTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
+      url: `${this.baseUrl}${path}`,
+      method,
+      headers,
+      body: body !== void 0 ? JSON.stringify(body) : void 0
+    }), abandonReject = () => {
+    }, abandoned = new Promise((_, rej) => {
+      abandonReject = rej;
+    }), entry = {
+      startedAt: Date.now(),
+      abandon: abandonReject,
+      shielded: attachmentTransfer
+    };
+    this.inflight.add(entry);
     try {
-      return await (0, import_obsidian.requestUrl)({
-        url: `${this.baseUrl}${path}`,
-        method,
-        headers,
-        body: body !== void 0 ? JSON.stringify(body) : void 0
-      });
+      return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
     } finally {
-      if (trace) {
+      if (this.inflight.delete(entry), trace) {
         let noteId = beaconNoteId(path);
         this.beacon.enqueue({
           trace_id: trace.traceId,
@@ -13192,13 +13229,43 @@ var EngramApi = class _EngramApi {
       }
     }
   }
-  /** Health check — no auth required. */
+  /** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
+   *  answers while they still hang — proof the connection they rode is wedged
+   *  (half-open after a deploy drain), not that the server is down. Called on
+   *  channel disconnect (the earliest wedge signal the plugin gets), so
+   *  recovery runs in ~probe time instead of the full request deadline. If
+   *  the probe fails, the server may be genuinely unreachable: leave the
+   *  requests to their normal deadline. Returns how many were failed. */
+  async failWedgedRequests(maxAgeMs = 4e3) {
+    if (this.wedgeProbeInFlight)
+      return 0;
+    this.wedgeProbeInFlight = !0;
+    try {
+      let now = Date.now(), stale = [...this.inflight].filter(
+        (e) => !e.shielded && now - e.startedAt >= maxAgeMs
+      );
+      if (stale.length === 0 || !await this.health())
+        return 0;
+      let failed = 0;
+      for (let e of stale)
+        this.inflight.delete(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
+      return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
+    } finally {
+      this.wedgeProbeInFlight = !1;
+    }
+  }
+  /** Health check — no auth required. Bounded like every other request: the
+   *  offline health-check loop awaits this, so a wedged probe would freeze
+   *  offline recovery. */
   async health() {
     try {
-      return (await (0, import_obsidian.requestUrl)({
-        url: `${this.baseUrl}/health`,
-        method: "GET"
-      })).status === 200;
+      return (await withTimeout(
+        (0, import_obsidian.requestUrl)({
+          url: `${this.baseUrl}/health`,
+          method: "GET"
+        }),
+        this.requestTimeoutMs
+      )).status === 200;
     } catch (e) {
       return !1;
     }
@@ -16571,7 +16638,13 @@ var EmailCaptureModal = class extends import_obsidian15.Modal {
   render() {
     let { contentEl } = this;
     if (contentEl.empty(), this.state.view === "success") {
-      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" });
+      let join = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+      join.createSpan({ text: "In the meantime, come say hi on " }), join.createEl("a", {
+        text: "Discord",
+        href: ENGRAM_DISCORD_URL,
+        attr: { target: "_blank", rel: "noopener" }
+      }), join.createSpan({ text: "." }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
       return;
     }
     contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet." }), contentEl.createEl("p", {
@@ -16588,6 +16661,10 @@ var EmailCaptureModal = class extends import_obsidian15.Modal {
     }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
       text: "GitHub",
       href: ENGRAM_GITHUB_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "Discord",
+      href: ENGRAM_DISCORD_URL,
       attr: { target: "_blank", rel: "noopener" }
     }), renderEmailCaptureForm({
       parent: contentEl,
@@ -17657,6 +17734,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
+    /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
+     *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
+     *  on a half-open connection — kept `pulling` true for 60s+, and deferred
+     *  edits never pushed, so sync looked dead. Instance field so tests can
+     *  shrink it. */
+    this.postPullMaxDeferMs = 5e3;
+    this.postPullDrainTimer = null;
     /** Id-keyed move: if `id` is already mapped to a DIFFERENT local path than
      *  `newPath`, the server moved one row (a rename resurrects the same note_id
      *  at a new path). Neither delivery channel is guaranteed to carry a delete
@@ -18375,7 +18459,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!this.ready || !this.isSyncable(file) || this.shouldIgnore(file.path)) return;
     if (this.pulling) {
-      this.pendingPostPullPushes.add(file.path);
+      this.pendingPostPullPushes.add(file.path), this.schedulePostPullDrain();
       return;
     }
     let crdtManaged = !!this.crdt && this.isMarkdown(file);
@@ -19195,10 +19279,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes(), this.pullPending && (this.pullPending = !1, this.pull());
     }
   }
+  /** Arm a one-shot bounded drain for the deferral above. Draining early is
+   *  safe: pushFile's echo-hash gate filters sync-write echoes either way —
+   *  the deferral only saves redundant echo traffic, it is not a correctness
+   *  gate. The normal end-of-pull drain clears this timer. */
+  schedulePostPullDrain() {
+    this.postPullDrainTimer === null && (this.postPullDrainTimer = window.setTimeout(() => {
+      this.postPullDrainTimer = null, this.flushPostPullPushes();
+    }, this.postPullMaxDeferMs));
+  }
   /** Push any files that were modified during pull. Echo suppression will
    *  naturally skip sync-engine writes; only real user edits get pushed. */
   async flushPostPullPushes() {
-    if (this.pendingPostPullPushes.size === 0) return;
+    if (this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
     let paths = [...this.pendingPostPullPushes];
     this.pendingPostPullPushes.clear(), devLog().log("push", `flushing ${paths.length} post-pull pushes`), rlog().info("push", `Post-pull flush: ${paths.length} files`);
     for (let path of paths) {
@@ -19686,7 +19779,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -19720,13 +19813,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
+    if (!forceOverwrite && change.version !== void 0) {
+      let known = (_d = this.syncState.get(normalized)) == null ? void 0 : _d.version;
+      if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
+        return rlog().info(
+          "pull",
+          `applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`
+        ), !1;
+    }
     let crdtConflictFallthrough = !1;
     if (this.crdt && normalized.endsWith(".md")) {
-      let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
+      let noteId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(normalized)) != null ? _f : null;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        noteId && this.isLiveBound(normalized) && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && this.isLiveBound(normalized) && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId));
+        noteId && this.isLiveBound(normalized) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId));
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -19736,9 +19837,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
             ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
               this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_i = stored == null ? void 0 : stored.hash) != null ? _i : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
-                ...(_i = this.syncState.get(normalized)) != null ? _i : {},
+                ...(_j = this.syncState.get(normalized)) != null ? _j : {},
                 hash: localHash,
                 serverHash: change.content_hash,
                 version: change.version
@@ -19787,14 +19888,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_j = this.baseStore) == null ? void 0 : _j.get(normalized);
+        let pullBase = (_k = this.baseStore) == null ? void 0 : _k.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_k = this.baseStore) == null || _k.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -19845,7 +19946,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_l = this.baseStore) == null || _l.set(
+            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -19867,7 +19968,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
+            }), change.version != null && ((_n = this.baseStore) == null || _n.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -19890,12 +19991,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_n = this.baseStore) == null || _n.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -19914,7 +20015,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_q = this.baseStore) == null || _q.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -20956,7 +21057,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.wipedRemote.clear();
     for (let timer of this.remotelyDeleted.values())
       window.clearTimeout(timer);
-    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
@@ -23112,7 +23213,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
         var _a2;
-        this.liveConnected = connected, connected && (this.everConnected = !0), this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
+        this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
           var _a3, _b2;
           if (!this.crdtMapReconciled)
             try {

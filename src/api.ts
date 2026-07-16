@@ -28,7 +28,56 @@ import type {
 	VersionConflictResponse,
 } from "./types";
 
+/** A request exceeded its deadline. requestUrl() cannot be aborted, so the
+ *  underlying request is ABANDONED, not cancelled — a late server-side apply
+ *  is possible and handled by the normal echo/conflict machinery. Carries no
+ *  `status`, so existing callers classify it like connection loss (issue #244:
+ *  a wedged half-open request hung forever, pinning `pulling` and stalling
+ *  sync in both directions until plugin reload). */
+export class RequestTimeoutError extends Error {
+	constructor(ms: number) {
+		super(`Request timed out after ${ms}ms`);
+		this.name = "RequestTimeoutError";
+	}
+}
+
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+	let timer: number | undefined;
+	const deadline = new Promise<never>((_, reject) => {
+		timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
+	});
+	try {
+		// race (not re-wrap) so a requestUrl rejection propagates UNCHANGED —
+		// callers classify on its `.status` (402 limit parse, 401 token retry).
+		// A loser's late rejection can never surface as unhandled: race itself
+		// attaches a reaction to every contender.
+		return await Promise.race([p, deadline]);
+	} finally {
+		window.clearTimeout(timer);
+	}
+}
+
 export class EngramApi {
+	/** Deadline for note/metadata requests. Instance fields (not consts) so
+	 *  tests can shrink them; attachments get a longer one — a large upload on
+	 *  a slow link legitimately outlives the note deadline. */
+	requestTimeoutMs = 15_000;
+	attachmentTimeoutMs = 120_000;
+	/** Bulk pages (batch push, change feeds) can carry many full note bodies —
+	 *  15s starves a slow link, 120s is a transfer budget they don't need. */
+	bulkTimeoutMs = 60_000;
+
+	/** In-flight sendRequest calls, so a channel-disconnect signal can probe
+	 *  for wedged connections and fail them early (see failWedgedRequests). */
+	private readonly inflight = new Set<{
+		startedAt: number;
+		abandon: (e: Error) => void;
+		shielded: boolean;
+	}>();
+
+	/** Single-flight latch for failWedgedRequests (see there). */
+	private wedgeProbeInFlight = false;
+
 	private vaultId: string | null = null;
 	private deviceId: string | null = null;
 	private authProvider: AuthProvider | null = null;
@@ -195,14 +244,56 @@ export class EngramApi {
 		if (body !== undefined) {
 			headers["Content-Type"] = "application/json";
 		}
+		// Deadline classes. Only actual attachment byte transfers earn 120s:
+		// upload (POST /attachments) and download (GET /attachments/<path>).
+		// The EXACT-endpoint check matters — "/attachments/changes" is the
+		// metadata feed, but "/attachments/changes.pdf" is a real file download
+		// (a prefix match starved any attachment literally named changes*).
+		// Bulk pages that legitimately carry many full note bodies (batch push,
+		// bootstrap/cursor change pages) get a middle deadline: 15s is too
+		// tight for a slow link, but they stay wedge-abortable (below) so a
+		// wedged pull still recovers in probe time, not 60s.
+		const attachmentMeta =
+			path === "/attachments/changes" || path.startsWith("/attachments/changes?");
+		const attachmentTransfer =
+			path.startsWith("/attachments") &&
+			!attachmentMeta &&
+			(method === "POST" || method === "GET");
+		const bulk =
+			path === "/notes/batch" ||
+			path.startsWith("/notes/changes?") ||
+			path === "/sync/changes" ||
+			path.startsWith("/sync/changes?");
+		const timeoutMs = attachmentTransfer
+			? this.attachmentTimeoutMs
+			: bulk
+				? this.bulkTimeoutMs
+				: this.requestTimeoutMs;
+		const raw = requestUrl({
+			url: `${this.baseUrl}${path}`,
+			method,
+			headers,
+			body: body !== undefined ? JSON.stringify(body) : undefined,
+		});
+		let abandonReject: (e: Error) => void = () => {};
+		const abandoned = new Promise<never>((_, rej) => {
+			abandonReject = rej;
+		});
+		// `shielded`: a slow-but-healthy attachment transfer legitimately hangs
+		// past the probe age, so the wedge probe must never abort it — its own
+		// 120s deadline is the only ceiling. (Bulk pages are NOT shielded:
+		// ponytail — a WS flap can abort a slow healthy bulk page, which just
+		// retries; shielding them would regress the wedged-pull fast recovery.)
+		const entry = {
+			startedAt: Date.now(),
+			abandon: abandonReject,
+			shielded: attachmentTransfer,
+		};
+		this.inflight.add(entry);
 		try {
-			return await requestUrl({
-				url: `${this.baseUrl}${path}`,
-				method,
-				headers,
-				body: body !== undefined ? JSON.stringify(body) : undefined,
-			});
+			return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
 		} finally {
+			this.inflight.delete(entry);
 			// Fire-and-forget: enqueue is O(1), touches no network on this path
 			// (the buffer batches/flushes on its own timer), and never blocks or
 			// fails the request above, including on the error path, so a failed
@@ -230,13 +321,62 @@ export class EngramApi {
 		}
 	}
 
-	/** Health check — no auth required. */
+	/** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
+	 *  answers while they still hang — proof the connection they rode is wedged
+	 *  (half-open after a deploy drain), not that the server is down. Called on
+	 *  channel disconnect (the earliest wedge signal the plugin gets), so
+	 *  recovery runs in ~probe time instead of the full request deadline. If
+	 *  the probe fails, the server may be genuinely unreachable: leave the
+	 *  requests to their normal deadline. Returns how many were failed. */
+	async failWedgedRequests(maxAgeMs = 4_000): Promise<number> {
+		// Single-flight: reconnect flaps fire this repeatedly; concurrent probes
+		// would double-count the same stale entries.
+		if (this.wedgeProbeInFlight) {
+			return 0;
+		}
+		this.wedgeProbeInFlight = true;
+		try {
+			const now = Date.now();
+			const stale = [...this.inflight].filter(
+				(e) => !e.shielded && now - e.startedAt >= maxAgeMs,
+			);
+			if (stale.length === 0) {
+				return 0;
+			}
+			if (!(await this.health())) {
+				return 0;
+			}
+			let failed = 0;
+			for (const e of stale) {
+				// Delete BEFORE abandoning: sendRequest's finally-cleanup runs a
+				// microtask later, so without this a racing settle could be
+				// double-counted.
+				if (this.inflight.delete(e)) {
+					e.abandon(new RequestTimeoutError(maxAgeMs));
+					failed++;
+				}
+			}
+			if (failed > 0) {
+				rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`);
+			}
+			return failed;
+		} finally {
+			this.wedgeProbeInFlight = false;
+		}
+	}
+
+	/** Health check — no auth required. Bounded like every other request: the
+	 *  offline health-check loop awaits this, so a wedged probe would freeze
+	 *  offline recovery. */
 	async health(): Promise<boolean> {
 		try {
-			const resp = await requestUrl({
-				url: `${this.baseUrl}/health`,
-				method: "GET",
-			});
+			const resp = await withTimeout(
+				requestUrl({
+					url: `${this.baseUrl}/health`,
+					method: "GET",
+				}),
+				this.requestTimeoutMs,
+			);
 			return resp.status === 200;
 		} catch {
 			return false;

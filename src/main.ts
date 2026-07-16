@@ -1538,6 +1538,14 @@ export default class EngramSyncPlugin extends Plugin {
 				channel.onStatusChange = (connected) => {
 					this.liveConnected = connected;
 					if (connected) this.everConnected = true;
+					if (!connected) {
+						// A dropped channel is the earliest wedge signal: any HTTP
+						// request in flight on a now-half-open pooled connection would
+						// otherwise hang to its full deadline (issue #244 follow-up).
+						// Probe /health on a fresh connection and fail the wedged ones
+						// now so pull/push recovery runs in seconds.
+						void this.api.failWedgedRequests();
+					}
 					this.updateStatusBar(this.syncEngine.getStatus());
 					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {

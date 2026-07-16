@@ -3,7 +3,12 @@
  */
 import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
-import { EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "../src/api";
+import {
+	EngramApi,
+	RequestTimeoutError,
+	arrayBufferToBase64,
+	base64ToArrayBuffer,
+} from "../src/api";
 import type { AuthProvider } from "../src/auth";
 import { toB64 } from "../src/crdt/channel";
 import { LimitExceededError } from "../src/limit-error";
@@ -1016,5 +1021,221 @@ describe("path encoding for by-path URL methods", () => {
 		await api().deleteNote("Notes/Sub/Deep.md");
 		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
 		expect(lastUrl()).not.toContain("%2F");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Request timeout (issue #244 — a wedged requestUrl on a half-open connection
+// hung forever, holding `pulling`/push slots and stalling sync both ways)
+// ---------------------------------------------------------------------------
+
+describe("request timeout", () => {
+	const never = () => new Promise<never>(() => {});
+
+	function timedApi(): EngramApi {
+		const api = new EngramApi("http://host", "key");
+		api.requestTimeoutMs = 20;
+		api.attachmentTimeoutMs = 300;
+		return api;
+	}
+
+	test("a request that never settles rejects with RequestTimeoutError", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const start = Date.now();
+		await expect(timedApi().getMe()).rejects.toThrow(RequestTimeoutError);
+		// Bound the wait: the reject must come from the 20ms timer, not a fluke.
+		await Bun.sleep(30);
+		expect(Date.now() - start).toBeLessThan(500);
+	});
+
+	test("attachment paths use the longer attachment timeout", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const api = timedApi();
+		let settledAt: number | null = null;
+		const p = api.pushAttachment("a.png", "AAAA", "image/png", 1).catch(() => {
+			settledAt = Date.now();
+		});
+		const start = Date.now();
+		// Probe well past the 20ms note timeout but far short of the 300ms
+		// attachment timer — wide margins so CI-runner jitter can't invert
+		// the ordering (review finding on the original 30ms/40ms pair).
+		await Bun.sleep(80);
+		expect(settledAt).toBeNull(); // still pending past the note timeout
+		await p;
+		expect(settledAt).not.toBeNull();
+		expect((settledAt ?? 0) - start).toBeGreaterThanOrEqual(150);
+	});
+
+	test("a fast response is unaffected", async () => {
+		mockRequestUrl.mockResolvedValue({ status: 200, json: { user: { id: "u", email: "e" } } });
+		const user = await timedApi().getMe();
+		expect(user.id).toBe("u");
+	});
+
+	test("health() is also bounded", async () => {
+		mockRequestUrl.mockImplementation(never);
+		const api = timedApi();
+		const healthy = await api.health();
+		expect(healthy).toBe(false);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Wedge detector (issue #244 follow-up): on channel disconnect, a fresh
+// /health probe that answers while older in-flight requests still hang proves
+// the CONNECTION is wedged (half-open after a drain), not the server — fail
+// those requests now instead of waiting out the full deadline.
+// ---------------------------------------------------------------------------
+
+describe("failWedgedRequests", () => {
+	const never = () => new Promise<never>(() => {});
+
+	function api(): EngramApi {
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 5_000; // far away — early rejection must come from the probe
+		return a;
+	}
+
+	test("rejects stale in-flight requests when the health probe answers", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = api();
+		const pending = a.getMe();
+		const settled = pending.catch((e) => e);
+		await Bun.sleep(1); // let sendRequest pass its async preamble and register
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(1);
+		expect(await settled).toBeInstanceOf(RequestTimeoutError);
+	});
+
+	test("leaves requests alone when the server is unreachable (real outage)", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.reject(new Error("down")) : never(),
+		);
+		const a = api();
+		let settled = false;
+		a.getMe().catch(() => {
+			settled = true;
+		});
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+
+	test("leaves young requests alone", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = api();
+		let settled = false;
+		a.getMe().catch(() => {
+			settled = true;
+		});
+		const failed = await a.failWedgedRequests(60_000);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+});
+
+describe("attachment deadline scope", () => {
+	test("attachment metadata (DELETE) uses the note deadline, not the transfer one", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.attachmentTimeoutMs = 100_000;
+		const start = Date.now();
+		await expect(a.deleteAttachment("x.png")).rejects.toThrow(RequestTimeoutError);
+		expect(Date.now() - start).toBeLessThan(5_000);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Review-wave fixes (2026-07-15): wedge-probe shielding, single-flight,
+// exact /attachments/changes endpoint match, bulk deadline tier.
+// ---------------------------------------------------------------------------
+
+describe("wedge probe shielding + single-flight", () => {
+	const never = () => new Promise<never>(() => {});
+
+	test("a slow attachment transfer is never wedge-aborted", async () => {
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health") ? Promise.resolve({ status: 200 }) : never(),
+		);
+		const a = new EngramApi("http://host", "key");
+		let settled = false;
+		a.pushAttachment("big.png", "AAAA", "image/png", 1).catch(() => {
+			settled = true;
+		});
+		await Bun.sleep(1);
+		const failed = await a.failWedgedRequests(0);
+		expect(failed).toBe(0);
+		await Bun.sleep(10);
+		expect(settled).toBe(false);
+	});
+
+	test("concurrent probes are single-flight (no double abandon/count)", async () => {
+		let healthResolve: (v: unknown) => void = () => {};
+		mockRequestUrl.mockImplementation((opts: { url: string }) =>
+			opts.url.includes("/health")
+				? new Promise((r) => {
+						healthResolve = r;
+					})
+				: never(),
+		);
+		const a = new EngramApi("http://host", "key");
+		const settled = a.getMe().catch((e) => e);
+		await Bun.sleep(1);
+		const p1 = a.failWedgedRequests(0);
+		const p2 = a.failWedgedRequests(0); // in-flight → immediate 0
+		healthResolve({ status: 200 });
+		expect(await p2).toBe(0);
+		expect(await p1).toBe(1);
+		expect(await settled).toBeInstanceOf(RequestTimeoutError);
+	});
+});
+
+describe("deadline classification", () => {
+	test("an attachment literally named changes.pdf gets the transfer deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 20;
+		a.attachmentTimeoutMs = 300;
+		let settledAt: number | null = null;
+		const p = a.getAttachment("changes.pdf").catch(() => {
+			settledAt = Date.now();
+		});
+		await Bun.sleep(80); // past note+bulk deadlines, well short of transfer
+		expect(settledAt).toBeNull();
+		await p;
+		expect(settledAt).not.toBeNull();
+	});
+
+	test("the /attachments/changes metadata feed keeps the short deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.attachmentTimeoutMs = 100_000;
+		await expect(a.getAttachmentChanges("2026-01-01T00:00:00Z")).rejects.toThrow(
+			RequestTimeoutError,
+		);
+	});
+
+	test("bulk change pages use the middle deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 300;
+		let settledAt: number | null = null;
+		const p = a.getSyncChanges("cursor-1").catch(() => {
+			settledAt = Date.now();
+		});
+		await Bun.sleep(80); // past the note deadline, short of the bulk one
+		expect(settledAt).toBeNull();
+		await p;
+		expect(settledAt).not.toBeNull();
 	});
 });
