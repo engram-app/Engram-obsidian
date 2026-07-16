@@ -355,6 +355,43 @@ export class NoteChannel {
 		});
 	}
 
+	/** Genesis a server row over the socket. Returns the server's authoritative
+	 *  doc_id — on ADOPT (path already owned by a different live note) the server
+	 *  returns a DIFFERENT id, which Task 3 uses to remap the local note and avoid
+	 *  orphaning edits. */
+	async crdtCreate(docId: string, path: string): Promise<string> {
+		const res = (await this.sendRequest("crdt_create", { doc_id: docId, path })) as {
+			doc_id: string;
+		};
+		return res.doc_id;
+	}
+
+	/** Delete a note over the socket (idempotent; fire-and-forget). */
+	crdtDelete(docId: string): void {
+		const t = this.crdtTopic;
+		if (!t || !this.crdtJoined) return;
+		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_delete", { doc_id: docId }]);
+	}
+
+	/** Vault-level head map for catch-up divergence detection. */
+	async crdtCatchupHeads(): Promise<{ heads: Record<string, string> }> {
+		return (await this.sendRequest("crdt_catchup_heads", {})) as {
+			heads: Record<string, string>;
+		};
+	}
+
+	/** Missing ops for one diverged note, given the client's base64 state vector. */
+	async crdtCatchupDelta(
+		docId: string,
+		sv: string,
+	): Promise<{ doc_id: string; b64: string; head: string }> {
+		return (await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv })) as {
+			doc_id: string;
+			b64: string;
+			head: string;
+		};
+	}
+
 	async connect(): Promise<void> {
 		if (this.ws) return;
 		this.reconnectMs = 1000;
