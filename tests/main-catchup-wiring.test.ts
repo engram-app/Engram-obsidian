@@ -42,7 +42,14 @@ function flushMicrotasks(): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>) {
+function makeFakeThis(
+	catchup: () => Promise<void>,
+	pull: () => Promise<number>,
+	opts?: {
+		reconcile?: () => Promise<number>;
+		lastMapReconcileAt?: number;
+	},
+) {
 	return {
 		settings: {
 			apiUrl: "https://api.example.com",
@@ -57,7 +64,10 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>)
 		authProvider: null,
 		liveConnected: false,
 		everConnected: false,
-		crdtMapReconciled: true, // skip the manifest-reconcile branch, irrelevant here
+		// Recently reconciled (now) by default — throttle window is open,
+		// so the manifest-reconcile branch is skipped, irrelevant to the
+		// tests that don't target it.
+		lastMapReconcileAt: opts?.lastMapReconcileAt ?? Date.now(),
 		crdtEverJoined: false,
 		crdtManager: null,
 		crdtEnrollment: undefined,
@@ -69,7 +79,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>)
 		syncEngine: {
 			getStatus: () => "idle",
 			clearConfirmedNoteIds: () => {},
-			reconcileNoteIdMapFromManifest: () => Promise.resolve(0),
+			reconcileNoteIdMapFromManifest: opts?.reconcile ?? (() => Promise.resolve(0)),
 			catchupViaSocket: catchup,
 			pull: pull,
 			// Wired unconditionally by connectChannel right after this.noteStream
@@ -103,5 +113,52 @@ describe("connectChannel reconnect catch-up", () => {
 
 		expect(catchup).toHaveBeenCalled();
 		expect(pull).not.toHaveBeenCalled();
+	});
+
+	test("a reconnect after the throttle window reconciles the noteIdMap before catchup", async () => {
+		const catchup = mock(() => Promise.resolve());
+		const pull = mock(() => Promise.resolve(0));
+		const reconcile = mock(() => Promise.resolve(1)); // discovers 1 new id
+		// Never reconciled (map is stale/empty) — throttle window is open.
+		const fakeThis = makeFakeThis(catchup, pull, { reconcile, lastMapReconcileAt: 0 });
+
+		(
+			EngramSyncPlugin.prototype as unknown as {
+				connectChannel: (a: number, e: number) => void;
+			}
+		).connectChannel.call(fakeThis as never, 0, 0);
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		fakeThis.noteStream?.onStatusChange?.(true);
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(catchup).toHaveBeenCalled();
+	});
+
+	test("two reconnects within the throttle window run the reconcile once", async () => {
+		const catchup = mock(() => Promise.resolve());
+		const pull = mock(() => Promise.resolve(0));
+		const reconcile = mock(() => Promise.resolve(0));
+		const fakeThis = makeFakeThis(catchup, pull, { reconcile, lastMapReconcileAt: 0 });
+
+		(
+			EngramSyncPlugin.prototype as unknown as {
+				connectChannel: (a: number, e: number) => void;
+			}
+		).connectChannel.call(fakeThis as never, 0, 0);
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		// A reconnect storm: two connects back-to-back, well inside the
+		// throttle window.
+		fakeThis.noteStream?.onStatusChange?.(true);
+		fakeThis.noteStream?.onStatusChange?.(true);
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		expect(reconcile).toHaveBeenCalledTimes(1);
 	});
 });

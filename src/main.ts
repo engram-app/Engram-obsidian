@@ -265,12 +265,19 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  whether the sync gate should be open. */
 	private syncGateAcceptedFor: string | null = null;
 
-	/** Whether the noteIdMap has been reconciled from the server manifest this
-	 *  session. The reconcile repairs a stale/empty map (drift is a one-time
-	 *  startup/migration event), so it runs ONCE on the first successful connect,
-	 *  not on every reconnect — re-fetching the manifest on each network blip adds
-	 *  load and perturbs in-flight sync timing. Reset on vault change. */
-	private crdtMapReconciled = false;
+	/** Timestamp (ms) of the last noteIdMap manifest-reconcile attempt.
+	 *  Reconciling on EVERY reconnect (not just the first) is required so a
+	 *  note another device created during a disconnect is discovered — see
+	 *  reconcileNoteIdMapFromManifest — but firing a manifest fetch on every
+	 *  connect during a reconnect storm (flaky wifi, deploy-drain churn) is
+	 *  the same class of load that caused the 2026-07-09 pool-exhaustion
+	 *  incident (docs/context/crdt-sync-pool-exhaustion-loop-2026-07-09.md).
+	 *  RECONCILE_THROTTLE_MS bounds a storm to one reconcile per window while
+	 *  a genuine reconnect after a real gap still reconciles and discovers.
+	 *  Reset to 0 on vault change so the new vault reconciles immediately. */
+	private lastMapReconcileAt = 0;
+
+	private static readonly RECONCILE_THROTTLE_MS = 30_000;
 
 	/** Single-flight guard so a vault switch (or any racing trigger) cannot
 	 *  stack two SyncPreviewModal instances. A second call while one preview is
@@ -1571,15 +1578,23 @@ export default class EngramSyncPlugin extends Plugin {
 						// makes live pull resolve. Await it so the map is ready before the
 						// STEP1/STEP2 handshakes below deliver content.
 						void (async () => {
-							// Once per session (first successful connect): a stale map is a
-							// startup/migration condition, not a per-reconnect one. On failure
-							// (e.g. offline at first connect) leave the flag unset so a later
-							// connect retries.
-							if (!this.crdtMapReconciled) {
+							// Runs on every reconnect (throttled) rather than once per
+							// session: a stale map on a second+ reconnect leaves
+							// catchupViaSocket deaf to notes another device created
+							// during the disconnect (see lastMapReconcileAt doc comment
+							// for the storm-throttle rationale). Stamp the timestamp
+							// BEFORE the await so a burst of reconnects arriving faster
+							// than one manifest round-trip sees the throttle already
+							// engaged instead of racing a second fetch.
+							const now = Date.now();
+							if (
+								now - this.lastMapReconcileAt >
+								EngramSyncPlugin.RECONCILE_THROTTLE_MS
+							) {
+								this.lastMapReconcileAt = now;
 								try {
 									const n =
 										await this.syncEngine.reconcileNoteIdMapFromManifest();
-									this.crdtMapReconciled = true;
 									if (n > 0) {
 										rlog().info(
 											"crdt",
@@ -2072,8 +2087,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// even when the new vault is empty.
 						await this.syncEngine.resetForVaultChange();
 						this.syncGateAcceptedFor = null;
-						// New vault = new id/path space; re-reconcile on next connect.
-						this.crdtMapReconciled = false;
+						// New vault = new id/path space; re-reconcile on next connect
+						// (bypass the throttle — this isn't a storm, it's a real swap).
+						this.lastMapReconcileAt = 0;
 						// Strand-heal retry counts are scoped to the previous vault's
 						// note_ids (final review MINOR-6) — stale counts here could
 						// prematurely give up on a note_id that happens to be reused
