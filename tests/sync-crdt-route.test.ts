@@ -1067,6 +1067,100 @@ describe("REST-first fix: new-note gate confirms via REST before CRDT", () => {
 });
 
 // ---------------------------------------------------------------------------
+// Task 3: new-note genesis routes through crdt_create (socket-native create),
+// not REST pushNote. crdt_create returns the server's authoritative doc_id: on
+// ADOPT (path already owned by a live note under a different id) the note is
+// remapped to that server id so its body/edits address the row that exists —
+// keeping the local mint would orphan the note (content loss). crdt_create can
+// reject (delete-wins, rate-limited, bad path); on rejection the note is NOT
+// lost — it falls through to the still-functional REST create (removed in B2).
+// ---------------------------------------------------------------------------
+
+describe("Task 3: new-note genesis routes through crdt_create", () => {
+	test("a brand-new note genesis goes over crdt_create, not REST pushNote", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		// The body is seeded into the Y.Doc after the row is created — the update
+		// listener forwards it over the channel. applyLocalEdit reports consumed.
+		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
+		const created: Array<{ id: string; path: string }> = [];
+		engine.setCrdtCreate(async (id: string, path: string) => {
+			created.push({ id, path });
+			return id; // server adopts the client-minted id (no collision).
+		});
+
+		const file = new TFile("Notes/brand-new.md");
+		engine.handleModify(file);
+		await flush();
+
+		expect(created).toHaveLength(1);
+		expect(created[0]?.path).toBe("Notes/brand-new.md");
+		// The minted id is the one sent to crdt_create and retained on the map.
+		expect(created[0]?.id).toBe(noteIdMap.get("Notes/brand-new.md"));
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("ADOPT: crdt_create returns a DIFFERENT id → note remapped to the server id, enroll + seed use it", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		// A live-bound note is gated OUT of handleModify (the editor owns the
+		// disk-write echo), so it reaches pushFile's genesis only via a direct
+		// call (full-sync batch / rename). Call pushFile directly so the genesis
+		// enroll (live-bound only) is exercised.
+		engine.setLiveBoundCheck(() => true);
+		const enroll = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
+		// Server already owns this path under a live note with a different id.
+		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+
+		const file = new TFile("Notes/collision.md");
+		await (
+			engine as unknown as { pushFile: (f: TFile, force?: boolean) => Promise<boolean> }
+		).pushFile(file);
+
+		// The local mint is replaced by the server's authoritative id: subsequent
+		// crdt_msg edits now address the row that actually exists.
+		expect(noteIdMap.get("Notes/collision.md")).toBe("server-owns-this");
+		// Body seeded AND enrolled under the SERVER id, never the orphaned mint.
+		expect(applyLocalEdit).toHaveBeenCalledWith(
+			"server-owns-this",
+			"body",
+			undefined,
+			expect.any(Function),
+		);
+		expect(enroll).toHaveBeenCalledWith("server-owns-this");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("rejection: crdt_create rejects → REST pushNote still delivers the note (not lost), error swallowed not thrown", async () => {
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
+		// Backend rejects the create (e.g. delete-wins / rate-limited).
+		engine.setCrdtCreate(async () => {
+			throw new Error("recently_deleted");
+		});
+
+		const file = new TFile("Notes/rejected.md");
+		// Must not reject out of pushFile — the catch logs and falls through.
+		engine.handleModify(file);
+		await flush();
+
+		// The note is created via the REST fallback, never dropped.
+		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/rejected.md",
+			"body",
+			expect.any(Number),
+			undefined,
+			noteIdMap.get("Notes/rejected.md"),
+		);
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Teardown fix — setupNoteStream must clear SyncEngine CRDT references
 //
 // Regression pin for the Important-1 review finding: the old teardown relied on
