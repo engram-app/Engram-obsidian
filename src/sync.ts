@@ -683,10 +683,8 @@ export class SyncEngine {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
 
-	// Single source of truth for "this note converges via CRDT ops, not the
-	// whole-doc push". Previously duplicated inline in pushFile and
-	// pushNotesViaBatch; both now call this.
-	//
+	// "This note converges via CRDT ops, not the whole-doc push." Called only by
+	// pushNotesViaBatch now; pushFile routes on hasServerNote directly.
 	private isCrdtManaged(path: string, noteId: string | null): boolean {
 		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
 		// shared clauses live in one place and can't drift between the two.
@@ -695,18 +693,21 @@ export class SyncEngine {
 
 	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
 	// note WOULD converge via CRDT ops if the crdt: channel were joined right
-	// now (Task 5, single authority). CRDT is UNCONDITIONAL for a confirmed
-	// note — a cold edit (note edited while its dedicated room is closed) MUST
-	// stay on CRDT so it merges with concurrent remote edits; routing it to
-	// legacy whole-doc REST would be last-write-wins → lost merges (#230).
+	// now (Task 5, single authority). Oracle is hasServerNote — the note's own
+	// CRDT state (crdtHead != null), the SAME oracle pushFile routes on, NOT the
+	// confirmed-set. The confirmed-set is wiped on every reconnect
+	// (clearConfirmedNoteIds); keying batch ownership on it re-routed a
+	// server-known note edited during a disconnect to legacy whole-doc REST,
+	// last-write-wins over a concurrent remote edit → lost merge (#230, DI-1).
+	// crdtHead survives reconnect, so a cold edit stays on CRDT and merges.
 	// Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
 	// idle note ships its edit channel-up or as a crdt-tagged durable /updates
-	// entry (runFlushQueue's noteId-keyed branch). pushFile/pushNotesViaBatch
-	// use this to keep a channel-down note off the legacy base_hash push; the
-	// crdt-live check is applied separately by the caller to pick channel-op vs
+	// entry (runFlushQueue's noteId-keyed branch). pushNotesViaBatch uses this
+	// to keep a channel-down note off the legacy base_hash push; the crdt-live
+	// check is applied separately by the caller to pick channel-op vs
 	// durable-REST transport.
 	private isCrdtManagedOffline(_path: string, noteId: string | null): boolean {
-		return !!this.crdt && !!noteId && this.isNoteConfirmed(noteId);
+		return !!this.crdt && this.hasServerNote(noteId);
 	}
 
 	private confirmNoteId(noteId: string | null | undefined): void {
@@ -1754,7 +1755,7 @@ export class SyncEngine {
 				// offline and lands in the catch below's enqueue/retry net.
 				if (!sent) await this.api.deleteNote(file.path);
 			} else {
-				await this.api.deleteNote(file.path); // fallback — removed in Plan B2
+				await this.api.deleteNote(file.path); // no crdtDelete wired / no note_id: REST delete
 			}
 			this.goOnline();
 			// Tear down the CRDT doc so a note recreated at the same path starts
@@ -2123,27 +2124,27 @@ export class SyncEngine {
 				}
 
 				// Routing observability: which inputs decide CRDT-vs-REST for this
-				// markdown save. A brand-new note MUST be REST (confirmed=false); a
-				// stale confirmed=true here routes a never-server-known note to CRDT,
-				// which the backend silently drops. Surfaced so the delivery oracle
-				// can attribute a "not on server" failure to the routing decision.
+				// markdown save. Routing is gated on hasServerNote (server=): a note
+				// the server already holds (crdtHead != null) routes over CRDT ops; a
+				// never-server-known note takes the genesis crdt_create path below.
+				// `confirmed` is a legacy diagnostic; it no longer drives routing.
 				if (file.extension === "md") {
 					rlog().info(
 						"push",
-						`route: ${file.path} crdt=${!!this.crdt} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
+						`route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
 					);
 				}
 
 				// CRDT path: route markdown saves through CrdtManager when wired,
 				// a note_id is known (#915-style gate: no id, no CRDT room to key
-				// the frame by — REST fallback owns it), the note is CONFIRMED
-				// server-known. The confirmed check exists because the backend's
+				// the frame by, REST fallback owns it), and the note is
+				// server-known (hasServerNote: crdtHead != null) because the backend's
 				// CRDT channel requires the note row to already exist (note_in_vault?)
 				// and silently DROPS a crdt_msg for an unknown note_id — it can no
 				// longer bootstrap a note from a bare wire doc_id (no path on the
 				// frame). A brand-new / never-synced note must therefore take the
-				// REST path below first (which creates the row and adopts the
-				// client-minted id, confirming it on success); only then do its
+				// genesis crdt_create path first (which creates the row and adopts the
+				// client-minted id); only then do its
 				// edits route through CRDT. diffIntoYText produces minimal ops.
 				//
 				// Transport (Task 5, single authority): once the edit is consumed
@@ -2282,8 +2283,8 @@ export class SyncEngine {
 				// a live note under a different id) it differs from our mint, so we
 				// remap before seeding/enrolling — addressing the row that exists rather
 				// than orphaning the note's content. On rejection (delete-wins,
-				// rate-limit, bad path) we log and fall through to the REST create,
-				// which still works in this additive phase (removed in Plan B2).
+				// rate-limit, bad path) we log and return false; there is no REST
+				// create fallback (CRDT is the sole md path); retries on reconnect.
 				if (
 					this.crdtCreate &&
 					this.crdt &&
