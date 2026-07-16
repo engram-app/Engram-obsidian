@@ -160,17 +160,55 @@ jobs:
           echo "Verified ${VERSION} is published as stable (prerelease=false, draft=false)"
 
       - name: Ensure versions.json has this version
-        # Runs last (after the RC-cleanup step's `git show HEAD~1` history read)
-        # so this commit doesn't shift HEAD before that step computes PREV_VERSION.
+        # Updates versions.json on main via the Contents API (not `git push
+        # origin HEAD:main`): main is protected, and the checked-out TAG
+        # commit's history is not guaranteed fast-forward with main (release-please
+        # pushes to main independently), so a raw push-of-HEAD can silently
+        # no-op or reject. Compare-on-sha PUT is atomic and works regardless
+        # of where main has moved; retries once on a concurrent-update 409.
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          VERSION: ${{ steps.version.outputs.version }}
         run: |
           set -euo pipefail
-          V="${GITHUB_REF_NAME}"
           MIN=$(jq -r '.minAppVersion' manifest.json)
-          if [ "$(jq --arg v "$V" 'has($v)' versions.json)" != "true" ]; then
-            tmp=$(mktemp); jq --arg v "$V" --arg m "$MIN" '.[$v]=$m' versions.json > "$tmp" && mv "$tmp" versions.json
-            git config user.name "engram-release[bot]"
-            git config user.email "engram-release[bot]@users.noreply.github.com"
-            git add versions.json
-            git commit -m "chore(release): versions.json ${V} [skip ci]"
-            git push origin HEAD:main
-          fi
+          API="https://api.github.com/repos/${{ github.repository }}/contents/versions.json"
+
+          for attempt in 1 2; do
+            RESP=$(curl --fail -sS \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}?ref=main")
+            SHA=$(echo "$RESP" | jq -r '.sha')
+            CONTENT=$(echo "$RESP" | jq -r '.content' | base64 -d)
+
+            if [ "$(echo "$CONTENT" | jq --arg v "$VERSION" 'has($v)')" = "true" ]; then
+              echo "versions.json already has ${VERSION} on main — skipping"
+              break
+            fi
+
+            NEW_CONTENT_B64=$(echo "$CONTENT" | jq --arg v "$VERSION" --arg m "$MIN" '.[$v]=$m' | base64 -w0)
+            BODY=$(jq -nc \
+              --arg msg "chore(release): versions.json ${VERSION} [skip ci]" \
+              --arg content "$NEW_CONTENT_B64" \
+              --arg sha "$SHA" \
+              '{message: $msg, content: $content, sha: $sha, branch: "main"}')
+
+            HTTP_STATUS=$(curl -sS -o /tmp/versions-put-response.json -w '%{http_code}' -X PUT \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}" -d "$BODY")
+
+            if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+              echo "Updated versions.json on main with ${VERSION}"
+              break
+            elif [ "$HTTP_STATUS" = "409" ] && [ "$attempt" = "1" ]; then
+              echo "sha conflict updating versions.json — retrying"
+              continue
+            else
+              echo "::error::Failed to update versions.json (HTTP $HTTP_STATUS): $(cat /tmp/versions-put-response.json)"
+              exit 1
+            fi
+          done
