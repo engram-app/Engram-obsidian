@@ -758,15 +758,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
 		// reconfigures it for each open note via EditorController.bindTo().
 		this.registerEditorExtension([ycollabExtension()]);
-		this.registerEvent(
-			// Plan B1 Task 6: file-open is now a pure local bind — no per-open
-			// convergence handshake (verifyConvergenceOnOpen, removed). The socket
-			// catch-up on (re)connect + connect-time re-enrollment now own keeping
-			// an open note converged, without the ~1s per-open REST-hash lag.
-			this.app.workspace.on("file-open", () => {
-				this.crdtLiveViews?.refresh();
-			}),
-		);
+		this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file)));
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
@@ -1248,6 +1240,21 @@ export default class EngramSyncPlugin extends Plugin {
 	 */
 	private handleAuthInvalidated(): void {
 		void this.clearAuthAndPromptRelink("server rejected refresh token", true);
+	}
+
+	/**
+	 * Rework #6: file-open keeps the instant local bind (unchanged, always
+	 * synchronous), then fires the mid-session divergence heal for the opened
+	 * note fire-and-forget — NOT awaited, so the open path is never blocked.
+	 * This restores the coverage the deleted `verifyConvergenceOnOpen` had (a
+	 * note that missed a live announce/STEP2 during a fan-out storm) without
+	 * its per-open synchronous REST manifest-hash check that caused the lag.
+	 */
+	private handleFileOpen(file: TFile | null): void {
+		this.crdtLiveViews?.refresh();
+		if (file?.path.endsWith(".md")) {
+			void this.syncEngine.healNoteOnOpen(file.path);
+		}
 	}
 
 	private createAuthProvider(): AuthProvider | null {
