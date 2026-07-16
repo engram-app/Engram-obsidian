@@ -248,6 +248,9 @@ beforeEach(() => {
 	(mockApi.pushAttachment as ReturnType<typeof mock>)
 		.mockReset()
 		.mockResolvedValue({ attachment: {} });
+	(mockApi.deleteNote as ReturnType<typeof mock>)
+		.mockReset()
+		.mockResolvedValue({ deleted: true, path: "" });
 	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue("body");
 	(mockApp.vault.modify as ReturnType<typeof mock>).mockReset().mockResolvedValue(undefined);
 	(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>)
@@ -1214,6 +1217,7 @@ describe("Task 4: local delete routes through crdt_delete", () => {
 		const deleted: string[] = [];
 		engine.setCrdtDelete((id: string) => {
 			deleted.push(id);
+			return true; // topic joined — sent
 		});
 
 		const file = new TFile("Notes/gone.md");
@@ -1221,6 +1225,43 @@ describe("Task 4: local delete routes through crdt_delete", () => {
 
 		expect(deleted).toEqual(["note-uuid"]);
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	// Rework #1: crdtDelete reports false when the crdt topic isn't joined
+	// (offline). handleDelete must not silently drop the delete — it falls
+	// through to the REST path, which throws offline and lands in the
+	// existing catch → enqueueChange net (src/sync.ts ~1731), retried by
+	// flushQueue on reconnect (src/sync.ts ~6683).
+	test("crdtDelete reporting false (topic not joined) falls back to REST, which enqueues when offline", async () => {
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/gone.md", "note-uuid");
+		const engine = createEngine(noteIdMap);
+		engine.setCrdtDelete(() => false); // topic not joined — nothing sent
+
+		(mockApi.deleteNote as ReturnType<typeof mock>).mockRejectedValueOnce(
+			new Error("Failed to fetch"),
+		);
+
+		const file = new TFile("Notes/gone.md");
+		await engine.handleDelete(file);
+
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/gone.md");
+		expect(engine.queue.size).toBe(1);
+		expect(engine.queue.all()[0]).toMatchObject({
+			action: "delete",
+			kind: "note",
+			path: "Notes/gone.md",
+		});
+
+		// Reconnect: flushQueue retries the durable delete and dequeues it.
+		(mockApi.deleteNote as ReturnType<typeof mock>).mockResolvedValueOnce({
+			deleted: true,
+			path: "Notes/gone.md",
+		});
+		await engine.flushQueue();
+
+		expect(mockApi.deleteNote).toHaveBeenCalledTimes(2);
+		expect(engine.queue.size).toBe(0);
 	});
 
 	test("a remote-applied delete does not echo a crdt_delete", async () => {
