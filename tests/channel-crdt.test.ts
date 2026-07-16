@@ -978,9 +978,9 @@ describe("NoteChannel.sendRequest", () => {
 			ref,
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { heads: { n1: "h1" } } },
+			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
 		]);
-		await expect(p).resolves.toEqual({ heads: { n1: "h1" } });
+		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
 
 		channel.disconnect();
 	});
@@ -1037,9 +1037,9 @@ describe("NoteChannel CRDT frame senders", () => {
 			ref,
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { heads: { n1: "h1" } } },
+			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
 		]);
-		await expect(p).resolves.toEqual({ heads: { n1: "h1" } });
+		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
 
 		channel.disconnect();
 	});

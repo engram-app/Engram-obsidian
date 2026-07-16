@@ -376,10 +376,13 @@ export class NoteChannel {
 		return true;
 	}
 
-	/** Vault-level head map for catch-up divergence detection. */
-	async crdtCatchupHeads(): Promise<{ heads: Record<string, string> }> {
+	/** Vault-level head map for catch-up divergence detection AND first-discovery.
+	 *  Each entry carries the note's server head plus its decrypted vault path, so
+	 *  a device that has never seen an id can materialize it at that path (the
+	 *  head map is the sole discovery source now that REST receive is gone). */
+	async crdtCatchupHeads(): Promise<{ heads: Record<string, { path: string; head: string }> }> {
 		return (await this.sendRequest("crdt_catchup_heads", {})) as {
-			heads: Record<string, string>;
+			heads: Record<string, { path: string; head: string }>;
 		};
 	}
 

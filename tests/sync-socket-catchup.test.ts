@@ -112,7 +112,12 @@ describe("catchupViaSocket", () => {
 		(engine as any).setCrdtHead("Notes/b.md", "old"); // diverged
 
 		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-a": "same", "id-b": "new" } }),
+			async () => ({
+				heads: {
+					"id-a": { path: "Notes/a.md", head: "same" },
+					"id-b": { path: "Notes/b.md", head: "new" },
+				},
+			}),
 			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
 		);
 
@@ -132,7 +137,12 @@ describe("catchupViaSocket", () => {
 		const engine = makeEngineWithCrdt(crdt);
 
 		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-a": "new", "id-b": "new" } }),
+			async () => ({
+				heads: {
+					"id-a": { path: "Notes/a.md", head: "new" },
+					"id-b": { path: "Notes/b.md", head: "new" },
+				},
+			}),
 			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
 		);
 
@@ -176,7 +186,7 @@ describe("catchupViaSocket", () => {
 			order.push("capture");
 		};
 		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": "new" } }),
+			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
 			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
 		);
 
@@ -208,7 +218,7 @@ describe("catchupViaSocket", () => {
 			return "new";
 		};
 		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": "new" } }),
+			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
 			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
 		);
 
@@ -232,7 +242,7 @@ describe("catchupViaSocket", () => {
 		(engine as any).setCrdtHead("Notes/b.md", "old");
 		(engine as any).captureDiskDriftBeforeRemote = async () => {};
 		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": "new" } }),
+			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
 			async (docId: string) => {
 				deltaCalls++;
 				return { doc_id: docId, b64: "AAE=", head: "new" };
@@ -243,6 +253,35 @@ describe("catchupViaSocket", () => {
 
 		expect(deltaCalls).toBe(2); // initial delta + gap-heal re-fetch
 		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("old"); // still gapped → NOT advanced
+	});
+
+	test("first-discovery: a head-map entry for an UNKNOWN id materializes the note at its path", async () => {
+		// The head map is the sole discovery source now that REST receive is gone.
+		// An id not in the noteIdMap must be learned from the entry's path and
+		// converged (flushFromCrdt creates the missing file).
+		const applied: string[] = [];
+		const crdt = {
+			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
+				applied.push(id);
+				return Promise.resolve();
+			},
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		const map = (engine as any).noteIdMap as NoteIdMap;
+
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-new": { path: "Notes/new.md", head: "h1" } } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		// The unknown id was learned from the head-map path and converged.
+		expect(map.pathForId("id-new")).toBe("Notes/new.md");
+		expect(applied).toEqual(["id-new"]);
+		expect((engine as any).getCrdtHead("Notes/new.md")).toBe("h1");
 	});
 
 	test("no-op when catchup deps or crdt manager are unset", async () => {
