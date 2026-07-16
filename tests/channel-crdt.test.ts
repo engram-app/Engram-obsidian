@@ -44,6 +44,21 @@ function simulateMessage(ws: any, msg: unknown[]): void {
 	ws.onmessage?.({ data: JSON.stringify(msg) });
 }
 
+/** News up a channel, opens the mock socket, and acks all three joins
+ *  (sync, user, crdt) so the crdt: topic is joined and ready for
+ *  sendRequest tests. Mirrors the [0]=sync join, [1]=user join,
+ *  [2]=crdt join setup used across this file. */
+async function joinedCrdtChannel(): Promise<{ channel: NoteChannel; ws: any }> {
+	const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+	await channel.connect();
+	const ws = lastWsInstance;
+	simulateOpen(ws);
+	simulateMessage(ws, [null, "1", "sync:u1:v1", "phx_reply", { status: "ok", response: {} }]);
+	simulateMessage(ws, [null, "2", "user:u1", "phx_reply", { status: "ok", response: {} }]);
+	simulateMessage(ws, [null, "3", "crdt:u1:v1", "phx_reply", { status: "ok", response: {} }]);
+	return { channel, ws };
+}
+
 beforeEach(() => {
 	lastWsUrl = null;
 	lastWsInstance = null;
@@ -939,6 +954,50 @@ describe("crdtJoined resets on unclean close (#191)", () => {
 		// A stale crdtJoined makes the join-ack handler's !crdtJoined guard
 		// skip this second fire, leaving main.ts unwired on the new session.
 		expect(joined).toHaveBeenCalledTimes(2);
+
+		channel.disconnect();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 1: channel request/reply plumbing (sendRequest + pendingReplies)
+// The one await-reply path the channel has — foundation for the socket-frame
+// senders that route create/delete/catch-up over the CRDT socket.
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel.sendRequest", () => {
+	test("sendRequest resolves on the matching phx_reply ref", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.sendRequest("crdt_catchup_heads", {});
+		// last outbound frame is the request; extract its ref (index 1 of the Phoenix array)
+		const frames = ws.sent.map((s: string) => JSON.parse(s));
+		const reqFrame = frames.find((f: unknown[]) => f[3] === "crdt_catchup_heads");
+		const ref = reqFrame[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { heads: { n1: "h1" } } },
+		]);
+		await expect(p).resolves.toEqual({ heads: { n1: "h1" } });
+
+		channel.disconnect();
+	});
+
+	test("sendRequest rejects on an error reply", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.sendRequest("crdt_catchup_delta", { doc_id: "n1", sv: null });
+		const frames = ws.sent.map((s: string) => JSON.parse(s));
+		const ref = frames.find((f: unknown[]) => f[3] === "crdt_catchup_delta")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "not_found" } },
+		]);
+		await expect(p).rejects.toThrow(/not_found/);
 
 		channel.disconnect();
 	});
