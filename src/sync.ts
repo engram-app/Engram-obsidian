@@ -3312,6 +3312,30 @@ export class SyncEngine {
 		}
 	}
 
+	/** Cheap mid-session divergence heal for the just-opened note (rework #6 —
+	 *  restores the coverage the removed `verifyConvergenceOnOpen` had, a note
+	 *  that missed a live announce/STEP2 during a fan-out storm, WITHOUT its
+	 *  per-open synchronous manifest-hash check + forced re-handshake, the
+	 *  #203 false-fire that caused the open-path lag). Fire-and-forget from
+	 *  file-open: a single note, one delta-since-our-real-state-vector via the
+	 *  existing guarded `restConvergeLiveBound` — empty (near-no-op) when
+	 *  already converged. Live-bound-only first cut (design decision iii): a
+	 *  just-opened note is live-bound after CrdtLiveViews.refresh(), so this
+	 *  covers the real case without a vault-wide heads fetch on every open; an
+	 *  idle note is still covered by reconnect catch-up (#5). Never throws. */
+	async healNoteOnOpen(path: string): Promise<void> {
+		if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
+		const normalized = normalizePath(path);
+		const noteId = this.noteIdMap?.get(normalized) ?? null;
+		if (!noteId || !this.isNoteConfirmed(noteId)) return;
+		if (!this.isLiveBound(normalized)) return; // idle notes heal on reconnect (#5)
+		try {
+			await this.restConvergeLiveBound(normalized, noteId);
+		} catch (e) {
+			rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
+		}
+	}
+
 	/** Pull remote changes and apply to the vault via the ordered cursor feed.
 	 *
 	 *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
