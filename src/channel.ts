@@ -110,7 +110,7 @@ export class NoteChannel {
 		{
 			resolve: (r: unknown) => void;
 			reject: (e: Error) => void;
-			timer: ReturnType<typeof setTimeout>;
+			timer: number;
 		}
 	>();
 	private readonly joinRef = "1";
@@ -346,7 +346,7 @@ export class NoteChannel {
 		}
 		const ref = String(++this.ref);
 		return new Promise((resolve, reject) => {
-			const timer = setTimeout(() => {
+			const timer = window.setTimeout(() => {
 				this.pendingReplies.delete(ref);
 				reject(new Error(`sendRequest timeout: ${event}`));
 			}, timeoutMs);
@@ -409,7 +409,7 @@ export class NoteChannel {
 		// Reject any in-flight sendRequest calls so callers don't hang forever
 		// waiting for a reply that a dead socket will never deliver.
 		for (const [, p] of this.pendingReplies) {
-			clearTimeout(p.timer);
+			window.clearTimeout(p.timer);
 			p.reject(new Error("channel disconnected"));
 		}
 		this.pendingReplies.clear();
@@ -775,7 +775,7 @@ export class NoteChannel {
 				const pending = this.pendingReplies.get(ref);
 				if (pending) {
 					this.pendingReplies.delete(ref);
-					clearTimeout(pending.timer);
+					window.clearTimeout(pending.timer);
 					const status = (payload as { status?: string })?.status;
 					const response = (payload as { response?: unknown })?.response;
 					if (status === "ok") pending.resolve(response);

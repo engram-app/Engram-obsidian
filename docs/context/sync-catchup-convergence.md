@@ -5,6 +5,8 @@ _Last verified: 2026-07-08_
 ## Status
 Working — shipped in plugin PRs #197 (v1.11.22) + #198 (v1.11.23), backend v0.5.642; hardened by #207/#209/#211 (v1.11.31-33) after reruns=0 unmasked three holes in the original design (see "The four guards").
 
+**Superseded (2026-07, Plan B1 CRDT-authoritative rewire, Task 6):** the per-open handshake `verifyConvergenceOnOpen` described in (c) below was REMOVED. File-open is now a pure local bind (`this.crdtLiveViews?.refresh()`, no hash comparison, no REST round-trip). Convergence on missed deliveries is now owned entirely by socket vault-catchup (`SyncEngine.catchupViaSocket()`) run at connect/reconnect (`main.ts` `onStatusChange`) and at `onLayoutReady`, over `crdt_catchup_heads`/`crdt_catchup_delta`. The rest of this doc (id adoption, base_hash CAS, backfill, the four guards) is still accurate — only mechanism (c) changed.
+
 ## What This Is
 Why a missed CRDT delivery used to be missed forever, and the healing system (PRs #197 + #198, 2026-07-07/08) that makes the plugin converge instead of silently diverging or deleting content.
 
@@ -20,7 +22,7 @@ Why a missed CRDT delivery used to be missed forever, and the healing system (PR
 - **#198 (v1.11.23):**
   - (a) `pushFile` declares `base_hash = syncState.serverHash` (the server `content_hash` last synced — NEVER computed locally); backend v0.5.642 CAS gate 409s stale pushes; the 409 rides the existing conflict flow (auto default = conflict-copy file, no silent deletion). Conflict-flow re-pushes deliberately send no base (intentional overwrites).
   - (b) `applyChange` for a CRDT-owned local note backfills the pull body when `change.content_hash` diverges from stored `serverHash` — or forces enrollment reset+enroll re-handshake when the note is live-bound (`setLiveBoundCheck`; the editor owns the file, never write disk under it).
-  - (c) `verifyConvergenceOnOpen` on file-open: compares the manifest snapshot's `content_hash` (30s-TTL cache from PR #193 — `cacheManifestOwners` now keeps hashes in `manifestPathHashes` instead of dropping them) vs stored `serverHash`; divergence → reset+enroll.
+  - (c) ~~`verifyConvergenceOnOpen` on file-open~~ — REMOVED in the B1 rewire (Task 6). Was: compared the manifest snapshot's `content_hash` (30s-TTL cache from PR #193 — `cacheManifestOwners` now keeps hashes in `manifestPathHashes` instead of dropping them) vs stored `serverHash`; divergence → reset+enroll. Replaced by socket vault-catchup on connect/reconnect (`catchupViaSocket()`) — see Status note above.
 
 ## Gotchas
 
