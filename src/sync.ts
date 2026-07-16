@@ -2285,66 +2285,96 @@ export class SyncEngine {
 					new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
 				) {
 					try {
-						// Server-authoritative id. On ADOPT (serverId !== noteId) the
-						// path is already owned by a live note under another id; remap so
-						// our body/edits address that existing row. No Y.Doc was seeded
-						// under our local mint by this genesis path (routeModify runs only
-						// AFTER, below, keyed by effectiveId), so there is nothing to
-						// re-key — we simply seed under the server id from the start.
+						// Only the crdtCreate call itself is covered by this catch — once
+						// it RESOLVES, the server row exists (possibly under a remapped
+						// serverId) and a throw from anything below must NOT fall through
+						// to the REST cascade: that would create a duplicate/misrouted row
+						// under the stale mint against a path the server already owns. The
+						// inner try/catch handles that post-create case locally.
 						const serverId = await this.crdtCreate(noteId, pushedPath);
 						let effectiveId = noteId;
-						if (serverId && serverId !== noteId) {
-							this.noteIdMap?.set(normalizePath(pushedPath), serverId);
-							rlog().info(
-								"crdt",
-								`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+						try {
+							// On ADOPT (serverId !== noteId) the path is already owned by a
+							// live note under another id; remap so our body/edits address
+							// that existing row. No Y.Doc was seeded under our local mint by
+							// this genesis path (routeModify runs only AFTER, below, keyed
+							// by effectiveId), so there is nothing to re-key — we simply
+							// seed under the server id from the start.
+							if (serverId && serverId !== noteId) {
+								this.noteIdMap?.set(normalizePath(pushedPath), serverId);
+								rlog().info(
+									"crdt",
+									`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+								);
+								effectiveId = serverId;
+							}
+							// Seed the body under the effective id: the Y.Doc update listener
+							// forwards it over the channel (crdt_msg). A LIVE reread, not the
+							// frozen `content`, backs the manager's stale-snapshot guard.
+							const consumed = await routeModify(
+								{
+									isMarkdown: true,
+									noteId: effectiveId,
+									readContent: () => this.app.vault.cachedRead(file),
+								},
+								this.crdt,
+								MAX_CRDT_NOTE_BYTES,
 							);
-							effectiveId = serverId;
-						}
-						// Seed the body under the effective id: the Y.Doc update listener
-						// forwards it over the channel (crdt_msg). A LIVE reread, not the
-						// frozen `content`, backs the manager's stale-snapshot guard.
-						const consumed = await routeModify(
-							{
-								isMarkdown: true,
-								noteId: effectiveId,
-								readContent: () => this.app.vault.cachedRead(file),
-							},
-							this.crdt,
-							MAX_CRDT_NOTE_BYTES,
-						);
-						this.confirmNoteId(effectiveId);
-						if (consumed !== null) {
-							// Echo baseline from what the manager CONSUMED (mirrors the
-							// CRDT-op branch above) so a later revert isn't hash-skipped.
-							this.syncState.set(normalizePath(pushedPath), {
-								...existing,
-								hash: fnv1a(consumed),
-							});
-						} else {
-							// ponytail: near-unreachable — a fresh in-cap note seedOnce's
-							// its body (non-null). If a live remote storm made the seed
-							// decline, the row exists + id is confirmed but no baseline is
-							// recorded, so the next edit re-pushes over the CRDT-op branch
-							// and delivers the body. Upgrade path: retry the seed here.
+							this.confirmNoteId(effectiveId);
+							if (consumed !== null) {
+								// Echo baseline from what the manager CONSUMED (mirrors the
+								// CRDT-op branch above) so a later revert isn't hash-skipped.
+								this.syncState.set(normalizePath(pushedPath), {
+									...existing,
+									hash: fnv1a(consumed),
+								});
+							} else {
+								// ponytail: near-unreachable — a fresh in-cap note seedOnce's
+								// its body (non-null). If a live remote storm made the seed
+								// decline, the row exists + id is confirmed but no baseline is
+								// recorded, so the next edit re-pushes over the CRDT-op branch
+								// and delivers the body. Upgrade path: retry the seed here.
+								rlog().warn(
+									"crdt",
+									`crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`,
+								);
+							}
+							// Vault-channel fan-out: enroll (STEP1) only for a live-bound note,
+							// matching the CRDT-op branch. An idle note's seed already shipped
+							// over the channel and it receives future updates over broadcast.
+							if (this.isLiveBound(normalizePath(pushedPath))) {
+								this.crdtEnrollment?.enroll(effectiveId);
+							}
+							devLog().log(
+								"push",
+								`crdt_create ok: ${pushedPath} (id=${effectiveId})`,
+							);
+							rlog().info(
+								"push",
+								`CRDT create ok: ${pushedPath} | id=${effectiveId}`,
+							);
+							return true;
+						} catch (seedErr) {
+							// crdtCreate already RESOLVED — the row exists server-side
+							// (possibly under the remapped effectiveId). Unlike the
+							// crdtCreate-rejection case below, we must NOT fall through to
+							// the REST cascade: that would create a second row under the
+							// stale mint id against a path the server already owns. Treat
+							// this like the seed-declined (null) branch above: the row
+							// exists, confirm it and return true — the body self-heals on
+							// the next edit's CRDT-op push.
 							rlog().warn(
 								"crdt",
-								`crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`,
+								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`,
 							);
+							this.confirmNoteId(effectiveId);
+							return true;
 						}
-						// Vault-channel fan-out: enroll (STEP1) only for a live-bound note,
-						// matching the CRDT-op branch. An idle note's seed already shipped
-						// over the channel and it receives future updates over broadcast.
-						if (this.isLiveBound(normalizePath(pushedPath))) {
-							this.crdtEnrollment?.enroll(effectiveId);
-						}
-						devLog().log("push", `crdt_create ok: ${pushedPath} (id=${effectiveId})`);
-						rlog().info("push", `CRDT create ok: ${pushedPath} | id=${effectiveId}`);
-						return true;
 					} catch (err) {
-						// Boundary fallback, NOT error-swallowing: the row was not created
-						// over CRDT, so the REST create below still delivers the note. Do
-						// not rethrow — control must reach the pushNote cascade.
+						// Boundary fallback, NOT error-swallowing: crdtCreate itself
+						// REJECTED, so the row was never created over CRDT — the REST
+						// create below still delivers the note. Do not rethrow — control
+						// must reach the pushNote cascade.
 						rlog().warn(
 							"crdt",
 							`crdt_create failed, falling back to REST create: ${pushedPath} | ${String(err)}`,
