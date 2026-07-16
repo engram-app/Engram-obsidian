@@ -12,11 +12,13 @@ Once your vault is synced, any AI app that supports MCP (Model Context Protocol)
 
 The AI never reaches into Obsidian directly. It goes through Engram, which holds the searchable index of your notes.
 
+## Release channels
+
+- **Stable** (default): install from Obsidian Community Plugins. Auto-updates.
+- **Beta**: install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then "Add beta plugin" → `engram-app/Engram-obsidian`, enable beta versions. Tracks `main`.
+- **Testing a specific PR**: in BRAT, "Add beta plugin" with a **frozen version** = the PR build tag (`X.Y.Z-pr.<num>.<sha>`, shown on the PR's prerelease).
+
 ## Other ways to install
-
-### Beta / pre-release builds
-
-To test upcoming features, install [BRAT](https://github.com/TfTHacker/obsidian42-brat) and add the repo `engram-app/Engram-obsidian`.
 
 ### Manual install
 

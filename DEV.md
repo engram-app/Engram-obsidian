@@ -139,6 +139,17 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
 2. **Open a PR.** Each push to that PR triggers `rc-release.yml` and publishes `X.Y.Z-rc.N` as a GitHub pre-release; BRAT users can pin to that frozen version for testing.
 3. **Merge.** `release.yml` removes the RC tags/pre-releases, tags `X.Y.Z` on the merge commit, and publishes the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached.
 
+### Testing a specific PR
+
+Contributors can test a feature PR's frozen build without waiting for merge or stable release. Each PR generates a prerelease tag (`X.Y.Z-pr.<num>.<sha>`) on every push. To install it:
+
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) if you haven't already.
+2. In Obsidian, go to **Settings → BRAT** → **Add beta plugin**.
+3. Enter `engram-app/Engram-obsidian` as the repo.
+4. Select the PR's frozen version from the version list (format: `X.Y.Z-pr.<num>.<sha>`).
+
+This lets you verify the fix before it merges, and revert back to stable by reinstalling the official version.
+
 ### Branch protection
 
 `main` requires two passing checks: `build-and-test` and `version-check / version-check`.

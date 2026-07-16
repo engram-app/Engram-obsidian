@@ -125,6 +125,8 @@ bun run build
 
 Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefix) for BRAT/Obsidian compatibility.
 
+**Do NOT bump `manifest.json` in feature PRs.** Versions are auto-derived (beta/per-PR). Stable releases are cut by merging the release-please PR.
+
 ### CI Workflows
 
 | Workflow | Trigger | What it does |
