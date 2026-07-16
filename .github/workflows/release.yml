@@ -1,9 +1,8 @@
 name: Release
 
 on:
-  pull_request:
-    types: [closed]
-    branches: [main]
+  push:
+    tags: ['[0-9]+.[0-9]+.[0-9]+']   # plain semver = stable only; excludes -beta./-pr.
 
 permissions:
   contents: write
@@ -12,12 +11,20 @@ permissions:
 
 jobs:
   release:
-    if: github.event.pull_request.merged == true
     runs-on: [self-hosted, linux, x64, isolated]
     steps:
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          # App token so the versions.json push-back to protected main succeeds.
+          token: ${{ steps.app-token.outputs.token }}
 
       - run: bun install --frozen-lockfile
 
@@ -38,7 +45,7 @@ jobs:
       - name: Determine version
         id: version
         run: |
-          VERSION=$(jq -r '.version' manifest.json)
+          VERSION="${GITHUB_REF_NAME}"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "Releasing: $VERSION"
 
@@ -105,14 +112,6 @@ jobs:
             done
           done
 
-      - name: Create release tag
-        if: steps.check.outputs.exists != 'true'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git tag -a "${{ steps.version.outputs.version }}" -m "Release ${{ steps.version.outputs.version }}"
-          git push origin "${{ steps.version.outputs.version }}"
-
       - name: Create GitHub Release
         if: steps.check.outputs.exists != 'true'
         env:
@@ -159,3 +158,19 @@ jobs:
             exit 1
           fi
           echo "Verified ${VERSION} is published as stable (prerelease=false, draft=false)"
+
+      - name: Ensure versions.json has this version
+        # Runs last (after the RC-cleanup step's `git show HEAD~1` history read)
+        # so this commit doesn't shift HEAD before that step computes PREV_VERSION.
+        run: |
+          set -euo pipefail
+          V="${GITHUB_REF_NAME}"
+          MIN=$(jq -r '.minAppVersion' manifest.json)
+          if [ "$(jq --arg v "$V" 'has($v)' versions.json)" != "true" ]; then
+            tmp=$(mktemp); jq --arg v "$V" --arg m "$MIN" '.[$v]=$m' versions.json > "$tmp" && mv "$tmp" versions.json
+            git config user.name "engram-release[bot]"
+            git config user.email "engram-release[bot]@users.noreply.github.com"
+            git add versions.json
+            git commit -m "chore(release): versions.json ${V} [skip ci]"
+            git push origin HEAD:main
+          fi
