@@ -799,6 +799,22 @@ export class SyncEngine {
 		this.crdtEnrollment = enrollment;
 	}
 
+	/** Socket-native new-note genesis (Plan B1, Task 3). When wired, a brand-new
+	 *  markdown note's FIRST push creates its server row over the CRDT channel
+	 *  (`crdt_create`) instead of a REST `pushNote`. Resolves to the server's
+	 *  AUTHORITATIVE doc_id: on ADOPT (the path is already owned by a live note
+	 *  under a different id) the returned id differs from the one sent, and
+	 *  pushFile remaps the local note to it so subsequent `crdt_msg` edits address
+	 *  the row that exists — keeping the local mint would orphan the note (content
+	 *  loss). Rejects on delete-wins / rate-limit / bad-path; the caller logs and
+	 *  falls through to the REST create (still functional in this additive phase,
+	 *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
+	private crdtCreate: ((docId: string, path: string) => Promise<string>) | null = null;
+
+	setCrdtCreate(fn: ((docId: string, path: string) => Promise<string>) | null): void {
+		this.crdtCreate = fn;
+	}
+
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
 	 *  The `crdt` manager latch above is edge-triggered (set on join via
 	 *  onCrdtJoined, cleared on disconnect), so it can go STALE — set, but the
@@ -2242,6 +2258,97 @@ export class SyncEngine {
 						this.isLiveBound(normalizePath(file.path))
 					) {
 						this.crdtEnrollment?.enroll(noteId);
+					}
+				}
+
+				// Socket-native genesis (Plan B1, Task 3): a brand-new / never-synced
+				// markdown note's FIRST write creates its server row over the CRDT
+				// channel instead of a REST pushNote. Gated to the genesis case only —
+				// a CONFIRMED note's edits already took the CRDT-op branch above (or its
+				// declined/oversized fall-through), and this branch must not intercept
+				// them. Requires the channel joined (crdt_create is a socket request)
+				// and the body within the CRDT transport cap (an oversized note stays
+				// on REST — routeModify would decline the seed anyway). crdt_create
+				// returns the server's AUTHORITATIVE id; on ADOPT (path already owned by
+				// a live note under a different id) it differs from our mint, so we
+				// remap before seeding/enrolling — addressing the row that exists rather
+				// than orphaning the note's content. On rejection (delete-wins,
+				// rate-limit, bad path) we log and fall through to the REST create,
+				// which still works in this additive phase (removed in Plan B2).
+				if (
+					this.crdtCreate &&
+					this.crdt &&
+					noteId &&
+					file.extension === "md" &&
+					!this.isNoteConfirmed(noteId) &&
+					(this.crdtLive?.() ?? true) &&
+					new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+				) {
+					try {
+						// Server-authoritative id. On ADOPT (serverId !== noteId) the
+						// path is already owned by a live note under another id; remap so
+						// our body/edits address that existing row. No Y.Doc was seeded
+						// under our local mint by this genesis path (routeModify runs only
+						// AFTER, below, keyed by effectiveId), so there is nothing to
+						// re-key — we simply seed under the server id from the start.
+						const serverId = await this.crdtCreate(noteId, pushedPath);
+						let effectiveId = noteId;
+						if (serverId && serverId !== noteId) {
+							this.noteIdMap?.set(normalizePath(pushedPath), serverId);
+							rlog().info(
+								"crdt",
+								`crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`,
+							);
+							effectiveId = serverId;
+						}
+						// Seed the body under the effective id: the Y.Doc update listener
+						// forwards it over the channel (crdt_msg). A LIVE reread, not the
+						// frozen `content`, backs the manager's stale-snapshot guard.
+						const consumed = await routeModify(
+							{
+								isMarkdown: true,
+								noteId: effectiveId,
+								readContent: () => this.app.vault.cachedRead(file),
+							},
+							this.crdt,
+							MAX_CRDT_NOTE_BYTES,
+						);
+						this.confirmNoteId(effectiveId);
+						if (consumed !== null) {
+							// Echo baseline from what the manager CONSUMED (mirrors the
+							// CRDT-op branch above) so a later revert isn't hash-skipped.
+							this.syncState.set(normalizePath(pushedPath), {
+								...existing,
+								hash: fnv1a(consumed),
+							});
+						} else {
+							// ponytail: near-unreachable — a fresh in-cap note seedOnce's
+							// its body (non-null). If a live remote storm made the seed
+							// decline, the row exists + id is confirmed but no baseline is
+							// recorded, so the next edit re-pushes over the CRDT-op branch
+							// and delivers the body. Upgrade path: retry the seed here.
+							rlog().warn(
+								"crdt",
+								`crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`,
+							);
+						}
+						// Vault-channel fan-out: enroll (STEP1) only for a live-bound note,
+						// matching the CRDT-op branch. An idle note's seed already shipped
+						// over the channel and it receives future updates over broadcast.
+						if (this.isLiveBound(normalizePath(pushedPath))) {
+							this.crdtEnrollment?.enroll(effectiveId);
+						}
+						devLog().log("push", `crdt_create ok: ${pushedPath} (id=${effectiveId})`);
+						rlog().info("push", `CRDT create ok: ${pushedPath} | id=${effectiveId}`);
+						return true;
+					} catch (err) {
+						// Boundary fallback, NOT error-swallowing: the row was not created
+						// over CRDT, so the REST create below still delivers the note. Do
+						// not rethrow — control must reach the pushNote cascade.
+						rlog().warn(
+							"crdt",
+							`crdt_create failed, falling back to REST create: ${pushedPath} | ${String(err)}`,
+						);
 					}
 				}
 
