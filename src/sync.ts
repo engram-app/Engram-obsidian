@@ -4,7 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
-import { toB64 } from "./crdt/channel";
+import { fromB64, toB64 } from "./crdt/channel";
 import type { CrdtManager } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import { uuid7 } from "./crdt/uuid7";
@@ -3124,6 +3124,56 @@ export class SyncEngine {
 			this.emitStatus();
 		}
 		return converged;
+	}
+
+	/** Socket-native vault catch-up (Plan B1, Task 5): fetch server heads over
+	 *  `crdt_catchup_heads`, and for each note whose stored crdtHead differs,
+	 *  pull the missing delta from the client's state vector over
+	 *  `crdt_catchup_delta` and apply it. Socket twin of `coldReceive` — same
+	 *  cost-gate (converged notes never open a doc) and same isolation (a
+	 *  per-note failure is logged and skipped, never thrown into the caller, so
+	 *  one bad note can't stall the vault). Unset deps / no crdt manager ->
+	 *  no-op. */
+	private crdtCatchupHeads: (() => Promise<{ heads: Record<string, string> }>) | null = null;
+	private crdtCatchupDelta:
+		| ((docId: string, sv: string) => Promise<{ doc_id: string; b64: string; head: string }>)
+		| null = null;
+
+	setCrdtCatchup(
+		heads: () => Promise<{ heads: Record<string, string> }>,
+		delta: (
+			docId: string,
+			sv: string,
+		) => Promise<{ doc_id: string; b64: string; head: string }>,
+	): void {
+		this.crdtCatchupHeads = heads;
+		this.crdtCatchupDelta = delta;
+	}
+
+	async catchupViaSocket(): Promise<void> {
+		if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
+		let heads: Record<string, string>;
+		try {
+			({ heads } = await this.crdtCatchupHeads());
+		} catch (e) {
+			// Whole-vault heads fetch failed (socket drop, etc). Match coldReceive:
+			// log and return so the method honors its never-throw-into-caller contract.
+			rlog().warn("crdt", `socket catchup: heads fetch failed — ${errMsg(e)}`);
+			return;
+		}
+		for (const [noteId, serverHead] of Object.entries(heads)) {
+			const path = this.noteIdMap?.pathForId(noteId);
+			if (!path) continue; // not locally known — first-discovery is pull()'s job
+			if (this.getCrdtHead(path) === serverHead) continue; // cost gate: unchanged
+			try {
+				const sv = toB64(await this.crdt.encodeStateVector(noteId));
+				const { b64, head } = await this.crdtCatchupDelta(noteId, sv);
+				await this.crdt.applyRemoteUpdate(noteId, fromB64(b64));
+				this.setCrdtHead(path, head);
+			} catch (e) {
+				rlog().warn("crdt", `socket catchup failed for ${noteId}: ${errMsg(e)}`);
+			}
+		}
 	}
 
 	/** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
