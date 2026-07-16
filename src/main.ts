@@ -752,15 +752,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// reconfigures it for each open note via EditorController.bindTo().
 		this.registerEditorExtension([ycollabExtension()]);
 		this.registerEvent(
-			this.app.workspace.on("file-open", (file) => {
+			// Plan B1 Task 6: file-open is now a pure local bind — no per-open
+			// convergence handshake (verifyConvergenceOnOpen, removed). The socket
+			// catch-up on (re)connect + connect-time re-enrollment now own keeping
+			// an open note converged, without the ~1s per-open REST-hash lag.
+			this.app.workspace.on("file-open", () => {
 				this.crdtLiveViews?.refresh();
-				// Bind-time convergence check (2026-07-07 catch-up gap): opening a
-				// note verifies the local synced state against the server's manifest
-				// hash; divergence forces a fresh CRDT handshake so a missed
-				// announce/STEP2 heals the moment the user looks at the note.
-				if (file?.extension === "md" && !this.syncEngine.isSyncBlocked()) {
-					void this.syncEngine.verifyConvergenceOnOpen(file.path);
-				}
 			}),
 		);
 		this.registerEvent(
@@ -903,9 +900,16 @@ export default class EngramSyncPlugin extends Plugin {
 				// User has already accepted a direction for this fingerprint —
 				// run an incremental sync without showing the modal.
 				try {
-					const { pulled, pushed } = await this.syncEngine.fullSync();
-					if (pulled > 0 || pushed > 0) {
-						new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+					// Plan B1 Task 6: catch-up runs over the socket (already-known
+					// notes' diverged heads), not a REST pull. The genesis path
+					// (pushFile's crdt_create branch, wired above) still creates a
+					// brand-new/never-synced note's server row on push — so
+					// pushModifiedFiles below still needs to run to actually push
+					// those local-only notes and any other local edits.
+					await this.syncEngine.catchupViaSocket();
+					const pushed = await this.syncEngine.pushModifiedFiles();
+					if (pushed > 0) {
+						new Notice(`Engram Sync: pushed ${pushed}`);
 					}
 				} catch (e) {
 					if (e instanceof LimitExceededError) {
@@ -1598,12 +1602,15 @@ export default class EngramSyncPlugin extends Plugin {
 							// (final review MINOR-6), not a counter left over from
 							// before the drift was fixed.
 							this.crdtWiring?.clearStrandHealAttempts();
-							this.syncEngine.pull().catch((e) => {
-								// biome-ignore lint/suspicious/noConsole: error boundary
-								console.error("Engram Sync: catch-up pull failed", e);
-								rlog().error(
-									"channel",
-									`Catch-up pull on reconnect failed: ${errMsg(e)}`,
+							// Plan B1 Task 6: reconnect catch-up now runs over the socket
+							// (already-known notes' diverged heads) instead of a REST pull
+							// — see catchupViaSocket's doc comment for what it does and
+							// does not cover. REST pull() stays available as a fallback
+							// for other callers (manual sync, fullSync).
+							void this.syncEngine.catchupViaSocket().catch((e) => {
+								rlog().warn(
+									"crdt",
+									`socket catchup on reconnect failed: ${errMsg(e)}`,
 								);
 							});
 						})();
@@ -1674,6 +1681,17 @@ export default class EngramSyncPlugin extends Plugin {
 					// object, same closure), so re-wiring it here would be a no-op.
 					this.noteStream.setAuthProvider(this.authProvider);
 				}
+
+				// Plan B1 Task 6: wire the socket-native create/delete/catchup senders
+				// into the engine. Harmless to wire unconditionally — each sender is
+				// only consulted once the engine's own crdt manager is set (enableCrdt
+				// && vaultId), so this is a no-op on a legacy/non-CRDT connection.
+				this.syncEngine.setCrdtCreate((id, path) => channel.crdtCreate(id, path));
+				this.syncEngine.setCrdtDelete((id) => channel.crdtDelete(id));
+				this.syncEngine.setCrdtCatchup(
+					() => channel.crdtCatchupHeads(),
+					(id, sv) => channel.crdtCatchupDelta(id, sv),
+				);
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by

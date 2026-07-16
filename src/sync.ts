@@ -533,45 +533,7 @@ export class SyncEngine {
 		this.manifestPathOwners = new Map(
 			manifest.notes.filter((n) => n.id).map((n) => [normalizePath(n.path), n.id as string]),
 		);
-		// Same snapshot, second projection: path -> server content_hash. Feeds
-		// the bind-time convergence check (verifyConvergenceOnOpen) for free —
-		// the manifest already carried the hashes; we were dropping them.
-		this.manifestPathHashes = new Map(
-			manifest.notes
-				.filter((n) => n.content_hash)
-				.map((n) => [normalizePath(n.path), n.content_hash]),
-		);
 		this.manifestOwnersFetchedAt = Date.now();
-	}
-
-	private manifestPathHashes: Map<string, string> | null = null;
-
-	/** Bind-time convergence check (2026-07-07 catch-up gap). Called when a
-	 *  note is opened: compare the server's content_hash for the path (from
-	 *  the cached manifest snapshot, 30s TTL — refreshed here when stale)
-	 *  against the serverHash this client last synced. A mismatch means a
-	 *  delivery was missed (announce lost, STEP2 dropped, offline window):
-	 *  force a fresh CRDT handshake — reset lifts the once-per-session
-	 *  enrollment guard, enroll re-fires STEP1, and the server's STEP2 reply
-	 *  carries exactly the ops we are missing. No-ops for unmapped notes and
-	 *  when ownership is unknowable (no manifest). */
-	async verifyConvergenceOnOpen(path: string): Promise<void> {
-		const normalized = normalizePath(path);
-		const noteId = this.noteIdMap?.get(normalized);
-		if (!noteId || !this.crdtEnrollment) return;
-		// Reuse manifestOwnerOf's refresh discipline (it repopulates both maps).
-		const owner = await this.manifestOwnerOf(normalized);
-		if (owner === undefined) return; // unknowable — never force on no data
-		const serverHash = this.manifestPathHashes?.get(normalized);
-		if (!serverHash) return;
-		const stored = this.syncState.get(normalized);
-		if (stored?.serverHash === serverHash) return; // converged
-		rlog().warn(
-			"pull",
-			`bind-time divergence: forcing re-handshake ${normalized} (have=${stored?.serverHash ?? "none"} server=${serverHash})`,
-		);
-		this.crdtEnrollment.reset(noteId);
-		this.crdtEnrollment.enroll(noteId);
 	}
 
 	/** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -3991,7 +3953,7 @@ export class SyncEngine {
 						// overwrote server content it never saw (e2e test_83).
 						// Seed-only, never advance: serverHash means "server content this
 						// device actually CONVERGED to" everywhere it is read (hash-skip,
-						// resolveChangeBody, verifyConvergenceOnOpen). Stamping the
+						// resolveChangeBody). Stamping the
 						// announced hash over a real converged base would mark the note
 						// converged before the body lands — a missed room delivery then
 						// sticks silently, with every recovery path defeated. A stale
@@ -5860,7 +5822,14 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
 	}
 
-	private async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
+	/** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
+	 *  genuinely-modified tracked files and never-before-synced local-only
+	 *  notes (always included regardless of mtime). A brand-new note's first
+	 *  push routes through pushFile's socket-native genesis (crdt_create) when
+	 *  wired. Public: also called directly by the connect path (onLayoutReady,
+	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
+	 *  needs this push leg to create/upload local-only notes on (re)connect. */
+	async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
 		// fall back to this.lastSync, which pull() just advanced to server_time,
