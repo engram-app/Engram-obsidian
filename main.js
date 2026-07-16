@@ -19276,7 +19276,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  "skipped" for a gate short-circuit; "failed" for a caught error / stalled
    *  adopt. */
   async convergeNoteFromDelta(path, noteId, serverHead, fetchDelta) {
-    if (!this.crdt || !this.isNoteConfirmed(noteId) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.getCrdtHead(path) === serverHead) return "skipped";
+    if (!this.crdt || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.getCrdtHead(path) === serverHead) return "skipped";
     try {
       if (!(typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)) {
         let adopted = await this.adoptHistoryLessNote(path, noteId);
@@ -19293,33 +19293,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } catch (e) {
       return devLog().log("crdt", `convergeNoteFromDelta: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`), "failed";
     }
-  }
-  /** Background convergence for COLD (confirmed, not live-bound) CRDT notes.
-   *  Diffs the server head-index against the persisted per-note crdtHead and,
-   *  for advanced notes, pulls the Yjs delta and applies it (echo-guarded disk
-   *  flush via applyRemoteUpdate). Best-effort: inert on pre-Phase-1 backends,
-   *  isolates per-note failures, and never throws. Returns notes converged. */
-  async coldReceive() {
-    var _a, _b;
-    if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return 0;
-    let heads;
-    try {
-      ({ heads } = await this.api.getVaultHeads());
-    } catch (e) {
-      return devLog().log("crdt", `coldReceive: getVaultHeads failed \u2014 ${errMsg(e)}`), 0;
-    }
-    let converged = 0;
-    for (let [noteId, serverHead] of Object.entries(heads)) {
-      let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-      if (!path) continue;
-      await this.convergeNoteFromDelta(
-        path,
-        noteId,
-        serverHead,
-        (id2, since) => this.api.getUpdates(id2, since)
-      ) === "converged" && converged++;
-    }
-    return converged > 0 && (devLog().log("crdt", `coldReceive: converged ${converged} cold note(s)`), this.emitStatus()), converged;
   }
   setCrdtCatchup(heads, delta) {
     this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
@@ -19478,9 +19451,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return await this.coldReceive().catch((e) => {
-        devLog().log("crdt", `coldReceive threw (ignored) \u2014 ${errMsg(e)}`);
-      }), applied;
+      return applied;
     } catch (e) {
       return console.error("Engram Sync: pull failed", e), rlog().error(
         "pull",
