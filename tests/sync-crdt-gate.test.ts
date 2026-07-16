@@ -41,6 +41,15 @@ function seedSyncState(engine: SyncEngine, path: string, content: string, versio
  *  same pattern as seedSyncState above for private test setup. */
 function markConfirmed(engine: SyncEngine, noteId: string): void {
 	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+	// CRDT-sole oracle: hasServerNote(noteId) = getCrdtHead(pathForId(noteId)) != null.
+	// Record a server head under the note's path so a "server-known" note routes
+	// through the CRDT path (the confirmed-set no longer gates CRDT routing).
+	const e = engine as unknown as {
+		noteIdMap?: { pathForId(id: string): string | null };
+		setCrdtHead(path: string, head: string): void;
+	};
+	const p = e.noteIdMap?.pathForId(noteId);
+	if (p) e.setCrdtHead(p, "server-head");
 }
 
 // ---------------------------------------------------------------------------
@@ -614,7 +623,7 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("after teardown (crdtManager=null on engine), markdown edits use pushNote", async () => {
+	test("after teardown (crdtManager=null on engine), a non-CRDT note still REST-pushes", async () => {
 		const engine = createEngine();
 
 		// Wire a CRDT manager
@@ -624,8 +633,10 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		// Simulate teardown: remove CRDT manager (what setupNoteStream now does)
 		engine.setCrdtManager(null as any);
 
-		// Markdown edit should now fall back to legacy pushNote
-		const file = new TFile("note.md");
+		// A note OUTSIDE the CRDT domain (.canvas) still takes the kept LWW REST
+		// path. (In-cap markdown no longer REST-falls-back — CRDT is its sole
+		// path — so it can't stand in for the legacy-path regression here.)
+		const file = new TFile("note.canvas");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -639,11 +650,11 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 // ---------------------------------------------------------------------------
 
 describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
-	test("without CRDT manager set, markdown modify goes through pushNote (not dropped)", async () => {
+	test("without CRDT manager set, a non-CRDT note modify goes through pushNote (not dropped)", async () => {
 		const engine = createEngine();
 		// No setCrdtManager call — simulates vaultId=null path where CRDT is never wired
 
-		const file = new TFile("note.md");
+		const file = new TFile("note.canvas");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -702,12 +713,12 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graceful degradation: channel join gate — CRDT not connected", () => {
-	test("with crdt NOT connected (manager null), .md edit goes through pushNote (legacy)", async () => {
+	test("with crdt NOT connected (manager null), a non-CRDT note edit goes through pushNote (legacy)", async () => {
 		const engine = createEngine();
 		// Simulates: vaultId known but crdt: topic join has not been acknowledged yet
 		// (or backend errored on join) — manager is null, legacy path active.
 
-		const file = new TFile("note.md");
+		const file = new TFile("note.canvas");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -764,7 +775,7 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("after disconnect (setCrdtManager(null)), .md edits revert to pushNote (legacy)", async () => {
+	test("after disconnect (setCrdtManager(null)), non-CRDT note edits revert to pushNote (legacy)", async () => {
 		const engine = createEngine();
 
 		const applyLocalEdit = mock(async () => {});
@@ -773,7 +784,7 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		// Simulate channel disconnect: clear manager (mirrors onStatusChange false handler)
 		engine.setCrdtManager(null);
 
-		const file = new TFile("note.md");
+		const file = new TFile("note.canvas");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -886,12 +897,14 @@ describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
 		engine.setSyncBlocked(true);
 
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		await engine.flushFromCrdt("Notes/echo-test.md", "content");
+		await engine.flushFromCrdt("Notes/echo-test.canvas", "content");
 
-		// Now unblock and verify handleModify proceeds (not echo-suppressed)
+		// Now unblock and verify handleModify proceeds (not echo-suppressed).
+		// A .canvas note takes the kept LWW REST path, so a non-suppressed edit
+		// is observable as a pushNote call (in-cap md no longer REST-pushes).
 		engine.setSyncBlocked(false);
 
-		const file = new TFile("Notes/echo-test.md");
+		const file = new TFile("Notes/echo-test.canvas");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -1063,39 +1076,6 @@ describe("C1 — onCrdtDocReady: isSyncBlocked suppresses enrollment and materia
 		}
 
 		expect(enrollment.enroll).toHaveBeenCalledWith("Notes/discovered.md");
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Push join-gate — the CRDT manager latch (setCrdtManager) is edge-triggered on
-// the crdt: topic join/disconnect, so it can go STALE: set, but the channel is
-// no longer joined (e.g. after an auth swap leaves a dead-but-set channel).
-// pushFile previously routed to CRDT on `this.crdt` ALONE, so the Y.Doc update
-// was produced but silently dropped by the server (stale join_ref) while
-// pushFile reported "CRDT push ok". A level-triggered isCrdtConnected() check at
-// push time closes that gap: not joined → fall through to the durable REST path
-// (the backend's crdt_deliver bridges the REST write back into the CRDT room, so
-// there is no divergence). See engram #915.
-// ---------------------------------------------------------------------------
-
-describe("push join-gate — stale CRDT latch falls back to REST", () => {
-	test("markdown edit falls back to pushNote when the channel is NOT joined", async () => {
-		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
-		engine.setCrdtManager({ applyLocalEdit } as any);
-		// Authoritative level check: channel reports not-joined (dead-but-set latch).
-		engine.setCrdtLiveCheck(() => false);
-
-		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await new Promise((r) => setTimeout(r, 50));
-
-		// Must NOT silently drop into a dead channel — REST is the durable path.
-		// (The joined→CRDT and unwired→CRDT paths are already covered by the
-		// "channel join gate" describe above; this test adds only the NEW
-		// not-joined→REST behavior.)
-		expect(applyLocalEdit).not.toHaveBeenCalled();
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 	});
 });
 

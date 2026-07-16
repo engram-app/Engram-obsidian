@@ -61,6 +61,14 @@ import type {
  *  notes still sync via the legacy push path (server-gated at 10 MB / 413). */
 export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
 
+/** Sentinel `crdtHead` recorded locally the moment `crdt_create` succeeds, so
+ *  the `hasServerNote` oracle flips to true immediately (the server row exists)
+ *  without waiting for the first server-delivered head. Never equals a real
+ *  server content-hash head, so the convergence cost gate (`getCrdtHead ===
+ *  serverHead → skip`) always runs at least once after create and overwrites
+ *  this with the authoritative head. */
+export const CRDT_HEAD_CREATED = "__crdt_created__";
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -1503,6 +1511,20 @@ export class SyncEngine {
 		this.syncState.set(key, { ...(existing ?? { hash: 0 }), crdtHead: head });
 	}
 
+	/** CRDT-native replacement for the REST-era confirmed-set oracle: true when
+	 *  the server is known to already hold a row for this note. `crdtHead` is set
+	 *  ONLY by server-delivered heads (convergence/apply) or by a successful
+	 *  `crdt_create` (the sentinel below), so `!= null` genuinely means "the
+	 *  server has this note." Keyed by note_id so a rename follows the note —
+	 *  `crdtHead` lives in syncState under the note's current path, resolved via
+	 *  the id map. The note's own CRDT state is the oracle, never a REST-era set. */
+	private hasServerNote(noteId: string | null): boolean {
+		if (!noteId) return false;
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!path) return false;
+		return this.getCrdtHead(path) != null;
+	}
+
 	/** Import legacy hash-only format (migration from old plugin versions). */
 	importHashes(data: Record<string, number>): void {
 		for (const [path, hash] of Object.entries(data)) {
@@ -2148,7 +2170,7 @@ export class SyncEngine {
 				if (
 					this.crdt &&
 					noteId &&
-					this.isCrdtManagedOffline(file.path, noteId) &&
+					this.hasServerNote(noteId) &&
 					(crdtLive || this.crdtOpsAvailable())
 				) {
 					const consumed = await routeModify(
@@ -2227,25 +2249,17 @@ export class SyncEngine {
 						rlog().info("push", `CRDT push ok: ${file.path}`);
 						return true;
 					}
-					// DECLINED (handshake gate): applyLocalEdit returned false because
-					// the doc is empty and the STEP2 has not yet arrived this session.
-					// The legacy push path below owns this write convergently (backend
-					// PR #846 merges legacy REST pushes into the server CRDT doc). We
-					// still enroll the markdown note so the STEP1 handshake kicks off —
-					// once STEP2 arrives, markSynced fires and future edits route through
-					// CRDT normally. Guard: enroll is md-gated (checked here, since
-					// CrdtEnrollment itself no longer knows the path) + idempotent per
-					// session.
-					//
-					// Oversized notes must NOT be enrolled: enrolling elicits a STEP2
-					// that encodes the full doc history (~+33% base64), which for a note
-					// at or above MAX_CRDT_NOTE_BYTES can exceed Bandit's 8 MB WebSocket
-					// frame limit (1009 close) and — because the bloated doc persists in
-					// IndexedDB — re-crashes on every reconnect, killing all vault sync.
-					// Vault-channel fan-out: enroll (STEP1) only for a live-bound note —
-					// the legacy REST push above already delivered the body server-side; an
-					// idle note receives future updates over the note_yjs_update broadcast,
-					// no room needed. Oversized notes never enroll (8 MB WS frame limit).
+					// DECLINED (handshake gate): applyLocalEdit did not consume because
+					// the doc is empty and STEP2 has not yet arrived this session. This is
+					// effectively unreachable now that Branch A is gated on hasServerNote
+					// (a server-known note's doc has already been seeded/converged, so it
+					// has history and won't decline) — but stay defensive rather than
+					// silently drop. Enroll the markdown note so the STEP1 handshake kicks
+					// off; the edit remains on disk and re-routes on the next edit /
+					// reconnect re-push once STEP2 lands. Md + cap + live-bound gated (an
+					// oversized doc must never enroll — 8 MB WS frame limit).
+					// ponytail: no immediate delivery on decline (the old REST fallback is
+					// gone); acceptable because the gate makes this path unreachable.
 					if (
 						file.extension === "md" &&
 						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES &&
@@ -2253,6 +2267,7 @@ export class SyncEngine {
 					) {
 						this.crdtEnrollment?.enroll(noteId);
 					}
+					return true;
 				}
 
 				// Socket-native genesis (Plan B1, Task 3): a brand-new / never-synced
@@ -2274,7 +2289,7 @@ export class SyncEngine {
 					this.crdt &&
 					noteId &&
 					file.extension === "md" &&
-					!this.isNoteConfirmed(noteId) &&
+					!this.hasServerNote(noteId) &&
 					(this.crdtLive?.() ?? true) &&
 					new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
 				) {
@@ -2368,13 +2383,17 @@ export class SyncEngine {
 									MAX_CRDT_NOTE_BYTES,
 								);
 							}
-							this.confirmNoteId(effectiveId);
+							// Oracle flip: record a sentinel crdtHead so hasServerNote is
+							// immediately true for this id (the server row now exists). The
+							// first convergence overwrites it with the authoritative head.
+							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
 							if (consumed !== null) {
 								// Echo baseline from what the manager CONSUMED (mirrors the
 								// CRDT-op branch above) so a later revert isn't hash-skipped.
 								this.syncState.set(normalizePath(pushedPath), {
 									...existing,
 									hash: fnv1a(consumed),
+									crdtHead: CRDT_HEAD_CREATED,
 								});
 							} else {
 								// ponytail: near-unreachable — a fresh in-cap note seedOnce's
@@ -2415,279 +2434,66 @@ export class SyncEngine {
 								"crdt",
 								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`,
 							);
-							this.confirmNoteId(effectiveId);
+							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
 							return true;
 						}
 					} catch (err) {
-						// Boundary fallback, NOT error-swallowing: crdtCreate itself
-						// REJECTED, so the row was never created over CRDT — the REST
-						// create below still delivers the note. Do not rethrow — control
-						// must reach the pushNote cascade.
+						// crdtCreate itself REJECTED (delete-wins window, rate-limit, bad
+						// path): the row was never created. CRDT is the sole md-note path
+						// now — there is no REST create to fall back to. The edit is safe on
+						// disk; the reconnect re-push (fullSync/pushModifiedFiles) retries
+						// crdt_create once the transient condition clears. Return handled so
+						// we don't fall into the non-md/oversized REST branch below.
 						rlog().warn(
 							"crdt",
-							`crdt_create failed, falling back to REST create: ${pushedPath} | ${String(err)}`,
+							`crdt_create failed (will retry on reconnect): ${pushedPath} | ${String(err)}`,
 						);
+						return false;
 					}
 				}
 
-				// (Echo suppression ran ABOVE the CRDT branch — `hash`/`existing`
-				// are already in scope; see the hoisted gate, e2e test_37.)
-				// Only pass trailing positional args when actually known — an explicit
-				// trailing `undefined` still changes Function.arguments.length, which
-				// several existing tests pin exactly via toHaveBeenCalledWith.
-				// base_hash = the server content_hash we last synced (CAS against the
-				// v0.5.642 gate); only the INITIAL push declares it — the conflict-flow
-				// re-pushes below are deliberate overwrites and send none.
-				const baseHash = existing?.serverHash;
-				const resp =
-					baseHash !== undefined
-						? await this.api.pushNote(
-								pushedPath,
-								content,
-								mtime,
-								existing?.version,
-								noteId ?? undefined,
-								baseHash,
-							)
-						: noteId
-							? await this.api.pushNote(
-									pushedPath,
-									content,
-									mtime,
-									existing?.version,
-									noteId,
-								)
-							: await this.api.pushNote(
-									pushedPath,
-									content,
-									mtime,
-									existing?.version,
-								);
-
-				// 409 = version conflict — server has a newer version
-				if ("conflict" in resp) {
-					// Delete-wins: the server refused this create because the path was
-					// deleted on another device within the window (identical content —
-					// a stale re-push of the note we still hold). Converge by trashing
-					// our local copy instead of re-pushing (which would resurrect it).
-					// trashRemotelyDeleted marks the path so the trash's own delete
-					// event doesn't echo-push.
-					if (resp.reason === "recently_deleted") {
-						rlog().info(
-							"push",
-							`recently_deleted — trashing local ${file.path} to honor remote delete`,
-						);
-						await this.trashRemotelyDeleted(file);
-						return true;
-					}
-
-					const serverNote = resp.server_note;
-					devLog().log(
-						"push",
-						`version conflict: ${file.path} (local=${existing?.version} server=${serverNote.version})`,
-					);
-					rlog().warn(
-						"conflict",
-						`Version conflict on push: ${file.path} | localVer=${existing?.version} | serverVer=${serverNote.version}`,
-					);
-
-					// Attempt 3-way auto-merge if we have a base
-					const pushBase = this.baseStore?.get(normalizePath(file.path));
-					if (pushBase) {
-						const merge = threeWayMerge(pushBase.content, content, serverNote.content);
-						if (merge.clean) {
-							const mergeResp = await this.api.pushNote(
-								file.path,
-								merge.merged,
-								mtime,
-							);
-							const localFile = this.app.vault.getFileByPath(file.path);
-							if (localFile) {
-								await this.modifyFile(localFile, merge.merged);
-							}
-							if (!("conflict" in mergeResp)) {
-								const np = normalizePath(file.path);
-								this.syncState.set(np, {
-									hash: fnv1a(merge.merged),
-									version: mergeResp.note.version,
-									serverHash: mergeResp.note.content_hash,
-								});
-								if (mergeResp.note.version != null) {
-									this.baseStore?.set(np, merge.merged, mergeResp.note.version);
-								}
-								this.noteIdMap?.set(np, mergeResp.note.id);
-								this.confirmNoteId(mergeResp.note.id);
-							}
-							rlog().info(
-								"conflict",
-								`Auto-merged (push): ${file.path}` +
-									` | baseLen=${pushBase.content.length} | localLen=${content.length}` +
-									` | remoteLen=${serverNote.content.length} | mergedLen=${merge.merged.length}`,
-							);
-							return false;
-						}
-						rlog().info(
-							"conflict",
-							`Auto-merge failed (push): ${file.path}` +
-								` | conflicts=${merge.conflicts.length}` +
-								` | baseLen=${pushBase.content.length} | localLen=${content.length}` +
-								` | remoteLen=${serverNote.content.length}`,
-						);
-					}
-
-					// Fall back to interactive conflict resolution
-					const resolution = await this.resolveConflict({
-						path: file.path,
-						localContent: content,
-						localMtime: mtime,
-						remoteContent: serverNote.content,
-						remoteMtime: serverNote.mtime,
-						baseContent: pushBase?.content,
-						vaultName: this.app.vault.getName(),
-					});
-					if (resolution.choice === "keep-local") {
-						// Re-push without version (unconditional overwrite)
-						const forceResp = await this.api.pushNote(file.path, content, mtime);
-						if (!("conflict" in forceResp)) {
-							const np = normalizePath(file.path);
-							this.syncState.set(np, {
-								hash,
-								version: forceResp.note.version,
-								serverHash: forceResp.note.content_hash,
-							});
-							if (forceResp.note.version != null) {
-								this.baseStore?.set(np, content, forceResp.note.version);
-							}
-							this.noteIdMap?.set(np, forceResp.note.id);
-							this.confirmNoteId(forceResp.note.id);
-							this.recordParseStatus(
-								forceResp.note.path ?? file.path,
-								"note",
-								forceResp.note.parse_status,
-								forceResp.note.parse_reason,
-							);
-						}
-					} else if (resolution.choice === "keep-remote") {
-						const localFile = this.app.vault.getFileByPath(file.path);
-						if (localFile) {
-							await this.modifyFile(localFile, serverNote.content);
-							const np = normalizePath(file.path);
-							this.syncState.set(np, {
-								hash: fnv1a(serverNote.content),
-								version: serverNote.version,
-								serverHash: serverNote.content_hash,
-							});
-							this.baseStore?.set(np, serverNote.content, serverNote.version);
-							this.noteIdMap?.set(np, serverNote.id);
-							this.confirmNoteId(serverNote.id);
-							this.recordParseStatus(
-								serverNote.path,
-								"note",
-								serverNote.parse_status,
-								serverNote.parse_reason,
-							);
-						}
-					} else if (resolution.choice === "merge" && resolution.mergedContent != null) {
-						const mergeResp = await this.api.pushNote(
-							file.path,
-							resolution.mergedContent,
-							mtime,
-						);
-						const localFile = this.app.vault.getFileByPath(file.path);
-						if (localFile) {
-							await this.modifyFile(localFile, resolution.mergedContent);
-						}
-						if (!("conflict" in mergeResp)) {
-							const np = normalizePath(file.path);
-							this.syncState.set(np, {
-								hash: fnv1a(resolution.mergedContent),
-								version: mergeResp.note.version,
-								serverHash: mergeResp.note.content_hash,
-							});
-							if (mergeResp.note.version != null) {
-								this.baseStore?.set(
-									np,
-									resolution.mergedContent,
-									mergeResp.note.version,
-								);
-							}
-							this.noteIdMap?.set(np, mergeResp.note.id);
-							this.confirmNoteId(mergeResp.note.id);
-							this.recordParseStatus(
-								mergeResp.note.path ?? file.path,
-								"note",
-								mergeResp.note.parse_status,
-								mergeResp.note.parse_reason,
-							);
-						}
-					}
-					// skip and keep-both handled by returning false / not pushing
+				// CRDT-sole: in-cap markdown notes converge over CRDT (handled
+				// above). The only REST note path kept is for notes OUTSIDE the CRDT
+				// domain — non-markdown text notes (.canvas is JSON) and oversized
+				// markdown (> the 8 MB WS-frame CRDT cap) — analogous to attachments.
+				// An in-cap md note reaching here (channel down, crdt_create unwired,
+				// or a genesis reject) is NOT REST-pushed: it stays on disk and
+				// re-pushes over CRDT on reconnect. LWW (no version/base_hash → no
+				// 409/conflict surface); the server may still sanitize the path.
+				if (
+					file.extension === "md" &&
+					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
+				) {
 					return false;
 				}
-
-				// Server may sanitize the path (strip chars illegal on mobile).
-				// If so, rename the local file to match.
+				const resp = await this.api.pushNote(pushedPath, content, mtime);
+				if ("conflict" in resp) {
+					// Unconditional push (no version) never conflicts server-side; guard
+					// for the type union only.
+					return false;
+				}
 				const serverPath = resp.note.path;
-				const serverVersion = resp.note.version;
 				if (file.path !== pushedPath) {
-					// The file was renamed locally while this push was in flight.
-					// The reply describes the OLD location: treating the path
-					// mismatch as server sanitization would rename the file BACK
-					// and silently lose the user's rename (#245, run 29392015897).
-					// Record nothing under either path — handleRename already
-					// tombstoned the old path and owns pushing the new one.
+					// Renamed locally while in flight; handleRename owns the new path.
 					devLog().log(
 						"push",
 						`sanitize-rename skipped: file moved during push (${pushedPath} → ${file.path})`,
-					);
-					rlog().info(
-						"push",
-						`Sanitize-rename skipped: file moved during push (${pushedPath} → ${file.path})`,
 					);
 				} else if (serverPath && serverPath !== pushedPath) {
 					const localFile = this.app.vault.getFileByPath(pushedPath);
 					if (localFile) {
 						await this.app.vault.rename(localFile, serverPath);
-						devLog().log(
-							"push",
-							`renamed: ${pushedPath} → ${serverPath} (server sanitized)`,
-						);
-						rlog().info(
-							"push",
-							`Renamed: ${pushedPath} → ${serverPath} (server sanitized)`,
-						);
 						new Notice(
 							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
 						);
 					}
 					this.syncState.delete(normalizePath(pushedPath));
-					this.syncState.set(normalizePath(serverPath), {
-						hash,
-						version: serverVersion,
-						serverHash: resp.note.content_hash,
-					});
-					this.baseStore?.delete(normalizePath(pushedPath));
-					if (serverVersion != null) {
-						this.baseStore?.set(normalizePath(serverPath), content, serverVersion);
-					}
-					// Learn/confirm the id at its final (sanitized) path — the server
-					// is authoritative even when client_id was sent.
+					this.syncState.set(normalizePath(serverPath), { hash });
 					this.noteIdMap?.delete(normalizePath(pushedPath));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
-					this.refireEnrollmentOnFirstConfirm(resp.note.id, serverPath, content);
-					this.confirmNoteId(resp.note.id);
 				} else {
-					this.syncState.set(normalizePath(file.path), {
-						hash,
-						version: serverVersion,
-						serverHash: resp.note.content_hash,
-					});
-					if (serverVersion != null) {
-						this.baseStore?.set(normalizePath(file.path), content, serverVersion);
-					}
+					this.syncState.set(normalizePath(file.path), { hash });
 					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
-					this.refireEnrollmentOnFirstConfirm(resp.note.id, file.path, content);
-					this.confirmNoteId(resp.note.id);
 				}
 				if (file.path === pushedPath) {
 					pushedNoteParse = {

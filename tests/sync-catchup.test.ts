@@ -84,10 +84,6 @@ function createEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): SyncEng
 	return engine;
 }
 
-function flush(ms = 50): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms));
-}
-
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
@@ -106,69 +102,6 @@ beforeEach(() => {
 	(mockApp.vault.process as ReturnType<typeof mock>)
 		.mockReset()
 		.mockImplementation((_f: any, fn: (d: string) => string) => Promise.resolve(fn("")));
-});
-
-describe("base_hash on pushes (CAS against the v0.5.642 backend gate)", () => {
-	test("pushFile declares the last-synced serverHash as base_hash", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"note.md": { hash: 123, version: 3, serverHash: "srv-hash-abc" },
-		});
-
-		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
-
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
-		// pushNote(path, content, mtime, version?, clientId?, baseHash?)
-		expect(call[5]).toBe("srv-hash-abc");
-	});
-
-	test("a note with no prior server state sends NO base_hash (create path)", async () => {
-		const engine = createEngine();
-
-		const file = new TFile("fresh.md");
-		engine.handleModify(file);
-		await flush();
-
-		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
-		expect(call.length).toBeLessThanOrEqual(5);
-	});
-
-	test("a base_hash-induced 409 routes into the existing conflict flow (keep-remote default)", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"note.md": { hash: 123, version: 3, serverHash: "stale-base" },
-		});
-		const localFile = new TFile("note.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-
-		// The CAS gate refuses the stale push with the current server note.
-		(mockApi.pushNote as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			conflict: true,
-			server_note: {
-				id: "sid",
-				path: "note.md",
-				content: "server content the client never saw",
-				content_hash: "srv-current",
-				version: 7,
-				mtime: 99,
-			},
-		});
-
-		engine.handleModify(localFile);
-		await flush();
-
-		// Default ("auto") resolution: the server content the client never saw
-		// is preserved as a conflict-copy file — NOT silently deleted. That is
-		// the whole point of the CAS gate: without base_hash the push would
-		// have merged as a deletion with no trace.
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls[0];
-		expect(created[0]).toContain("conflict");
-		expect(created[1]).toBe("server content the client never saw");
-	});
 });
 
 describe("pull un-masking — CRDT-owned local note must catch up from /changes", () => {
