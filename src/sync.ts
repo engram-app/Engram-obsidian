@@ -779,15 +779,16 @@ export class SyncEngine {
 
 	/** Socket-native note delete (Plan B1, Task 4). When wired, a local
 	 *  user-initiated delete of a note with a resolved note_id sends
-	 *  `crdt_delete` instead of a REST `deleteNote`. Fire-and-forget: the
-	 *  channel drops it silently if not joined. Unset, or no resolved id →
-	 *  falls through to the still-functional REST delete (removed in Plan
-	 *  B2). Never fires for a delete APPLIED locally because it arrived FROM
-	 *  the server — handleDelete's remote-echo early-return returns before
-	 *  this is ever reached. */
-	private crdtDelete: ((docId: string) => void) | null = null;
+	 *  `crdt_delete` instead of a REST `deleteNote`. Returns false when the
+	 *  crdt topic isn't joined (offline) — the caller then falls through to
+	 *  the REST delete, which carries the durable offline enqueue/retry net.
+	 *  Unset, or no resolved id → falls through to the still-functional REST
+	 *  delete (removed in Plan B2). Never fires for a delete APPLIED locally
+	 *  because it arrived FROM the server — handleDelete's remote-echo
+	 *  early-return returns before this is ever reached. */
+	private crdtDelete: ((docId: string) => boolean) | null = null;
 
-	setCrdtDelete(fn: ((docId: string) => void) | null): void {
+	setCrdtDelete(fn: ((docId: string) => boolean) | null): void {
 		this.crdtDelete = fn;
 	}
 
@@ -1714,7 +1715,10 @@ export class SyncEngine {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path); // attachments stay REST
 			} else if (this.crdtDelete && crdtNoteId) {
-				this.crdtDelete(crdtNoteId);
+				const sent = this.crdtDelete(crdtNoteId);
+				// Topic not joined (offline) — fall through to REST, which throws
+				// offline and lands in the catch below's enqueue/retry net.
+				if (!sent) await this.api.deleteNote(file.path);
 			} else {
 				await this.api.deleteNote(file.path); // fallback — removed in Plan B2
 			}

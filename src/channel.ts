@@ -366,11 +366,14 @@ export class NoteChannel {
 		return res.doc_id;
 	}
 
-	/** Delete a note over the socket (idempotent; fire-and-forget). */
-	crdtDelete(docId: string): void {
+	/** Delete a note over the socket (idempotent). Returns false (nothing
+	 *  sent) when the crdt topic isn't joined, so the caller can fall back to
+	 *  the durable REST path instead of silently dropping the delete. */
+	crdtDelete(docId: string): boolean {
 		const t = this.crdtTopic;
-		if (!t || !this.crdtJoined) return;
+		if (!t || !this.crdtJoined) return false;
 		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_delete", { doc_id: docId }]);
+		return true;
 	}
 
 	/** Vault-level head map for catch-up divergence detection. */
