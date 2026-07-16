@@ -419,6 +419,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// happens via the existing file-open/leaf/layout refresh events.
 		this.syncEngine.setCrdtEditorDetach(() => this.crdtLiveViews?.detachAll());
 
+		// Genesis ADOPT under a live editor: rebind the editor off the orphaned
+		// mint doc onto the server's authoritative id (the serverId doc is
+		// pre-seeded with the editor's content, so no in-flight edit is lost).
+		this.syncEngine.setCrdtEditorRebind((path) => this.crdtLiveViews?.rebindPath(path));
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);

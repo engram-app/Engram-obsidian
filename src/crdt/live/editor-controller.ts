@@ -92,6 +92,19 @@ export class EditorController {
 		this.scheduleDriftCheck(view);
 	}
 
+	/** Force a rebind even when this.path already equals `path`. detach() clears
+	 *  this.path SYNCHRONOUSLY (stopping keystrokes reaching the now-orphaned
+	 *  doc immediately), so the subsequent bindTo does not short-circuit on the
+	 *  path-equality guard and re-resolves getYText to the note's current id.
+	 *  Used after a genesis ADOPT remaps path -> serverId under a live editor:
+	 *  the PATH is unchanged (only the id under it moved), so refresh()'s bindTo
+	 *  would no-op. The caller pre-seeds the serverId Y.Text with the editor's
+	 *  content, so bindTo's reconcile is a no-op (no visible buffer change). */
+	forceRebind(view: EditorView, path: string): void {
+		this.detach(view);
+		void this.bindTo(view, path);
+	}
+
 	release(view: EditorView): void {
 		this.released = true;
 		this.detach(view);

@@ -248,6 +248,12 @@ export class CrdtManager {
 		return (await this.entry(noteId)).doc;
 	}
 
+	/** True when the doc is currently resident in memory. Used to prove an
+	 *  orphaned mint doc was torn down (removeDoc) after a genesis adopt. */
+	hasDoc(noteId: string): boolean {
+		return this.docs.has(this.docId(noteId));
+	}
+
 	/**
 	 * Apply a disk-read content string into the doc's Y.Text and frontmatter
 	 * Y.Map/Y.Array.

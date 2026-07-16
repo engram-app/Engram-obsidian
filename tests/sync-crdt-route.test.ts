@@ -1137,6 +1137,86 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	test("ADOPT under a LIVE editor: seeds serverId from the mint's live buffer, rebinds the editor, removes the mint doc (no lost in-flight edits)", async () => {
+		// The editor is bound to the MINT doc, so ySync propagated the user's live
+		// keystrokes (incl. any typed during the crdt_create round-trip and any
+		// not yet flushed to disk) into the mint Y.Text — projectedText reflects
+		// them, cachedRead (disk) can lag. The adopt must transfer the MINT content
+		// into serverId (default origin → forwards to the server) and rebind the
+		// editor, NOT re-seed from the staler disk snapshot (which would clobber
+		// the in-flight chars).
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		const projectedText = mock(async (_id: string) => "hello world"); // mint live buffer
+		const removeDoc = mock(async (_id: string) => {});
+		const hasHistory = mock(async (_id: string) => false); // serverId empty → no doubling warn
+		engine.setCrdtManager({ applyLocalEdit, projectedText, removeDoc, hasHistory } as any);
+		engine.setLiveBoundCheck(() => true);
+		const enroll = mock((_id: string) => {});
+		const reset = mock((_id: string) => {});
+		engine.setCrdtEnrollment({ enroll, reset } as any);
+		const rebinds: string[] = [];
+		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
+		let mintId = "";
+		engine.setCrdtCreate(async (id: string, _path: string) => {
+			mintId = id;
+			return "server-owns-this";
+		});
+
+		const file = new TFile("Notes/collision-live.md");
+		await (
+			engine as unknown as { pushFile: (f: TFile, force?: boolean) => Promise<boolean> }
+		).pushFile(file);
+
+		// Remap stuck; the mint's live buffer was seeded into the server id, once,
+		// forwarding to the server (default origin) — NOT the disk "body" snapshot.
+		expect(noteIdMap.get("Notes/collision-live.md")).toBe("server-owns-this");
+		expect(projectedText).toHaveBeenCalledWith(mintId);
+		expect(applyLocalEdit.mock.calls.length).toBe(1);
+		expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("server-owns-this");
+		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("hello world"); // in-flight buffer, not disk
+		// Editor rebound off the orphaned mint onto serverId; mint doc retired.
+		expect(rebinds).toEqual(["Notes/collision-live.md"]);
+		expect(removeDoc).toHaveBeenCalledWith(mintId);
+		expect(reset).toHaveBeenCalledWith(mintId);
+		expect(enroll).toHaveBeenCalledWith("server-owns-this");
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("idle ADOPT (rebind wired but note NOT live-bound): uses the disk-seed path, no transfer/rebind/removeDoc", async () => {
+		// No live editor owns the note → nothing to preserve → the transfer branch
+		// must be skipped and the existing routeModify disk-seed runs unchanged.
+		const noteIdMap = new NoteIdMap();
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
+		const projectedText = mock(async (_id: string) => "hello world");
+		const removeDoc = mock(async (_id: string) => {});
+		engine.setCrdtManager({ applyLocalEdit, projectedText, removeDoc } as any);
+		engine.setLiveBoundCheck(() => false); // idle
+		engine.setCrdtEnrollment({ enroll: mock(() => {}), reset: mock(() => {}) } as any);
+		const rebinds: string[] = [];
+		engine.setCrdtEditorRebind((p: string) => rebinds.push(p));
+		engine.setCrdtCreate(async (_id: string, _path: string) => "server-owns-this");
+
+		const file = new TFile("Notes/collision-idle.md");
+		await (
+			engine as unknown as { pushFile: (f: TFile, force?: boolean) => Promise<boolean> }
+		).pushFile(file);
+
+		// Disk-seed path: applyLocalEdit gets the disk body + a reread fn; the
+		// mint-transfer machinery never runs.
+		expect(applyLocalEdit).toHaveBeenCalledWith(
+			"server-owns-this",
+			"body",
+			undefined,
+			expect.any(Function),
+		);
+		expect(projectedText).not.toHaveBeenCalled();
+		expect(rebinds).toEqual([]);
+		expect(removeDoc).not.toHaveBeenCalled();
+	});
+
 	test("rejection: crdt_create rejects → REST pushNote still delivers the note (not lost), error swallowed not thrown", async () => {
 		const noteIdMap = new NoteIdMap();
 		const engine = createEngine(noteIdMap);
