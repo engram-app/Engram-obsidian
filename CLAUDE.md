@@ -132,34 +132,20 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci.yml` | Push to any branch | Build, lint, test + trigger backend E2E |
-| `version-check.yml` | PR to main | Blocks merge if version not bumped or out of sync |
-| `rc-release.yml` | PR to main (each push) | Creates BRAT-compatible pre-release (`X.Y.Z-rc.N`) |
-| `release.yml` | PR merged to main | Cleans up RCs, creates final `X.Y.Z` release |
+| `version-check.yml` | PR to main | Enforces `manifest.json`/`package.json`/`versions.json` consistency, but only when `manifest.json` is deliberately bumped; otherwise a no-op pass |
+| `pr-build.yml` | PR to main (each push) | Publishes a prerelease tagged `X.Y.Z-pr.<num>.<sha>` with build assets, for BRAT frozen-version install by reviewers |
+| `release-please.yml` | Push to main | Maintains a standing "Release PR"; merging it bumps `manifest.json`/`versions.json`/`package.json` and pushes a bare `X.Y.Z` tag |
+| `release.yml` | Push of a bare `X.Y.Z` tag | Publishes the stable GitHub release + community-store assets, updates `versions.json` |
 
-### 1. Version Bump (only manual step)
+There's also a rolling **beta** channel (`main` builds published as `X.Y.Z-beta.N`, installed via BRAT's "add beta plugin") that's part of this same release-channels initiative; its workflow lands in a separate commit.
 
-```bash
-npm version patch   # or minor, major
-```
+### Cutting a release
 
-This updates `package.json`, runs `version-bump.mjs` to sync `manifest.json` + `versions.json`, and commits.
+1. **Open/merge feature PRs as usual.** Each push to a PR auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump needed.
+2. **Edit the release notes.** `release-please.yml` keeps a Release PR up to date with a generated CHANGELOG; edit that PR's description to adjust the notes.
+3. **Merge the release-please PR.** This bumps `manifest.json`/`versions.json`/`package.json` and pushes the bare `X.Y.Z` tag, which triggers `release.yml` to publish the final GitHub release.
 
-### 2. Push to PR → RC Pre-releases
-
-Every push to a PR targeting main automatically:
-- Builds and tests the plugin
-- Creates an RC tag (`X.Y.Z-rc.1`, `rc.2`, ...) incrementing automatically
-- Publishes a GitHub pre-release with `main.js`, `manifest.json`, `styles.css`
-- Install via BRAT: add repo with frozen version `X.Y.Z-rc.N`
-
-### 3. Merge PR → Final Release
-
-Merging the PR to main automatically:
-- Deletes all RC tags and pre-releases for that version
-- Creates annotated tag `X.Y.Z` on the merge commit
-- Publishes final GitHub release with assets and auto-generated notes
-
-### 4. Deploy to Local Vault
+### Deploy to Local Vault
 
 ```bash
 bun run build
