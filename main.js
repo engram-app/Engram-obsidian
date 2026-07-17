@@ -14100,7 +14100,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     }
     if (event === "crdt_doc_ready" && payload) {
       let docId = payload.doc_id;
-      docId && ((_k = this.onCrdtDocReady) == null || _k.call(this, docId));
+      if (docId) {
+        let path = payload.path;
+        (_k = this.onCrdtDocReady) == null || _k.call(this, docId, path);
+      }
       return;
     }
     if (event === "note_changed" && payload) {
@@ -17643,7 +17646,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__", CRDT_HEAD_ANNOUNCED = "__crdt_announced__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -19492,6 +19495,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     learned && this.noteIdMap && await this.saveData({ noteIds: this.noteIdMap.toJSON() });
   }
+  /** Per-note discovery from a room-open announce that carries a path
+   *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
+   *  ZERO Y.Doc ops, so no `note_yjs_update` ever fans out — without this the
+   *  note is only found ~30s later via the level-triggered pull (e2e test_27,
+   *  which materialized it at +31s, 1s past the deadline). Learn the id->path
+   *  mapping, confirm the id (an announce is authoritative proof the server holds
+   *  the row), and converge just this note over the SAME socket catch-up delta
+   *  channel `catchupViaSocket` uses, so the history-less adopt + empty
+   *  materialize backstop (`adoptHistoryLessNote` step 5) runs in seconds. Never
+   *  opens a dedicated room (the connect-storm) and never fabricates content: a
+   *  non-empty note adopts full server state, only a genuinely empty one hits the
+   *  backstop. Gate-safe and failure-isolated: never throws into the caller. */
+  async discoverAnnouncedNote(noteId, path) {
+    var _a;
+    if (!this.crdt || !this.crdtCatchupDelta || this.isSyncBlocked()) return;
+    let normalized = (0, import_obsidian21.normalizePath)(path);
+    if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
+      try {
+        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.convergeNoteFromDelta(
+          normalized,
+          noteId,
+          CRDT_HEAD_ANNOUNCED,
+          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
+            update: fromB64(x.b64),
+            head: x.head
+          }))
+        );
+      } catch (e) {
+        rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
+      }
+  }
   /** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
    *  to an IDLE note — one with no dedicated CRDT room open right now. Mirrors
    *  coldReceive's per-note apply, minus the REST getUpdates fetch (the update
@@ -19890,9 +19924,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
-        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized;
-        if (confirmedCanonical && !foreignAttributed) {
-          rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
+        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized, recentlyRecreated = this.pushing.has(normalized) || this.recentlyPushed.has(normalized);
+        if (confirmedCanonical && recentlyRecreated) {
+          rlog().info(
+            "ws",
+            `Delete deferred to pull (recreate in-flight at path): ${event.path}`
+          ), this.pull();
           return;
         }
         if (confirmedCanonical)
@@ -22688,9 +22725,9 @@ function createCrdtWiring(deps) {
     channel.handleFrame(docId, b64);
   }, onNoteYjsUpdate = (noteId, b64, head) => {
     syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
-  }, onCrdtDocReady = (docId) => {
+  }, onCrdtDocReady = (docId, announcedPath) => {
     if (syncEngine.isSyncBlocked()) return;
-    syncEngine.ensureNoteIdMapped(docId);
+    syncEngine.ensureNoteIdMapped(docId), announcedPath !== void 0 && syncEngine.discoverAnnouncedNote(docId, announcedPath);
     let path = noteIdMap.pathForId(docId);
     path !== null && deps.isBound(path) && enrollment.enroll(docId);
   }, onCrdtNoteNotFound = (docId) => {
