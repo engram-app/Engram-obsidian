@@ -311,13 +311,16 @@ describe("SyncEngine.handleModify", () => {
 });
 
 describe("SyncEngine.handleDelete", () => {
-	test("calls API to delete note", async () => {
+	test("calls API to delete a non-md note (canvas stays REST)", async () => {
+		// CRDT-authoritative rewire: md deletes go over the socket (see the
+		// "CRDT-authoritative delete rewire" block). Canvas is not CRDT-managed, so
+		// it still uses the LWW REST delete.
 		const engine = createEngine();
-		const file = new TFile("Notes/Old.md");
+		const file = new TFile("Notes/Old.canvas");
 
 		await engine.handleDelete(file);
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Old.md");
+		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Old.canvas");
 	});
 
 	test("cancels pending push on delete", async () => {
@@ -329,9 +332,10 @@ describe("SyncEngine.handleDelete", () => {
 
 		await new Promise((r) => setTimeout(r, 300));
 
-		// Push should NOT have been called
+		// Push should NOT have been called (debounce cancelled by the delete).
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Test.md");
+		// The md note was never synced (no note_id) → no REST delete, no socket op.
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 });
 
@@ -756,16 +760,14 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
 
-	test("delete for a live confirmed note defers to pull instead of trashing it", async () => {
-		// A WS delete is unordered and can be a STALE echo — e.g. of our own
-		// delete→recreate at the same path. Trashing the live recreated file
-		// would lose the user's content. When the path canonically holds a
-		// confirmed note we own, the delete is ambiguous (stale echo vs. a real
-		// remote delete), so defer to the seq-ordered pull, which reconciles
-		// correctly. (A renamed-away old path is NOT canonical for its id, so it
-		// is trashed by the branch — see the id-keyed move tests.)
+	test("delete whose id matches the live note trashes it authoritatively (no pull)", async () => {
+		// CRDT-authoritative rewire: a received delete is applied directly on the
+		// socket receive path, never deferred to a REST pull (the old pull-defer
+		// skipped the tombstone and resurrected the note — e2e test_47). The
+		// delete→recreate case is discriminated by id (see the recreate test),
+		// NOT by deferring an ambiguous delete to the ordered pull.
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-1"); // pull() → pullViaCursor → getSyncChanges
+		engine.setSyncCursor("CUR-1");
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("E2E/Live.md", "id-live");
 		engine.setNoteIdMap(noteIdMap);
@@ -780,10 +782,11 @@ describe("SyncEngine.handleStreamEvent", () => {
 			event_type: "delete",
 			path: "E2E/Live.md",
 			timestamp: 1709345678,
+			id: "id-live",
 		});
 
-		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
-		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(liveFile);
+		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // never routes to REST pull
 	});
 
 	test("delete trashes when the path's id is not confirmed (defer guard falls through)", async () => {
@@ -1830,17 +1833,19 @@ describe("SyncEngine offline queue integration", () => {
 	});
 
 	test("failed delete queues the delete and goes offline", async () => {
+		// A REST delete (canvas — md now goes over the durable CRDT socket, which
+		// never throws) that fails goes offline and queues the delete for retry.
 		(mockApi.deleteNote as jest.Mock).mockRejectedValueOnce(new Error("network"));
 
 		const engine = createEngine();
-		const file = new TFile("Notes/Deleted.md");
+		const file = new TFile("Notes/Deleted.canvas");
 
 		await engine.handleDelete(file);
 
 		expect(engine.isOffline()).toBe(true);
 		expect(engine.queue.size).toBe(1);
 		const entry = engine.queue.all()[0];
-		expect(entry.path).toBe("Notes/Deleted.md");
+		expect(entry.path).toBe("Notes/Deleted.canvas");
 		expect(entry.action).toBe("delete");
 	});
 

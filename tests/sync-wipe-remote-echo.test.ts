@@ -290,13 +290,24 @@ describe("wipeRemote self-echo suppression", () => {
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 
-	test("a genuine user-initiated delete still pushes to the server", async () => {
-		const engine = createEngine();
+	test("a genuine user-initiated delete of a synced note enqueues a socket delete (no REST)", async () => {
+		// CRDT-authoritative rewire: a local delete of a note the server knows
+		// (a resolvable note_id) hands off a durable crdt_delete over the socket
+		// instead of a REST api.deleteNote.
+		const map = identityNoteIdMap("Notes/UserDeleted.md");
+		const engine = createEngine(map);
+		const enqueued: unknown[] = [];
+		engine.setCrdtEnqueue((op) => {
+			enqueued.push(op);
+		});
 		const file = new TFile("Notes/UserDeleted.md");
 
 		await engine.handleDelete(file);
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/UserDeleted.md");
+		expect(enqueued).toEqual([
+			{ kind: "delete", docId: "Notes/UserDeleted.md", path: "Notes/UserDeleted.md" },
+		]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 
 	test("wipeRemote clears server bindings so the re-push mints fresh", async () => {
@@ -544,5 +555,157 @@ describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canon
 			mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
 			(mockApp.fileManager.trashFile as jest.Mock).mockReset().mockResolvedValue(undefined);
 		}
+	});
+});
+
+describe("CRDT-authoritative delete rewire (REST detour removed)", () => {
+	// A received delete is now applied directly on the socket receive path,
+	// id-keyed — never routed to a REST pull (which skipped the tombstone and
+	// re-pushed, resurrecting the note: e2e test_47). The delete→recreate case is
+	// discriminated by comparing the delete's target id against the id currently
+	// live at the path.
+	function crdtDeps() {
+		const crdt = {
+			removeDoc: mock(async () => {}),
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		};
+		const enrollment = { enroll: mock(), reset: mock() };
+		return { crdt, enrollment };
+	}
+
+	test("(a) received delete of a CRDT note trashes directly, no pull, room torn down", async () => {
+		const map = new NoteIdMap();
+		map.set("Notes/Live.md", "id-live");
+		const engine = createEngine(map);
+		const { crdt, enrollment } = crdtDeps();
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
+
+		const file = new TFile("Notes/Live.md");
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Live.md",
+			timestamp: 1709345678,
+			id: "id-live",
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+		// No REST pull of any shape.
+		expect(mockApi.getSyncChanges).not.toHaveBeenCalled();
+		expect(mockApi.getManifest).not.toHaveBeenCalled();
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		// CRDT room for the deleted id torn down.
+		expect(crdt.removeDoc).toHaveBeenCalledWith("id-live");
+		expect(enrollment.reset).toHaveBeenCalledWith("id-live");
+		expect(map.get("Notes/Live.md")).toBeNull();
+	});
+
+	test("(b) received delete whose target id != the path's current id (recreate) does NOT trash", async () => {
+		// A delete→recreate minted a fresh id at the path. The delete carries the
+		// DEAD id; the live note under the new id must survive.
+		const map = new NoteIdMap();
+		map.set("Notes/Recreated.md", "id-new");
+		const engine = createEngine(map);
+		const { crdt, enrollment } = crdtDeps();
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+
+		const file = new TFile("Notes/Recreated.md");
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Recreated.md",
+			timestamp: 1709345678,
+			id: "id-old", // dead id
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		// The live note's room and mapping are untouched.
+		expect(crdt.removeDoc).not.toHaveBeenCalledWith("id-new");
+		expect(map.get("Notes/Recreated.md")).toBe("id-new");
+	});
+
+	test("(c) received delete with genuine local drift writes a keep-both copy BEFORE trashing", async () => {
+		const map = new NoteIdMap();
+		map.set("Notes/Drift.md", "id-drift");
+		const engine = createEngine(map);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-drift");
+		priv(engine).syncState.set("Notes/Drift.md", { hash: fnv1a("synced body") });
+
+		const file = new TFile("Notes/Drift.md");
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+		mockApp.vault.cachedRead.mockResolvedValue("unsynced local edits");
+
+		const order: string[] = [];
+		mockApp.vault.create.mockImplementation((p: string) => {
+			order.push(`create:${p}`);
+			return Promise.resolve();
+		});
+		(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(() => {
+			order.push("trash");
+			return Promise.resolve();
+		});
+
+		try {
+			await engine.handleStreamEvent({
+				event_type: "delete",
+				path: "Notes/Drift.md",
+				timestamp: 1709345678,
+				id: "id-drift",
+				device_id: "device-other",
+			});
+
+			expect(mockApp.vault.create).toHaveBeenCalledWith(
+				expect.stringMatching(/^Notes\/Drift \(conflict .*\)\.md$/),
+				"unsynced local edits",
+			);
+			const createIdx = order.findIndex((o) => o.startsWith("create:"));
+			const trashIdx = order.indexOf("trash");
+			expect(createIdx).toBeGreaterThanOrEqual(0);
+			expect(trashIdx).toBeGreaterThanOrEqual(0);
+			expect(createIdx).toBeLessThan(trashIdx);
+			expect(mockApi.getSyncChanges).not.toHaveBeenCalled();
+		} finally {
+			mockApp.vault.create.mockReset().mockResolvedValue(undefined);
+			mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
+			(mockApp.fileManager.trashFile as jest.Mock).mockReset().mockResolvedValue(undefined);
+		}
+	});
+
+	test("(d) own local delete routes through crdtEnqueue, NOT api.deleteNote", async () => {
+		const map = new NoteIdMap();
+		map.set("Notes/Mine.md", "id-mine");
+		const engine = createEngine(map);
+		const { crdt, enrollment } = crdtDeps();
+		engine.setCrdtManager(crdt as any);
+		engine.setCrdtEnrollment(enrollment as any);
+		const enqueued: unknown[] = [];
+		engine.setCrdtEnqueue((op) => {
+			enqueued.push(op);
+		});
+
+		const file = new TFile("Notes/Mine.md");
+		await engine.handleDelete(file);
+
+		expect(enqueued).toEqual([{ kind: "delete", docId: "id-mine", path: "Notes/Mine.md" }]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("(d2) own local delete of a NEVER-synced note (no id) does nothing — no REST", async () => {
+		const engine = createEngine(new NoteIdMap());
+		engine.setCrdtEnqueue(() => {
+			throw new Error("must not enqueue without an id");
+		});
+
+		const file = new TFile("Notes/NeverSynced.md");
+		await engine.handleDelete(file);
+
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 });

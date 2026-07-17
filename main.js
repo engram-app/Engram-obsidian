@@ -18859,7 +18859,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleDelete short-circuited \u2014 gate closed");
       return;
@@ -18873,10 +18873,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     try {
-      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : this.crdtEnqueue && crdtNoteId ? this.crdtEnqueue({ kind: "delete", docId: crdtNoteId, path: file.path }) : (await this.api.deleteNote(file.path), this.goOnline()), file.path.endsWith(".md") && crdtNoteId && (await ((_f = this.crdt) == null ? void 0 : _f.removeDoc(crdtNoteId)), (_g = this.crdtEnrollment) == null || _g.reset(crdtNoteId));
+      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : file.path.endsWith(".md") ? crdtNoteId && ((_f = this.crdtEnqueue) == null || _f.call(this, { kind: "delete", docId: crdtNoteId, path: file.path })) : (await this.api.deleteNote(file.path), this.goOnline()), file.path.endsWith(".md") && crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId));
+        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(crdtNoteId)), (_j = this.crdtEnrollment) == null || _j.reset(crdtNoteId));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -18884,13 +18884,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         action: "delete",
         kind: isBinary ? "attachment" : "note",
         timestamp: Date.now(),
-        vaultId: (_j = this.settings.vaultId) != null ? _j : void 0
+        vaultId: (_k = this.settings.vaultId) != null ? _k : void 0
       }), this.maybeGoOffline(e);
     }
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -18899,17 +18899,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
-        isBinary ? await this.api.deleteAttachment(oldPath) : await this.api.deleteNote(oldPath), this.goOnline();
+        if (isBinary)
+          await this.api.deleteAttachment(oldPath), this.goOnline();
+        else if (oldPath.endsWith(".md")) {
+          let relocatedId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
+          relocatedId && ((_d = this.crdtEnqueue) == null || _d.call(this, { kind: "delete", docId: relocatedId, path: oldPath }));
+        } else
+          await this.api.deleteNote(oldPath), this.goOnline();
       } catch (e) {
         isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
+          vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_f = this.baseStore) == null || _f.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_h = (_g = this.noteIdMap) == null ? void 0 : _g.get(file.path)) != null ? _h : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -19875,7 +19881,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -19922,34 +19928,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
         return;
       }
-      let existing = this.app.vault.getFileByPath(normalized);
+      let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, existing = this.app.vault.getFileByPath(normalized);
+      if (existing && targetId && currentId && targetId !== currentId) {
+        rlog().info(
+          "ws",
+          `Delete for dead id ${targetId} ignored \u2014 ${normalized} recreated as ${currentId}`
+        );
+        return;
+      }
       if (existing) {
-        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized;
-        if (confirmedCanonical && !foreignAttributed) {
-          rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
-          return;
-        }
-        if (confirmedCanonical)
-          try {
-            let disk = await this.app.vault.cachedRead(existing);
-            if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk)) {
-              let copy2 = await this.writeDriftConflictCopy(normalized, disk);
-              rlog().info(
-                "conflict",
-                `foreign-delete drift \u2192 keep-both | original=${normalized} copy=${copy2}`
-              );
-            }
-          } catch (e) {
-            rlog().warn(
+        try {
+          let disk = await this.app.vault.cachedRead(existing);
+          if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk)) {
+            let copy2 = await this.writeDriftConflictCopy(normalized, disk);
+            rlog().info(
               "conflict",
-              `foreign-delete drift check failed for ${normalized}: ${errMsg(e)}`
+              `received-delete drift \u2192 keep-both | original=${normalized} copy=${copy2}`
             );
           }
+        } catch (e) {
+          rlog().warn(
+            "conflict",
+            `received-delete drift check failed for ${normalized}: ${errMsg(e)}`
+          );
+        }
         await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
       }
       if (normalized.endsWith(".md")) {
-        let crdtNoteId = (_i = (_h = this.noteIdMap) == null ? void 0 : _h.get(normalized)) != null ? _i : null;
-        (_j = this.noteIdMap) == null || _j.delete(normalized), crdtNoteId && (await ((_k = this.crdt) == null ? void 0 : _k.removeDoc(crdtNoteId)), (_l = this.crdtEnrollment) == null || _l.reset(crdtNoteId));
+        (_h = this.noteIdMap) == null || _h.delete(normalized);
+        let roomId = targetId != null ? targetId : currentId;
+        roomId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(roomId)), (_j = this.crdtEnrollment) == null || _j.reset(roomId));
       }
       return;
     }
@@ -19968,19 +19976,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_n = event.id) != null ? _n : (_m = this.noteIdMap) != null && _m.get(event.path))) {
-          let noteId = (_p = event.id) != null ? _p : (_o = this.noteIdMap) == null ? void 0 : _o.get(event.path), canonicalPath = (_r = (_q = this.noteIdMap) == null ? void 0 : _q.pathForId(noteId)) != null ? _r : null;
+        } else if (this.crdt && event.path.endsWith(".md") && ((_l = event.id) != null ? _l : (_k = this.noteIdMap) != null && _k.get(event.path))) {
+          let noteId = (_n = event.id) != null ? _n : (_m = this.noteIdMap) == null ? void 0 : _m.get(event.path), canonicalPath = (_p = (_o = this.noteIdMap) == null ? void 0 : _o.pathForId(noteId)) != null ? _p : null;
           if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
             rlog().info(
               "ws",
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            (_s = this.noteIdMap) == null || _s.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_t2 = this.crdtEnrollment) == null || _t2.enroll(noteId));
+            (_q = this.noteIdMap) == null || _q.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_r = this.crdtEnrollment) == null || _r.enroll(noteId));
             let np = (0, import_obsidian21.normalizePath)(event.path), priorState = this.syncState.get(np);
             event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
-              hash: (_u = priorState == null ? void 0 : priorState.hash) != null ? _u : fnv1a(""),
-              version: (_v = event.version) != null ? _v : priorState == null ? void 0 : priorState.version,
+              hash: (_s = priorState == null ? void 0 : priorState.hash) != null ? _s : fnv1a(""),
+              version: (_t2 = event.version) != null ? _t2 : priorState == null ? void 0 : priorState.version,
               serverHash: event.content_hash
             }), rlog().info(
               "ws",
@@ -19996,13 +20004,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_w = event.title) != null ? _w : "",
+            title: (_u = event.title) != null ? _u : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_x = event.folder) != null ? _x : "",
-            tags: (_y = event.tags) != null ? _y : [],
-            mtime: (_z = event.mtime) != null ? _z : Date.now(),
-            updated_at: (_A = event.updated_at) != null ? _A : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_v = event.folder) != null ? _v : "",
+            tags: (_w = event.tags) != null ? _w : [],
+            mtime: (_x = event.mtime) != null ? _x : Date.now(),
+            updated_at: (_y = event.updated_at) != null ? _y : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -20012,13 +20020,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_B = note.content_hash) != null ? _B : event.content_hash,
+            content_hash: (_z = note.content_hash) != null ? _z : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_C = note.version) != null ? _C : event.version
+            version: (_A = note.version) != null ? _A : event.version
           });
         }
       } catch (e) {

@@ -1900,16 +1900,21 @@ export class SyncEngine {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path); // attachments stay REST
 				this.goOnline();
-			} else if (this.crdtEnqueue && crdtNoteId) {
-				// CRDT-sole delete: enqueue a durable crdt_delete. The queue holds it
-				// until the crdt: topic is joined and retries transient failures (no
-				// REST delete fallback, Plan B2). Enqueue never throws, so the CRDT
-				// teardown below always runs. No goOnline() here: this is a local
-				// durable hand-off, not a network round-trip, so connection status is
-				// driven by real traffic elsewhere.
-				this.crdtEnqueue({ kind: "delete", docId: crdtNoteId, path: file.path });
+			} else if (file.path.endsWith(".md")) {
+				// CRDT-sole md delete path (REST removed). With a resolvable note_id,
+				// enqueue a durable crdt_delete: the queue holds it until the crdt:
+				// topic is joined and retries transient failures. Enqueue never throws,
+				// so the CRDT teardown below always runs, and there is no goOnline()
+				// here — a local durable hand-off, not a network round-trip. With NO
+				// note_id the note was never synced remotely, so there is nothing to
+				// delete on the server: do nothing rather than fall back to REST.
+				if (crdtNoteId) {
+					this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
+				}
 			} else {
-				await this.api.deleteNote(file.path); // no crdt wired / no note_id: REST delete
+				// Canvas / other non-md syncable text is not CRDT-managed — still LWW
+				// REST (outside the CRDT-only md collapse).
+				await this.api.deleteNote(file.path);
 				this.goOnline();
 			}
 			// Tear down the CRDT doc so a note recreated at the same path starts
@@ -1967,10 +1972,22 @@ export class SyncEngine {
 			try {
 				if (isBinary) {
 					await this.api.deleteAttachment(oldPath);
+					this.goOnline();
+				} else if (oldPath.endsWith(".md")) {
+					// CRDT-authoritative: the rename's old-path tombstone goes over the
+					// socket (durable crdt_delete for the relocated id), never REST.
+					// noteIdMap.rename above moved the id onto file.path, so resolve it
+					// there. No id → the note was never synced → nothing to tombstone.
+					// Enqueue never throws / makes no network call, so no goOnline here.
+					const relocatedId = this.noteIdMap?.get(file.path) ?? null;
+					if (relocatedId) {
+						this.crdtEnqueue?.({ kind: "delete", docId: relocatedId, path: oldPath });
+					}
 				} else {
+					// Canvas / other non-md syncable text stays LWW REST (not CRDT-managed).
 					await this.api.deleteNote(oldPath);
+					this.goOnline();
 				}
-				this.goOnline();
 				// Task 6 (note_id-keyed CRDT): a rename must NOT tear down the CRDT
 				// doc. Its key is now the note's stable note_id (unchanged by a
 				// rename — only the path above it moves, via noteIdMap.rename), so
@@ -4017,70 +4034,56 @@ export class SyncEngine {
 				rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
 				return;
 			}
+			// A delete is an AUTHORITATIVE CRDT operation applied directly here — no
+			// REST pull, no resurrection. It is id-keyed: `targetId` is the note the
+			// delete addresses (the broadcast carries `event.id`), `currentId` is the
+			// note currently live at the path. If they differ, a delete→recreate at
+			// this path minted a fresh id — the delete is for a DEAD id, so leave the
+			// recreated note (and its live room) alone. Otherwise apply it: the
+			// CRDT-native resolution the old REST-pull defer could not do (the pull
+			// never trashed a note merely absent from the server, so a real remote
+			// delete of a live confirmed note was silently dropped — e2e test_47).
+			const currentId = this.noteIdMap?.get(normalized) ?? null;
+			const targetId = event.id ?? currentId;
 			const existing = this.app.vault.getFileByPath(normalized);
+			if (existing && targetId && currentId && targetId !== currentId) {
+				rlog().info(
+					"ws",
+					`Delete for dead id ${targetId} ignored — ${normalized} recreated as ${currentId}`,
+				);
+				return;
+			}
 			if (existing) {
-				// A WS delete is unordered and can be a STALE echo — e.g. of our own
-				// delete→recreate at the same path (the recreate re-established a live
-				// note here). If this path canonically holds a CONFIRMED note we own,
-				// trashing now could destroy the recreated file, and an UNATTRIBUTED
-				// delete is ambiguous (stale echo vs. a real remote delete). For that
-				// ambiguous case, defer to the seq-ordered pull, which reconciles
-				// delete-vs-recreate correctly.
-				//
-				// A FOREIGN-attributed delete (device_id present, not ours; #970) is
-				// provably NOT our own echo, so the ambiguity is gone: apply it
-				// authoritatively (fall through to trashRemotelyDeleted below), the
-				// CRDT-native resolution — the REST pull never trashes a note merely
-				// absent from the server, so deferring a real remote delete of a
-				// confirmed note simply dropped it (e2e test_47: A deletes via REST, B's
-				// live client kept the file forever). trashRemotelyDeleted marks
-				// remotelyDeleted, so B's own vault-delete event is echo-suppressed and
-				// never re-pushed (the 2026-07-08 wipe-echo invariant, test_86).
-				//
-				// A renamed-away old path is handled either way (test_10): once
-				// moveIfIdRelocated has run it is non-canonical (its id resolves to the
-				// new path) and is trashed here; if the delete arrives FIRST it is still
-				// canonical — an unattributed one defers (pull's moveIfIdRelocated
-				// trashes it), a foreign-attributed one trashes here. No duplicate leaks.
-				const ownedId = this.noteIdMap?.get(normalized) ?? null;
-				const confirmedCanonical =
-					!!ownedId &&
-					this.isNoteConfirmed(ownedId) &&
-					this.noteIdMap?.pathForId(ownedId) === normalized;
-				if (confirmedCanonical && !foreignAttributed) {
-					rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`);
-					void this.pull();
-					return;
-				}
-				// Applying a foreign delete of a confirmed-canonical note authoritatively
-				// trashes + tears down its CRDT room, which would discard B's local
-				// UNPUSHED drift. A rename emits api.deleteNote(oldPath) as a
-				// foreign-attributed delete (delete-first is the common order), so a note
-				// A renames while B has un-synced edits would lose that drift. Preserve
-				// it FIRST as a keep-both conflict copy (mirrors adoptHistoryLessNote's
-				// no-LCA keep-both), then trash. needsColdReconcile == a recorded
-				// baseline disagreeing with disk == real local drift; no drift → trash
-				// directly. Best-effort: a copy failure must not block the delete.
-				if (confirmedCanonical) {
-					try {
-						const disk = await this.app.vault.cachedRead(existing);
-						if (
-							!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
-							this.needsColdReconcile(normalized, disk)
-						) {
-							const copy = await this.writeDriftConflictCopy(normalized, disk);
-							rlog().info(
-								"conflict",
-								`foreign-delete drift → keep-both | original=${normalized} copy=${copy}`,
-							);
-						}
-					} catch (e) {
-						rlog().warn(
+				// Applying the delete trashes + tears down the note's CRDT room, which
+				// would discard local UNPUSHED drift. A rename emits a delete for the
+				// old path (delete-first is the common order), so a note renamed on
+				// another device while THIS device has un-synced edits would lose that
+				// drift. Preserve it FIRST as a keep-both conflict copy (mirrors
+				// adoptHistoryLessNote's no-LCA keep-both), then trash. needsColdReconcile
+				// == a recorded baseline disagreeing with disk == real local drift; no
+				// baseline / no drift → trash directly. Best-effort: a copy failure must
+				// not block the delete.
+				try {
+					const disk = await this.app.vault.cachedRead(existing);
+					if (
+						!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
+						this.needsColdReconcile(normalized, disk)
+					) {
+						const copy = await this.writeDriftConflictCopy(normalized, disk);
+						rlog().info(
 							"conflict",
-							`foreign-delete drift check failed for ${normalized}: ${errMsg(e)}`,
+							`received-delete drift → keep-both | original=${normalized} copy=${copy}`,
 						);
 					}
+				} catch (e) {
+					rlog().warn(
+						"conflict",
+						`received-delete drift check failed for ${normalized}: ${errMsg(e)}`,
+					);
 				}
+				// trashRemotelyDeleted marks remotelyDeleted, so this device's own
+				// vault-delete event is echo-suppressed and never re-pushed (the
+				// 2026-07-08 wipe-echo invariant, test_86).
 				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
@@ -4090,14 +4093,15 @@ export class SyncEngine {
 			// existed locally. The ghost lineage in IDB/memory must be cleared so a
 			// note recreated at the same path starts fresh (P1-3). Non-md paths are
 			// never CRDT-managed — skip them to avoid spurious removeDoc overhead.
-			// Keyed by note_id now — resolve + clear the mapping before tearing down
-			// (nothing to tear down if this device never learned an id for it).
+			// Keyed by the DELETE's target id (the recreate case returned above, so
+			// here targetId == currentId or one is null): clear the path mapping and
+			// tear down the room for that id.
 			if (normalized.endsWith(".md")) {
-				const crdtNoteId = this.noteIdMap?.get(normalized) ?? null;
 				this.noteIdMap?.delete(normalized);
-				if (crdtNoteId) {
-					await this.crdt?.removeDoc(crdtNoteId);
-					this.crdtEnrollment?.reset(crdtNoteId);
+				const roomId = targetId ?? currentId;
+				if (roomId) {
+					await this.crdt?.removeDoc(roomId);
+					this.crdtEnrollment?.reset(roomId);
 				}
 			}
 			return;
