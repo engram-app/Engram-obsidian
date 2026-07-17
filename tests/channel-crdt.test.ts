@@ -375,6 +375,28 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 		channel.disconnect();
 	});
 
+	test("forwards the announce path to onCrdtDocReady (empty-note discovery, test_27)", async () => {
+		// The backend now carries the note's path on the announce so an empty note
+		// (zero Y.Doc ops → no note_yjs_update) can be discovered immediately.
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const calls: Array<[string, string | undefined]> = [];
+		channel.onCrdtDocReady = (docId, path) => calls.push([docId, path]);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"crdt:u1:v1",
+			"crdt_doc_ready",
+			{ doc_id: "v1/note.md", path: "v1/note.md" },
+		]);
+
+		expect(calls).toEqual([["v1/note.md", "v1/note.md"]]);
+
+		channel.disconnect();
+	});
+
 	test("a note_not_found error reply routes to onCrdtNoteNotFound (backend #955)", async () => {
 		// The backend now replies {reason: "note_not_found", doc_id} when a
 		// crdt_msg names an id it has no row for — the create-race cross-wire

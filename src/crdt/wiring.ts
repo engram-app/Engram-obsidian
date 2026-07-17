@@ -17,6 +17,7 @@ type WiringSyncEngine = Pick<
 	| "isSyncBlocked"
 	| "ensureNoteIdMapped"
 	| "applyPushedNoteUpdate"
+	| "discoverAnnouncedNote"
 >;
 
 export interface CrdtWiringDeps {
@@ -45,8 +46,10 @@ export interface CrdtWiring {
 	enrollment: CrdtEnrollment;
 	/** Inbound CRDT frame handler (channel.onCrdtMessage). */
 	onCrdtMessage: (docId: string, b64: string) => void;
-	/** Remote room-open announce handler (channel.onCrdtDocReady). */
-	onCrdtDocReady: (docId: string) => void;
+	/** Remote room-open announce handler (channel.onCrdtDocReady). `path` is
+	 *  carried on the announce (backend addition) so an empty note can be
+	 *  discovered immediately; absent on pre-path backends. */
+	onCrdtDocReady: (docId: string, path?: string) => void;
 	/** Server dropped a crdt_msg we sent for an unknown note_id (backend #955,
 	 *  plugin #202) — the create-race cross-wire signature. Handler kicks the
 	 *  sync engine's coalesced live id-map reconcile (channel.onCrdtNoteNotFound). */
@@ -286,7 +289,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// Discovery: when another device opens a room (server announces
 	// crdt_doc_ready), enroll the note here so a sync-step-1 fires and we pull it
 	// even if we've never opened it.
-	const onCrdtDocReady = (docId: string): void => {
+	const onCrdtDocReady = (docId: string, announcedPath?: string): void => {
 		// While the sync gate is closed, skip enrollment: STEP2 ops would integrate
 		// into the Y.Doc but never flush, and after gate-accept the re-handshake
 		// delivers zero new ops. Gating here keeps gated-period state out of the doc
@@ -298,6 +301,17 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// Kick the coalesced manifest reconcile so the mapping lands now, not at
 		// the next cold start.
 		syncEngine.ensureNoteIdMapped(docId);
+		// Empty-note discovery (e2e test_27): an empty note's genesis emits ZERO
+		// Y.Doc ops, so no note_yjs_update ever fans out — the announce carries only
+		// the id and (now) the path. Without this the note is found ~30s later via
+		// the level-triggered pull. When the announce carries a path, run a per-note
+		// discovery+adopt now so the empty-materialize backstop writes the file in
+		// seconds. discoverAnnouncedNote is gate-safe, skips notes already on disk /
+		// live-bound / locally deleted, and NEVER opens a dedicated room (that was
+		// the connect-storm) — it reuses the socket catch-up delta path and isolates
+		// its own failure, so the fire-and-forget call can't throw out of here.
+		if (announcedPath !== undefined)
+			void syncEngine.discoverAnnouncedNote(docId, announcedPath);
 		// Vault-channel fan-out: an IDLE note (not open in an editor) converges over
 		// the note_yjs_update broadcast (applyPushedNoteUpdate) — it must NOT open a
 		// dedicated room. This announce-driven enroll was the primary connect-storm

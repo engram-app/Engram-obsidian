@@ -397,3 +397,96 @@ describe("catchupViaSocket", () => {
 		expect((engine as any).getCrdtHead("Notes/EmptyNote.md")).toBe("h1");
 	});
 });
+
+describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty-note discovery)", () => {
+	// An empty note's genesis emits crdt_doc_ready with a path but ZERO Y.Doc ops,
+	// so no note_yjs_update ever fans out. Consuming the announce path runs the
+	// SAME per-note adopt+materialize the whole-vault catch-up would, without
+	// waiting ~30s for the level-triggered pull (the note landed at +31s in
+	// test_27, 1s past the deadline). It targets ONE note — never the whole-vault
+	// heads fetch — and is socket-native (no REST getUpdates).
+	test("materializes an empty file from the announce path alone (test_27)", async () => {
+		const getUpdates = mock().mockRejectedValue(
+			new Error("REST getUpdates must not be called on the socket discovery path"),
+		);
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false), // history-less first-discovery
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(), // empty → no flush
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			projectedText: (_id: string) => Promise.resolve(""), // empty projected body
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
+		mockApp.vault.create.mockClear();
+
+		// Only the delta channel matters — discovery targets one announced note.
+		let headsFetched = false;
+		engine.setCrdtCatchup(
+			async () => {
+				headsFetched = true;
+				return { heads: {} };
+			},
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.discoverAnnouncedNote("id-empty", "Notes/EmptyNote.md");
+
+		expect(headsFetched).toBe(false); // per-note, NOT a whole-vault heads fetch
+		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
+		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/EmptyNote.md", "");
+		// The id->path mapping was learned and the head recorded.
+		expect((engine as any).noteIdMap.pathForId("id-empty")).toBe("Notes/EmptyNote.md");
+		expect((engine as any).getCrdtHead("Notes/EmptyNote.md")).toBe("h1");
+	});
+
+	test("does NOT resurrect a note with a pending local delete", async () => {
+		const applied: string[] = [];
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false),
+			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
+				applied.push(id);
+				return Promise.resolve();
+			},
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			projectedText: (_id: string) => Promise.resolve(""),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		await (engine as any).queue.enqueue({
+			path: "Notes/gone.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+		mockApp.vault.create.mockClear();
+		engine.setCrdtCatchup(
+			async () => ({ heads: {} }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.discoverAnnouncedNote("id-gone", "Notes/gone.md");
+
+		expect(applied).toEqual([]); // not resurrected
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("never throws when the delta fetch fails (failure-isolated)", async () => {
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			projectedText: (_id: string) => Promise.resolve(""),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		engine.setCrdtCatchup(
+			async () => ({ heads: {} }),
+			async () => {
+				throw new Error("socket delta failed");
+			},
+		);
+
+		await expect(engine.discoverAnnouncedNote("id-x", "Notes/x.md")).resolves.toBeUndefined();
+	});
+});

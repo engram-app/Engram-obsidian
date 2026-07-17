@@ -69,6 +69,13 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
  *  this with the authoritative head. */
 export const CRDT_HEAD_CREATED = "__crdt_created__";
 
+/** Sentinel serverHead for announce-driven per-note discovery
+ *  (`discoverAnnouncedNote`): a `crdt_doc_ready` announce carries no head, so we
+ *  pass a value that can never equal a stored crdtHead — the note has no local
+ *  file (checked first), so its crdtHead is unset and the convergence cost gate
+ *  can't short-circuit the adopt. */
+const CRDT_HEAD_ANNOUNCED = "__crdt_announced__";
+
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
  *  killing the socket (and re-crashing on every reconnect). Every CRDT seed
@@ -3234,6 +3241,51 @@ export class SyncEngine {
 		// them (the head map is authoritative, but re-fetching every session is
 		// wasteful and a mid-session offline edit needs the mapping already local).
 		if (learned && this.noteIdMap) await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+	}
+
+	/** Per-note discovery from a room-open announce that carries a path
+	 *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
+	 *  ZERO Y.Doc ops, so no `note_yjs_update` ever fans out — without this the
+	 *  note is only found ~30s later via the level-triggered pull (e2e test_27,
+	 *  which materialized it at +31s, 1s past the deadline). Learn the id->path
+	 *  mapping, confirm the id (an announce is authoritative proof the server holds
+	 *  the row), and converge just this note over the SAME socket catch-up delta
+	 *  channel `catchupViaSocket` uses, so the history-less adopt + empty
+	 *  materialize backstop (`adoptHistoryLessNote` step 5) runs in seconds. Never
+	 *  opens a dedicated room (the connect-storm) and never fabricates content: a
+	 *  non-empty note adopts full server state, only a genuinely empty one hits the
+	 *  backstop. Gate-safe and failure-isolated: never throws into the caller. */
+	async discoverAnnouncedNote(noteId: string, path: string): Promise<void> {
+		if (!this.crdt || !this.crdtCatchupDelta) return;
+		if (this.isSyncBlocked()) return;
+		const normalized = normalizePath(path);
+		if (this.shouldIgnore(normalized)) return;
+		if (this.isLiveBound(normalized)) return; // the live room owns it
+		// Already on disk — a content STEP2, a prior converge, or the user made it.
+		if (this.app.vault.getAbstractFileByPath(normalized) instanceof TFile) return;
+		// A note THIS device deleted must not be resurrected (mirrors
+		// catchupViaSocket): recentlyDeleted covers the delete-wins window (#970),
+		// hasPendingDelete covers one still in the offline queue.
+		if (this.recentlyDeleted.has(noteId)) return;
+		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) return;
+		try {
+			// Learn + persist the id->path mapping (discovery source, like catchup).
+			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized) {
+				this.noteIdMap.set(normalized, noteId);
+				await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+			}
+			this.confirmNoteId(noteId);
+			// Converge the single note over the socket catch-up delta channel — same
+			// guarded per-note apply as catchupViaSocket, only the trigger differs.
+			await this.convergeNoteFromDelta(normalized, noteId, CRDT_HEAD_ANNOUNCED, (id, sv) =>
+				this.crdtCatchupDelta!(id, sv).then((x) => ({
+					update: fromB64(x.b64),
+					head: x.head,
+				})),
+			);
+		} catch (e) {
+			rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
+		}
 	}
 
 	/** Apply a Yjs update fanned out over the vault channel (`note_yjs_update`)
