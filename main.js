@@ -19912,7 +19912,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -19959,7 +19959,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
         return;
       }
-      let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, existing = this.app.vault.getFileByPath(normalized);
+      let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, roomId = targetId != null ? targetId : currentId, relocatedPath = roomId && (_h = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(roomId)) != null ? _h : null;
+      if (relocatedPath !== null && (0, import_obsidian21.normalizePath)(relocatedPath) !== normalized) {
+        ((_i = this.noteIdMap) == null ? void 0 : _i.get(normalized)) === roomId && this.noteIdMap.delete(normalized), rlog().info(
+          "ws",
+          `Delete is rename old-leg (id relocated to ${relocatedPath}); room preserved: ${normalized}`
+        );
+        return;
+      }
+      let existing = this.app.vault.getFileByPath(normalized);
       if (existing && targetId && currentId && targetId !== currentId) {
         rlog().info(
           "ws",
@@ -19983,12 +19991,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             `received-delete drift check failed for ${normalized}: ${errMsg(e)}`
           );
         }
-        await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
+        await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_j = this.baseStore) == null || _j.delete(normalized);
       }
       if (normalized.endsWith(".md")) {
-        (_h = this.noteIdMap) == null || _h.delete(normalized);
-        let roomId = targetId != null ? targetId : currentId;
-        roomId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(roomId)), (_j = this.crdtEnrollment) == null || _j.reset(roomId));
+        (_k = this.noteIdMap) == null || _k.delete(normalized);
+        let roomId2 = targetId != null ? targetId : currentId;
+        roomId2 && (await ((_l = this.crdt) == null ? void 0 : _l.removeDoc(roomId2)), (_m = this.crdtEnrollment) == null || _m.reset(roomId2));
       }
       return;
     }
@@ -20007,19 +20015,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_l = event.id) != null ? _l : (_k = this.noteIdMap) != null && _k.get(event.path))) {
-          let noteId = (_n = event.id) != null ? _n : (_m = this.noteIdMap) == null ? void 0 : _m.get(event.path), canonicalPath = (_p = (_o = this.noteIdMap) == null ? void 0 : _o.pathForId(noteId)) != null ? _p : null;
+        } else if (this.crdt && event.path.endsWith(".md") && ((_o = event.id) != null ? _o : (_n = this.noteIdMap) != null && _n.get(event.path))) {
+          let noteId = (_q = event.id) != null ? _q : (_p = this.noteIdMap) == null ? void 0 : _p.get(event.path), canonicalPath = (_s = (_r = this.noteIdMap) == null ? void 0 : _r.pathForId(noteId)) != null ? _s : null;
           if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
             rlog().info(
               "ws",
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            (_q = this.noteIdMap) == null || _q.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_r = this.crdtEnrollment) == null || _r.enroll(noteId));
+            (_t2 = this.noteIdMap) == null || _t2.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_u = this.crdtEnrollment) == null || _u.enroll(noteId));
             let np = (0, import_obsidian21.normalizePath)(event.path), priorState = this.syncState.get(np);
             event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
-              hash: (_s = priorState == null ? void 0 : priorState.hash) != null ? _s : fnv1a(""),
-              version: (_t2 = event.version) != null ? _t2 : priorState == null ? void 0 : priorState.version,
+              hash: (_v = priorState == null ? void 0 : priorState.hash) != null ? _v : fnv1a(""),
+              version: (_w = event.version) != null ? _w : priorState == null ? void 0 : priorState.version,
               serverHash: event.content_hash
             }), rlog().info(
               "ws",
@@ -20035,13 +20043,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         } else if (event.content !== void 0)
           await this.applyChange({
             path: event.path,
-            title: (_u = event.title) != null ? _u : "",
+            title: (_x = event.title) != null ? _x : "",
             content: event.content,
             content_hash: event.content_hash,
-            folder: (_v = event.folder) != null ? _v : "",
-            tags: (_w = event.tags) != null ? _w : [],
-            mtime: (_x = event.mtime) != null ? _x : Date.now(),
-            updated_at: (_y = event.updated_at) != null ? _y : (/* @__PURE__ */ new Date()).toISOString(),
+            folder: (_y = event.folder) != null ? _y : "",
+            tags: (_z = event.tags) != null ? _z : [],
+            mtime: (_A = event.mtime) != null ? _A : Date.now(),
+            updated_at: (_B = event.updated_at) != null ? _B : (/* @__PURE__ */ new Date()).toISOString(),
             deleted: !1,
             version: event.version
           });
@@ -20051,13 +20059,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             path: note.path,
             title: note.title,
             content: note.content,
-            content_hash: (_z = note.content_hash) != null ? _z : event.content_hash,
+            content_hash: (_C = note.content_hash) != null ? _C : event.content_hash,
             folder: note.folder,
             tags: note.tags,
             mtime: note.mtime,
             updated_at: note.updated_at,
             deleted: !1,
-            version: (_A = note.version) != null ? _A : event.version
+            version: (_D = note.version) != null ? _D : event.version
           });
         }
       } catch (e) {

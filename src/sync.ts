@@ -4091,6 +4091,28 @@ export class SyncEngine {
 			// delete of a live confirmed note was silently dropped — e2e test_47).
 			const currentId = this.noteIdMap?.get(normalized) ?? null;
 			const targetId = event.id ?? currentId;
+			// Rename old-leg guard: the backend now emits the upsert for the NEW
+			// path BEFORE this delete for the OLD path, so moveIfIdRelocated already
+			// relocated the id to its new path. If the id now lives at a DIFFERENT
+			// live path, this delete is the stale old leg — tearing down its room by
+			// id (below) would destroy the very doc the new-path upsert must
+			// materialize from (e2e test_34 "received=yes materialized=no"; test_10).
+			// A genuine delete does NOT relocate the id (no upsert-new elsewhere), so
+			// pathForId resolves to this path or null → not relocated → normal delete.
+			const roomId = targetId ?? currentId;
+			const relocatedPath = roomId ? (this.noteIdMap?.pathForId(roomId) ?? null) : null;
+			const relocated = relocatedPath !== null && normalizePath(relocatedPath) !== normalized;
+			if (relocated) {
+				// moveIfIdRelocated already trashed/moved the old file; only clear a
+				// stale old-path→id mapping if one somehow still points here. Never
+				// touch the id's room (removeDoc/reset) — that room is the live note.
+				if (this.noteIdMap?.get(normalized) === roomId) this.noteIdMap.delete(normalized);
+				rlog().info(
+					"ws",
+					`Delete is rename old-leg (id relocated to ${relocatedPath}); room preserved: ${normalized}`,
+				);
+				return;
+			}
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing && targetId && currentId && targetId !== currentId) {
 				rlog().info(

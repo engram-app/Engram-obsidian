@@ -884,6 +884,78 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
 	});
 
+	test("delete for a relocated id preserves the CRDT room (rename old-leg, test_34)", async () => {
+		// Backend now emits the upsert for the NEW path BEFORE the delete for the
+		// OLD path, so moveIfIdRelocated already relocated the id — it maps to the
+		// new path only. Tearing down the room by id here would destroy the very
+		// doc the new-path upsert just materialized (received=yes materialized=no).
+		const removed: string[] = [];
+		const resets: string[] = [];
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: (id: string) => {
+				removed.push(id);
+				return Promise.resolve();
+			},
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		engine.setCrdtEnrollment({
+			enroll: () => {},
+			reset: (id: string) => {
+				resets.push(id);
+			},
+		});
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/RenameNew.md", "id-reloc"); // id lives at the NEW path now
+		engine.setNoteIdMap(noteIdMap);
+		// The old file was already moved by the relocation — nothing on disk here.
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/RenameOld.md",
+			timestamp: 1709345678,
+			id: "id-reloc",
+		});
+
+		// Room preserved: the relocated doc must survive to materialize the new path.
+		expect(removed).not.toContain("id-reloc");
+		expect(resets).not.toContain("id-reloc");
+		// No content trashed — the old file was already moved by moveIfIdRelocated.
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("delete for an id still at THIS path tears down the room (regression guard)", async () => {
+		// A genuine delete: the id maps to THIS path (no upsert relocated it), so
+		// the authoritative teardown must still fire — removeDoc is called.
+		const removed: string[] = [];
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: (id: string) => {
+				removed.push(id);
+				return Promise.resolve();
+			},
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/Live.md", "id-live"); // id lives at THIS path
+		engine.setNoteIdMap(noteIdMap);
+		const liveFile = new TFile("E2E/Live.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/Live.md",
+			timestamp: 1709345678,
+			id: "id-live",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(liveFile);
+		expect(removed).toContain("id-live"); // room torn down for a real delete
+	});
+
 	test("ignores events for ignored paths", async () => {
 		const engine = createEngine();
 
