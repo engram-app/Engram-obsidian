@@ -488,6 +488,18 @@ export default class EngramSyncPlugin extends Plugin {
 						"crdt",
 						`crdt_${op.kind} terminally failed (${reason}), dropping op for ${op.docId}`,
 					),
+				onLimit: (op, reason) => {
+					// A TRANSIENT plan cap (notes_cap_reached): the op is retried, but the
+					// user must be TOLD (not just a silent log) so they can free a note /
+					// upgrade. Route it to the same limit toast the edit flow uses.
+					notifyLimitExceeded(
+						new LimitExceededError(reason, null, "notes_cap", null, null),
+					);
+					rlog().info(
+						"crdt",
+						`crdt_${op.kind} blocked by plan cap (${reason}), surfaced, retrying: ${op.docId}`,
+					);
+				},
 			}),
 			now: () => Date.now(),
 			onDrop: (op, reason) =>
@@ -972,6 +984,12 @@ export default class EngramSyncPlugin extends Plugin {
 					if (this.noteStream?.isCrdtConnected()) {
 						await this.syncEngine.catchupViaSocket();
 					}
+					// ponytail: not sequenced after the crdtOpQueue flush (that flush is
+					// driven by the independent onCrdtJoined event; coordinating the two
+					// async flows is racy and not worth it). Not a stranding hazard: an
+					// offline-created note here routes through pushFile's genesis branch,
+					// which itself enqueues a durable crdt_create when the topic is not yet
+					// joined (sync.ts:2546). The queue is the safety net either way.
 					const pushed = await this.syncEngine.pushModifiedFiles();
 					if (pushed > 0) {
 						new Notice(`Engram Sync: pushed ${pushed}`);
@@ -1903,11 +1921,15 @@ export default class EngramSyncPlugin extends Plugin {
 						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
 						// Deliver any HELD create/delete ops FIRST, then reconcile the
-						// id-map, re-enroll open notes, and run the socket catch-up. Order
-						// matters: flushing the queue creates the server rows and flips
-						// hasServerNote BEFORE the re-push decides whether to re-create
-						// them, avoiding a double crdt_create race. This is the sole
-						// convergence trigger on (re)connect; wiring it here (not the
+						// id-map, re-enroll open notes, and run the socket catch-up.
+						// onCrdtTopicJoined re-creates NOTHING (it is catch-up/pull-only,
+						// no pushModifiedFiles), so this ordering is not a re-push guard.
+						// The double-crdt_create guard lives elsewhere: the queue coalesces
+						// to one create per docId, pushFile's genesis branch is gated on
+						// !hasServerNote (a later edit after the ack's head-flip routes as a
+						// crdt_msg, not a re-create), and a genuine duplicate is rejected
+						// server-side as id_conflict (terminal). Flushing here is simply the
+						// sole convergence trigger on (re)connect; wiring it here (not the
 						// sync-topic onStatusChange, which acks first) is what fixes the
 						// deaf-note race. See onCrdtTopicJoined.
 						void (async () => {

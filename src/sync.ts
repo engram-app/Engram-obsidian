@@ -836,21 +836,83 @@ export class SyncEngine {
 		this.crdtEnqueue = fn;
 	}
 
-	/** A durable queued `crdt_create` acked by the server. Flip the head oracle so
-	 *  hasServerNote is true (the row now exists), and on ADOPT (serverId differs
-	 *  from the local mint, the path was already owned by a live note under
-	 *  another id) remap the note_id so subsequent edits address the server's row
-	 *  instead of orphaning under the stale mint. The body rides the next re-push
-	 *  over crdt_msg once hasServerNote is true. Mirrors pushFile's non-live-bound
-	 *  ADOPT branch; the live-editor rebind is irrelevant for a queued (offline,
-	 *  not live-bound) create. */
-	applyCrdtCreateAck(localId: string, serverId: string, path: string): void {
+	/** A durable queued `crdt_create` acked by the server. On ADOPT (serverId
+	 *  differs from the local mint, the path was already owned by a live note
+	 *  under another id) remap the note_id so subsequent edits address the
+	 *  server's row instead of orphaning under the stale mint, and retire the
+	 *  orphaned mint doc + its enrollment (mirrors pushFile's live adopt at
+	 *  sync.ts:2429-2430, which the queued path previously LEAKED). Then SEED the
+	 *  body under the effective id and flip the head oracle so hasServerNote is
+	 *  true (the row now exists).
+	 *
+	 *  Why the body seed here (not "on the next re-push"): the live genesis path
+	 *  seeds inline right after crdt_create, but a QUEUED create is acked on
+	 *  (re)join where the only follow-ups are catch-up/pull (onCrdtTopicJoined has
+	 *  no pushModifiedFiles). A head-only flip therefore lands a 0-byte row on
+	 *  peers until the user edits the note again (the deaf-note / 0-byte-
+	 *  materialize class). routeModify → applyLocalEdit uses the DEFAULT (local)
+	 *  origin, so the manager's onUpdate forwards the seed over the channel
+	 *  (crdt_msg): no enrollment needed for an idle note, matching the live
+	 *  idle-note path. This runs INSIDE the queue's send (channel joined), so the
+	 *  forward has a live socket.
+	 *
+	 *  Cannot double-send with the live path: the queue only HOLDS a create when
+	 *  the inline live seed did NOT run (genesis branch skipped pre-join, or the
+	 *  live crdt_create rejected). It cannot re-enqueue a remote-applied update:
+	 *  the seed is the note's own local disk content, not anything received from
+	 *  the server, so REMOTE_ORIGIN suppression is untouched. */
+	async applyCrdtCreateAck(localId: string, serverId: string, path: string): Promise<void> {
+		const normalized = normalizePath(path);
+		let effectiveId = localId;
 		if (serverId && serverId !== localId) {
-			this.noteIdMap?.set(normalizePath(path), serverId);
+			this.noteIdMap?.set(normalized, serverId);
+			effectiveId = serverId;
 			rlog().info(
 				"crdt",
 				`crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`,
 			);
+			// Retire the orphaned mint doc + its enrollment (mirrors the live adopt).
+			try {
+				await this.crdt?.removeDoc(localId);
+			} catch (e) {
+				rlog().warn(
+					"crdt",
+					`crdt_create (queued) adopt: mint removeDoc failed for ${localId}: ${errMsg(e)}`,
+				);
+			}
+			this.crdtEnrollment?.reset(localId);
+		}
+		// Seed the body from disk under the effective id (mirrors the live genesis
+		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify.
+		const file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
+		if (this.crdt && file instanceof TFile && this.isMarkdown(file)) {
+			try {
+				const consumed = await routeModify(
+					{
+						isMarkdown: true,
+						noteId: effectiveId,
+						readContent: () => this.app.vault.cachedRead(file),
+					},
+					this.crdt,
+					MAX_CRDT_NOTE_BYTES,
+				);
+				if (consumed !== null) {
+					// Echo baseline from what the manager CONSUMED so a later revert to
+					// this content isn't hash-skipped (mirrors the live seed).
+					this.syncState.set(normalized, {
+						...(this.syncState.get(normalized) ?? { hash: 0 }),
+						hash: fnv1a(consumed),
+						crdtHead: CRDT_HEAD_CREATED,
+					});
+				}
+			} catch (e) {
+				// The row exists (crdt_create already acked); a failed body seed
+				// self-heals on the note's next edit. Never fall back to REST.
+				rlog().warn(
+					"crdt",
+					`crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`,
+				);
+			}
 		}
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
 	}

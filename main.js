@@ -14487,9 +14487,8 @@ var TERMINAL_REASONS = /* @__PURE__ */ new Set([
   "id_conflict",
   "version_conflict",
   "bad_doc_id",
-  "notes_cap_reached",
   "implausible_state_vector"
-]);
+]), LIMIT_REASONS = /* @__PURE__ */ new Set(["notes_cap_reached"]);
 function crdtOpFailureReason(err) {
   let m = (err instanceof Error ? err.message : String(err)).match(/request failed: (\{.*\})/s);
   if (!(m != null && m[1])) return null;
@@ -14501,14 +14500,18 @@ function crdtOpFailureReason(err) {
   }
 }
 function makeCrdtOpSend(hooks) {
+  let limitSurfaced = /* @__PURE__ */ new Set();
   return async (op) => {
-    var _a, _b;
+    var _a, _b, _c;
     let ch = hooks.channel();
     if (!ch) return "error";
     try {
       if (op.kind === "create") {
         let path = (_b = (_a = op.payload) == null ? void 0 : _a.path) != null ? _b : "", serverId = await ch.crdtCreate(op.docId, path);
-        hooks.onCreated(op.docId, serverId, path);
+        try {
+          await hooks.onCreated(op.docId, serverId, path);
+        } catch (e) {
+        }
       } else if (op.kind === "delete")
         await ch.crdtDeleteAcked(op.docId);
       else
@@ -14516,6 +14519,8 @@ function makeCrdtOpSend(hooks) {
       return "ok";
     } catch (err) {
       let reason = crdtOpFailureReason(err);
+      if (reason && LIMIT_REASONS.has(reason))
+        return limitSurfaced.has(op.id) || (limitSurfaced.add(op.id), (_c = hooks.onLimit) == null || _c.call(hooks, op, reason)), "error";
       if (reason && TERMINAL_REASONS.has(reason))
         return hooks.onTerminal(op, reason), "ok";
       let msg = err instanceof Error ? err.message : String(err);
@@ -14667,6 +14672,8 @@ var import_obsidian3 = require("obsidian");
 // src/limit-copy.ts
 var TABLE = {
   notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
+  // CRDT channel variant of the note-cap reject (crdt_channel.ex): same copy.
+  notes_cap_reached: "Note limit reached. Upgrade to keep adding notes.",
   vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
   attachment_must_be_text: "Free syncs notes only \u2014 images & PDFs need a paid plan.",
   attachments_disabled: "Attachment sync needs a paid plan.",
@@ -18267,20 +18274,73 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCrdtEnqueue(fn) {
     this.crdtEnqueue = fn;
   }
-  /** A durable queued `crdt_create` acked by the server. Flip the head oracle so
-   *  hasServerNote is true (the row now exists), and on ADOPT (serverId differs
-   *  from the local mint, the path was already owned by a live note under
-   *  another id) remap the note_id so subsequent edits address the server's row
-   *  instead of orphaning under the stale mint. The body rides the next re-push
-   *  over crdt_msg once hasServerNote is true. Mirrors pushFile's non-live-bound
-   *  ADOPT branch; the live-editor rebind is irrelevant for a queued (offline,
-   *  not live-bound) create. */
-  applyCrdtCreateAck(localId, serverId, path) {
-    var _a;
-    serverId && serverId !== localId && ((_a = this.noteIdMap) == null || _a.set((0, import_obsidian21.normalizePath)(path), serverId), rlog().info(
-      "crdt",
-      `crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`
-    )), this.setCrdtHead(path, CRDT_HEAD_CREATED);
+  /** A durable queued `crdt_create` acked by the server. On ADOPT (serverId
+   *  differs from the local mint, the path was already owned by a live note
+   *  under another id) remap the note_id so subsequent edits address the
+   *  server's row instead of orphaning under the stale mint, and retire the
+   *  orphaned mint doc + its enrollment (mirrors pushFile's live adopt at
+   *  sync.ts:2429-2430, which the queued path previously LEAKED). Then SEED the
+   *  body under the effective id and flip the head oracle so hasServerNote is
+   *  true (the row now exists).
+   *
+   *  Why the body seed here (not "on the next re-push"): the live genesis path
+   *  seeds inline right after crdt_create, but a QUEUED create is acked on
+   *  (re)join where the only follow-ups are catch-up/pull (onCrdtTopicJoined has
+   *  no pushModifiedFiles). A head-only flip therefore lands a 0-byte row on
+   *  peers until the user edits the note again (the deaf-note / 0-byte-
+   *  materialize class). routeModify → applyLocalEdit uses the DEFAULT (local)
+   *  origin, so the manager's onUpdate forwards the seed over the channel
+   *  (crdt_msg): no enrollment needed for an idle note, matching the live
+   *  idle-note path. This runs INSIDE the queue's send (channel joined), so the
+   *  forward has a live socket.
+   *
+   *  Cannot double-send with the live path: the queue only HOLDS a create when
+   *  the inline live seed did NOT run (genesis branch skipped pre-join, or the
+   *  live crdt_create rejected). It cannot re-enqueue a remote-applied update:
+   *  the seed is the note's own local disk content, not anything received from
+   *  the server, so REMOTE_ORIGIN suppression is untouched. */
+  async applyCrdtCreateAck(localId, serverId, path) {
+    var _a, _b, _c, _d;
+    let normalized = (0, import_obsidian21.normalizePath)(path), effectiveId = localId;
+    if (serverId && serverId !== localId) {
+      (_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
+        "crdt",
+        `crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`
+      );
+      try {
+        await ((_b = this.crdt) == null ? void 0 : _b.removeDoc(localId));
+      } catch (e) {
+        rlog().warn(
+          "crdt",
+          `crdt_create (queued) adopt: mint removeDoc failed for ${localId}: ${errMsg(e)}`
+        );
+      }
+      (_c = this.crdtEnrollment) == null || _c.reset(localId);
+    }
+    let file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
+    if (this.crdt && file instanceof import_obsidian21.TFile && this.isMarkdown(file))
+      try {
+        let consumed = await routeModify(
+          {
+            isMarkdown: !0,
+            noteId: effectiveId,
+            readContent: () => this.app.vault.cachedRead(file)
+          },
+          this.crdt,
+          MAX_CRDT_NOTE_BYTES
+        );
+        consumed !== null && this.syncState.set(normalized, {
+          ...(_d = this.syncState.get(normalized)) != null ? _d : { hash: 0 },
+          hash: fnv1a(consumed),
+          crdtHead: CRDT_HEAD_CREATED
+        });
+      } catch (e) {
+        rlog().warn(
+          "crdt",
+          `crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`
+        );
+      }
+    this.setCrdtHead(path, CRDT_HEAD_CREATED);
   }
   setCrdtLiveCheck(fn) {
     this.crdtLive = fn;
@@ -23056,7 +23116,15 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             "crdt",
             `crdt_${op.kind} terminally failed (${reason}), dropping op for ${op.docId}`
           )
-        )
+        ),
+        onLimit: (op, reason) => {
+          notifyLimitExceeded(
+            new LimitExceededError(reason, null, "notes_cap", null, null)
+          ), rlog().info(
+            "crdt",
+            `crdt_${op.kind} blocked by plan cap (${reason}), surfaced, retrying: ${op.docId}`
+          );
+        }
       }),
       now: () => Date.now(),
       onDrop: (op, reason) => rlog().warn(
