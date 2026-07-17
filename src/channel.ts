@@ -366,14 +366,15 @@ export class NoteChannel {
 		return res.doc_id;
 	}
 
-	/** Delete a note over the socket (idempotent). Returns false (nothing
-	 *  sent) when the crdt topic isn't joined, so the caller can fall back to
-	 *  the durable REST path instead of silently dropping the delete. */
-	crdtDelete(docId: string): boolean {
-		const t = this.crdtTopic;
-		if (!t || !this.crdtJoined) return false;
-		this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_delete", { doc_id: docId }]);
-		return true;
+	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
+	 *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
+	 *  resolve means the delete is durably applied; a reject carries a retryable
+	 *  (rate_limited / not-joined / disconnect) or terminal (bad_doc_id) reason.
+	 *  Routed through the durable CrdtOpQueue; there is no REST delete fallback. */
+	async crdtDeleteAcked(docId: string): Promise<{ doc_id: string }> {
+		return (await this.sendRequest("crdt_delete", { doc_id: docId })) as {
+			doc_id: string;
+		};
 	}
 
 	/** Vault-level head map for catch-up divergence detection AND first-discovery.

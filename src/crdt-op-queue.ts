@@ -113,6 +113,13 @@ export class CrdtOpQueue {
 		return this.entries.size;
 	}
 
+	/** Flat snapshot of pending ops (mirrors OfflineQueue.all()), for the
+	 *  wholesale savePluginData blob. Every save must re-list it or the next
+	 *  write wipes it. */
+	all(): CrdtOp[] {
+		return this.pending();
+	}
+
 	/** Register a callback to persist the flat pending op list. */
 	setPersist(fn: (ops: CrdtOp[]) => Promise<void> | void): void {
 		this.persistFn = fn;
@@ -204,7 +211,7 @@ export class CrdtOpQueue {
 		return [...this.entries.values()].map((e) => e.op);
 	}
 
-	/** Debounced persist — coalesces rapid mutations into one write. */
+	/** Debounced persist: coalesces rapid mutations into one write. */
 	private schedulePersist(): void {
 		if (!this.persistFn || this.persistTimer !== null) return;
 		this.persistTimer = window.setTimeout(() => {
