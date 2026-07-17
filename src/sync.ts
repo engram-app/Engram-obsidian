@@ -4103,13 +4103,28 @@ export class SyncEngine {
 			const relocatedPath = roomId ? (this.noteIdMap?.pathForId(roomId) ?? null) : null;
 			const relocated = relocatedPath !== null && normalizePath(relocatedPath) !== normalized;
 			if (relocated) {
-				// moveIfIdRelocated already trashed/moved the old file; only clear a
-				// stale old-path→id mapping if one somehow still points here. Never
-				// touch the id's room (removeDoc/reset) — that room is the live note.
+				// The id's room now belongs to the NEW path (moveIfIdRelocated
+				// relocated it), so its doc must survive — the new-path upsert
+				// materializes from it. NEVER tear the room down (removeDoc/reset).
+				// But the stale file at the OLD path must still be trashed, or it
+				// lingers forever (e2e test_34 "Cleanup.md still exists after 30s").
+				// Trash it like a normal delete: trashRemotelyDeleted marks
+				// remotelyDeleted so this device's own vault-delete event is
+				// echo-suppressed and never re-pushed. A rename changes no content,
+				// so the bytes are preserved at the new path — no drift keep-both copy.
+				const existing = this.app.vault.getFileByPath(normalized);
+				if (existing) {
+					await this.trashRemotelyDeleted(existing);
+					await this.removeEmptyFolders(normalized);
+					this.syncState.delete(normalized);
+					this.baseStore?.delete(normalized);
+				}
+				// Only clear a stale old-path→id mapping if one still points at the
+				// relocated room; leave the id's room mapping (new path) intact.
 				if (this.noteIdMap?.get(normalized) === roomId) this.noteIdMap.delete(normalized);
 				rlog().info(
 					"ws",
-					`Delete is rename old-leg (id relocated to ${relocatedPath}); room preserved: ${normalized}`,
+					`Delete is rename old-leg (id relocated to ${relocatedPath}); old path trashed, room preserved: ${normalized}`,
 				);
 				return;
 			}
@@ -4312,13 +4327,34 @@ export class SyncEngine {
 							}
 							await this.flushFromCrdt(np, body);
 						}
-						// #189: a rename carries no content change, so it never produces a
-						// Y.Doc update — onFlushToDisk never fires for it — and enroll()
-						// above is a per-session no-op for an id this device already
-						// enrolled (e.g. it received the old path live before the rename).
-						// Left alone, the file is never written: received=yes,
-						// materialized=no. materializeRelocated closes that gap directly.
-						void this.materializeRelocated(event.path, noteId);
+						// #189/#210/test_34 rename new-leg: a rename carries no content
+						// change, so it never produces a Y.Doc update — onFlushToDisk never
+						// fires — and enroll() above is a per-session no-op for an id this
+						// device already enrolled. materializeRelocated (its only writer
+						// left) is isSynced-gated and projects the DOC, which can be unsynced
+						// or stale, so it bails and the new path only appears ~60s later via
+						// the pull (received=yes materialized=no). The upsert-new leg carries
+						// the note's AUTHORITATIVE content inline, so when the id is canonical
+						// at this (new) path and no file exists there yet, materialize LIVE
+						// from event.content. Re-check canonicality right before the write to
+						// mirror materializeRelocated's #210 stale guard — a concurrent
+						// relocation landing during an await above must not resurrect a
+						// moved-away path. Content-absent falls back to the doc projection.
+						// priorState === undefined mirrors the first-delivery gate above:
+						// a note this device already has a baseline for converges via its
+						// CRDT/pull path, and re-writing it here would double-write / clobber
+						// a converged base. A relocation's NEW path never had a baseline
+						// (moveIfIdRelocated dropped the old path's syncState), so it passes.
+						if (
+							priorState === undefined &&
+							event.content !== undefined &&
+							this.noteIdMap?.pathForId(noteId) === np &&
+							!this.app.vault.getAbstractFileByPath(np)
+						) {
+							await this.flushFromCrdt(np, event.content);
+						} else {
+							void this.materializeRelocated(event.path, noteId);
+						}
 					}
 				} else if (event.content !== undefined) {
 					// Use inline content from the broadcast — no extra HTTP

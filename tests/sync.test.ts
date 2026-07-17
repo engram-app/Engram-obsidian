@@ -956,6 +956,143 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(removed).toContain("id-live"); // room torn down for a real delete
 	});
 
+	test("relocated upsert materializes the new path from inline content (test_34, #189)", async () => {
+		// Backend emits upsert-new BEFORE delete-old. On the receiver the id is
+		// already relocated to the NEW path but no file exists there yet, and the
+		// rename produced no Y.Doc update so materializeRelocated (doc projection,
+		// isSynced-gated) bails — the new path would only appear ~60s later via the
+		// pull (received=yes materialized=no). The upsert carries the note's
+		// AUTHORITATIVE content inline, so it must materialize LIVE from event.content.
+		const removed: string[] = [];
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: (id: string) => {
+				removed.push(id);
+				return Promise.resolve();
+			},
+			closeDoc: () => {},
+			// Synced doc → the first-delivery materializer is skipped, leaving the
+			// rename new-leg to this branch. projectedText returns STALE content to
+			// prove event.content (not the doc projection) is what gets written.
+			isSynced: () => true,
+			projectedText: () => Promise.resolve("STALE DOC PROJECTION"),
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/RenameNew.md", "id-reloc"); // id already relocated here
+		engine.setNoteIdMap(noteIdMap);
+		(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.vault.create as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "E2E/RenameNew.md",
+			timestamp: 1709345678,
+			id: "id-reloc",
+			content: "# Renamed\n\nAuthoritative body",
+			content_hash: "h-reloc",
+			updated_at: "2026-03-01T12:00:00Z",
+		});
+
+		// Materialized LIVE from the inline content, not the stale doc projection.
+		expect(mockApp.vault.create).toHaveBeenCalledWith(
+			"E2E/RenameNew.md",
+			"# Renamed\n\nAuthoritative body",
+		);
+		// Room intact — the upsert never tears down its own doc.
+		expect(removed).not.toContain("id-reloc");
+	});
+
+	test("delete for a relocated id trashes the stale old path but keeps the room (test_34 cleanup)", async () => {
+		// Regression from e17e3e7: the rename old-leg guard preserved the room
+		// (good) but stopped trashing the stale old-path file, so it lingered
+		// forever (e2e test_34 "Cleanup.md still exists after 30s"). The room must
+		// stay (it now belongs to the new path) AND the old file must be trashed.
+		const removed: string[] = [];
+		const resets: string[] = [];
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: (id: string) => {
+				removed.push(id);
+				return Promise.resolve();
+			},
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		engine.setCrdtEnrollment({
+			enroll: () => {},
+			reset: (id: string) => {
+				resets.push(id);
+			},
+		});
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("E2E/RenameNew.md", "id-reloc"); // id lives at the NEW path now
+		engine.setNoteIdMap(noteIdMap);
+		// The stale old file is STILL on disk (moveIfIdRelocated did not trash it).
+		const oldFile = new TFile("E2E/RenameOld.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockImplementation((p: string) =>
+			p === "E2E/RenameOld.md" ? oldFile : null,
+		);
+		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "E2E/RenameOld.md",
+			timestamp: 1709345678,
+			id: "id-reloc",
+		});
+
+		// Old path cleaned up...
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(oldFile);
+		// ...but the relocated room survives to materialize the new path.
+		expect(removed).not.toContain("id-reloc");
+		expect(resets).not.toContain("id-reloc");
+	});
+
+	test("stale relocation upsert does not write the new path (write-time identity guard, #210)", async () => {
+		// A concurrent relocation can land DURING an await between the branch's
+		// stale-path guard and the materialize write, moving the id away from the
+		// captured path. Writing then would re-create a moved-away path server-side
+		// (#210). Mirror materializeRelocated's write-time pathForId re-check: the
+		// stub map reports the captured path canonical when the branch is entered,
+		// then flips (as if a relocation landed) before the write — the new path
+		// must NOT be written.
+		let flipped = false;
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: () => Promise.resolve(),
+			closeDoc: () => {},
+			isSynced: () => true,
+			projectedText: () => Promise.resolve("DOC BODY"),
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		const stubMap = {
+			get: () => null,
+			set: () => {
+				flipped = true; // a concurrent relocation lands here
+			},
+			delete: () => {},
+			rename: () => {},
+			pathForId: (id: string) =>
+				id === "id-reloc" ? (flipped ? "E2E/Elsewhere.md" : "E2E/RenameNew.md") : null,
+		} as unknown as NoteIdMap;
+		engine.setNoteIdMap(stubMap);
+		(mockApp.vault.getAbstractFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
+		(mockApp.vault.create as jest.Mock).mockClear();
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "E2E/RenameNew.md",
+			timestamp: 1709345678,
+			id: "id-reloc",
+			content: "# Renamed\n\nAuthoritative body",
+			content_hash: "h-reloc",
+			updated_at: "2026-03-01T12:00:00Z",
+		});
+
+		// The id relocated away between the guard and the write — nothing materialized.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
 	test("ignores events for ignored paths", async () => {
 		const engine = createEngine();
 
