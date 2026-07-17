@@ -126,7 +126,7 @@ describe("healNoteOnOpen", () => {
 
 	test("unmapped path: no-op (nothing to heal against)", async () => {
 		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
-		const engine = makeEngine({ applyRemoteUpdate });
+		const engine = makeEngine({ applyRemoteUpdate }, {});
 
 		await expect(engine.healNoteOnOpen("Notes/unknown.md")).resolves.toBeUndefined();
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
