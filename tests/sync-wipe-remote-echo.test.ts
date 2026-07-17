@@ -445,16 +445,18 @@ describe("wipeRemote pre-gate local snapshot (test_86 gate-open race)", () => {
 	});
 });
 
-describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canonical note applies authoritatively", () => {
+describe("FIX 1 (e2e test_47) — remote delete of a confirmed-canonical note we did NOT recreate applies authoritatively", () => {
 	// Root cause: a delete for a CONFIRMED + CANONICAL note used to defer to the
 	// REST pull (`void this.pull()`), but pull/bootstrap never trashes a note
 	// merely absent from the server — so a real remote delete of a confirmed note
 	// was silently dropped and the file lived forever (test_47: A deletes
-	// "OAuthWSDelete.md" via REST, B's live client kept it). A FOREIGN-attributed
-	// delete (#970 device_id, not ours) is provably not our own stale echo, so it
-	// is now applied authoritatively (trash + remotelyDeleted), CRDT-native, no
-	// REST pull. The unattributed/self case still defers (see sync.test.ts
-	// "delete for a live confirmed note defers to pull").
+	// "OAuthWSDelete.md" via REST, B's live client kept it). The discriminator is
+	// NOT attribution: test_47's delete comes from an external REST client that
+	// sends no X-Device-Id, so it is UNATTRIBUTED yet must apply. The true test is
+	// "did WE recently recreate this path?" (pushing/recentlyPushed, set by
+	// pushFile). A note we merely RECEIVED is in neither set → the delete applies
+	// authoritatively (trash + remotelyDeleted), CRDT-native, no REST pull. A path
+	// we recently recreated still defers (the recreate-echo guard, tested below).
 	function confirmedEngine(): { engine: SyncEngine; file: TFile } {
 		const map = new NoteIdMap();
 		map.set("OAuthWSDelete.md", "id-live");
@@ -472,18 +474,37 @@ describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canon
 		return (engine as unknown as { remotelyDeleted: Map<string, unknown> }).remotelyDeleted;
 	}
 
-	test("trashes the live note authoritatively and does NOT defer to the REST pull", async () => {
+	test("trashes the live note authoritatively and does NOT defer to the REST pull (unattributed, test_47)", async () => {
 		const { engine, file } = confirmedEngine();
+		// No device_id — the external REST client that deleted it sends none.
 		await engine.handleStreamEvent({
 			event_type: "delete",
 			path: "OAuthWSDelete.md",
 			timestamp: 1709345678,
-			device_id: "device-A",
 		});
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
 		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // pull NOT taken
 		expect(remotelyDeleted(engine).has("OAuthWSDelete.md")).toBe(true);
+	});
+
+	test("DEFERS to pull when WE recently recreated the path (recreate-echo guard)", async () => {
+		const { engine, file } = confirmedEngine();
+		engine.setSyncCursor("CUR-1"); // pull() → pullViaCursor → getSyncChanges
+		// The path is in recentlyPushed: WE just delete→recreated it via pushFile,
+		// so this delete could be the stale echo of our own recreate → defer.
+		(engine as unknown as { markRecentlyPushed(p: string): void }).markRecentlyPushed(
+			"OAuthWSDelete.md",
+		);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "OAuthWSDelete.md",
+			timestamp: 1709345678,
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalledWith(file);
+		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
 	});
 
 	test("the applied delete is echo-suppressed and never re-pushed (test_86 wipe-echo invariant)", async () => {
@@ -492,7 +513,6 @@ describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canon
 			event_type: "delete",
 			path: "OAuthWSDelete.md",
 			timestamp: 1709345678,
-			device_id: "device-A",
 		});
 		(mockApi.deleteNote as jest.Mock).mockClear();
 
@@ -523,7 +543,6 @@ describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canon
 				event_type: "delete",
 				path: "OAuthWSDelete.md",
 				timestamp: 1709345678,
-				device_id: "device-A",
 			});
 
 			// Keep-both copy written with the drift content...
