@@ -359,4 +359,41 @@ describe("catchupViaSocket", () => {
 		e.setReady();
 		await expect(e.catchupViaSocket()).resolves.toBeUndefined();
 	});
+
+	// FIX 2 (e2e test_27 — empty note never materializes).
+	test("first-discovery of an EMPTY note materializes an empty file (test_27)", async () => {
+		// An empty note created on another device while this one was offline:
+		// present in the head map, absent locally (history-less). Its Y.Doc holds
+		// NO content, so applying the full server state integrates ZERO ops —
+		// unlike the non-empty case above, the manager's remote-update listener
+		// never fires and NO onFlushToDisk/flushFromCrdt runs. The adopt path's
+		// materialize backstop must still create the file: an empty markdown file
+		// is valid content, not "nothing to do".
+		const getUpdates = mock().mockRejectedValue(
+			new Error("REST getUpdates must not be called on the socket catch-up path"),
+		);
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false), // history-less first-discovery
+			// Empty note: the full-state apply is a no-op, so (deliberately, unlike
+			// the non-empty first-discovery test) this triggers NO disk flush.
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			projectedText: (_id: string) => Promise.resolve(""), // empty projected body
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
+		mockApp.vault.create.mockClear();
+
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-empty": { path: "Notes/EmptyNote.md", head: "h1" } } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
+		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/EmptyNote.md", "");
+		expect((engine as any).getCrdtHead("Notes/EmptyNote.md")).toBe("h1");
+	});
 });
