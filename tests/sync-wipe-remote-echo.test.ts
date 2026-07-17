@@ -22,7 +22,7 @@ import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { SyncEngine } from "../src/sync";
+import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
@@ -442,5 +442,107 @@ describe("wipeRemote pre-gate local snapshot (test_86 gate-open race)", () => {
 
 		const pushedPaths = (mockApi.pushNote as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
 		expect(pushedPaths).not.toContain("Notes/RemoteOnly.md");
+	});
+});
+
+describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canonical note applies authoritatively", () => {
+	// Root cause: a delete for a CONFIRMED + CANONICAL note used to defer to the
+	// REST pull (`void this.pull()`), but pull/bootstrap never trashes a note
+	// merely absent from the server — so a real remote delete of a confirmed note
+	// was silently dropped and the file lived forever (test_47: A deletes
+	// "OAuthWSDelete.md" via REST, B's live client kept it). A FOREIGN-attributed
+	// delete (#970 device_id, not ours) is provably not our own stale echo, so it
+	// is now applied authoritatively (trash + remotelyDeleted), CRDT-native, no
+	// REST pull. The unattributed/self case still defers (see sync.test.ts
+	// "delete for a live confirmed note defers to pull").
+	function confirmedEngine(): { engine: SyncEngine; file: TFile } {
+		const map = new NoteIdMap();
+		map.set("OAuthWSDelete.md", "id-live");
+		const engine = createEngine(map);
+		engine.setDeviceId("device-B");
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
+		// Reuse ONE instance: mock TFile stamps ctime=Date.now() at construction, so
+		// two separate `new TFile(path)` are not deep-equal (flaky toHaveBeenCalledWith).
+		const file = new TFile("OAuthWSDelete.md");
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+		return { engine, file };
+	}
+
+	function remotelyDeleted(engine: SyncEngine): Map<string, unknown> {
+		return (engine as unknown as { remotelyDeleted: Map<string, unknown> }).remotelyDeleted;
+	}
+
+	test("trashes the live note authoritatively and does NOT defer to the REST pull", async () => {
+		const { engine, file } = confirmedEngine();
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "OAuthWSDelete.md",
+			timestamp: 1709345678,
+			device_id: "device-A",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // pull NOT taken
+		expect(remotelyDeleted(engine).has("OAuthWSDelete.md")).toBe(true);
+	});
+
+	test("the applied delete is echo-suppressed and never re-pushed (test_86 wipe-echo invariant)", async () => {
+		const { engine, file } = confirmedEngine();
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "OAuthWSDelete.md",
+			timestamp: 1709345678,
+			device_id: "device-A",
+		});
+		(mockApi.deleteNote as jest.Mock).mockClear();
+
+		// trashRemotelyDeleted fires B's own vault "delete" for the path;
+		// handleDelete must see it as remote-applied and NOT re-push to the server.
+		await engine.handleDelete(file);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("preserves B's local UNPUSHED drift as a keep-both copy written BEFORE the trash", async () => {
+		const { engine, file } = confirmedEngine();
+		// B has un-synced edits: disk disagrees with the recorded baseline → drift.
+		mockApp.vault.cachedRead.mockResolvedValue("B local unpushed edits");
+		priv(engine).syncState.set("OAuthWSDelete.md", { hash: fnv1a("original synced body") });
+
+		const order: string[] = [];
+		mockApp.vault.create.mockImplementation((p: string) => {
+			order.push(`create:${p}`);
+			return Promise.resolve();
+		});
+		(mockApp.fileManager.trashFile as jest.Mock).mockImplementation(() => {
+			order.push("trash");
+			return Promise.resolve();
+		});
+
+		try {
+			await engine.handleStreamEvent({
+				event_type: "delete",
+				path: "OAuthWSDelete.md",
+				timestamp: 1709345678,
+				device_id: "device-A",
+			});
+
+			// Keep-both copy written with the drift content...
+			expect(mockApp.vault.create).toHaveBeenCalledWith(
+				expect.stringMatching(/^OAuthWSDelete \(conflict .*\)\.md$/),
+				"B local unpushed edits",
+			);
+			// ...and it lands BEFORE the trash (drift is durable before removeDoc).
+			const createIdx = order.findIndex((o) => o.startsWith("create:"));
+			const trashIdx = order.indexOf("trash");
+			expect(createIdx).toBeGreaterThanOrEqual(0);
+			expect(trashIdx).toBeGreaterThanOrEqual(0);
+			expect(createIdx).toBeLessThan(trashIdx);
+			expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+		} finally {
+			// Restore shared vault mocks (beforeEach only clears calls, not impls).
+			mockApp.vault.create.mockReset().mockResolvedValue(undefined);
+			mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
+			(mockApp.fileManager.trashFile as jest.Mock).mockReset().mockResolvedValue(undefined);
+		}
 	});
 });

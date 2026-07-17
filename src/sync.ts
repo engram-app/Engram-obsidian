@@ -3970,23 +3970,64 @@ export class SyncEngine {
 				// A WS delete is unordered and can be a STALE echo — e.g. of our own
 				// delete→recreate at the same path (the recreate re-established a live
 				// note here). If this path canonically holds a CONFIRMED note we own,
-				// trashing now could destroy the recreated file, and the delete is
-				// ambiguous (stale echo vs. a real remote delete). Defer to the
-				// seq-ordered pull, which reconciles delete-vs-recreate correctly.
+				// trashing now could destroy the recreated file, and an UNATTRIBUTED
+				// delete is ambiguous (stale echo vs. a real remote delete). For that
+				// ambiguous case, defer to the seq-ordered pull, which reconciles
+				// delete-vs-recreate correctly.
+				//
+				// A FOREIGN-attributed delete (device_id present, not ours; #970) is
+				// provably NOT our own echo, so the ambiguity is gone: apply it
+				// authoritatively (fall through to trashRemotelyDeleted below), the
+				// CRDT-native resolution — the REST pull never trashes a note merely
+				// absent from the server, so deferring a real remote delete of a
+				// confirmed note simply dropped it (e2e test_47: A deletes via REST, B's
+				// live client kept the file forever). trashRemotelyDeleted marks
+				// remotelyDeleted, so B's own vault-delete event is echo-suppressed and
+				// never re-pushed (the 2026-07-08 wipe-echo invariant, test_86).
+				//
 				// A renamed-away old path is handled either way (test_10): once
 				// moveIfIdRelocated has run it is non-canonical (its id resolves to the
 				// new path) and is trashed here; if the delete arrives FIRST it is still
-				// canonical and defers, and the pull's moveIfIdRelocated trashes it — no
-				// duplicate leaks in either ordering.
+				// canonical — an unattributed one defers (pull's moveIfIdRelocated
+				// trashes it), a foreign-attributed one trashes here. No duplicate leaks.
 				const ownedId = this.noteIdMap?.get(normalized) ?? null;
-				if (
-					ownedId &&
+				const confirmedCanonical =
+					!!ownedId &&
 					this.isNoteConfirmed(ownedId) &&
-					this.noteIdMap?.pathForId(ownedId) === normalized
-				) {
+					this.noteIdMap?.pathForId(ownedId) === normalized;
+				if (confirmedCanonical && !foreignAttributed) {
 					rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`);
 					void this.pull();
 					return;
+				}
+				// Applying a foreign delete of a confirmed-canonical note authoritatively
+				// trashes + tears down its CRDT room, which would discard B's local
+				// UNPUSHED drift. A rename emits api.deleteNote(oldPath) as a
+				// foreign-attributed delete (delete-first is the common order), so a note
+				// A renames while B has un-synced edits would lose that drift. Preserve
+				// it FIRST as a keep-both conflict copy (mirrors adoptHistoryLessNote's
+				// no-LCA keep-both), then trash. needsColdReconcile == a recorded
+				// baseline disagreeing with disk == real local drift; no drift → trash
+				// directly. Best-effort: a copy failure must not block the delete.
+				if (confirmedCanonical) {
+					try {
+						const disk = await this.app.vault.cachedRead(existing);
+						if (
+							!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
+							this.needsColdReconcile(normalized, disk)
+						) {
+							const copy = await this.writeDriftConflictCopy(normalized, disk);
+							rlog().info(
+								"conflict",
+								`foreign-delete drift → keep-both | original=${normalized} copy=${copy}`,
+							);
+						}
+					} catch (e) {
+						rlog().warn(
+							"conflict",
+							`foreign-delete drift check failed for ${normalized}: ${errMsg(e)}`,
+						);
+					}
 				}
 				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
