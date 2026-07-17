@@ -284,6 +284,71 @@ describe("catchupViaSocket", () => {
 		expect((engine as any).getCrdtHead("Notes/new.md")).toBe("h1");
 	});
 
+	test("first-discovery history-less note materializes the FILE from the socket delta (no REST getUpdates)", async () => {
+		// A note created on ANOTHER device while this one was offline: present in
+		// the head map, absent locally (no id->path mapping, no file, empty Y.Doc =
+		// history-less). Catch-up must materialize it from the SOCKET delta, never
+		// fall back to REST getUpdates (dropped in the CRDT-authoritative rewire).
+		const getUpdates = mock().mockRejectedValue(
+			new Error("REST getUpdates must not be called on the socket catch-up path"),
+		);
+		const ref: { engine?: SyncEngine } = {};
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false), // never in IDB — first-discovery
+			// Simulate the manager's onFlushToDisk wiring: a remote apply flushes the
+			// projected server content to disk (createFileWithFolders for a new note).
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) =>
+				ref.engine!.flushFromCrdt("Notes/new.md", "server body").then(() => undefined),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		ref.engine = engine;
+		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
+		mockApp.vault.create.mockClear();
+
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-new": { path: "Notes/new.md", head: "h1" } } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
+		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/new.md", "server body");
+		expect((engine as any).getCrdtHead("Notes/new.md")).toBe("h1");
+	});
+
+	test("does NOT resurrect a note with a pending local delete not yet synced (minimal Task C guard)", async () => {
+		const applied: string[] = [];
+		const crdt = {
+			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
+				applied.push(id);
+				return Promise.resolve();
+			},
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		// handleDelete's offline path: the note's mapping is gone and a delete is
+		// queued but not yet synced; the server still lists it in the head map.
+		await (engine as any).queue.enqueue({
+			path: "Notes/gone.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+		engine.setCrdtCatchup(
+			async () => ({ heads: { "id-gone": { path: "Notes/gone.md", head: "h1" } } }),
+			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
+		);
+
+		await engine.catchupViaSocket();
+
+		expect(applied).toEqual([]); // NOT resurrected
+		expect((engine as any).noteIdMap.pathForId("id-gone")).toBeNull(); // not learned/mapped
+	});
+
 	test("no-op when catchup deps or crdt manager are unset", async () => {
 		const e = new SyncEngine(
 			mockApp,

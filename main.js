@@ -17367,6 +17367,12 @@ var OfflineQueue = class {
   async dequeue(path, vaultId) {
     this.entries.delete(dedupKey(path, vaultId)), await this.persistNow();
   }
+  /** True when a not-yet-synced DELETE is queued for this path. Catch-up uses
+   *  this to avoid recreating a note the user deleted locally while offline. */
+  hasPendingDelete(path, vaultId) {
+    var _a;
+    return ((_a = this.entries.get(dedupKey(path, vaultId))) == null ? void 0 : _a.action) === "delete";
+  }
   /** Get all entries sorted by timestamp (oldest first). */
   all() {
     return Array.from(this.entries.values()).sort((a, b) => a.timestamp - b.timestamp);
@@ -18186,8 +18192,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  any un-pushed disk drift is then reconciled against it (no seed, no
    *  double). Returns the adopted server head, or null on failure (caller leaves
    *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
-   *  own failure, never throws. */
-  async adoptHistoryLessNote(path, noteId) {
+   *  own failure, never throws.
+   *
+   *  `fetchFull` supplies the FULL-state bytes for the empty doc. It defaults to
+   *  REST getUpdates (the fan-out caller's transport), but the socket catch-up
+   *  path injects `crdt_catchup_delta` — sending the empty-doc state vector makes
+   *  the server return full state either way, so the adopt is CRDT-native with no
+   *  REST fallback (the rewire's sole-socket-transport invariant). */
+  async adoptHistoryLessNote(path, noteId, fetchFull = (id2, sv) => this.api.getUpdates(id2, sv)) {
     var _a;
     if (!this.crdt) return null;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
@@ -18213,7 +18225,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     let head;
     try {
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), full = await this.api.getUpdates(noteId, since);
+      let since = toB64(await this.crdt.encodeStateVector(noteId)), full = await fetchFull(noteId, since);
       head = full.head, await this.crdt.applyRemoteUpdate(noteId, full.update);
     } catch (e) {
       return rlog().warn(
@@ -19157,7 +19169,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.crdt || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.getCrdtHead(path) === serverHead) return "skipped";
     try {
       if (!(typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)) {
-        let adopted = await this.adoptHistoryLessNote(path, noteId);
+        let adopted = await this.adoptHistoryLessNote(path, noteId, fetchDelta);
         return adopted === null ? "failed" : (this.setCrdtHead(path, adopted), this.hibernateIfIdle(path, noteId), "converged");
       }
       await this.captureDiskDriftBeforeRemote(path, noteId);
@@ -19176,6 +19188,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
   }
   async catchupViaSocket() {
+    var _a;
     if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
     let heads;
     try {
@@ -19187,15 +19200,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let learned = !1;
     for (let [noteId, entry] of Object.entries(heads)) {
       let serverPath = entry.path;
-      this.shouldIgnore(serverPath) || (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath && (this.noteIdMap.set(serverPath, noteId), learned = !0), await this.convergeNoteFromDelta(
-        serverPath,
-        noteId,
-        entry.head,
-        (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
-          update: fromB64(x.b64),
-          head: x.head
-        }))
-      ));
+      if (!this.shouldIgnore(serverPath)) {
+        if (this.queue.hasPendingDelete(serverPath, (_a = this.settings.vaultId) != null ? _a : void 0)) {
+          rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
+          continue;
+        }
+        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath && (this.noteIdMap.set(serverPath, noteId), learned = !0), await this.convergeNoteFromDelta(
+          serverPath,
+          noteId,
+          entry.head,
+          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
+            update: fromB64(x.b64),
+            head: x.head
+          }))
+        );
+      }
     }
     learned && this.noteIdMap && await this.saveData({ noteIds: this.noteIdMap.toJSON() });
   }
@@ -19273,8 +19292,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
     let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
-    if (!(!noteId || !this.isNoteConfirmed(noteId)) && this.isLiveBound(normalized))
+    if (noteId)
       try {
+        if (!this.isNoteConfirmed(noteId)) {
+          await this.catchupViaSocket();
+          return;
+        }
+        if (!this.isLiveBound(normalized)) return;
         await this.restConvergeLiveBound(normalized, noteId);
       } catch (e) {
         rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
