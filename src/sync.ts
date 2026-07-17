@@ -242,6 +242,15 @@ const ECHO_COOLDOWN_MS = 5000;
  *  on #970 backends a long TTL cannot swallow another device's real delete. */
 const WIPE_ECHO_COOLDOWN_MS = 10 * 60_000;
 
+/** How long (ms) after THIS device deletes a note to refuse resurrecting it
+ *  via either CRDT convergence path (catch-up head map or vault-channel
+ *  fan-out). Keyed by note_id — a recreate at the same path mints a fresh id
+ *  (handleDelete clears the mapping), so this only suppresses the tombstoned
+ *  id, never a legitimate recreation. Sized to backend #970's same-user
+ *  delete-then-recreate window: within it the server won't have a live row for
+ *  this id anyway (delete-wins), so honoring the local tombstone is exact. */
+const RECENT_DELETE_COOLDOWN_MS = 60_000;
+
 /** Debounce window for the ok->degraded transition Notice: aggregates a
  *  burst of newly-degraded notes (e.g. a batch push) into one Notice. */
 const DEGRADED_NOTICE_DEBOUNCE_MS = 1500;
@@ -345,6 +354,16 @@ export class SyncEngine {
 	 *  recentlyPushed would make handleModify drop REAL user edits within the
 	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
 	private recentlyFlushed: Map<string, number> = new Map();
+	/** note_ids THIS device recently deleted. Both CRDT convergence paths
+	 *  (catchupViaSocket's head-map loop and applyPushedNoteUpdate's fan-out)
+	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. The
+	 *  server head map lists only surviving notes and carries no tombstone, so a
+	 *  just-deleted note that is still (transiently) in the head map, or a
+	 *  late-arriving fan-out for it, would otherwise re-materialize it. Keyed by
+	 *  note_id (the key both paths iterate by), unlike the path-keyed
+	 *  offline-queue `hasPendingDelete` guard which only covers a delete STILL
+	 *  queued (this covers one already sent/dequeued). */
+	private recentlyDeleted: Map<string, number> = new Map();
 	private pulling = false;
 	/** A pull() requested while one was already in flight. Set by the re-entry
 	 *  guard, drained in pull()'s finally to run exactly one follow-up pull.
@@ -1730,6 +1749,13 @@ export class SyncEngine {
 		// it to tear down the right CRDT doc, keyed by id not path).
 		const crdtNoteId = !isBinary ? (this.noteIdMap?.get(file.path) ?? null) : null;
 
+		// Tombstone the id BEFORE clearing the mapping and issuing the delete, so a
+		// racing catch-up head map (which still lists the not-yet-committed delete)
+		// or a late fan-out cannot resurrect it. Covers every exit path below
+		// (socket delete, REST delete, remote-echo skip, offline enqueue). Marked
+		// on any known id, regardless of which send path runs.
+		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
+
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
 		// so a note later recreated at this path must mint a fresh id rather
 		// than resurrecting the deleted note's (Task 5). Attachments have no
@@ -2807,6 +2833,12 @@ export class SyncEngine {
 		this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
 	}
 
+	/** Record a note_id THIS device just deleted so neither CRDT convergence
+	 *  path resurrects it during the delete-wins window (backend #970). */
+	private markRecentlyDeleted(noteId: string): void {
+		this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
+	}
+
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
 	 *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
 	 *  must honor identical ownership invariants
@@ -3046,10 +3078,17 @@ export class SyncEngine {
 			// over any local mapping so a rename converges to the new path too.
 			const serverPath = entry.path;
 			if (this.shouldIgnore(serverPath)) continue;
-			// A note this device deleted locally but has not yet synced (offline
-			// delete sitting in the queue) is still in the server head map. Do NOT
-			// recreate it — that would resurrect a user delete. Minimal guard; full
-			// tombstone semantics (delete-wins, dequeue coordination) are Task C.
+			// A note this device deleted stays in the server head map until the
+			// delete commits (the map lists surviving notes, is_nil(deleted_at)) —
+			// recreating it here would resurrect a user delete. Two guards, keyed
+			// differently on purpose: recentlyDeleted (by note_id) covers a delete
+			// already SENT/dequeued for the delete-wins window (backend #970);
+			// hasPendingDelete (by path) covers one still sitting in the offline
+			// queue. Either one wins → skip.
+			if (this.recentlyDeleted.has(noteId)) {
+				rlog().info("crdt", `catchup skip (recent local delete): ${serverPath}`);
+				continue;
+			}
 			if (this.queue.hasPendingDelete(serverPath, this.settings.vaultId ?? undefined)) {
 				rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
 				continue;
@@ -3089,6 +3128,15 @@ export class SyncEngine {
 	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
 	async applyPushedNoteUpdate(noteId: string, update: Uint8Array, head: string): Promise<void> {
 		if (!this.crdt) return;
+		// A fan-out for a note THIS device just deleted must not resurrect it —
+		// the tombstone (backend #970 delete-wins window) wins regardless of
+		// whether a racing catch-up has re-learned the id's mapping. Checked
+		// first, before confirmNoteId, so a late fan-out can't re-confirm a
+		// deleted id either.
+		if (this.recentlyDeleted.has(noteId)) {
+			rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
+			return;
+		}
 		const path = this.noteIdMap?.pathForId(noteId) ?? null;
 		if (!path) return; // not locally known — first-discovery is pull()'s job
 		// A fan-out for a mapped note is the server pushing that note's bytes —
@@ -6877,6 +6925,10 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.remotelyDeleted.clear();
+		for (const timer of this.recentlyDeleted.values()) {
+			window.clearTimeout(timer);
+		}
+		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.postPullDrainTimer !== null) {
 			window.clearTimeout(this.postPullDrainTimer);

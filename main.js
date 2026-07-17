@@ -17509,7 +17509,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -17588,6 +17588,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  recentlyPushed would make handleModify drop REAL user edits within the
      *  post-push cooldown — silently losing edits and breaking conflict detection. */
     this.recentlyFlushed = /* @__PURE__ */ new Map();
+    /** note_ids THIS device recently deleted. Both CRDT convergence paths
+     *  (catchupViaSocket's head-map loop and applyPushedNoteUpdate's fan-out)
+     *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. The
+     *  server head map lists only surviving notes and carries no tombstone, so a
+     *  just-deleted note that is still (transiently) in the head map, or a
+     *  late-arriving fan-out for it, would otherwise re-materialize it. Keyed by
+     *  note_id (the key both paths iterate by), unlike the path-keyed
+     *  offline-queue `hasPendingDelete` guard which only covers a delete STILL
+     *  queued (this covers one already sent/dequeued). */
+    this.recentlyDeleted = /* @__PURE__ */ new Map();
     this.pulling = !1;
     /** A pull() requested while one was already in flight. Set by the re-entry
      *  guard, drained in pull()'s finally to run exactly one follow-up pull.
@@ -18600,7 +18610,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
+    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
       this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
       return;
     }
@@ -19076,6 +19086,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   markRecentlyFlushed(path) {
     this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
   }
+  /** Record a note_id THIS device just deleted so neither CRDT convergence
+   *  path resurrects it during the delete-wins window (backend #970). */
+  markRecentlyDeleted(noteId) {
+    this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
+  }
   /** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
    *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
    *  must honor identical ownership invariants
@@ -19201,6 +19216,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let [noteId, entry] of Object.entries(heads)) {
       let serverPath = entry.path;
       if (!this.shouldIgnore(serverPath)) {
+        if (this.recentlyDeleted.has(noteId)) {
+          rlog().info("crdt", `catchup skip (recent local delete): ${serverPath}`);
+          continue;
+        }
         if (this.queue.hasPendingDelete(serverPath, (_a = this.settings.vaultId) != null ? _a : void 0)) {
           rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
           continue;
@@ -19232,6 +19251,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async applyPushedNoteUpdate(noteId, update, head) {
     var _a, _b;
     if (!this.crdt) return;
+    if (this.recentlyDeleted.has(noteId)) {
+      rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
+      return;
+    }
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (path) {
       if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path))) {
@@ -21150,7 +21173,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.wipedRemote.clear();
     for (let timer of this.remotelyDeleted.values())
       window.clearTimeout(timer);
-    this.remotelyDeleted.clear(), this.pendingPostPullPushes.clear(), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.remotelyDeleted.clear();
+    for (let timer of this.recentlyDeleted.values())
+      window.clearTimeout(timer);
+    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4;
