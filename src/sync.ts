@@ -4019,46 +4019,36 @@ export class SyncEngine {
 			}
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				// A WS delete is unordered and can be a STALE echo of our own
+				// A WS delete is unordered and can be a STALE echo — e.g. of our own
 				// delete→recreate at the same path (the recreate re-established a live
-				// note here). Trashing then would destroy the recreated file. But the
-				// discriminator is NOT attribution — test_47's real remote delete comes
-				// from an external REST client that sends no X-Device-Id, so it is
-				// unattributed yet must apply. The true test is "did WE recently
-				// (re)create this path?": a recreate routes through pushFile, which
-				// marks the path `pushing` (in flight) then `recentlyPushed` (just
-				// landed). Only then is a delete plausibly the echo of our own recreate,
-				// so defer to the seq-ordered pull, which reconciles delete-vs-recreate
-				// correctly. Our own delete echo is already dropped earlier (device_id
-				// === this.deviceId, #970), so this gate only guards the recreate race.
+				// note here). If this path canonically holds a CONFIRMED note we own,
+				// trashing now could destroy the recreated file, and an UNATTRIBUTED
+				// delete is ambiguous (stale echo vs. a real remote delete). For that
+				// ambiguous case, defer to the seq-ordered pull, which reconciles
+				// delete-vs-recreate correctly.
 				//
-				// A confirmed note we merely RECEIVED (never went through pushFile, so
-				// in neither set — test_47) falls through to trashRemotelyDeleted below,
-				// the CRDT-native resolution: the REST pull never trashes a note merely
+				// A FOREIGN-attributed delete (device_id present, not ours; #970) is
+				// provably NOT our own echo, so the ambiguity is gone: apply it
+				// authoritatively (fall through to trashRemotelyDeleted below), the
+				// CRDT-native resolution — the REST pull never trashes a note merely
 				// absent from the server, so deferring a real remote delete of a
-				// confirmed note simply dropped it (test_47: A deletes via REST, B's live
-				// client kept the file forever). trashRemotelyDeleted marks
+				// confirmed note simply dropped it (e2e test_47: A deletes via REST, B's
+				// live client kept the file forever). trashRemotelyDeleted marks
 				// remotelyDeleted, so B's own vault-delete event is echo-suppressed and
 				// never re-pushed (the 2026-07-08 wipe-echo invariant, test_86).
 				//
 				// A renamed-away old path is handled either way (test_10): once
 				// moveIfIdRelocated has run it is non-canonical (its id resolves to the
-				// new path) so confirmedCanonical is false and it is trashed here. If the
-				// delete arrives FIRST the old path is still canonical; if a resurrection
-				// re-push also marked it recentlyPushed the delete defers and pull's
-				// moveIfIdRelocated trashes it, otherwise it trashes here. No leaks.
+				// new path) and is trashed here; if the delete arrives FIRST it is still
+				// canonical — an unattributed one defers (pull's moveIfIdRelocated
+				// trashes it), a foreign-attributed one trashes here. No duplicate leaks.
 				const ownedId = this.noteIdMap?.get(normalized) ?? null;
 				const confirmedCanonical =
 					!!ownedId &&
 					this.isNoteConfirmed(ownedId) &&
 					this.noteIdMap?.pathForId(ownedId) === normalized;
-				const recentlyRecreated =
-					this.pushing.has(normalized) || this.recentlyPushed.has(normalized);
-				if (confirmedCanonical && recentlyRecreated) {
-					rlog().info(
-						"ws",
-						`Delete deferred to pull (recreate in-flight at path): ${event.path}`,
-					);
+				if (confirmedCanonical && !foreignAttributed) {
+					rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`);
 					void this.pull();
 					return;
 				}
