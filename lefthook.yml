@@ -75,6 +75,17 @@ pre-push:
           exit 0
         fi
 
+        # Workflow-only carve-out (mirrors .github/workflows/version-check.yml):
+        # require a version bump only when a shippable path changed vs main.
+        # CI/docs/test/config-only branches push without bumping.
+        SHIPPABLE="$(git diff --name-only origin/main...HEAD -- \
+          src manifest.json styles.css esbuild.config.mjs main.js assets \
+          tsconfig.json package.json bun.lock version-bump.mjs 2>/dev/null || true)"
+        if [ -z "$SHIPPABLE" ]; then
+          echo "✓ pre-push: no shippable paths changed vs main — version bump not required"
+          exit 0
+        fi
+
         for file in package.json manifest.json; do
           branch_v=$(node -p "require('./$file').version" 2>/dev/null || true)
           main_v=$(git show "origin/main:$file" 2>/dev/null \
