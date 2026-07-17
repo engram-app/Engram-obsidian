@@ -19924,12 +19924,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
-        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized, recentlyRecreated = this.pushing.has(normalized) || this.recentlyPushed.has(normalized);
-        if (confirmedCanonical && recentlyRecreated) {
-          rlog().info(
-            "ws",
-            `Delete deferred to pull (recreate in-flight at path): ${event.path}`
-          ), this.pull();
+        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized;
+        if (confirmedCanonical && !foreignAttributed) {
+          rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
           return;
         }
         if (confirmedCanonical)
