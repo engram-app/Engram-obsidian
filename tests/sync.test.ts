@@ -644,25 +644,20 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
 
-	test("delete for a confirmed note we RECENTLY RECREATED defers to pull instead of trashing", async () => {
-		// A WS delete is unordered and can be a STALE echo of our own
+	test("delete for a live confirmed note defers to pull instead of trashing it", async () => {
+		// A WS delete is unordered and can be a STALE echo — e.g. of our own
 		// delete→recreate at the same path. Trashing the live recreated file
-		// would lose the user's content. The discriminator is "did WE recently
-		// recreate this path?" — a recreate routes through pushFile, which marks
-		// the path recentlyPushed. Only then is the delete plausibly our own
-		// recreate echo, so defer to the seq-ordered pull, which reconciles
-		// delete-vs-recreate correctly. (A note we merely RECEIVED is in neither
-		// pushing/recentlyPushed set → it trashes; see the test_47 suite.)
+		// would lose the user's content. When the path canonically holds a
+		// confirmed note we own, the delete is ambiguous (stale echo vs. a real
+		// remote delete), so defer to the seq-ordered pull, which reconciles
+		// correctly. (A renamed-away old path is NOT canonical for its id, so it
+		// is trashed by the branch — see the id-keyed move tests.)
 		const engine = createEngine();
 		engine.setSyncCursor("CUR-1"); // pull() → pullViaCursor → getSyncChanges
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("E2E/Live.md", "id-live");
 		engine.setNoteIdMap(noteIdMap);
 		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
-		// Mark the path recently pushed — the recreate-in-flight signal.
-		(engine as unknown as { markRecentlyPushed(p: string): void }).markRecentlyPushed(
-			"E2E/Live.md",
-		);
 
 		const liveFile = new TFile("E2E/Live.md");
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
@@ -677,34 +672,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(mockApi.getSyncChanges).toHaveBeenCalled(); // deferred to the ordered pull
-	});
-
-	test("delete for a confirmed note we did NOT recreate trashes it (test_47)", async () => {
-		// The test_47 case: a confirmed-canonical note this device merely RECEIVED
-		// (never went through pushFile, so neither pushing nor recentlyPushed) gets
-		// a real remote delete. It must apply authoritatively, not defer — the REST
-		// pull never trashes a note merely absent from the server, so deferring
-		// would drop the delete and the file would live forever.
-		const engine = createEngine();
-		engine.setSyncCursor("CUR-1");
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("E2E/Live.md", "id-live");
-		engine.setNoteIdMap(noteIdMap);
-		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-live");
-
-		const liveFile = new TFile("E2E/Live.md");
-		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
-		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
-		(mockApi.getSyncChanges as jest.Mock).mockClear();
-
-		await engine.handleStreamEvent({
-			event_type: "delete",
-			path: "E2E/Live.md",
-			timestamp: 1709345678,
-		});
-
-		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(liveFile);
-		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // applied, not deferred
 	});
 
 	test("delete trashes when the path's id is not confirmed (defer guard falls through)", async () => {
