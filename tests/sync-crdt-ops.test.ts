@@ -120,6 +120,82 @@ function engine(opts?: {
 	return e;
 }
 
+// ---------------------------------------------------------------------------
+// applyCrdtCreateAck: a QUEUED crdt_create (offline-created note, held until the
+// crdt: topic joined) must, on ack, seed the note BODY over CRDT, not merely
+// flip the head. The live genesis path seeds inline after crdt_create; a queued
+// create acked on (re)join has NO follow-up pushModifiedFiles (onCrdtTopicJoined
+// is catch-up/pull-only), so a head-only flip leaves a 0-byte row on peers until
+// the user edits again (the deaf-note / 0-byte-materialize class).
+// ---------------------------------------------------------------------------
+describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => {
+	function seedHarness(opts: { localId: string; content: string }) {
+		const applyLocalEdit = mock(async (_id: string, content: string) => content);
+		const removeDoc = mock(async () => {});
+		const crdt = { applyLocalEdit, removeDoc };
+		const enroll = mock();
+		const reset = mock();
+		const testFile = new TFile(`${opts.localId}.md`);
+		const localApp = {
+			...mockApp,
+			vault: {
+				...mockApp.vault,
+				getAbstractFileByPath: mock().mockReturnValue(testFile),
+				cachedRead: mock().mockResolvedValue(opts.content),
+			},
+		};
+		const e = new SyncEngine(
+			localApp as any,
+			mockApi,
+			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			mock().mockResolvedValue(undefined),
+		);
+		e.setCrdtManager(crdt as unknown as CrdtManager);
+		e.setReady();
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set(`${opts.localId}.md`, opts.localId);
+		e.setNoteIdMap(noteIdMap);
+		e.setCrdtEnrollment({ enroll, reset } as any);
+		return { e, applyLocalEdit, removeDoc, reset, noteIdMap };
+	}
+
+	test("non-adopt: seeds the body under the local id AND marks it server-known", async () => {
+		const { e, applyLocalEdit, removeDoc } = seedHarness({
+			localId: "id-1",
+			content: "# Note\n\nreal offline content",
+		});
+		await (e as any).applyCrdtCreateAck("id-1", "id-1", "id-1.md");
+
+		// The body was pushed over CRDT (routeModify → applyLocalEdit), not dropped
+		// as a 0-byte row: assert the CONTENT is sent, not just the head flipped.
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("id-1");
+		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("# Note\n\nreal offline content");
+		// Head flipped → the server row is known.
+		expect((e as any).hasServerNote("id-1")).toBe(true);
+		// Non-adopt: no mint to retire.
+		expect(removeDoc).not.toHaveBeenCalled();
+	});
+
+	test("adopt: remaps, seeds under the server id, and retires the orphaned mint doc + enrollment", async () => {
+		const { e, applyLocalEdit, removeDoc, reset, noteIdMap } = seedHarness({
+			localId: "id-1",
+			content: "adopted body",
+		});
+		await (e as any).applyCrdtCreateAck("id-1", "srv-2", "id-1.md");
+
+		// Remapped to the authoritative server id.
+		expect(noteIdMap.get("id-1.md")).toBe("srv-2");
+		// Body seeded under the SERVER id (not the stale mint).
+		expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("srv-2");
+		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("adopted body");
+		// Orphaned mint doc + its enrollment cleaned up (the queued path leaked both).
+		expect(removeDoc).toHaveBeenCalledWith("id-1");
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect((e as any).hasServerNote("srv-2")).toBe(true);
+	});
+});
+
 describe("crdtOpsAvailable latch", () => {
 	test("is available when enableCrdt, probed, and not latched", () => {
 		const e = engine();

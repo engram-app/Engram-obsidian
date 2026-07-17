@@ -108,6 +108,43 @@ describe("makeCrdtOpSend dispatch + taxonomy", () => {
 		expect(onTerminal).toHaveBeenCalledTimes(1);
 		expect(onTerminal.mock.calls[0]?.[1]).toBe("id_conflict");
 	});
+
+	test("notes_cap_reached → error (retryable), routed to onLimit not onTerminal", async () => {
+		const onTerminal = mock(() => {});
+		const onLimit = mock(() => {});
+		const send = makeCrdtOpSend({
+			channel: () =>
+				fakeChannel({
+					crdtCreate: async () => Promise.reject(serverError("notes_cap_reached")),
+				}),
+			onCreated: () => {},
+			onTerminal,
+			onLimit,
+		});
+		// The plan note-cap is TRANSIENT (freeing a note / upgrading clears it): the
+		// op must be RETRIED (→ "error", kept in the queue), never dropped as terminal.
+		await expect(send(op("create", "d1"))).resolves.toBe("error");
+		expect(onTerminal).not.toHaveBeenCalled();
+		expect(onLimit).toHaveBeenCalledTimes(1);
+		expect(onLimit.mock.calls[0]?.[1]).toBe("notes_cap_reached");
+	});
+
+	test("notes_cap_reached surfaces to the user ONCE across retries (no toast spam)", async () => {
+		const onLimit = mock(() => {});
+		const send = makeCrdtOpSend({
+			channel: () =>
+				fakeChannel({
+					crdtCreate: async () => Promise.reject(serverError("notes_cap_reached")),
+				}),
+			onCreated: () => {},
+			onTerminal: () => {},
+			onLimit,
+		});
+		const capOp = op("create", "d1");
+		await expect(send(capOp)).resolves.toBe("error");
+		await expect(send(capOp)).resolves.toBe("error"); // retried on the next tick
+		expect(onLimit).toHaveBeenCalledTimes(1);
+	});
 });
 
 describe("CrdtOpQueue integration (durable create/delete)", () => {

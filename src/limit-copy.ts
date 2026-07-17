@@ -10,6 +10,8 @@
 
 const TABLE: Record<string, string> = {
 	notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
+	// CRDT channel variant of the note-cap reject (crdt_channel.ex): same copy.
+	notes_cap_reached: "Note limit reached. Upgrade to keep adding notes.",
 	vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
 	attachment_must_be_text: "Free syncs notes only — images & PDFs need a paid plan.",
 	attachments_disabled: "Attachment sync needs a paid plan.",
