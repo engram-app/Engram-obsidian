@@ -17972,6 +17972,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  falls through to the REST create (still functional in this additive phase,
      *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
     this.crdtCreate = null;
+    /** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
+     *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
+     *  the new-path `crdt_create` resurrect: the backend relocates a note only via
+     *  tombstone->resurrect (`genesis_crdt_note` id_conflicts a LIVE id at a new
+     *  path, crdt_channel.ex:201), and the durable CrdtOpQueue coalesces one op
+     *  per docId, so a queued delete + a retried create for the SAME id race and
+     *  cancel. Awaiting a direct delete removes both hazards. Offline / not-joined
+     *  falls back to the durable `crdtEnqueue` delete. */
+    this.crdtDelete = null;
     /** Durable enqueue hook for socket-native create/delete (Plan B2). Wired to
      *  the plugin's CrdtOpQueue: an op is HELD until the crdt: topic is joined,
      *  delivered on join, retried on transient failure, acked, and dropped only on
@@ -18273,6 +18282,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtCreate(fn) {
     this.crdtCreate = fn;
+  }
+  setCrdtDelete(fn) {
+    this.crdtDelete = fn;
   }
   setCrdtEnqueue(fn) {
     this.crdtEnqueue = fn;
@@ -18890,7 +18902,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -18903,7 +18915,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.api.deleteAttachment(oldPath), this.goOnline();
         else if (oldPath.endsWith(".md")) {
           let relocatedId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-          relocatedId && ((_d = this.crdtEnqueue) == null || _d.call(this, { kind: "delete", docId: relocatedId, path: oldPath }));
+          if (relocatedId)
+            if (this.crdtDelete && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null && _e))
+              try {
+                await this.crdtDelete(relocatedId), this.goOnline();
+              } catch (e) {
+                rlog().warn(
+                  "crdt",
+                  `rename tombstone ack failed, enqueuing durable delete for ${oldPath}: ${errMsg(e)}`
+                ), (_f = this.crdtEnqueue) == null || _f.call(this, {
+                  kind: "delete",
+                  docId: relocatedId,
+                  path: oldPath
+                });
+              }
+            else
+              (_g = this.crdtEnqueue) == null || _g.call(this, {
+                kind: "delete",
+                docId: relocatedId,
+                path: oldPath
+              });
         } else
           await this.api.deleteNote(oldPath), this.goOnline();
       } catch (e) {
@@ -18912,10 +18943,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_e = this.settings.vaultId) != null ? _e : void 0
+          vaultId: (_h = this.settings.vaultId) != null ? _h : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_f = this.baseStore) == null || _f.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_h = (_g = this.noteIdMap) == null ? void 0 : _g.get(file.path)) != null ? _h : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_i = this.baseStore) == null || _i.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(file.path)) != null ? _k : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -23804,7 +23835,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCatchup(
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchup(
         () => channel.crdtCatchupHeads(),
         (id2, sv) => channel.crdtCatchupDelta(id2, sv)
       ), this.settings.enableCrdt && this.settings.vaultId) {

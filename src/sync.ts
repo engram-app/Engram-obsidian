@@ -824,6 +824,20 @@ export class SyncEngine {
 		this.crdtCreate = fn;
 	}
 
+	/** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
+	 *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
+	 *  the new-path `crdt_create` resurrect: the backend relocates a note only via
+	 *  tombstone->resurrect (`genesis_crdt_note` id_conflicts a LIVE id at a new
+	 *  path, crdt_channel.ex:201), and the durable CrdtOpQueue coalesces one op
+	 *  per docId, so a queued delete + a retried create for the SAME id race and
+	 *  cancel. Awaiting a direct delete removes both hazards. Offline / not-joined
+	 *  falls back to the durable `crdtEnqueue` delete. */
+	private crdtDelete: ((docId: string) => Promise<{ doc_id: string }>) | null = null;
+
+	setCrdtDelete(fn: ((docId: string) => Promise<{ doc_id: string }>) | null): void {
+		this.crdtDelete = fn;
+	}
+
 	/** Durable enqueue hook for socket-native create/delete (Plan B2). Wired to
 	 *  the plugin's CrdtOpQueue: an op is HELD until the crdt: topic is joined,
 	 *  delivered on join, retried on transient failure, acked, and dropped only on
@@ -1974,14 +1988,46 @@ export class SyncEngine {
 					await this.api.deleteAttachment(oldPath);
 					this.goOnline();
 				} else if (oldPath.endsWith(".md")) {
-					// CRDT-authoritative: the rename's old-path tombstone goes over the
-					// socket (durable crdt_delete for the relocated id), never REST.
-					// noteIdMap.rename above moved the id onto file.path, so resolve it
-					// there. No id → the note was never synced → nothing to tombstone.
-					// Enqueue never throws / makes no network call, so no goOnline here.
+					// CRDT-authoritative rename = tombstone->resurrect, ORDERED. The
+					// backend has no live-note relocation: `genesis_crdt_note` replies
+					// `id_conflict` for a LIVE id at a new path (crdt_channel.ex:201), so
+					// the note moves only by tombstoning the old path first, then having
+					// the new-path `crdt_create` below hit the {:tombstone} ->
+					// `:announce_moved` resurrect (which re-paths the SAME row, so the
+					// server shows old-path gone + new-path present, matching test_10's
+					// asserts). noteIdMap.rename above moved the id onto file.path; the id
+					// (unchanged by a rename) is the tombstone target. No id means never
+					// synced, so there is nothing to tombstone.
+					//
+					// AWAIT a direct crdt_delete when the channel is live so the create
+					// sees the tombstone, never a live id_conflict, and the two ops never
+					// coalesce on the docId-keyed CrdtOpQueue (which would drop one).
+					// Offline / not-joined → durable enqueue; the reconnect re-push
+					// resurrects once the tombstone lands.
 					const relocatedId = this.noteIdMap?.get(file.path) ?? null;
 					if (relocatedId) {
-						this.crdtEnqueue?.({ kind: "delete", docId: relocatedId, path: oldPath });
+						if (this.crdtDelete && (this.crdtLive?.() ?? false)) {
+							try {
+								await this.crdtDelete(relocatedId);
+								this.goOnline();
+							} catch (e) {
+								rlog().warn(
+									"crdt",
+									`rename tombstone ack failed, enqueuing durable delete for ${oldPath}: ${errMsg(e)}`,
+								);
+								this.crdtEnqueue?.({
+									kind: "delete",
+									docId: relocatedId,
+									path: oldPath,
+								});
+							}
+						} else {
+							this.crdtEnqueue?.({
+								kind: "delete",
+								docId: relocatedId,
+								path: oldPath,
+							});
+						}
 					}
 				} else {
 					// Canvas / other non-md syncable text stays LWW REST (not CRDT-managed).
@@ -2024,11 +2070,11 @@ export class SyncEngine {
 			// the old path — the new note's push is skipped and it never syncs).
 			// The new-path push below re-establishes sync-state under file.path.
 			this.syncState.delete(normalizePath(oldPath));
-			// deleteNote above tombstoned the old path's row, so the note_id is no
-			// longer server-live. Un-confirm it so the pushFile below takes the
-			// REST-first path (which moves/resurrects the row at the new path,
-			// keyed by the stable id) instead of the CRDT path — the server drops
-			// crdt frames for a note it sees as absent, silently losing the rename.
+			// The tombstone above made the note_id no longer server-live. Un-confirm
+			// it so pushFile below takes the `crdt_create` genesis branch (not the
+			// crdt_msg edit branch, which carries no path and can't move the row):
+			// against the fresh tombstone that create hits the {:tombstone} ->
+			// `:announce_moved` resurrect, re-pathing the SAME row to file.path.
 			this.unconfirmNoteId(this.noteIdMap?.get(file.path) ?? null);
 		}
 

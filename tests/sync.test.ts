@@ -340,9 +340,9 @@ describe("SyncEngine.handleDelete", () => {
 });
 
 describe("SyncEngine.handleRename", () => {
-	test("deletes old path and pushes new path", async () => {
+	test("canvas rename deletes old path and pushes new path (LWW REST)", async () => {
 		const engine = createEngine();
-		// .canvas so the new-path push takes the kept LWW REST route.
+		// .canvas stays on the kept LWW REST route (not CRDT-managed).
 		const file = new TFile("Notes/Renamed.canvas", Date.now());
 
 		await engine.handleRename(file, "Notes/Original.canvas");
@@ -352,6 +352,57 @@ describe("SyncEngine.handleRename", () => {
 			"Notes/Renamed.canvas",
 			expect.any(String),
 			expect.any(Number),
+		);
+	});
+
+	test("md rename tombstones the old path over the socket, never REST", async () => {
+		// A .md rename relocates via ordered tombstone->resurrect: an AWAITED direct
+		// crdt_delete for the (stable, shared) id, then pushFile's crdt_create
+		// resurrects it at the new path. It must NOT hit REST deleteNote/pushNote,
+		// and must NOT enqueue a coalescing durable delete (which would race the
+		// resurrect create on the docId-keyed queue — the test_10 regression).
+		const engine = createEngine();
+		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-md-move" });
+		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtDelete(crdtDelete);
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
+
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/Old.md", "id-md-move");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-md-move");
+
+		const file = new TFile("Notes/New.md", Date.now());
+		await engine.handleRename(file, "Notes/Old.md");
+
+		expect(crdtDelete).toHaveBeenCalledWith("id-md-move");
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		// The id moved onto the new path; no delete should be durably queued.
+		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
+	});
+
+	test("md rename falls back to a durable delete when the channel is down", async () => {
+		const engine = createEngine();
+		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-md-off" });
+		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtDelete(crdtDelete);
+		engine.setCrdtLiveCheck(() => false); // channel not joined
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
+
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/Old.md", "id-md-off");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-md-off");
+
+		const file = new TFile("Notes/New.md", Date.now());
+		await engine.handleRename(file, "Notes/Old.md");
+
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(enqueued).toContainEqual(
+			expect.objectContaining({ kind: "delete", docId: "id-md-off" }),
 		);
 	});
 });
