@@ -74,6 +74,7 @@ function makeDevice(id: string, reconcile: () => number): Device {
 		// Live id-map heal (announce/#955 note_not_found). The scenarios drive
 		// the manifest reconcile explicitly, so the coalesced trigger is a no-op.
 		ensureNoteIdMapped: () => {},
+		discoverAnnouncedNote: async () => {},
 	};
 
 	const wiring = createCrdtWiring({
@@ -118,6 +119,7 @@ function fanoutStubEngine() {
 		isSyncBlocked: () => false,
 		ensureNoteIdMapped: () => {},
 		applyPushedNoteUpdate: async () => {},
+		discoverAnnouncedNote: async () => {},
 	};
 }
 
@@ -159,6 +161,63 @@ test("onCrdtDocReady DOES enroll a live-bound (open) note", async () => {
 
 	wiring.onCrdtDocReady("id-open");
 	await waitFor(() => sent.includes("id-open"), "STEP1 sent for the open note's room");
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
+
+test("onCrdtDocReady with a path triggers per-note discovery (empty-note, test_27)", async () => {
+	// An empty note's genesis emits crdt_doc_ready with a path but ZERO Y.Doc ops
+	// (no note_yjs_update fan-out), so the announce path is the only immediate
+	// signal. The handler must kick discoverAnnouncedNote so the empty note
+	// materializes in seconds instead of ~30s later via the level pull.
+	const map = new NoteIdMap();
+	const discovered: Array<[string, string]> = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			...fanoutStubEngine(),
+			discoverAnnouncedNote: async (id: string, p: string) => {
+				discovered.push([id, p]);
+			},
+		},
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "docready-discover",
+	});
+
+	wiring.onCrdtDocReady("id-empty", "Notes/Empty.md");
+	await waitFor(() => discovered.length > 0, "discoverAnnouncedNote called");
+
+	expect(discovered).toEqual([["id-empty", "Notes/Empty.md"]]);
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
+
+test("onCrdtDocReady WITHOUT a path does not trigger discovery (pre-path backend)", async () => {
+	const map = new NoteIdMap();
+	map.set("Idle.md", "id-idle");
+	const discovered: string[] = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			...fanoutStubEngine(),
+			discoverAnnouncedNote: async (id: string) => {
+				discovered.push(id);
+			},
+		},
+		sendCrdt: () => {},
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "docready-nopath",
+	});
+
+	wiring.onCrdtDocReady("id-idle");
+	await sleep(50);
+
+	expect(discovered).toEqual([]); // no path on the announce → no discovery
 
 	wiring.dispose();
 	await wiring.manager.destroy();

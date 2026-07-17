@@ -202,7 +202,7 @@ export class NoteChannel {
 	/** A room became active on the server for `docId` (announced via
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
 	 *  for this doc so a device that doesn't yet have the note pulls it. */
-	onCrdtDocReady: ((docId: string) => void) | null = null;
+	onCrdtDocReady: ((docId: string, path?: string) => void) | null = null;
 	/** A crdt_msg we sent was dropped server-side: the note_id has no row
 	 *  (backend #955 error reply). The create-race cross-wire signature — wire
 	 *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
@@ -951,7 +951,11 @@ export class NoteChannel {
 		if (event === "crdt_doc_ready" && payload) {
 			const docId = payload.doc_id as string | undefined;
 			if (docId) {
-				this.onCrdtDocReady?.(docId);
+				// The backend now carries the note's path on the announce so an EMPTY
+				// note (zero Y.Doc ops → no note_yjs_update fan-out) can be discovered
+				// and materialized immediately, not ~30s later via the level pull.
+				const path = payload.path as string | undefined;
+				this.onCrdtDocReady?.(docId, path);
 			}
 			return;
 		}
