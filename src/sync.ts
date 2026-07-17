@@ -1003,8 +1003,22 @@ export class SyncEngine {
 	 *  any un-pushed disk drift is then reconciled against it (no seed, no
 	 *  double). Returns the adopted server head, or null on failure (caller leaves
 	 *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
-	 *  own failure, never throws. */
-	private async adoptHistoryLessNote(path: string, noteId: string): Promise<string | null> {
+	 *  own failure, never throws.
+	 *
+	 *  `fetchFull` supplies the FULL-state bytes for the empty doc. It defaults to
+	 *  REST getUpdates (the fan-out caller's transport), but the socket catch-up
+	 *  path injects `crdt_catchup_delta` — sending the empty-doc state vector makes
+	 *  the server return full state either way, so the adopt is CRDT-native with no
+	 *  REST fallback (the rewire's sole-socket-transport invariant). */
+	private async adoptHistoryLessNote(
+		path: string,
+		noteId: string,
+		fetchFull: (
+			noteId: string,
+			sinceB64: string,
+		) => Promise<{ update: Uint8Array; head: string }> = (id, sv) =>
+			this.api.getUpdates(id, sv),
+	): Promise<string | null> {
 		if (!this.crdt) return null;
 		const normalized = normalizePath(path);
 
@@ -1062,7 +1076,7 @@ export class SyncEngine {
 			// string is rejected by the backend's plausible_state_vector? guard
 			// (400) — mirror coldReceive and send the real (empty-doc) SV instead.
 			const since = toB64(await this.crdt.encodeStateVector(noteId));
-			const full = await this.api.getUpdates(noteId, since);
+			const full = await fetchFull(noteId, since);
 			head = full.head;
 			await this.crdt.applyRemoteUpdate(noteId, full.update);
 		} catch (e) {
@@ -2936,7 +2950,11 @@ export class SyncEngine {
 					? await this.crdt.hasHistory(noteId)
 					: true;
 			if (!historyFull) {
-				const adopted = await this.adoptHistoryLessNote(path, noteId);
+				// First-discovery / feed-synced note with an empty Y.Doc: adopt FULL
+				// server state, fetched over the SAME socket delta channel as the
+				// history-full branch below (empty-doc SV → server returns full). No
+				// REST fallback — the socket path stays CRDT-native.
+				const adopted = await this.adoptHistoryLessNote(path, noteId, fetchDelta);
 				if (adopted === null) return "failed"; // adopt stalled — retry next poll
 				this.setCrdtHead(path, adopted);
 				this.hibernateIfIdle(path, noteId);
@@ -3028,6 +3046,14 @@ export class SyncEngine {
 			// over any local mapping so a rename converges to the new path too.
 			const serverPath = entry.path;
 			if (this.shouldIgnore(serverPath)) continue;
+			// A note this device deleted locally but has not yet synced (offline
+			// delete sitting in the queue) is still in the server head map. Do NOT
+			// recreate it — that would resurrect a user delete. Minimal guard; full
+			// tombstone semantics (delete-wins, dequeue coordination) are Task C.
+			if (this.queue.hasPendingDelete(serverPath, this.settings.vaultId ?? undefined)) {
+				rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
+				continue;
+			}
 			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath) {
 				this.noteIdMap.set(serverPath, noteId);
 				learned = true;
@@ -3183,9 +3209,18 @@ export class SyncEngine {
 		if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
 		const normalized = normalizePath(path);
 		const noteId = this.noteIdMap?.get(normalized) ?? null;
-		if (!noteId || !this.isNoteConfirmed(noteId)) return;
-		if (!this.isLiveBound(normalized)) return; // idle notes heal on reconnect (#5)
+		if (!noteId) return; // truly unknown — reconnect catch-up discovers it (#5)
 		try {
+			// Opened but never handshaked (discovered via catch-up/fan-out): the REST
+			// restConvergeLiveBound fast path needs a confirmed server row, so converge
+			// it over the SOCKET instead — a cold note must not stay unmaterialized
+			// until the next reconnect. Socket-native; the head cost-gate makes an
+			// already-converged note a near-no-op.
+			if (!this.isNoteConfirmed(noteId)) {
+				await this.catchupViaSocket();
+				return;
+			}
+			if (!this.isLiveBound(normalized)) return; // idle confirmed notes heal on reconnect (#5)
 			await this.restConvergeLiveBound(normalized, noteId);
 		} catch (e) {
 			rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);

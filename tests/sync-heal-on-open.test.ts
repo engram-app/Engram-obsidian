@@ -153,6 +153,26 @@ describe("healNoteOnOpen", () => {
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
+	test("opened-but-unconfirmed note: converges over the SOCKET (catchupViaSocket), not REST", async () => {
+		// A note opened after being discovered via catch-up/fan-out but never
+		// handshaked (unconfirmed). It must not wait for the next reconnect — heal
+		// converges it over the socket, NOT via REST restConvergeLiveBound.
+		const heads = mock().mockResolvedValue({ heads: {} });
+		const getUpdates = mock().mockResolvedValue({ update: new Uint8Array(), head: "h" });
+		const crdt = {
+			applyRemoteUpdate: mock().mockResolvedValue(undefined),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+		};
+		const engine = makeEngine(crdt, { getUpdates });
+		(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.delete("id-a");
+		engine.setCrdtCatchup(heads, mock());
+
+		await engine.healNoteOnOpen("Notes/a.md");
+
+		expect(heads).toHaveBeenCalledTimes(1); // socket catch-up ran
+		expect(getUpdates).not.toHaveBeenCalled(); // NOT the REST heal path
+	});
+
 	test("crdt disabled: no-op", async () => {
 		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
 		const e = new SyncEngine(
