@@ -907,10 +907,17 @@ export default class EngramSyncPlugin extends Plugin {
 					// Plan B1 Task 6: catch-up runs over the socket (already-known
 					// notes' diverged heads), not a REST pull. The genesis path
 					// (pushFile's crdt_create branch, wired above) still creates a
-					// brand-new/never-synced note's server row on push — so
+					// brand-new/never-synced note's server row on push, so
 					// pushModifiedFiles below still needs to run to actually push
 					// those local-only notes and any other local edits.
-					await this.syncEngine.catchupViaSocket();
+					//
+					// Only run catch-up once the crdt: topic is joined: its
+					// sendRequest is refused pre-join (the deaf-note race), and if the
+					// join has not landed yet onCrdtTopicJoined (channel.onCrdtJoined)
+					// runs the catch-up when it fires, so skipping here is safe.
+					if (this.noteStream?.isCrdtConnected()) {
+						await this.syncEngine.catchupViaSocket();
+					}
 					const pushed = await this.syncEngine.pushModifiedFiles();
 					if (pushed > 0) {
 						new Notice(`Engram Sync: pushed ${pushed}`);
@@ -1503,6 +1510,62 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/**
+	 * Reconcile the id-map, re-arm CRDT enrollments, and run the socket catch-up
+	 * on a crdt: topic (re)join. Invoked ONLY from channel.onCrdtJoined, i.e. after
+	 * the crdt: join is server-acked (crdtJoined=true), so crdtCatchupHeads'
+	 * sendRequest is guaranteed past the join gate. Wiring the catch-up to the
+	 * sync-topic onStatusChange (which acks first) let the sendRequest reject with
+	 * "crdt topic not joined" and silently drop with no retry, the deaf-note class:
+	 * idle notes and notes another device created during the disconnect never
+	 * converged. CRDT socket only, no REST fallback.
+	 */
+	private async onCrdtTopicJoined(): Promise<void> {
+		// Repair a stale noteIdMap from the server manifest BEFORE re-enrolling and
+		// catch-up: live pull and catch-up resolve the disk path via
+		// noteIdMap.pathForId, and after the id-keying cutover a cursor-bearing
+		// device never re-ran bootstrap(), so its map stayed stale and inbound
+		// frames stranded ("no known path"). Throttled: a reconnect storm must not
+		// fire a manifest fetch per reconnect (the 2026-07-09 pool-exhaustion class,
+		// see lastMapReconcileAt). Stamp the timestamp BEFORE the await so a burst
+		// arriving faster than one round-trip sees the throttle already engaged.
+		const now = Date.now();
+		if (now - this.lastMapReconcileAt > EngramSyncPlugin.RECONCILE_THROTTLE_MS) {
+			this.lastMapReconcileAt = now;
+			try {
+				const n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+				if (n > 0) {
+					rlog().info("crdt", `noteIdMap reconciled from manifest: ${n} notes`);
+				}
+			} catch (e) {
+				rlog().warn(
+					"crdt",
+					`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
+				);
+			}
+		}
+		// Reset all CRDT enrollments so a fresh startSync STEP1 handshake fires for
+		// each note after reconnect, then re-enroll every open note so the server
+		// re-registers this device as a room observer (the active-leaf-change handler
+		// only fires on a tab switch). Mirrors the web client's reconnect resync; on
+		// the initial join it is a near no-op (already enrolled).
+		this.crdtEnrollment?.resetAll();
+		// A reconnect just reconciled the noteIdMap above, so any note_id stranded by
+		// map drift deserves fresh retry attempts against the now-current map, not a
+		// counter left over from before the drift was fixed.
+		this.crdtWiring?.clearStrandHealAttempts();
+		this.reEnrollOpenCrdtNotes();
+		// Sole convergence path on (re)connect: already-known notes' diverged heads
+		// AND notes another device created during the disconnect, discovered via the
+		// head map (which carries the server-authoritative path). Never throws into
+		// the caller; a socket-drop mid-fetch is logged and left for the next join.
+		try {
+			await this.syncEngine.catchupViaSocket();
+		} catch (e) {
+			rlog().warn("crdt", `socket catchup on reconnect failed: ${errMsg(e)}`);
+		}
+	}
+
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
 	private connectChannel(attempt = 0, epoch = this.channelEpoch): void {
 		rlog().info(
@@ -1570,77 +1633,22 @@ export default class EngramSyncPlugin extends Plugin {
 						void this.api.failWedgedRequests();
 					}
 					this.updateStatusBar(this.syncEngine.getStatus());
-					// Catch-up pull on reconnect to cover missed events during disconnect
 					if (connected) {
 						// Forget confirmed-note-id status: across a (re)connect the
 						// server's view may have diverged (another device deleted/renamed
 						// a note, or the backing store was reset). A stale "confirmed"
 						// entry routes a note's first write to CRDT, which the server
 						// silently drops for a note it has no row for. Clearing biases the
-						// next write back to durable REST; the catch-up pull below re-
+						// next write back to durable REST; the crdt-join catch-up re-
 						// confirms whatever changed.
 						this.syncEngine.clearConfirmedNoteIds();
-						// Repair a stale noteIdMap from the server manifest BEFORE
-						// re-enrolling. Live pull of an existing note is CRDT-only and
-						// onFlushToDisk resolves the disk path via noteIdMap.pathForId;
-						// after the id-keying cutover a cursor-bearing device never
-						// re-ran bootstrap(), so its map stayed stale and every inbound
-						// frame stranded ("no known path"). The manifest is authoritative
-						// id->path (id+path+hash only, no content), so reconciling it here
-						// makes live pull resolve. Await it so the map is ready before the
-						// STEP1/STEP2 handshakes below deliver content.
-						void (async () => {
-							// Runs on every reconnect (throttled) rather than once per
-							// session: a stale map on a second+ reconnect leaves
-							// catchupViaSocket deaf to notes another device created
-							// during the disconnect (see lastMapReconcileAt doc comment
-							// for the storm-throttle rationale). Stamp the timestamp
-							// BEFORE the await so a burst of reconnects arriving faster
-							// than one manifest round-trip sees the throttle already
-							// engaged instead of racing a second fetch.
-							const now = Date.now();
-							if (
-								now - this.lastMapReconcileAt >
-								EngramSyncPlugin.RECONCILE_THROTTLE_MS
-							) {
-								this.lastMapReconcileAt = now;
-								try {
-									const n =
-										await this.syncEngine.reconcileNoteIdMapFromManifest();
-									if (n > 0) {
-										rlog().info(
-											"crdt",
-											`noteIdMap reconciled from manifest: ${n} notes`,
-										);
-									}
-								} catch (e) {
-									rlog().warn(
-										"crdt",
-										`noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`,
-									);
-								}
-							}
-							// Reset all CRDT enrollments so a fresh startSync STEP1
-							// handshake fires for each open note after reconnect.
-							this.crdtEnrollment?.resetAll();
-							// A reconnect just reconciled the noteIdMap above — any
-							// note_id that was stranded due to map drift deserves
-							// fresh retry attempts against the now-current map
-							// (final review MINOR-6), not a counter left over from
-							// before the drift was fixed.
-							this.crdtWiring?.clearStrandHealAttempts();
-							// Plan B1 Task 6: reconnect catch-up now runs over the socket
-							// (already-known notes' diverged heads) instead of a REST pull
-							// — see catchupViaSocket's doc comment for what it does and
-							// does not cover. REST pull() stays available as a fallback
-							// for other callers (manual sync, fullSync).
-							void this.syncEngine.catchupViaSocket().catch((e) => {
-								rlog().warn(
-									"crdt",
-									`socket catchup on reconnect failed: ${errMsg(e)}`,
-								);
-							});
-						})();
+						// The noteIdMap reconcile, CRDT re-enrollment, and socket catch-up
+						// do NOT run here. This is the SYNC-topic ack, which fires BEFORE
+						// the crdt: topic join sets crdtJoined=true. Running catch-up now
+						// makes crdtCatchupHeads' sendRequest reject with "crdt topic not
+						// joined" and silently drop, the deaf-note reconnect race. They run
+						// from channel.onCrdtJoined (onCrdtTopicJoined) instead, which fires
+						// only after the crdt: join is server-acked.
 					} else {
 						// On disconnect: if onCrdtJoined has already fired for this
 						// channel session (crdtEverJoined), KEEP the CRDT manager wired
@@ -1835,14 +1843,12 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
-						// Re-enroll every open markdown note so the server re-registers
-						// this device as a room observer after a (re)connect. The active-
-						// leaf-change handler only fires on a tab switch, so a note left
-						// open across a socket drop would otherwise never re-send STEP1 and
-						// go deaf to live updates until the user switches tabs or hits Sync.
-						// Mirrors the web client's reconnect resync. Runs on every crdt:
-						// (re)join; on the initial join it is a near no-op (already enrolled).
-						this.reEnrollOpenCrdtNotes();
+						// Reconcile the id-map, re-enroll open notes, and run the socket
+						// catch-up now that the crdt: topic is acked. This is the sole
+						// convergence trigger on (re)connect; wiring it here (not the
+						// sync-topic onStatusChange, which acks first) is what fixes the
+						// deaf-note race. See onCrdtTopicJoined.
+						void this.onCrdtTopicJoined();
 					};
 					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
 					// (backend downgrade, transient error, or this plugin being too old),
