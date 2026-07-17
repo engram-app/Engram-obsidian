@@ -19924,12 +19924,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
-        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized, recentlyRecreated = this.pushing.has(normalized) || this.recentlyPushed.has(normalized);
-        if (confirmedCanonical && recentlyRecreated) {
-          rlog().info(
-            "ws",
-            `Delete deferred to pull (recreate in-flight at path): ${event.path}`
-          ), this.pull();
+        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized;
+        if (confirmedCanonical && !foreignAttributed) {
+          rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
           return;
         }
         if (confirmedCanonical)
@@ -20088,15 +20085,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return this.applyAttachmentChange(ac);
     }
     if (!c.path) return !1;
-    if (c.deleted)
-      (_a = this.noteIdMap) == null || _a.delete(c.path);
-    else {
+    if (!c.deleted) {
       let relocationTs = Date.parse(c.updated_at);
       await this.moveIfIdRelocated(
         c.id,
         c.path,
         Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_b = this.noteIdMap) == null || _b.set(c.path, c.id), this.confirmNoteId(c.id), this.shouldIgnore(c.path) || this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
+      ), (_a = this.noteIdMap) == null || _a.set(c.path, c.id), this.confirmNoteId(c.id), this.shouldIgnore(c.path) || this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
     }
     let nc = {
       path: c.path,
@@ -20109,8 +20104,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       updated_at: c.updated_at,
       deleted: c.deleted,
       version: c.version
-    };
-    return this.applyChange(nc);
+    }, applied = await this.applyChange(nc);
+    return c.deleted && ((_b = this.noteIdMap) == null || _b.delete(c.path)), applied;
   }
   /** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
    *  (delete server-deleted, push offline-created — disambiguated by the
@@ -20196,34 +20191,57 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
-      let existing2 = this.app.vault.getFileByPath(normalized);
+      let crdtNoteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null, crdtManaged = !!this.crdt && crdtNoteId !== null, existing2 = this.app.vault.getFileByPath(normalized);
       if (existing2) {
         let localContent = await this.app.vault.cachedRead(existing2), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized);
         if (!lastSynced || lastSynced.hash !== localHash) {
-          rlog().info(
-            "pull",
-            `Tombstone skipped (resurrection): ${change.path} | localHash=${localHash} | syncedHash=${(_a = lastSynced == null ? void 0 : lastSynced.hash) != null ? _a : "none"} | localLen=${localContent.length}`
-          ), devLog().log(
-            "pull",
-            `applyChange DELETE skipped (resurrection): ${change.path} (localHash=${localHash} !== syncedHash=${(_b = lastSynced == null ? void 0 : lastSynced.hash) != null ? _b : "none"})`
-          );
-          try {
-            await this.pushFile(existing2, !0);
-          } catch (e) {
-            rlog().error(
+          if (!crdtManaged) {
+            rlog().info(
               "pull",
-              `Resurrection push failed: ${change.path} | err=${errMsg(e)}`
+              `Tombstone skipped (resurrection): ${change.path} | localHash=${localHash} | syncedHash=${(_c = lastSynced == null ? void 0 : lastSynced.hash) != null ? _c : "none"} | localLen=${localContent.length}`
+            ), devLog().log(
+              "pull",
+              `applyChange DELETE skipped (resurrection): ${change.path} (localHash=${localHash} !== syncedHash=${(_d = lastSynced == null ? void 0 : lastSynced.hash) != null ? _d : "none"})`
             );
+            try {
+              await this.pushFile(existing2, !0);
+            } catch (e) {
+              rlog().error(
+                "pull",
+                `Resurrection push failed: ${change.path} | err=${errMsg(e)}`
+              );
+            }
+            return !1;
           }
-          return !1;
+          if (this.needsColdReconcile(normalized, localContent))
+            try {
+              let copy2 = await this.writeDriftConflictCopy(
+                normalized,
+                localContent
+              );
+              rlog().info(
+                "conflict",
+                `CRDT tombstone drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+              );
+            } catch (e) {
+              rlog().warn(
+                "conflict",
+                `CRDT tombstone drift capture failed for ${normalized}: ${errMsg(e)}`
+              );
+            }
+          else
+            rlog().info(
+              "pull",
+              `CRDT tombstone honoured (no drift): ${change.path} | syncedHash=${(_e = lastSynced == null ? void 0 : lastSynced.hash) != null ? _e : "none"}`
+            );
         }
-        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), !0;
+        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && normalized.endsWith(".md") && ((_g = this.noteIdMap) == null || _g.delete(normalized), await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId)), !0;
       }
       return !1;
     }
@@ -20231,7 +20249,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
     if (!forceOverwrite && change.version !== void 0) {
-      let known = (_d = this.syncState.get(normalized)) == null ? void 0 : _d.version;
+      let known = (_j = this.syncState.get(normalized)) == null ? void 0 : _j.version;
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
         return rlog().info(
           "pull",
@@ -20240,11 +20258,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let crdtConflictFallthrough = !1;
     if (this.crdt && normalized.endsWith(".md")) {
-      let noteId = (_f = (_e = this.noteIdMap) == null ? void 0 : _e.get(normalized)) != null ? _f : null;
+      let noteId = (_l = (_k = this.noteIdMap) == null ? void 0 : _k.get(normalized)) != null ? _l : null;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_g = this.crdtEnrollment) == null || _g.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        noteId && this.isLiveBound(normalized) && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && this.isLiveBound(normalized) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId));
+        noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId));
         let stored = this.syncState.get(normalized);
         if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -20254,9 +20272,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
             ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
               this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_i = stored == null ? void 0 : stored.hash) != null ? _i : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_o = stored == null ? void 0 : stored.hash) != null ? _o : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
               this.syncState.set(normalized, {
-                ...(_j = this.syncState.get(normalized)) != null ? _j : {},
+                ...(_p = this.syncState.get(normalized)) != null ? _p : {},
                 hash: localHash,
                 serverHash: change.content_hash,
                 version: change.version
@@ -20305,14 +20323,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_k = this.baseStore) == null ? void 0 : _k.get(normalized);
+        let pullBase = (_q = this.baseStore) == null ? void 0 : _q.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_l = this.baseStore) == null || _l.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_r = this.baseStore) == null || _r.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20363,7 +20381,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_m = this.baseStore) == null || _m.set(
+            }), change.version != null && ((_s = this.baseStore) == null || _s.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20385,7 +20403,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_n = this.baseStore) == null || _n.set(
+            }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20408,12 +20426,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_o = this.baseStore) == null || _o.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_p = this.baseStore) == null || _p.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20432,7 +20450,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_q = this.baseStore) == null || _q.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_w = this.baseStore) == null || _w.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.

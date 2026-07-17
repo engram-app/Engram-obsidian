@@ -526,6 +526,118 @@ describe("SyncEngine.pull", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
+
+	// A CRDT-managed note (id learned from the server feed) that reaches the
+	// resurrection guard with NO baseline (syncedHash=none, #203) must have the
+	// server tombstone HONOURED, not misread as local drift and resurrected
+	// (e2e test_47). Legacy notes (no id) keep the skip-and-resurrect guard.
+	function makeCrdtDeleteEngine(): { engine: SyncEngine; removed: string[] } {
+		const removed: string[] = [];
+		const engine = createEngine({ enableCrdt: true });
+		engine.setCrdtManager({
+			removeDoc: (id: string) => {
+				removed.push(id);
+				return Promise.resolve();
+			},
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		return { engine, removed };
+	}
+
+	test("honours a server tombstone for a CRDT note with no baseline (test_47)", async () => {
+		const { engine, removed } = makeCrdtDeleteEngine();
+		engine.setSyncCursor("CUR-0");
+		const path = "E2E/CrdtDelete/Note.md";
+
+		// This device learned the note's server id (CRDT-managed), but has NO
+		// syncState entry — the CRDT delivery never advanced the baseline (#203).
+		const map = new NoteIdMap();
+		map.set(path, "id-crdt");
+		engine.setNoteIdMap(map);
+
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue("# Delete Me\n");
+
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([syncNoteEntry({ id: "id-crdt", seq: 9, path, deleted: true, version: 2 })]),
+		);
+
+		await engine.pull();
+
+		// Trashed (not resurrected), and no keep-both copy for un-drifted content.
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		// CRDT room torn down so a recreate starts fresh.
+		expect(removed).toContain("id-crdt");
+	});
+
+	test("preserves genuine drift as a keep-both copy before honouring a CRDT tombstone", async () => {
+		const { engine } = makeCrdtDeleteEngine();
+		engine.setSyncCursor("CUR-0");
+		const path = "E2E/CrdtDelete/Drifted.md";
+
+		const map = new NoteIdMap();
+		map.set(path, "id-drift");
+		engine.setNoteIdMap(map);
+
+		// A recorded CRDT baseline that DISAGREES with disk == genuine local
+		// drift the user must not silently lose.
+		const baseline = "# Old baseline\n";
+		const drifted = "# Drifted\nunsynced local edit\n";
+		(engine as unknown as { syncState: Map<string, { hash: number }> }).syncState.set(path, {
+			hash: fnv1a(baseline),
+		});
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue(drifted);
+
+		const order: string[] = [];
+		(mockApp.vault.create as jest.Mock).mockImplementationOnce(async () => {
+			order.push("create");
+		});
+		(mockApp.fileManager.trashFile as jest.Mock).mockImplementationOnce(async () => {
+			order.push("trash");
+		});
+
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([syncNoteEntry({ id: "id-drift", seq: 9, path, deleted: true, version: 2 })]),
+		);
+
+		await engine.pull();
+
+		// Keep-both copy written FIRST (drift preserved), then the note trashed.
+		expect(order).toEqual(["create", "trash"]);
+		const createCall = (mockApp.vault.create as jest.Mock).mock.calls[0];
+		expect(createCall[0]).toMatch(/\(conflict .*\)\.md$/);
+		expect(createCall[1]).toBe(drifted);
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
+	});
+
+	test("still skips + resurrects a legacy (non-CRDT) note with unsynced edits", async () => {
+		const { engine } = makeCrdtDeleteEngine();
+		engine.setSyncCursor("CUR-0");
+		// No id mapping → not CRDT-managed → legacy resurrection protection.
+		engine.setNoteIdMap(new NoteIdMap());
+		// .canvas so the resurrection re-push takes the REST route (asserts pushNote).
+		const path = "Notes/Legacy.canvas";
+
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue("# legacy\nnew local edit\n");
+		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({ note: { path, version: 1 } });
+
+		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
+			syncPage([syncNoteEntry({ id: "id-legacy", seq: 9, path, deleted: true, version: 2 })]),
+		);
+
+		await engine.pull();
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(mockApi.pushNote).toHaveBeenCalled();
+	});
 });
 
 describe("SyncEngine.handleStreamEvent", () => {

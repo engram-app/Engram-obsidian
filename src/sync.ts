@@ -4465,10 +4465,11 @@ export class SyncEngine {
 		// mapping instead of recording it: a note later recreated at the same
 		// path is a NEW note server-side and must mint a fresh id, not resurrect
 		// the deleted one's — mirrors the CRDT doc teardown-on-delete rationale
-		// elsewhere in this file (no ghost lineage across a delete).
-		if (c.deleted) {
-			this.noteIdMap?.delete(c.path);
-		} else {
+		// elsewhere in this file (no ghost lineage across a delete). The clear is
+		// DEFERRED to after applyChange (below): its delete branch needs the
+		// path→id mapping to classify the note as CRDT-managed and tear its room
+		// down, so retiring the id here would blind it.
+		if (!c.deleted) {
 			// Id-keyed move: the server sends a note's stable id at a NEW path, but
 			// this device still holds that id at a DIFFERENT local path. A rename
 			// moves one row server-side (delete old + resurrect at new, same id), so
@@ -4523,7 +4524,11 @@ export class SyncEngine {
 			deleted: c.deleted,
 			version: c.version,
 		};
-		return this.applyChange(nc);
+		const applied = await this.applyChange(nc);
+		// Retire the id now that applyChange has consumed the mapping (see the
+		// deferral note above). Idempotent with applyChange's own md teardown.
+		if (c.deleted) this.noteIdMap?.delete(c.path);
+		return applied;
 	}
 
 	/** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
@@ -4696,6 +4701,15 @@ export class SyncEngine {
 		if (change.deleted) {
 			devLog().log("pull", `applyChange DELETE: ${change.path}`);
 
+			// A CRDT-managed note carries a note_id we learned from the server's
+			// own feed (single-authority: every synced .md is CRDT-owned). null
+			// for the legacy GET /notes/changes path, which never learns an id,
+			// or for a purely-local file no device ever synced. applySyncChange
+			// defers its tombstone map-clear until AFTER this call so the id is
+			// still resolvable here.
+			const crdtNoteId = this.noteIdMap?.get(normalized) ?? null;
+			const crdtManaged = !!this.crdt && crdtNoteId !== null;
+
 			// Delete local file if it exists
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
@@ -4717,33 +4731,85 @@ export class SyncEngine {
 				const lastSynced = this.syncState.get(normalized);
 				const hasUnsyncedEdits = !lastSynced || lastSynced.hash !== localHash;
 				if (hasUnsyncedEdits) {
-					rlog().info(
-						"pull",
-						`Tombstone skipped (resurrection): ${change.path}` +
-							` | localHash=${localHash}` +
-							` | syncedHash=${lastSynced?.hash ?? "none"}` +
-							` | localLen=${localContent.length}`,
-					);
-					devLog().log(
-						"pull",
-						`applyChange DELETE skipped (resurrection): ${change.path}` +
-							` (localHash=${localHash} !== syncedHash=${lastSynced?.hash ?? "none"})`,
-					);
-					try {
-						await this.pushFile(existing, true);
-					} catch (e) {
-						rlog().error(
+					// The hash proxy misfires for CRDT-managed notes: a
+					// CRDT-DELIVERED body frequently has no syncState baseline
+					// (syncedHash=none, #203), so `hasUnsyncedEdits` misreads
+					// authoritative server content as local drift and resurrects a
+					// note the server legitimately deleted (e2e test_47, and the
+					// folder-rename cleanup class test_34/78). For a CRDT note the
+					// tombstone IS authoritative — never re-push it. Distinguish
+					// genuine local drift (disk diverged from the recorded CRDT
+					// baseline) via needsColdReconcile: no drift → honour the
+					// tombstone directly; genuine drift → preserve it as a keep-both
+					// conflict copy FIRST (data-integrity: the server owns the
+					// delete, but we must not silently destroy un-synced edits),
+					// then honour it. Only the legacy (non-CRDT) note keeps the
+					// original skip-and-resurrect behaviour.
+					if (!crdtManaged) {
+						rlog().info(
 							"pull",
-							`Resurrection push failed: ${change.path} | err=${errMsg(e)}`,
+							`Tombstone skipped (resurrection): ${change.path}` +
+								` | localHash=${localHash}` +
+								` | syncedHash=${lastSynced?.hash ?? "none"}` +
+								` | localLen=${localContent.length}`,
+						);
+						devLog().log(
+							"pull",
+							`applyChange DELETE skipped (resurrection): ${change.path}` +
+								` (localHash=${localHash} !== syncedHash=${lastSynced?.hash ?? "none"})`,
+						);
+						try {
+							await this.pushFile(existing, true);
+						} catch (e) {
+							rlog().error(
+								"pull",
+								`Resurrection push failed: ${change.path} | err=${errMsg(e)}`,
+							);
+						}
+						return false;
+					}
+					if (this.needsColdReconcile(normalized, localContent)) {
+						// Best-effort: a copy failure must not block the delete
+						// (mirrors the WS foreign-delete drift-capture on this branch).
+						try {
+							const copy = await this.writeDriftConflictCopy(
+								normalized,
+								localContent,
+							);
+							rlog().info(
+								"conflict",
+								`CRDT tombstone drift → keep-both | original=${normalized} copy=${copy}`,
+							);
+						} catch (e) {
+							rlog().warn(
+								"conflict",
+								`CRDT tombstone drift capture failed for ${normalized}: ${errMsg(e)}`,
+							);
+						}
+					} else {
+						rlog().info(
+							"pull",
+							`CRDT tombstone honoured (no drift): ${change.path}` +
+								` | syncedHash=${lastSynced?.hash ?? "none"}`,
 						);
 					}
-					return false;
+					// fall through to trash below
 				}
 				await this.trashRemotelyDeleted(existing);
 				await this.removeEmptyFolders(normalized);
 				this.syncState.delete(normalized);
 				this.baseStore?.delete(normalized);
 				rlog().info("pull", `Deleted: ${change.path}`);
+				// Tear the CRDT room down so a note recreated at this path starts
+				// fresh (no ghost lineage). Gated on note_id + .md — a legacy note
+				// (crdtNoteId null) or attachment is a no-op, so the non-CRDT trash
+				// path is unchanged. Clears the map too (idempotent with
+				// applySyncChange's deferred clear).
+				if (crdtNoteId && normalized.endsWith(".md")) {
+					this.noteIdMap?.delete(normalized);
+					await this.crdt?.removeDoc(crdtNoteId);
+					this.crdtEnrollment?.reset(crdtNoteId);
+				}
 				return true;
 			}
 			return false;
