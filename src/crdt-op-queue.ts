@@ -11,8 +11,11 @@
  * and retries are driven off the injected clock via `tick()`. No real timers,
  * no real sockets, fully deterministic under test.
  *
- * NOTE (persistence): this is the in-memory queue only. Disk persistence
- * (mirroring `offline-queue.ts`) is a later task and deliberately absent here.
+ * Persistence (mirrors `offline-queue.ts`): register `setPersist(fn)` and every
+ * mutation (enqueue / ack-delete / drop) schedules a debounced write of the flat
+ * pending `CrdtOp[]`. `load(ops)` restores them on startup — pruning any op past
+ * `opTtlMs` (never resurrect stale ops after a long downtime) and honoring
+ * `maxQueue`. `dispose()` cancels the pending timer on unload.
  */
 
 /** One outbound CRDT op. `attempts` counts failed send attempts so far. */
@@ -63,7 +66,12 @@ export type CrdtOpQueueDeps = {
 	now: () => number;
 	onDrop?: (op: CrdtOp, reason: DropReason) => void;
 	options?: Partial<CrdtOpQueueOptions>;
+	/** Debounce window for persist writes, coalescing rapid mutations. */
+	persistDelayMs?: number;
 };
+
+/** Default persist debounce (matches OfflineQueue). */
+export const PERSIST_DELAY_MS = 1000;
 
 const DEFAULT_OPTIONS: CrdtOpQueueOptions = {
 	maxQueue: MAX_QUEUE,
@@ -88,16 +96,54 @@ export class CrdtOpQueue {
 	private readonly onDrop?: (op: CrdtOp, reason: DropReason) => void;
 	private readonly opts: CrdtOpQueueOptions;
 
+	private persistFn: ((ops: CrdtOp[]) => Promise<void> | void) | null = null;
+	private persistTimer: number | null = null;
+	private readonly persistDelayMs: number;
+
 	constructor(deps: CrdtOpQueueDeps) {
 		this.send = deps.send;
 		this.now = deps.now;
 		this.onDrop = deps.onDrop;
 		this.opts = { ...DEFAULT_OPTIONS, ...deps.options };
+		this.persistDelayMs = deps.persistDelayMs ?? PERSIST_DELAY_MS;
 	}
 
 	/** Number of distinct pending ops (docIds). */
 	size(): number {
 		return this.entries.size;
+	}
+
+	/** Register a callback to persist the flat pending op list. */
+	setPersist(fn: (ops: CrdtOp[]) => Promise<void> | void): void {
+		this.persistFn = fn;
+	}
+
+	/**
+	 * Restore persisted ops on startup. Prunes any op already past `opTtlMs`
+	 * (fires onDrop "ttl") so a long downtime never resurrects stale ops, and
+	 * never restores more than `maxQueue` (oldest-first, dropping the excess).
+	 * `attempts`/`nextAttemptAt` are transient scheduling state and are reset:
+	 * a reloaded op gets a fresh retry budget and is due immediately.
+	 */
+	load(ops: CrdtOp[]): void {
+		this.entries.clear();
+		const now = this.now();
+		for (const op of ops) {
+			if (now - op.enqueuedAt > this.opts.opTtlMs) {
+				this.onDrop?.(op, "ttl");
+				continue;
+			}
+			if (this.entries.size >= this.opts.maxQueue) this.evictOldest();
+			this.entries.set(op.docId, { op: { ...op, attempts: 0 }, nextAttemptAt: 0 });
+		}
+	}
+
+	/** Cancel any pending persist timer. Call on plugin unload. */
+	dispose(): void {
+		if (this.persistTimer !== null) {
+			window.clearTimeout(this.persistTimer);
+			this.persistTimer = null;
+		}
 	}
 
 	/**
@@ -111,12 +157,14 @@ export class CrdtOpQueue {
 		if (existing) {
 			// Supersede in place; Map keeps the original FIFO slot for this docId.
 			this.entries.set(op.docId, { op, nextAttemptAt: 0 });
+			this.schedulePersist();
 			return;
 		}
 		if (this.entries.size >= this.opts.maxQueue) {
 			this.evictOldest();
 		}
 		this.entries.set(op.docId, { op, nextAttemptAt: 0 });
+		this.schedulePersist();
 	}
 
 	/** Channel joined: flush all held ops FIFO, retrying failures via backoff. */
@@ -139,6 +187,7 @@ export class CrdtOpQueue {
 		const entry = this.entries.get(first.value);
 		this.entries.delete(first.value);
 		if (entry) this.onDrop?.(entry.op, "overflow");
+		this.schedulePersist();
 	}
 
 	/** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
@@ -146,7 +195,22 @@ export class CrdtOpQueue {
 		if (this.now() - entry.op.enqueuedAt <= this.opts.opTtlMs) return false;
 		this.entries.delete(docId);
 		this.onDrop?.(entry.op, "ttl");
+		this.schedulePersist();
 		return true;
+	}
+
+	/** Flat snapshot of pending ops, for persistence. */
+	private pending(): CrdtOp[] {
+		return [...this.entries.values()].map((e) => e.op);
+	}
+
+	/** Debounced persist — coalesces rapid mutations into one write. */
+	private schedulePersist(): void {
+		if (!this.persistFn || this.persistTimer !== null) return;
+		this.persistTimer = window.setTimeout(() => {
+			this.persistTimer = null;
+			void this.persistFn?.(this.pending());
+		}, this.persistDelayMs);
 	}
 
 	private backoffFor(attempts: number): number {
@@ -180,12 +244,14 @@ export class CrdtOpQueue {
 
 		if (result === "ok") {
 			this.entries.delete(docId);
+			this.schedulePersist();
 			return;
 		}
 		entry.op.attempts += 1;
 		if (entry.op.attempts >= this.opts.maxAttempts) {
 			this.entries.delete(docId);
 			this.onDrop?.(entry.op, "max-attempts");
+			this.schedulePersist();
 			return;
 		}
 		entry.nextAttemptAt = this.now() + this.backoffFor(entry.op.attempts);
