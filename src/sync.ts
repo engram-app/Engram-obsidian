@@ -1197,6 +1197,24 @@ export class SyncEngine {
 		if (hasDrift && disk !== null && !keepBothCopied) {
 			await this.reconcileDriftOntoServer(normalized, noteId, disk);
 		}
+		// 5. Empty-note materialize backstop (e2e test_27). A non-empty note's adopt
+		//    integrates real ops, so the manager's REMOTE_ORIGIN update listener fired
+		//    onFlushToDisk → flushFromCrdt already wrote the file AND recorded its
+		//    baseline (recordCrdtBaseline populates syncState). But an EMPTY server
+		//    note's full state integrates ZERO ops (empty Y.Doc), so no update event
+		//    fires, no flush reaches disk, no baseline is recorded, and a
+		//    first-discovery empty note never materializes — it just gets marked
+		//    "converged". An empty markdown file is valid content, not "nothing to do":
+		//    materialize it here. Gate on "no baseline recorded this adopt" (the
+		//    already-flushed signal) so a non-empty note isn't re-projected/re-flushed.
+		//    Only runs inside the adopt path, reached solely for notes present in the
+		//    server head map — never fabricates a row.
+		if (
+			this.syncState.get(normalized) === undefined &&
+			!(this.app.vault.getAbstractFileByPath(normalized) instanceof TFile)
+		) {
+			await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId));
+		}
 		return head;
 	}
 
