@@ -18498,7 +18498,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         `adoptHistoryLessNote: full-state adopt failed for ${path}: ${errMsg(e)}`
       ), null;
     }
-    return hasDrift && disk !== null && !keepBothCopied && await this.reconcileDriftOntoServer(normalized, noteId, disk), head;
+    return hasDrift && disk !== null && !keepBothCopied && await this.reconcileDriftOntoServer(normalized, noteId, disk), this.syncState.get(normalized) === void 0 && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId)), head;
   }
   /** Reconcile an un-pushed disk edit (`localDisk`) against a note whose Y.Doc
    *  now holds the adopted SERVER lineage (`adoptHistoryLessNote` step 3). The
@@ -19890,11 +19890,27 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       let existing = this.app.vault.getFileByPath(normalized);
       if (existing) {
-        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
-        if (ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized) {
+        let ownedId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, confirmedCanonical = !!ownedId && this.isNoteConfirmed(ownedId) && ((_f = this.noteIdMap) == null ? void 0 : _f.pathForId(ownedId)) === normalized;
+        if (confirmedCanonical && !foreignAttributed) {
           rlog().info("ws", `Delete deferred to pull (live note at path): ${event.path}`), this.pull();
           return;
         }
+        if (confirmedCanonical)
+          try {
+            let disk = await this.app.vault.cachedRead(existing);
+            if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk)) {
+              let copy2 = await this.writeDriftConflictCopy(normalized, disk);
+              rlog().info(
+                "conflict",
+                `foreign-delete drift \u2192 keep-both | original=${normalized} copy=${copy2}`
+              );
+            }
+          } catch (e) {
+            rlog().warn(
+              "conflict",
+              `foreign-delete drift check failed for ${normalized}: ${errMsg(e)}`
+            );
+          }
         await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_g = this.baseStore) == null || _g.delete(normalized);
       }
       if (normalized.endsWith(".md")) {
