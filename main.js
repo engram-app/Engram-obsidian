@@ -22956,7 +22956,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
       })
     ), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
-      var _a2, _b;
+      var _a2, _b, _c;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
           file instanceof import_obsidian26.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
@@ -23022,7 +23022,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
         if (gateOpen)
           try {
-            await this.syncEngine.catchupViaSocket();
+            (_c = this.noteStream) != null && _c.isCrdtConnected() && await this.syncEngine.catchupViaSocket();
             let pushed = await this.syncEngine.pushModifiedFiles();
             pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
@@ -23289,6 +23289,38 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       enrollment.reset(noteId), enrollment.enroll(noteId);
     }
   }
+  /**
+   * Reconcile the id-map, re-arm CRDT enrollments, and run the socket catch-up
+   * on a crdt: topic (re)join. Invoked ONLY from channel.onCrdtJoined, i.e. after
+   * the crdt: join is server-acked (crdtJoined=true), so crdtCatchupHeads'
+   * sendRequest is guaranteed past the join gate. Wiring the catch-up to the
+   * sync-topic onStatusChange (which acks first) let the sendRequest reject with
+   * "crdt topic not joined" and silently drop with no retry, the deaf-note class:
+   * idle notes and notes another device created during the disconnect never
+   * converged. CRDT socket only, no REST fallback.
+   */
+  async onCrdtTopicJoined() {
+    var _a, _b;
+    let now = Date.now();
+    if (now - this.lastMapReconcileAt > _EngramSyncPlugin.RECONCILE_THROTTLE_MS) {
+      this.lastMapReconcileAt = now;
+      try {
+        let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
+        n > 0 && rlog().info("crdt", `noteIdMap reconciled from manifest: ${n} notes`);
+      } catch (e) {
+        rlog().warn(
+          "crdt",
+          `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
+        );
+      }
+    }
+    (_a = this.crdtEnrollment) == null || _a.resetAll(), (_b = this.crdtWiring) == null || _b.clearStrandHealAttempts(), this.reEnrollOpenCrdtNotes();
+    try {
+      await this.syncEngine.catchupViaSocket();
+    } catch (e) {
+      rlog().warn("crdt", `socket catchup on reconnect failed: ${errMsg(e)}`);
+    }
+  }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
   connectChannel(attempt = 0, epoch = this.channelEpoch) {
     var _a, _b, _c, _d, _e, _f, _g;
@@ -23322,31 +23354,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
         var _a2;
-        this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? (this.syncEngine.clearConfirmedNoteIds(), (async () => {
-          var _a3, _b2;
-          let now = Date.now();
-          if (now - this.lastMapReconcileAt > _EngramSyncPlugin.RECONCILE_THROTTLE_MS) {
-            this.lastMapReconcileAt = now;
-            try {
-              let n = await this.syncEngine.reconcileNoteIdMapFromManifest();
-              n > 0 && rlog().info(
-                "crdt",
-                `noteIdMap reconciled from manifest: ${n} notes`
-              );
-            } catch (e) {
-              rlog().warn(
-                "crdt",
-                `noteIdMap manifest reconcile failed (live pull may strand until next sync): ${errMsg(e)}`
-              );
-            }
-          }
-          (_a3 = this.crdtEnrollment) == null || _a3.resetAll(), (_b2 = this.crdtWiring) == null || _b2.clearStrandHealAttempts(), this.syncEngine.catchupViaSocket().catch((e) => {
-            rlog().warn(
-              "crdt",
-              `socket catchup on reconnect failed: ${errMsg(e)}`
-            );
-          });
-        })()) : (this.crdtEverJoined ? rlog().info(
+        this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? this.syncEngine.clearConfirmedNoteIds() : (this.crdtEverJoined ? rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
         ) : (this.syncEngine.setCrdtManager(null), rlog().info(
@@ -23424,7 +23432,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
-          ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager), this.reEnrollOpenCrdtNotes();
+          ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager), this.onCrdtTopicJoined();
         }, channel.onCrdtJoinError = (reason, min2) => {
           var _a2, _b2;
           rlog().warn(
