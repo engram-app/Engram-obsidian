@@ -1044,13 +1044,21 @@ describe("NoteChannel CRDT frame senders", () => {
 		channel.disconnect();
 	});
 
-	test("crdtDelete sends a fire-and-forget frame", async () => {
+	test("crdtDeleteAcked sends the frame and resolves on the server ack", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
-		channel.crdtDelete("n1");
+		const p = channel.crdtDeleteAcked("n1");
 		const f = ws.sent
 			.map((s: string) => JSON.parse(s))
 			.find((x: unknown[]) => x[3] === "crdt_delete");
 		expect(f[4]).toEqual({ doc_id: "n1" });
+		simulateMessage(ws, [
+			null,
+			f[1],
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "n1" } },
+		]);
+		await expect(p).resolves.toEqual({ doc_id: "n1" });
 
 		channel.disconnect();
 	});

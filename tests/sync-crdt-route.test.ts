@@ -1152,77 +1152,56 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 4: local note delete routes through crdt_delete (socket-native,
-// fire-and-forget), not REST deleteNote. Attachments are unaffected — they
-// stay on REST deleteAttachment. A delete APPLIED locally because it arrived
-// FROM the server (remotelyDeleted marks the path before the vault trash that
-// fires handleDelete) must NOT echo a crdt_delete back — the server already
-// knows.
+// Task 4 (Plan B2): a local note delete ENQUEUES a durable crdt_delete on the
+// CrdtOpQueue, never a REST deleteNote. The queue holds it until the crdt:
+// topic is joined and retries transient failures (there is no REST delete
+// fallback). Attachments are unaffected (REST deleteAttachment). A delete
+// APPLIED locally because it arrived FROM the server (remotelyDeleted marks the
+// path before the vault trash that fires handleDelete) must NOT echo a
+// crdt_delete back. The server already knows.
 // ---------------------------------------------------------------------------
 
-describe("Task 4: local delete routes through crdt_delete", () => {
-	test("deleting a synced note sends crdt_delete, not REST deleteNote", async () => {
+describe("Task 4: local delete enqueues a durable crdt_delete", () => {
+	test("deleting a synced note enqueues crdt_delete, not REST deleteNote", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/gone.md", "note-uuid");
 		const engine = createEngine(noteIdMap);
-		const deleted: string[] = [];
-		engine.setCrdtDelete((id: string) => {
-			deleted.push(id);
-			return true; // topic joined — sent
-		});
+		const enqueued: Array<{ kind: string; docId: string; path: string }> = [];
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
 
 		const file = new TFile("Notes/gone.md");
 		await engine.handleDelete(file);
 
-		expect(deleted).toEqual(["note-uuid"]);
+		expect(enqueued).toEqual([{ kind: "delete", docId: "note-uuid", path: "Notes/gone.md" }]);
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 
-	// Rework #1: crdtDelete reports false when the crdt topic isn't joined
-	// (offline). handleDelete must not silently drop the delete — it falls
-	// through to the REST path, which throws offline and lands in the
-	// existing catch → enqueueChange net (src/sync.ts ~1731), retried by
-	// flushQueue on reconnect (src/sync.ts ~6683).
-	test("crdtDelete reporting false (topic not joined) falls back to REST, which enqueues when offline", async () => {
+	// Plan B2: enqueue is a durable local hand-off that never throws and never
+	// touches REST. The delete is HELD by the queue even when the topic isn't
+	// joined (offline), delivered on join. No REST fallback, no offline REST
+	// queue entry.
+	test("delete enqueues durably even when offline (no REST fallback)", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/gone.md", "note-uuid");
 		const engine = createEngine(noteIdMap);
-		engine.setCrdtDelete(() => false); // topic not joined — nothing sent
-
-		(mockApi.deleteNote as ReturnType<typeof mock>).mockRejectedValueOnce(
-			new Error("Failed to fetch"),
-		);
+		const enqueued: Array<{ kind: string; docId: string; path: string }> = [];
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
 
 		const file = new TFile("Notes/gone.md");
 		await engine.handleDelete(file);
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/gone.md");
-		expect(engine.queue.size).toBe(1);
-		expect(engine.queue.all()[0]).toMatchObject({
-			action: "delete",
-			kind: "note",
-			path: "Notes/gone.md",
-		});
-
-		// Reconnect: flushQueue retries the durable delete and dequeues it.
-		(mockApi.deleteNote as ReturnType<typeof mock>).mockResolvedValueOnce({
-			deleted: true,
-			path: "Notes/gone.md",
-		});
-		await engine.flushQueue();
-
-		expect(mockApi.deleteNote).toHaveBeenCalledTimes(2);
+		expect(enqueued).toEqual([{ kind: "delete", docId: "note-uuid", path: "Notes/gone.md" }]);
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		// The durable REST offline queue is NOT used for CRDT deletes.
 		expect(engine.queue.size).toBe(0);
 	});
 
-	test("a remote-applied delete does not echo a crdt_delete", async () => {
+	test("a remote-applied delete does not enqueue a crdt_delete", async () => {
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Notes/gone.md", "note-uuid");
 		const engine = createEngine(noteIdMap);
-		const deleted: string[] = [];
-		engine.setCrdtDelete((id: string) => {
-			deleted.push(id);
-		});
+		const enqueued: Array<{ kind: string; docId: string; path: string }> = [];
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
 		// Simulate trashRemotelyDeleted having marked the path before the vault
 		// 'delete' event fires — the remote-echo early-return in handleDelete.
 		(engine as unknown as { remotelyDeleted: Map<string, number> }).remotelyDeleted.set(
@@ -1233,7 +1212,7 @@ describe("Task 4: local delete routes through crdt_delete", () => {
 		const file = new TFile("Notes/gone.md");
 		await engine.handleDelete(file);
 
-		expect(deleted).toEqual([]);
+		expect(enqueued).toEqual([]);
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 });

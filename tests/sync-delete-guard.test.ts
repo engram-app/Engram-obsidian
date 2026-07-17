@@ -51,7 +51,7 @@ function makeEngine(crdt: Partial<CrdtManager>, applied: string[]): SyncEngine {
 	);
 	e.setCrdtManager(crdt as unknown as CrdtManager);
 	e.setReady();
-	e.setCrdtDelete(() => true); // socket delete "sent"
+	e.setCrdtEnqueue(() => {}); // durable crdt_delete enqueued (never REST)
 	const map = new NoteIdMap();
 	map.set("Notes/gone.md", "id-gone");
 	map.set("Notes/a.md", "id-a");
@@ -83,9 +83,9 @@ describe("recent-local-delete guard", () => {
 		const applied: string[] = [];
 		const engine = makeEngine(crdtDouble(applied), applied);
 
-		// Delete the note. crdtDelete is wired to return true (delete sent over the
-		// socket) so nothing lingers in the offline queue — the hasPendingDelete
-		// guard from Task B does NOT cover this case.
+		// Delete the note. The delete is enqueued on the durable CRDT op queue
+		// (not the REST offline queue), so nothing lingers there; the
+		// hasPendingDelete guard from Task B does NOT cover this case.
 		await engine.handleDelete(new TFile("Notes/gone.md"));
 
 		// A reconnect catch-up whose head map STILL lists the just-deleted note

@@ -817,19 +817,42 @@ export class SyncEngine {
 		this.crdtCreate = fn;
 	}
 
-	/** Socket-native note delete (Plan B1, Task 4). When wired, a local
-	 *  user-initiated delete of a note with a resolved note_id sends
-	 *  `crdt_delete` instead of a REST `deleteNote`. Returns false when the
-	 *  crdt topic isn't joined (offline) — the caller then falls through to
-	 *  the REST delete, which carries the durable offline enqueue/retry net.
-	 *  Unset, or no resolved id → falls through to the still-functional REST
-	 *  delete (removed in Plan B2). Never fires for a delete APPLIED locally
-	 *  because it arrived FROM the server — handleDelete's remote-echo
-	 *  early-return returns before this is ever reached. */
-	private crdtDelete: ((docId: string) => boolean) | null = null;
+	/** Durable enqueue hook for socket-native create/delete (Plan B2). Wired to
+	 *  the plugin's CrdtOpQueue: an op is HELD until the crdt: topic is joined,
+	 *  delivered on join, retried on transient failure, acked, and dropped only on
+	 *  TTL / terminal error. Enqueue never throws; it is a local durable hand-off,
+	 *  so there is NO REST create/delete fallback (CRDT is the sole md path).
+	 *  Unset (legacy/non-CRDT connection or a test double) → callers fall through
+	 *  to the still-functional REST path. Never fires for a delete APPLIED locally
+	 *  because it arrived FROM the server: handleDelete's remote-echo early-return
+	 *  runs first. */
+	private crdtEnqueue:
+		| ((op: { kind: "create" | "delete"; docId: string; path: string }) => void)
+		| null = null;
 
-	setCrdtDelete(fn: ((docId: string) => boolean) | null): void {
-		this.crdtDelete = fn;
+	setCrdtEnqueue(
+		fn: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null,
+	): void {
+		this.crdtEnqueue = fn;
+	}
+
+	/** A durable queued `crdt_create` acked by the server. Flip the head oracle so
+	 *  hasServerNote is true (the row now exists), and on ADOPT (serverId differs
+	 *  from the local mint, the path was already owned by a live note under
+	 *  another id) remap the note_id so subsequent edits address the server's row
+	 *  instead of orphaning under the stale mint. The body rides the next re-push
+	 *  over crdt_msg once hasServerNote is true. Mirrors pushFile's non-live-bound
+	 *  ADOPT branch; the live-editor rebind is irrelevant for a queued (offline,
+	 *  not live-bound) create. */
+	applyCrdtCreateAck(localId: string, serverId: string, path: string): void {
+		if (serverId && serverId !== localId) {
+			this.noteIdMap?.set(normalizePath(path), serverId);
+			rlog().info(
+				"crdt",
+				`crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`,
+			);
+		}
+		this.setCrdtHead(path, CRDT_HEAD_CREATED);
 	}
 
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
@@ -1789,15 +1812,19 @@ export class SyncEngine {
 		try {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path); // attachments stay REST
-			} else if (this.crdtDelete && crdtNoteId) {
-				const sent = this.crdtDelete(crdtNoteId);
-				// Topic not joined (offline) — fall through to REST, which throws
-				// offline and lands in the catch below's enqueue/retry net.
-				if (!sent) await this.api.deleteNote(file.path);
+				this.goOnline();
+			} else if (this.crdtEnqueue && crdtNoteId) {
+				// CRDT-sole delete: enqueue a durable crdt_delete. The queue holds it
+				// until the crdt: topic is joined and retries transient failures (no
+				// REST delete fallback, Plan B2). Enqueue never throws, so the CRDT
+				// teardown below always runs. No goOnline() here: this is a local
+				// durable hand-off, not a network round-trip, so connection status is
+				// driven by real traffic elsewhere.
+				this.crdtEnqueue({ kind: "delete", docId: crdtNoteId, path: file.path });
 			} else {
-				await this.api.deleteNote(file.path); // no crdtDelete wired / no note_id: REST delete
+				await this.api.deleteNote(file.path); // no crdt wired / no note_id: REST delete
+				this.goOnline();
 			}
-			this.goOnline();
 			// Tear down the CRDT doc so a note recreated at the same path starts
 			// fresh — no ghost lineage that would resurrect stale content (P1-3).
 			// Gate on .md (not !isBinary) so .canvas files never hit removeDoc:
@@ -2481,14 +2508,19 @@ export class SyncEngine {
 					} catch (err) {
 						// crdtCreate itself REJECTED (delete-wins window, rate-limit, bad
 						// path): the row was never created. CRDT is the sole md-note path
-						// now — there is no REST create to fall back to. The edit is safe on
-						// disk; the reconnect re-push (fullSync/pushModifiedFiles) retries
-						// crdt_create once the transient condition clears. Return handled so
-						// we don't fall into the non-md/oversized REST branch below.
+						// now, there is no REST create to fall back to. Enqueue a durable
+						// crdt_create so the genesis is HELD and retried (transient reasons)
+						// or surfaced (terminal) by the CrdtOpQueue instead of riding a
+						// best-effort reconnect re-push that can silently drop it. Return
+						// handled so we don't fall into the non-md/oversized REST branch.
 						rlog().warn(
 							"crdt",
-							`crdt_create failed (will retry on reconnect): ${pushedPath} | ${String(err)}`,
+							`crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`,
 						);
+						if (this.crdtEnqueue) {
+							this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
+							return true;
+						}
 						return false;
 					}
 				}
@@ -2505,6 +2537,15 @@ export class SyncEngine {
 					file.extension === "md" &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
 				) {
+					// The CRDT create branch above was skipped (crdt: topic not joined
+					// yet, crdtCreate unwired, or already server-known). If the server has
+					// no row for this note, enqueue a durable crdt_create so a note created
+					// before join is HELD and delivered on join (test_27) rather than
+					// deferred to a best-effort reconnect re-push that can drop it.
+					// Coalesced by docId; the head is set only on the queue's ack.
+					if (this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId)) {
+						this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath });
+					}
 					return false;
 				}
 				const resp = await this.api.pushNote(pushedPath, content, mtime);

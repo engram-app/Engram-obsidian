@@ -26,6 +26,8 @@ import {
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { NoteChannel, connectRetryDelayMs } from "./channel";
 import { ConflictModal } from "./conflict-modal";
+import { makeCrdtOpSend } from "./crdt-op-dispatch";
+import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { errMsg } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
@@ -98,6 +100,9 @@ interface PluginData {
 	 *  collides across devices). */
 	deviceId?: string;
 	offlineQueue?: QueueEntry[];
+	/** Durable outbound CRDT ops (create/delete) held across reloads. Mirrors
+	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
+	crdtOpQueue?: CrdtOp[];
 	/** Opaque cursor marking the durably-applied position in the backend's
 	 *  ordered sync feed (PR B2 cursor pull). Separate from `lastSync`, which is
 	 *  retained for rollback. Omitted when no cursor has been established yet. */
@@ -195,6 +200,9 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  reinstall/reset mints a new id → one clean re-bootstrap. */
 	deviceId: string | null = null;
 	private syncInterval: number | null = null;
+	/** Durable outbound CRDT op queue (create/delete). Plugin-lifetime; its `send`
+	 *  dispatches over the CURRENT `noteStream`, and `onCrdtJoined` flushes it. */
+	private crdtOpQueue: CrdtOpQueue | null = null;
 	noteStream: NoteChannel | null = null;
 	private statusBarEl: HTMLElement | null = null;
 	private settingTab: EngramSyncSettingTab | null = null;
@@ -465,6 +473,49 @@ export default class EngramSyncPlugin extends Plugin {
 			await this.savePluginData(this.syncEngine.getLastSync(), entries);
 		});
 
+		// Durable outbound CRDT op queue (create/delete). ONE plugin-lifetime
+		// instance whose `send` dispatches over the CURRENT noteStream; the wiring
+		// (onJoined flush, retry tick, enqueue hook) is set below/in connectChannel.
+		this.crdtOpQueue = new CrdtOpQueue({
+			send: makeCrdtOpSend({
+				channel: () => this.noteStream,
+				onCreated: (localId, serverId, path) =>
+					this.syncEngine.applyCrdtCreateAck(localId, serverId, path),
+				onTerminal: (op, reason) =>
+					// A create/delete that retrying cannot fix. Surface it (error log) so
+					// it never silently vanishes; the queue then drops it (no infinite retry).
+					rlog().error(
+						"crdt",
+						`crdt_${op.kind} terminally failed (${reason}), dropping op for ${op.docId}`,
+					),
+			}),
+			now: () => Date.now(),
+			onDrop: (op, reason) =>
+				rlog().warn(
+					"crdt",
+					`crdt_${op.kind} dropped (${reason}) without delivery: ${op.docId}`,
+				),
+		});
+		// Persist on every mutation (mirrors OfflineQueue); the flat op list is
+		// re-listed in savePluginData's wholesale blob via crdtOpQueue.all().
+		this.crdtOpQueue.setPersist(() => {
+			void this.savePluginData(this.syncEngine.getLastSync());
+		});
+		// Drive retries: a due op past its backoff is re-sent on each tick (no-op
+		// until joined). registerInterval auto-clears on unload.
+		this.registerInterval(window.setInterval(() => void this.crdtOpQueue?.tick(), 5000));
+		// Wire the SyncEngine's durable create/delete enqueue hook to the queue.
+		this.syncEngine.setCrdtEnqueue((op) =>
+			this.crdtOpQueue?.enqueue({
+				id: crypto.randomUUID(),
+				kind: op.kind,
+				docId: op.docId,
+				payload: { path: op.path },
+				enqueuedAt: Date.now(),
+				attempts: 0,
+			}),
+		);
+
 		// Restore last sync timestamp, offline queue, and sync state
 		const saved = await this.loadPluginData();
 		if (saved?.lastSync) {
@@ -475,6 +526,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
+		}
+		if (saved?.crdtOpQueue?.length) {
+			this.crdtOpQueue?.load(saved.crdtOpQueue);
 		}
 		if (saved?.syncStateVaultId !== undefined) {
 			this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId);
@@ -954,6 +1008,7 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.savePluginData(this.syncEngine.getLastSync());
 		this.baseStore?.prune();
 		void this.baseStore?.save();
+		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
 		this.crdtLiveViews?.destroy();
@@ -1210,6 +1265,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// next wholesale saveData() wipes it. null → omit (cursor cleared).
 			syncCursor: this.syncEngine.getSyncCursor() ?? undefined,
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
+			// Re-listed on every wholesale save (like offlineQueue) or the next
+			// saveData() wipes the durable CRDT ops.
+			crdtOpQueue: this.crdtOpQueue?.all() ?? [],
 			syncState: this.syncEngine.exportSyncState(),
 			syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
 			// Dual-write legacy format for rollback safety (remove after one release cycle)
@@ -1722,7 +1780,8 @@ export default class EngramSyncPlugin extends Plugin {
 				// only consulted once the engine's own crdt manager is set (enableCrdt
 				// && vaultId), so this is a no-op on a legacy/non-CRDT connection.
 				this.syncEngine.setCrdtCreate((id, path) => channel.crdtCreate(id, path));
-				this.syncEngine.setCrdtDelete((id) => channel.crdtDelete(id));
+				// Delete (and durable create genesis) now route through the plugin-
+				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
 				this.syncEngine.setCrdtCatchup(
 					() => channel.crdtCatchupHeads(),
 					(id, sv) => channel.crdtCatchupDelta(id, sv),
@@ -1843,12 +1902,18 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
-						// Reconcile the id-map, re-enroll open notes, and run the socket
-						// catch-up now that the crdt: topic is acked. This is the sole
+						// Deliver any HELD create/delete ops FIRST, then reconcile the
+						// id-map, re-enroll open notes, and run the socket catch-up. Order
+						// matters: flushing the queue creates the server rows and flips
+						// hasServerNote BEFORE the re-push decides whether to re-create
+						// them, avoiding a double crdt_create race. This is the sole
 						// convergence trigger on (re)connect; wiring it here (not the
 						// sync-topic onStatusChange, which acks first) is what fixes the
 						// deaf-note race. See onCrdtTopicJoined.
-						void this.onCrdtTopicJoined();
+						void (async () => {
+							await this.crdtOpQueue?.onJoined();
+							await this.onCrdtTopicJoined();
+						})();
 					};
 					// T4 folded finding + audit F13: when the crdt: topic REJOIN fails
 					// (backend downgrade, transient error, or this plugin being too old),
