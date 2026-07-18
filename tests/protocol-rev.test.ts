@@ -139,11 +139,10 @@ afterEach(() => {
 	activeEngines.length = 0;
 });
 
-// PR B2: pull() now drives the ordered cursor feed (getSyncChanges), not the
-// legacy timestamp feed. The meta-page pagination + serverHash body-skip +
-// body-fetch-on-hash-diff strategy these tests protect still lives in
-// fetchAllNoteChanges / resolveChangeBody, exercised by pullAll(). So these
-// were re-pointed from pull() → pullAll() — same wiring, still-live coverage.
+// The meta-page pagination + serverHash body-skip + body-fetch-on-hash-diff
+// strategy these tests protect lives in fetchAllNoteChanges / resolveChangeBody,
+// exercised by pullAll() (the advanced-sync path over the legacy /notes/changes
+// feed — the only surviving REST change feed after the pull-cluster purge).
 describe("paginated pull (legacy meta feed via pullAll)", () => {
 	test("loops pages until has_more=false, passing the cursor through", async () => {
 		const engine = createEngine();

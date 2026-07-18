@@ -1230,7 +1230,8 @@ describe("deadline classification", () => {
 		a.requestTimeoutMs = 20;
 		a.bulkTimeoutMs = 300;
 		let settledAt: number | null = null;
-		const p = a.getSyncChanges("cursor-1").catch(() => {
+		// /notes/changes is a bulk feed (advanced-sync pullAll).
+		const p = a.getChanges("2026-01-01T00:00:00Z").catch(() => {
 			settledAt = Date.now();
 		});
 		await Bun.sleep(80); // past the note deadline, short of the bulk one
