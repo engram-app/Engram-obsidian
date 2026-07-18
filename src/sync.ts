@@ -4776,16 +4776,32 @@ export class SyncEngine {
 	 *  (delete server-deleted, push offline-created — disambiguated by the
 	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
 	 *  (3-way merging diverged files via applyChange). Returns count applied. */
-	private async bootstrap(emitProgress = false): Promise<number> {
-		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
-		const manifest = await this.api.getManifest();
-
-		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
-		if (!manifest) return this.pullViaCursor(undefined, emitProgress);
+	/** Manifest-diff reconcile: trash files the server deleted while we were
+	 *  away (in baseline, absent from the manifest) and drop their baseline, then
+	 *  seed markers for folders the server can't derive (empty / non-syncable
+	 *  only). Does NOT pull content and does NOT push — content arrives via the
+	 *  seq-replay catch-up, and offline-created files push separately
+	 *  (pushModifiedFiles, or bootstrap's own push step).
+	 *
+	 *  A manifest snapshot is the ONLY way to catch a server-delete once the
+	 *  op-log has GC'd the tombstone — a replay-from-0 cannot see it — so this
+	 *  stays a standalone step called from every catch-up path (fullSync, poll).
+	 *
+	 *  Returns the never-synced (offline-created) local files so a caller can
+	 *  push them itself. Idempotent; a per-file trash failure is logged, never
+	 *  thrown, and leaves the baseline entry intact (clearing it would reclassify
+	 *  the file as offline-created and resurrect it on the next push).
+	 *
+	 *  `manifest` is accepted pre-fetched (bootstrap already has one); omit it and
+	 *  it fetches its own. A null manifest (pre-B1 backend / 404) → nothing to
+	 *  reconcile, returns []. */
+	private async reconcileFromManifest(manifest?: ManifestResponse | null): Promise<TFile[]> {
+		const m = manifest === undefined ? await this.api.getManifest() : manifest;
+		if (!m) return [];
 
 		const serverPaths = new Set<string>([
-			...manifest.notes.map((n) => normalizePath(n.path)),
-			...manifest.attachments.map((a) => normalizePath(a.path)),
+			...m.notes.map((n) => normalizePath(n.path)),
+			...m.attachments.map((a) => normalizePath(a.path)),
 		]);
 
 		// §F structural pass over local syncable files.
@@ -4793,33 +4809,46 @@ export class SyncEngine {
 		for (const file of this.app.vault.getFiles()) {
 			if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
 			const np = normalizePath(file.path);
-			if (serverPaths.has(np)) continue; // in manifest → content handled by the pull below
+			if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
 
 			if (this.syncState.has(np)) {
 				// In baseline but gone from the server → server-deleted while away.
-				// Trash locally so the post-pull push step can't resurrect it. A
-				// trash failure (locked file / OS error) must NOT abort the whole
-				// bootstrap, and must NOT drop the baseline entry — leaving it as
-				// "in baseline" keeps it classified as server-deleted on the next
-				// run (clearing it would reclassify the file as offline-created and
-				// resurrect it on the next push). Log + carry on.
 				try {
 					await this.trashRemotelyDeleted(file);
 					this.syncState.delete(np);
 					this.baseStore?.delete(np);
-					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
+					rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
 				} catch (e) {
 					rlog().error(
 						"pull",
-						`Bootstrap trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
+						`Reconcile trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
 						e instanceof Error ? e.stack : undefined,
 					);
 				}
 			} else {
-				// Never synced → created locally offline → push after content reconcile.
+				// Never synced → created locally offline → caller pushes it.
 				toPush.push(file);
 			}
 		}
+
+		// Markers for folders the server can't derive. getFiles() never sees
+		// folders, so without this a pre-existing vault's empty folders never
+		// reach the server. Best-effort.
+		await this.seedEmptyFolders();
+
+		return toPush;
+	}
+
+	private async bootstrap(emitProgress = false): Promise<number> {
+		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
+		const manifest = await this.api.getManifest();
+
+		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
+		if (!manifest) return this.pullViaCursor(undefined, emitProgress);
+
+		// Structural reconcile (trash server-deleted, seed folder markers); returns
+		// the offline-created files this bootstrap pushes after content lands.
+		const toPush = await this.reconcileFromManifest(manifest);
 
 		// Content delivery: genesis pull (full content + tombstones, ordered).
 		// The manifest gives us a real up-front total for the progress bar (a
@@ -4849,11 +4878,6 @@ export class SyncEngine {
 				);
 			}
 		}
-
-		// Seed markers for folders the server can't derive (empty, or holding only
-		// non-syncable files). getFiles() above never sees folders, so without this
-		// a pre-existing vault's empty folders never reach the server. Best-effort.
-		await this.seedEmptyFolders();
 
 		return applied;
 	}

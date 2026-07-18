@@ -630,6 +630,39 @@ describe("SyncEngine bootstrap (§F reconcile + genesis pull)", () => {
 		expect(engine.getSyncCursor()).toBe(encodeCursor(42, MAX_CURSOR_UUID));
 	});
 
+	// reconcileFromManifest: the standalone manifest-diff reconcile extracted
+	// from bootstrap (server-delete-local + folder markers). It does NOT pull
+	// content and does NOT push — it returns the offline-created files so the
+	// caller pushes them (bootstrap does; fullSync/poll ignore + use
+	// pushModifiedFiles). No getSyncChanges (cursor pull) is triggered.
+	test("reconcileFromManifest trashes a server-deleted file + drops its baseline", async () => {
+		getManifest.mockResolvedValueOnce(emptyManifest());
+		const gone = fakeFile("gone.md");
+		const { engine, pushFileSpy } = createEngine([gone]);
+		engine.importSyncState({ "gone.md": { hash: 123 } });
+
+		const toPush = await (engine as any).reconcileFromManifest();
+
+		expect(trashFile).toHaveBeenCalledTimes(1);
+		expect(trashFile.mock.calls[0][0]).toBe(gone);
+		expect(engine.exportSyncState()["gone.md"]).toBeUndefined();
+		expect(pushFileSpy).not.toHaveBeenCalled();
+		expect(getSyncChanges).not.toHaveBeenCalled();
+		expect(toPush).toEqual([]);
+	});
+
+	test("reconcileFromManifest returns offline-created files (does not push them)", async () => {
+		getManifest.mockResolvedValueOnce(emptyManifest());
+		const created = fakeFile("new.md");
+		const { engine, pushFileSpy } = createEngine([created]);
+
+		const toPush = await (engine as any).reconcileFromManifest();
+
+		expect(toPush).toEqual([created]);
+		expect(pushFileSpy).not.toHaveBeenCalled();
+		expect(trashFile).not.toHaveBeenCalled();
+	});
+
 	// Helper: a well-formed note feed entry for a given path.
 	function noteEntryFor(path: string): SyncChange {
 		const stem = path.replace(/\.md$/, "");
