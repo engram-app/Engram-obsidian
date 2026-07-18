@@ -3278,23 +3278,31 @@ export class SyncEngine {
 	}
 
 	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
-	 *  recovers on reconnect, Todd's call). Three responsibilities a bare op-log
+	 *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
 	 *  replay can't cover, run around it:
 	 *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
 	 *      seed LOCAL empty-folder markers to the server.
 	 *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
 	 *      content (the authoritative delivery path).
-	 *   3. `syncExplicitFolders` — pull the server's empty-folder markers to disk
+	 *   3. `healDivergedLiveBoundNotes` — re-converge any live-bound note the
+	 *      op-log replay could not deliver (its seq cursor already advanced past
+	 *      the edit on a prior/background catch-up that failed to converge). The
+	 *      manifest re-detects the divergence independent of the cursor. Before
+	 *      the REST purge, fullSync had its OWN cursor separate from the socket
+	 *      replay's, giving a live-bound note a second delivery chance; unifying
+	 *      onto one `catchupSeq` removed it, so this restores that guarantee.
+	 *   4. `syncExplicitFolders` — pull the server's empty-folder markers to disk
 	 *      and propagate remote folder deletes.
 	 *  Returns the applied-op count (for the progress recap / poll notice). Never
 	 *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
-	 *  never has to guard it. reconcile's returned offline-created files are
-	 *  ignored here: pushModifiedFiles (the push half) already pushes never-synced
-	 *  files. */
+	 *  never has to guard it. The manifest is fetched once and shared by steps 1
+	 *  and 3. */
 	async catchUp(): Promise<number> {
 		try {
-			await this.reconcileFromManifest();
+			const manifest = await this.api.getManifest();
+			await this.reconcileFromManifest(manifest);
 			const applied = await this.catchupViaSeqReplay();
+			await this.healDivergedLiveBoundNotes(manifest);
 			try {
 				await this.syncExplicitFolders();
 			} catch (e) {
@@ -4683,9 +4691,10 @@ export class SyncEngine {
 	 *  per-file trash failure is logged, never thrown, and leaves the baseline
 	 *  entry intact (clearing it would reclassify the file as offline-created and
 	 *  resurrect it on the next push). A null manifest (pre-B1 backend / 404) is
-	 *  a no-op. */
-	private async reconcileFromManifest(): Promise<void> {
-		const m = await this.api.getManifest();
+	 *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
+	 *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
+	private async reconcileFromManifest(manifest?: ManifestResponse | null): Promise<void> {
+		const m = manifest === undefined ? await this.api.getManifest() : manifest;
 		if (!m) return;
 
 		const serverPaths = new Set<string>([
@@ -4719,6 +4728,58 @@ export class SyncEngine {
 		// folders, so without this a pre-existing vault's empty folders never
 		// reach the server. Best-effort.
 		await this.seedEmptyFolders();
+	}
+
+	/** Re-converge any LIVE-BOUND note whose server content (per the manifest)
+	 *  diverges from our recorded baseline — independent of the seq cursor.
+	 *
+	 *  The socket seq-replay advances `catchupSeq` past every op it sees
+	 *  (monotonic, so a permanently-unappliable op can't stall the feed). A
+	 *  live-bound note whose convergence FAILED on a prior catch-up (e.g. a
+	 *  background reconnect replay that consumed the edit op before the live
+	 *  Y.Doc could take it) is therefore never re-delivered by cursor alone.
+	 *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
+	 *  socket replay, so it re-delivered the diverged note and converged it; the
+	 *  cursor unification removed that. This restores it: a manifest snapshot
+	 *  re-detects the divergence every catch-up and re-fires the same idempotent
+	 *  `restConvergeLiveBound` (a converged note's serverHash already matches and
+	 *  is skipped). Only live-bound notes (the editor owns the body, so disk
+	 *  writes are unsafe) need it — idle divergences heal through the normal
+	 *  op-log apply. Best-effort; never throws into catchUp. */
+	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<void> {
+		if (!manifest || !this.crdt) return;
+		for (const entry of manifest.notes) {
+			const path = normalizePath(entry.path);
+			if (!this.isLiveBound(path)) continue;
+			const stored = this.syncState.get(path);
+			// Already converged (serverHash matches the server's current hash) → skip.
+			if (entry.content_hash && stored?.serverHash === entry.content_hash) continue;
+
+			const noteId = this.noteIdMap?.get(path) ?? entry.id ?? null;
+			if (!noteId) continue;
+
+			try {
+				const converged = await this.restConvergeLiveBound(path, noteId);
+				if (converged && entry.content_hash) {
+					// Record convergence so the next catch-up skips it. Mirror
+					// applyChange's live-bound success bookkeeping: the editor owns the
+					// body (no disk write), so keep the REAL local hash and only advance
+					// serverHash. Spread the existing entry — restConvergeLiveBound just
+					// recorded crdtHead into it, which coldReceive's cost gate reads.
+					const boundFile = this.app.vault.getFileByPath(path);
+					const localHash =
+						stored?.hash ??
+						(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+					this.syncState.set(path, {
+						...(this.syncState.get(path) ?? {}),
+						hash: localHash,
+						serverHash: entry.content_hash,
+					});
+				}
+			} catch (e) {
+				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+			}
+		}
 	}
 
 	/** Apply a single remote change to the vault, with conflict detection.
