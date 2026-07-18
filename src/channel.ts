@@ -97,11 +97,22 @@ const LARGE_FRAME_WARN_BYTES = 1_000_000;
  *
  * Protocol: messages are JSON arrays [join_ref, ref, topic, event, payload]
  */
-import type { NoteStreamEvent } from "./types";
+import type { NoteStreamEvent, SyncNoteChange } from "./types";
 
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
+	/** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
+	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
+	 *  `disconnect()` — the one await-reply path the channel has. */
+	private readonly pendingReplies = new Map<
+		string,
+		{
+			resolve: (r: unknown) => void;
+			reject: (e: Error) => void;
+			timer: number;
+		}
+	>();
 	private readonly joinRef = "1";
 	private readonly userJoinRef = "2";
 	private readonly crdtJoinRef = "3";
@@ -191,7 +202,7 @@ export class NoteChannel {
 	/** A room became active on the server for `docId` (announced via
 	 *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
 	 *  for this doc so a device that doesn't yet have the note pulls it. */
-	onCrdtDocReady: ((docId: string) => void) | null = null;
+	onCrdtDocReady: ((docId: string, path?: string) => void) | null = null;
 	/** A crdt_msg we sent was dropped server-side: the note_id has no row
 	 *  (backend #955 error reply). The create-race cross-wire signature — wire
 	 *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
@@ -322,6 +333,89 @@ export class NoteChannel {
 		return true;
 	}
 
+	/** Push a request frame on the crdt topic and resolve when the matching
+	 *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
+	 *  disconnect. The one await-reply path the channel has — everything else is
+	 *  fire-and-forget. */
+	sendRequest(event: string, payload: unknown, timeoutMs = 10000): Promise<unknown> {
+		const t = this.crdtTopic;
+		if (!t || !this.crdtJoined) {
+			return Promise.reject(
+				new Error(`sendRequest refused (crdt topic not joined): ${event}`),
+			);
+		}
+		const ref = String(++this.ref);
+		return new Promise((resolve, reject) => {
+			const timer = window.setTimeout(() => {
+				this.pendingReplies.delete(ref);
+				reject(new Error(`sendRequest timeout: ${event}`));
+			}, timeoutMs);
+			this.pendingReplies.set(ref, { resolve, reject, timer });
+			this.send([this.crdtJoinRef, ref, t, event, payload]);
+		});
+	}
+
+	/** Genesis a server row over the socket. Returns the server's authoritative
+	 *  doc_id — on ADOPT (path already owned by a different live note) the server
+	 *  returns a DIFFERENT id, which Task 3 uses to remap the local note and avoid
+	 *  orphaning edits. */
+	async crdtCreate(docId: string, path: string): Promise<string> {
+		const res = (await this.sendRequest("crdt_create", { doc_id: docId, path })) as {
+			doc_id: string;
+		};
+		return res.doc_id;
+	}
+
+	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
+	 *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
+	 *  resolve means the delete is durably applied; a reject carries a retryable
+	 *  (rate_limited / not-joined / disconnect) or terminal (bad_doc_id) reason.
+	 *  Routed through the durable CrdtOpQueue; there is no REST delete fallback. */
+	async crdtDeleteAcked(docId: string): Promise<{ doc_id: string }> {
+		return (await this.sendRequest("crdt_delete", { doc_id: docId })) as {
+			doc_id: string;
+		};
+	}
+
+	/** Vault-level head map for catch-up divergence detection AND first-discovery.
+	 *  Each entry carries the note's server head plus its decrypted vault path, so
+	 *  a device that has never seen an id can materialize it at that path (the
+	 *  head map is the sole discovery source now that REST receive is gone). */
+	async crdtCatchupHeads(): Promise<{ heads: Record<string, { path: string; head: string }> }> {
+		return (await this.sendRequest("crdt_catchup_heads", {})) as {
+			heads: Record<string, { path: string; head: string }>;
+		};
+	}
+
+	/** Missing ops for one diverged note, given the client's base64 state vector. */
+	async crdtCatchupDelta(
+		docId: string,
+		sv: string,
+	): Promise<{ doc_id: string; b64: string; head: string }> {
+		return (await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv })) as {
+			doc_id: string;
+			b64: string;
+			head: string;
+		};
+	}
+
+	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
+	 *  carries FULL content (a SyncNoteChange), so it is causally complete and
+	 *  can never pend the way a state-vector delta can — this is what a
+	 *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
+	async crdtCatchupSince(
+		cursorSeq: number,
+		limit?: number,
+	): Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }> {
+		const payload: { cursor_seq: number; limit?: number } = { cursor_seq: cursorSeq };
+		if (limit !== undefined) payload.limit = limit;
+		return (await this.sendRequest("crdt_catchup_since", payload)) as {
+			changes: SyncNoteChange[];
+			has_more: boolean;
+			next_seq: number | null;
+		};
+	}
+
 	async connect(): Promise<void> {
 		if (this.ws) return;
 		this.reconnectMs = 1000;
@@ -336,6 +430,13 @@ export class NoteChannel {
 			this.ws.close();
 			this.ws = null;
 		}
+		// Reject any in-flight sendRequest calls so callers don't hang forever
+		// waiting for a reply that a dead socket will never deliver.
+		for (const [, p] of this.pendingReplies) {
+			window.clearTimeout(p.timer);
+			p.reject(new Error("channel disconnected"));
+		}
+		this.pendingReplies.clear();
 		// Always reset crdtJoined on intentional disconnect regardless of whether
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
@@ -691,6 +792,21 @@ export class NoteChannel {
 		];
 
 		if (event === "phx_reply") {
+			// A sendRequest awaiting this exact ref takes priority over the
+			// topic-join cascade below — it's a one-shot request/response, not a
+			// join ack, and must not fall through to the join-error logging path.
+			if (ref !== null) {
+				const pending = this.pendingReplies.get(ref);
+				if (pending) {
+					this.pendingReplies.delete(ref);
+					window.clearTimeout(pending.timer);
+					const status = (payload as { status?: string })?.status;
+					const response = (payload as { response?: unknown })?.response;
+					if (status === "ok") pending.resolve(response);
+					else pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
+					return;
+				}
+			}
 			// Clear the outstanding heartbeat ref when the phoenix topic replies.
 			// We clear on any phoenix phx_reply rather than matching the exact ref
 			// because the topic is unambiguous — only heartbeats produce phoenix
@@ -852,7 +968,11 @@ export class NoteChannel {
 		if (event === "crdt_doc_ready" && payload) {
 			const docId = payload.doc_id as string | undefined;
 			if (docId) {
-				this.onCrdtDocReady?.(docId);
+				// The backend now carries the note's path on the announce so an EMPTY
+				// note (zero Y.Doc ops → no note_yjs_update fan-out) can be discovered
+				// and materialized immediately, not ~30s later via the level pull.
+				const path = payload.path as string | undefined;
+				this.onCrdtDocReady?.(docId, path);
 			}
 			return;
 		}

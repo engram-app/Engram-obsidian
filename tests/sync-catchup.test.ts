@@ -84,20 +84,6 @@ function createEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): SyncEng
 	return engine;
 }
 
-function flush(ms = 50): Promise<void> {
-	return new Promise((r) => setTimeout(r, ms));
-}
-
-function manifestWith(notes: Array<{ id: string; path: string; content_hash: string }>) {
-	(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValue({
-		notes,
-		attachments: [],
-		total_notes: notes.length,
-		total_attachments: 0,
-		change_seq: 1,
-	});
-}
-
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()
@@ -116,69 +102,6 @@ beforeEach(() => {
 	(mockApp.vault.process as ReturnType<typeof mock>)
 		.mockReset()
 		.mockImplementation((_f: any, fn: (d: string) => string) => Promise.resolve(fn("")));
-});
-
-describe("base_hash on pushes (CAS against the v0.5.642 backend gate)", () => {
-	test("pushFile declares the last-synced serverHash as base_hash", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"note.md": { hash: 123, version: 3, serverHash: "srv-hash-abc" },
-		});
-
-		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
-
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
-		// pushNote(path, content, mtime, version?, clientId?, baseHash?)
-		expect(call[5]).toBe("srv-hash-abc");
-	});
-
-	test("a note with no prior server state sends NO base_hash (create path)", async () => {
-		const engine = createEngine();
-
-		const file = new TFile("fresh.md");
-		engine.handleModify(file);
-		await flush();
-
-		const call = (mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0];
-		expect(call.length).toBeLessThanOrEqual(5);
-	});
-
-	test("a base_hash-induced 409 routes into the existing conflict flow (keep-remote default)", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"note.md": { hash: 123, version: 3, serverHash: "stale-base" },
-		});
-		const localFile = new TFile("note.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-
-		// The CAS gate refuses the stale push with the current server note.
-		(mockApi.pushNote as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			conflict: true,
-			server_note: {
-				id: "sid",
-				path: "note.md",
-				content: "server content the client never saw",
-				content_hash: "srv-current",
-				version: 7,
-				mtime: 99,
-			},
-		});
-
-		engine.handleModify(localFile);
-		await flush();
-
-		// Default ("auto") resolution: the server content the client never saw
-		// is preserved as a conflict-copy file — NOT silently deleted. That is
-		// the whole point of the CAS gate: without base_hash the push would
-		// have merged as a deletion with no trace.
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls[0];
-		expect(created[0]).toContain("conflict");
-		expect(created[1]).toBe("server content the client never saw");
-	});
 });
 
 describe("pull un-masking — CRDT-owned local note must catch up from /changes", () => {
@@ -581,55 +504,19 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 });
 
-describe("bind-time convergence — verifyConvergenceOnOpen", () => {
-	test("manifest hash differs from last-synced serverHash → forced re-handshake", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({
-			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
-		} as any);
-		const map = new NoteIdMap();
-		map.set("open-me.md", "note-id-9");
-		engine.setNoteIdMap(map);
-		const enroll = mock();
-		const reset = mock();
-		engine.setCrdtEnrollment({ enroll, reset });
-		engine.importSyncState({
-			"open-me.md": { hash: 1, version: 1, serverHash: "what-i-last-saw" },
-		});
-		manifestWith([{ id: "note-id-9", path: "open-me.md", content_hash: "server-moved-on" }]);
-		// Prime the manifest snapshot (reconcile caches owners + hashes).
-		await engine.reconcileNoteIdMapFromManifest();
-
-		await engine.verifyConvergenceOnOpen("open-me.md");
-
-		// Divergence → force a fresh CRDT handshake: reset lifts the
-		// once-per-session guard, enroll re-fires STEP1.
-		expect(reset).toHaveBeenCalledWith("note-id-9");
-		expect(enroll).toHaveBeenCalledWith("note-id-9");
-	});
-
-	test("hashes agree → no re-handshake", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({
-			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
-		} as any);
-		const map = new NoteIdMap();
-		map.set("open-me.md", "note-id-9");
-		engine.setNoteIdMap(map);
-		const enroll = mock();
-		const reset = mock();
-		engine.setCrdtEnrollment({ enroll, reset });
-		engine.importSyncState({
-			"open-me.md": { hash: 1, version: 1, serverHash: "same" },
-		});
-		manifestWith([{ id: "note-id-9", path: "open-me.md", content_hash: "same" }]);
-		await engine.reconcileNoteIdMapFromManifest();
-
-		await engine.verifyConvergenceOnOpen("open-me.md");
-
-		expect(reset).not.toHaveBeenCalled();
-	});
-});
+// The "bind-time convergence — verifyConvergenceOnOpen" describe block that
+// lived here is gone (Plan B1 Task 6): the per-file-open REST manifest-hash
+// check it tested no longer exists (verifyConvergenceOnOpen deleted from
+// src/sync.ts, along with the manifestPathHashes cache it solely read). Its
+// intent — heal a note whose local state diverged from the server without
+// waiting for the user to act — is now served by catchupViaSocket running on
+// every (re)connect instead of once per file-open; that mechanism has its
+// own non-redundant coverage in tests/sync-socket-catchup.test.ts
+// ("pulls deltas only for diverged notes" etc.). Re-pointing these two tests
+// at catchupViaSocket would just duplicate that coverage under a different
+// name — the manifest-hash-vs-serverHash comparison these tests exercised is
+// not a mechanism catchupViaSocket has (it compares crdtHead vs serverHead
+// instead), so there's no meaningful "same intent, new API" retarget to make.
 
 describe("anti-stale apply guard (review 2026-07-15 — mid-pull push overwrite race)", () => {
 	test("a change at or below the already-synced version is skipped", async () => {

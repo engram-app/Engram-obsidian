@@ -610,7 +610,10 @@ describe("SyncEngine.pushAll with progress", () => {
 	});
 
 	test("logs errors to syncLog when push fails", async () => {
-		const file = makeTFile("notes/fail.md");
+		// .canvas takes the kept LWW single-note REST path (md is CRDT-sole and
+		// never REST-pushes); the push-failure → syncLog logging under test is
+		// transport-agnostic.
+		const file = makeTFile("notes/fail.canvas");
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.cachedRead.mockResolvedValue("# Content");
 		(mockApi.pushNote as jest.Mock).mockRejectedValue(new Error("500 Internal Server Error"));
@@ -623,7 +626,7 @@ describe("SyncEngine.pushAll with progress", () => {
 
 		const errors = engine.syncLog.entries().filter((e) => e.result === "error");
 		expect(errors).toHaveLength(1);
-		expect(errors[0].path).toBe("notes/fail.md");
+		expect(errors[0].path).toBe("notes/fail.canvas");
 		expect(errors[0].error).toContain("500");
 	});
 });

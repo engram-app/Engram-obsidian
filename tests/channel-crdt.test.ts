@@ -44,6 +44,21 @@ function simulateMessage(ws: any, msg: unknown[]): void {
 	ws.onmessage?.({ data: JSON.stringify(msg) });
 }
 
+/** News up a channel, opens the mock socket, and acks all three joins
+ *  (sync, user, crdt) so the crdt: topic is joined and ready for
+ *  sendRequest tests. Mirrors the [0]=sync join, [1]=user join,
+ *  [2]=crdt join setup used across this file. */
+async function joinedCrdtChannel(): Promise<{ channel: NoteChannel; ws: any }> {
+	const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+	await channel.connect();
+	const ws = lastWsInstance;
+	simulateOpen(ws);
+	simulateMessage(ws, [null, "1", "sync:u1:v1", "phx_reply", { status: "ok", response: {} }]);
+	simulateMessage(ws, [null, "2", "user:u1", "phx_reply", { status: "ok", response: {} }]);
+	simulateMessage(ws, [null, "3", "crdt:u1:v1", "phx_reply", { status: "ok", response: {} }]);
+	return { channel, ws };
+}
+
 beforeEach(() => {
 	lastWsUrl = null;
 	lastWsInstance = null;
@@ -356,6 +371,28 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 		]);
 
 		expect(ready).toEqual(["v1/note.md"]);
+
+		channel.disconnect();
+	});
+
+	test("forwards the announce path to onCrdtDocReady (empty-note discovery, test_27)", async () => {
+		// The backend now carries the note's path on the announce so an empty note
+		// (zero Y.Doc ops → no note_yjs_update) can be discovered immediately.
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const calls: Array<[string, string | undefined]> = [];
+		channel.onCrdtDocReady = (docId, path) => calls.push([docId, path]);
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"crdt:u1:v1",
+			"crdt_doc_ready",
+			{ doc_id: "v1/note.md", path: "v1/note.md" },
+		]);
+
+		expect(calls).toEqual([["v1/note.md", "v1/note.md"]]);
 
 		channel.disconnect();
 	});
@@ -939,6 +976,111 @@ describe("crdtJoined resets on unclean close (#191)", () => {
 		// A stale crdtJoined makes the join-ack handler's !crdtJoined guard
 		// skip this second fire, leaving main.ts unwired on the new session.
 		expect(joined).toHaveBeenCalledTimes(2);
+
+		channel.disconnect();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 1: channel request/reply plumbing (sendRequest + pendingReplies)
+// The one await-reply path the channel has — foundation for the socket-frame
+// senders that route create/delete/catch-up over the CRDT socket.
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel.sendRequest", () => {
+	test("sendRequest resolves on the matching phx_reply ref", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.sendRequest("crdt_catchup_heads", {});
+		// last outbound frame is the request; extract its ref (index 1 of the Phoenix array)
+		const frames = ws.sent.map((s: string) => JSON.parse(s));
+		const reqFrame = frames.find((f: unknown[]) => f[3] === "crdt_catchup_heads");
+		const ref = reqFrame[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
+		]);
+		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
+
+		channel.disconnect();
+	});
+
+	test("sendRequest rejects on an error reply", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.sendRequest("crdt_catchup_delta", { doc_id: "n1", sv: null });
+		const frames = ws.sent.map((s: string) => JSON.parse(s));
+		const ref = frames.find((f: unknown[]) => f[3] === "crdt_catchup_delta")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "error", response: { reason: "not_found" } },
+		]);
+		await expect(p).rejects.toThrow(/not_found/);
+
+		channel.disconnect();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 2: the four socket-frame senders (crdt_create/delete/catchup_heads/delta)
+// ---------------------------------------------------------------------------
+
+describe("NoteChannel CRDT frame senders", () => {
+	test("crdtCreate returns the server's doc_id (adopt returns a different id)", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCreate("client-id-X", "Notes/n.md");
+		const ref = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_create")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "server-id-Y" } },
+		]);
+		await expect(p).resolves.toBe("server-id-Y");
+
+		channel.disconnect();
+	});
+
+	test("crdtCatchupHeads sends the frame and returns heads", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtCatchupHeads();
+		const ref = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_catchup_heads")[1];
+		simulateMessage(ws, [
+			null,
+			ref,
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
+		]);
+		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
+
+		channel.disconnect();
+	});
+
+	test("crdtDeleteAcked sends the frame and resolves on the server ack", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const p = channel.crdtDeleteAcked("n1");
+		const f = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((x: unknown[]) => x[3] === "crdt_delete");
+		expect(f[4]).toEqual({ doc_id: "n1" });
+		simulateMessage(ws, [
+			null,
+			f[1],
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: { doc_id: "n1" } },
+		]);
+		await expect(p).resolves.toEqual({ doc_id: "n1" });
 
 		channel.disconnect();
 	});
