@@ -4469,15 +4469,13 @@ export class SyncEngine {
 							}
 						}
 					}
-				} else {
-					// Legacy fallback: a broadcast carrying neither an id nor a
-					// locally-known mapping (no note_id to key an applyOp on) — or a
-					// non-CRDT note. Apply directly via applyChange, resolving the body
-					// inline-or-fetch through the shared resolver.
+				} else if (event.content !== undefined) {
+					// Legacy fallback (no note_id, or non-CRDT): inline content from the
+					// broadcast — no extra HTTP roundtrip.
 					await this.applyChange({
 						path: event.path,
 						title: event.title ?? "",
-						content: await this.resolveEventBody(event),
+						content: event.content,
 						content_hash: event.content_hash,
 						folder: event.folder ?? "",
 						tags: event.tags ?? [],
@@ -4485,6 +4483,24 @@ export class SyncEngine {
 						updated_at: event.updated_at ?? new Date().toISOString(),
 						deleted: false,
 						version: event.version,
+					});
+				} else {
+					// Hash-only broadcast (or folder rename): fetch the body AND use the
+					// note's own authoritative metadata (mtime/updated_at/version drive
+					// applyChange's staleness + anti-stale-version guards — event.* are
+					// sparse/absent here and would misfire toward a silent overwrite).
+					const note = await this.api.getNote(event.path);
+					await this.applyChange({
+						path: note.path,
+						title: note.title,
+						content: note.content,
+						content_hash: note.content_hash ?? event.content_hash,
+						folder: note.folder,
+						tags: note.tags,
+						mtime: note.mtime,
+						updated_at: note.updated_at,
+						deleted: false,
+						version: note.version ?? event.version,
 					});
 				}
 			} catch (e) {
