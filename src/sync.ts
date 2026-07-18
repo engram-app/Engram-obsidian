@@ -3294,8 +3294,32 @@ export class SyncEngine {
 	 *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
 	 *  feed: a note another device created while we were away arrives as an op and
 	 *  materializes via applySyncChange. Never throws into the caller; a socket
-	 *  drop mid-replay is logged and resumed from the persisted cursor next join. */
+	 *  drop mid-replay is logged and resumed from the persisted cursor next join.
+	 *
+	 *  Single-flighted: concurrent callers (reconnect + the per-relocation trigger
+	 *  a folder rename fires N times) coalesce into one in-flight replay, and a
+	 *  trigger that arrives mid-replay schedules exactly one more pass so an op
+	 *  committed during the replay is never missed. */
+	private seqReplayRunning = false;
+	private seqReplayAgain = false;
+
 	async catchupViaSeqReplay(): Promise<void> {
+		if (this.seqReplayRunning) {
+			this.seqReplayAgain = true;
+			return;
+		}
+		this.seqReplayRunning = true;
+		try {
+			do {
+				this.seqReplayAgain = false;
+				await this.runSeqReplayOnce();
+			} while (this.seqReplayAgain);
+		} finally {
+			this.seqReplayRunning = false;
+		}
+	}
+
+	private async runSeqReplayOnce(): Promise<void> {
 		if (!this.crdtCatchupSince || !this.crdt) return;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
@@ -4440,6 +4464,19 @@ export class SyncEngine {
 							await this.flushFromCrdt(np, event.content);
 						} else {
 							void this.materializeRelocated(event.path, noteId);
+							// materializeRelocated is isSynced-gated and projects the DOC, so it
+							// bails when the doc is unsynced/stale — and a folder-rename cascade
+							// upsert is META-projected (content:nil, #863), so the inline fast
+							// path above can't fire either. The note then only appears ~40s later
+							// via the slow pull (received=yes materialized=no, e2e test_34).
+							// Deliver it through the op-log instead: a seq-replay applies the
+							// upsert with REAL content (list_changes_by_seq) via applySyncChange,
+							// promptly. Gated on "no file yet" so a normal re-upsert of a note
+							// already on disk never triggers a replay; single-flighted so a
+							// folder rename's N relocations coalesce into one pass.
+							if (!this.app.vault.getAbstractFileByPath(np)) {
+								void this.catchupViaSeqReplay();
+							}
 						}
 					}
 				} else if (event.content !== undefined) {

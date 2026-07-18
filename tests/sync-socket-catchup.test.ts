@@ -607,6 +607,32 @@ describe("catchupViaSeqReplay", () => {
 		expect(cursorsSeen).toEqual([42]);
 	});
 
+	test("single-flights concurrent calls and re-runs once for a mid-flight trigger", async () => {
+		// A folder rename fires the per-relocation trigger N times; they must
+		// coalesce into one in-flight replay, plus exactly one re-run to pick up
+		// anything committed during the first pass.
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		let calls = 0;
+		let releaseFirst: () => void = () => {};
+		const firstHeld = new Promise<void>((r) => {
+			releaseFirst = r;
+		});
+		engine.setCrdtCatchupSince(async () => {
+			calls += 1;
+			if (calls === 1) await firstHeld; // hold the first pass open
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		const p1 = engine.catchupViaSeqReplay(); // starts, blocks on firstHeld
+		const p2 = engine.catchupViaSeqReplay(); // coalesced → schedules one re-run
+		const p3 = engine.catchupViaSeqReplay(); // also coalesced (no extra pass)
+		releaseFirst();
+		await Promise.all([p1, p2, p3]);
+
+		expect(calls).toBe(2); // first pass + exactly one coalesced re-run
+	});
+
 	test("no-op (never throws) when the socket fetcher is unwired", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();

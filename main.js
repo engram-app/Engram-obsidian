@@ -18064,6 +18064,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.crdtCatchupHeads = null;
     this.crdtCatchupDelta = null;
     this.crdtCatchupSince = null;
+    /** Single-path convergence on (re)connect: replay the seq-ordered op-log over
+     *  the socket from our persisted cursor. Each op carries FULL content and is
+     *  applied through the SAME `applySyncChange` the REST pull used — so a
+     *  reconnecting device gets every op it missed, IN ORDER, causally complete.
+     *
+     *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
+     *  mechanism: that delta could hand Yjs a causally-incomplete update, which
+     *  pends while the device advances its head anyway (faked convergence → deaf
+     *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+     *  feed: a note another device created while we were away arrives as an op and
+     *  materializes via applySyncChange. Never throws into the caller; a socket
+     *  drop mid-replay is logged and resumed from the persisted cursor next join.
+     *
+     *  Single-flighted: concurrent callers (reconnect + the per-relocation trigger
+     *  a folder rename fires N times) coalesce into one in-flight replay, and a
+     *  trigger that arrives mid-replay schedules exactly one more pass so an op
+     *  committed during the replay is never missed. */
+    this.seqReplayRunning = !1;
+    this.seqReplayAgain = !1;
     /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
      *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
      *  on a half-open connection — kept `pulling` true for 60s+, and deferred
@@ -19520,19 +19539,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCrdtCatchupSince(fn) {
     this.crdtCatchupSince = fn;
   }
-  /** Single-path convergence on (re)connect: replay the seq-ordered op-log over
-   *  the socket from our persisted cursor. Each op carries FULL content and is
-   *  applied through the SAME `applySyncChange` the REST pull used — so a
-   *  reconnecting device gets every op it missed, IN ORDER, causally complete.
-   *
-   *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
-   *  mechanism: that delta could hand Yjs a causally-incomplete update, which
-   *  pends while the device advances its head anyway (faked convergence → deaf
-   *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
-   *  feed: a note another device created while we were away arrives as an op and
-   *  materializes via applySyncChange. Never throws into the caller; a socket
-   *  drop mid-replay is logged and resumed from the persisted cursor next join. */
   async catchupViaSeqReplay() {
+    if (this.seqReplayRunning) {
+      this.seqReplayAgain = !0;
+      return;
+    }
+    this.seqReplayRunning = !0;
+    try {
+      do
+        this.seqReplayAgain = !1, await this.runSeqReplayOnce();
+      while (this.seqReplayAgain);
+    } finally {
+      this.seqReplayRunning = !1;
+    }
+  }
+  async runSeqReplayOnce() {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt) return;
     let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
@@ -20098,7 +20119,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               let body = event.content;
               body === void 0 && (body = (await this.api.getNote(event.path)).content, body === "" && event.content_hash && (this.emptyContentHash = event.content_hash)), await this.flushFromCrdt(np, body);
             }
-            priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.flushFromCrdt(np, event.content) : this.materializeRelocated(event.path, noteId);
+            priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.flushFromCrdt(np, event.content) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
           }
         } else if (event.content !== void 0)
           await this.applyChange({
