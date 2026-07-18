@@ -1395,26 +1395,23 @@ export class SyncEngine {
 		await this.flushFromCrdt(path, text);
 	}
 
-	/** Materialize a note at a NEW path after an id-keyed relocation
-	 *  (`moveIfIdRelocated`) when this device's CRDT handshake for `noteId`
-	 *  already completed earlier THIS session (e2e test_10, #189).
+	/** Materialize a relocated/first-delivery note at `path` from its CRDT doc
+	 *  projection when this device's handshake for `noteId` has landed. Content-
+	 *  ABSENT backstop only (a content-present op materializes via applyOp): a
+	 *  rename carries no doc update so onFlushToDisk never fires, and an idle note
+	 *  is not enrolled — without this the new path would appear only via the slow
+	 *  pull (received=yes materialized=no). Gated on `crdt.isSynced(noteId)` (NOT
+	 *  "already enrolled": enroll marks synchronously before STEP2 lands, so an
+	 *  enrolled check could flush empty/partial content — the #547 class), so the
+	 *  projected text is trustworthy; no-ops when the handshake hasn't landed
+	 *  (the op-log seq-replay heals instead) or the file already exists.
 	 *
-	 *  A rename changes no doc content, so it never produces a Y.Doc update —
-	 *  `onFlushToDisk` never fires for it — and `crdtEnrollment.enroll()` is a
-	 *  documented per-session no-op once a note_id is already enrolled (true
-	 *  here: this device received the note live, at its old path, earlier this
-	 *  session). With neither trigger left, the file at the new path is never
-	 *  written: the event is received but never materialized. This closes that
-	 *  gap by flushing the CRDT doc's already-known content directly.
-	 *
-	 *  Gated on `crdt.isSynced(noteId)` — NOT on "already enrolled". `enroll()`
-	 *  marks a note_id enrolled synchronously, before its STEP2 handshake
-	 *  resolves, so an "already enrolled" check would race a note's genuine
-	 *  FIRST enrollment and could flush empty/partial content (the #547 class
-	 *  of premature-empty-file bug). `isSynced` only turns true once a STEP2
-	 *  has actually landed, so the content read here is trustworthy. No-ops
-	 *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
-	 *  still owns materializing it) or the file already exists at `path`. */
+	 *  Identity re-check at WRITE time (issue #210, e2e test_34): a concurrent
+	 *  id-keyed move can land during the projectedText await (it suspends on IDB),
+	 *  so re-read the canonical path immediately before the write — writing a
+	 *  moved-away path would re-create a tombstoned file and resurrect it. Defends
+	 *  the MOVE case only; a tombstone delete clears the byId entry (canonical
+	 *  null), where the isSynced gate is the backstop. */
 	private async materializeRelocated(path: string, noteId: string): Promise<void> {
 		if (!this.crdt || !path.endsWith(".md")) return;
 		// Defensive `typeof` (not `?.`) — CrdtManager always has isSynced, but many
@@ -1424,18 +1421,6 @@ export class SyncEngine {
 		if (typeof this.crdt.isSynced !== "function" || !this.crdt.isSynced(noteId)) return;
 		if (this.app.vault.getAbstractFileByPath(normalizePath(path))) return;
 		const text = await this.crdt.projectedText(noteId);
-		// Identity re-check at WRITE time (issue #210, e2e test_34): this call is
-		// unawaited and races the pull's id-keyed move. A stale old-path upsert
-		// captures (path, noteId) while old is still canonical; the relocation
-		// can land any time up to here — including DURING the projectedText
-		// await (it suspends on IDB load), which is why the check sits after it,
-		// immediately before the write (flushFromCrdt has no identity guard and
-		// fails open). Writing a relocated path re-creates the tombstoned file,
-		// and its modify event re-pushes it under a FRESH mint (the old-path
-		// map entry moved away), resurrecting the path server-side. Defends the
-		// MOVE case only: a tombstone delete clears the byId entry entirely
-		// (canonical === null), where the doc teardown's isSynced gate above is
-		// the backstop.
 		const canonical = this.noteIdMap?.pathForId(noteId) ?? null;
 		if (canonical !== null && normalizePath(canonical) !== normalizePath(path)) {
 			rlog().info(
@@ -4070,6 +4055,39 @@ export class SyncEngine {
 		}
 	}
 
+	/** Resolve a stream event's authoritative body: the broadcast's inline
+	 *  content when present, else ONE getNote fetch (hash-only broadcasts / empty
+	 *  or meta-projected notes carry no body). A learned empty-hash retires the
+	 *  fetch for later inline-"" upserts carrying the same hash (see the ingress
+	 *  guard). Shared by the CRDT first-delivery path and the legacy fallback so
+	 *  the fetch + empty-hash learn lives in exactly one place. (getNote-for-sync
+	 *  removal is Phase E.) */
+	private async resolveEventBody(event: NoteStreamEvent): Promise<string | undefined> {
+		if (event.content !== undefined) return event.content;
+		const body = (await this.api.getNote(event.path)).content;
+		if (body === "" && event.content_hash) this.emptyContentHash = event.content_hash;
+		return body;
+	}
+
+	/** Reshape a live stream event + resolved body into the single `SyncOp` shape
+	 *  so the CRDT-managed first-delivery / rename new-leg both converge through
+	 *  `applyOp`. */
+	private eventToOp(event: NoteStreamEvent, content: string | undefined, id: string): SyncOp {
+		return {
+			kind: "upsert",
+			id,
+			path: event.path,
+			content,
+			content_hash: event.content_hash,
+			folder: event.folder ?? "",
+			title: event.title ?? "",
+			tags: event.tags ?? [],
+			mtime: event.mtime ?? Date.now(),
+			updated_at: event.updated_at ?? new Date().toISOString(),
+			version: event.version,
+		};
+	}
+
 	/** Handle a WebSocket stream event (upsert or delete). */
 	async handleStreamEvent(event: NoteStreamEvent): Promise<void> {
 		if (this.syncBlocked) {
@@ -4402,93 +4420,64 @@ export class SyncEngine {
 							"ws",
 							`CRDT-managed: skipping legacy body apply for ${event.path}`,
 						);
-						// First-delivery materialization (idle, room-free): a never-seen note
-						// (no prior syncState, no local file) that is idle is NOT enrolled here
-						// (fan-out isolation), so it can never join a room. Its live note_yjs_update
-						// fan-out is fire-and-forget and is MISSED if this device was offline when it
-						// fired (a note created before we connected). materializeRelocated below needs
-						// a SYNCED doc so it bails, leaving only the pull-discovery backstop, which
-						// serializes behind slow conflict resolution (9s+ observed) and loses the
-						// delivery-timing race (e2e test_27, and the broader created-before-connect
-						// class). Materialize now from AUTHORITATIVE content, like the pre-fan-out
-						// legacy apply did: inline body if the broadcast carries it, else one getNote
-						// fetch (serialize_note is hash-only in prod). This is real server content, not
-						// an unsynced empty projection, so it sidesteps the #547 premature-empty class.
-						// flushFromCrdt's markRecentlyFlushed suppresses the echo and records the CRDT
-						// baseline; CRDT still owns subsequent live edits. A note with a prior baseline
-						// is left to its convergence path, a live-bound one to its editor/room, and a
-						// synced doc (the rename case) to materializeRelocated below.
+						// First-delivery materialization (Phase C step 2). A never-seen note
+						// (no prior baseline, no local file) materializes here; one with a
+						// prior baseline converges via its CRDT/pull path, a live-bound one
+						// via its editor room — both left alone. When the op carries
+						// AUTHORITATIVE content (inline, or one getNote fetch for the idle
+						// case), converge through the SINGLE apply path (applyOp) — this
+						// folds in the old hand-rolled first-delivery + rename new-leg
+						// (#189/#210/test_34) writes uniformly by id. When it does NOT (a
+						// live-bound / synced first delivery, or a folder-rename meta
+						// projection with content:nil #863), fall back to the doc projection
+						// (materializeRelocated, isSynced-gated) then the op-log seq-replay.
+						// (getNote-for-sync + the materializeRelocated projection are Phase E
+						// deletions — deferred here to keep the test_10/34 fast path intact.)
 						const synced =
 							typeof this.crdt.isSynced === "function" && this.crdt.isSynced(noteId);
+						// Idle first-delivery: a never-seen, not-live-bound, unsynced note
+						// materializes from its resolved body (inline, else one getNote
+						// fetch) through the single apply path.
 						if (
 							priorState === undefined &&
 							!synced &&
 							!this.isLiveBound(np) &&
 							!this.app.vault.getAbstractFileByPath(np)
 						) {
-							let body = event.content;
-							if (body === undefined) {
-								body = (await this.api.getNote(event.path)).content;
-								// Learned empty-hash (see the ingress guard): one fetch
-								// proving this user's hash-of-"" retires the GET for
-								// every later inline-empty upsert with the same hash.
-								if (body === "" && event.content_hash) {
-									this.emptyContentHash = event.content_hash;
-								}
-							}
-							await this.flushFromCrdt(np, body);
+							const body = await this.resolveEventBody(event);
+							if (body !== undefined)
+								await this.applyOp(this.eventToOp(event, body, noteId));
 						}
-						// #189/#210/test_34 rename new-leg: a rename carries no content
-						// change, so it never produces a Y.Doc update — onFlushToDisk never
-						// fires — and enroll() above is a per-session no-op for an id this
-						// device already enrolled. materializeRelocated (its only writer
-						// left) is isSynced-gated and projects the DOC, which can be unsynced
-						// or stale, so it bails and the new path only appears ~60s later via
-						// the pull (received=yes materialized=no). The upsert-new leg carries
-						// the note's AUTHORITATIVE content inline, so when the id is canonical
-						// at this (new) path and no file exists there yet, materialize LIVE
-						// from event.content. Re-check canonicality right before the write to
-						// mirror materializeRelocated's #210 stale guard — a concurrent
-						// relocation landing during an await above must not resurrect a
-						// moved-away path. Content-absent falls back to the doc projection.
-						// priorState === undefined mirrors the first-delivery gate above:
-						// a note this device already has a baseline for converges via its
-						// CRDT/pull path, and re-writing it here would double-write / clobber
-						// a converged base. A relocation's NEW path never had a baseline
-						// (moveIfIdRelocated dropped the old path's syncState), so it passes.
+						// Rename new-leg carrying inline content → single apply path (from the
+						// op's own content, by id). Otherwise fall back to the doc projection
+						// (materializeRelocated, isSynced-gated) then the op-log seq-replay —
+						// this else covers a content-absent / meta-projected-nil relocation
+						// (#863) AND a note whose baseline moveIfIdRelocated already carried
+						// to the new path (priorState defined), which the first-discovery
+						// materialize (gated on priorState === undefined) skips.
 						if (
 							priorState === undefined &&
 							event.content !== undefined &&
 							this.noteIdMap?.pathForId(noteId) === np &&
 							!this.app.vault.getAbstractFileByPath(np)
 						) {
-							await this.flushFromCrdt(np, event.content);
+							await this.applyOp(this.eventToOp(event, event.content, noteId));
 						} else {
 							void this.materializeRelocated(event.path, noteId);
-							// materializeRelocated is isSynced-gated and projects the DOC, so it
-							// bails when the doc is unsynced/stale — and a folder-rename cascade
-							// upsert is META-projected (content:nil, #863), so the inline fast
-							// path above can't fire either. The note then only appears ~40s later
-							// via the slow pull (received=yes materialized=no, e2e test_34).
-							// Deliver it through the op-log instead: a seq-replay applies the
-							// upsert with REAL content (list_changes_by_seq) via applySyncChange,
-							// promptly. Gated on "no file yet" so a normal re-upsert of a note
-							// already on disk never triggers a replay; single-flighted so a
-							// folder rename's N relocations coalesce into one pass.
 							if (!this.app.vault.getAbstractFileByPath(np)) {
 								void this.catchupViaSeqReplay();
 							}
 						}
 					}
-				} else if (event.content !== undefined) {
-					// Use inline content from the broadcast — no extra HTTP
-					// roundtrip. (Dual-field transition: backends send content
-					// for one more release; afterwards only content_hash and the
-					// fetch branch below applies.)
+				} else {
+					// Legacy fallback: a broadcast carrying neither an id nor a
+					// locally-known mapping (no note_id to key an applyOp on) — or a
+					// non-CRDT note. Apply directly via applyChange, resolving the body
+					// inline-or-fetch through the shared resolver.
 					await this.applyChange({
 						path: event.path,
 						title: event.title ?? "",
-						content: event.content,
+						content: await this.resolveEventBody(event),
 						content_hash: event.content_hash,
 						folder: event.folder ?? "",
 						tags: event.tags ?? [],
@@ -4496,21 +4485,6 @@ export class SyncEngine {
 						updated_at: event.updated_at ?? new Date().toISOString(),
 						deleted: false,
 						version: event.version,
-					});
-				} else {
-					// Hash-only broadcast (or folder rename): fetch the body.
-					const note = await this.api.getNote(event.path);
-					await this.applyChange({
-						path: note.path,
-						title: note.title,
-						content: note.content,
-						content_hash: note.content_hash ?? event.content_hash,
-						folder: note.folder,
-						tags: note.tags,
-						mtime: note.mtime,
-						updated_at: note.updated_at,
-						deleted: false,
-						version: note.version ?? event.version,
 					});
 				}
 			} catch (e) {
