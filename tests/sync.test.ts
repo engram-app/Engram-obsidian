@@ -1200,76 +1200,38 @@ describe("SyncEngine.pull (fresh install)", () => {
 		);
 	});
 
-	test("fullSync on fresh engine genesis-pulls all notes without prior cursor", async () => {
+	// fullSync's pull-half now routes through the single catch-up path
+	// (reconcile + socket seq-replay + folder markers), NOT the REST pull()
+	// cursor cluster. The genesis content-delivery mechanism is tested directly
+	// against bootstrap/pullViaCursor (sync-cursor-pull.test.ts) and the op-log
+	// replay (sync-socket-catchup.test.ts). NOTE: the seq-replay emits no
+	// per-page "pulling" progress (only the terminal recap), so fullSync no
+	// longer shows an incremental download bar during a large catch-up — a
+	// deliberate consequence of the single-path migration, matching the already
+	// silent reconnect/startup catch-up.
+	test("fullSync routes its pull-half through catchUp (seq-replay), not the REST pull()", async () => {
 		const engine = createEngine();
-		// Fresh engine — no cursor, no prior sync state.
-
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "a",
-					seq: 1,
-					path: "Notes/A.md",
-					title: "Note A",
-					content: "# A",
-				}),
-				syncNoteEntry({
-					id: "b",
-					seq: 2,
-					path: "Notes/B.md",
-					title: "Note B",
-					content: "# B",
-				}),
-			]),
-		);
-
-		const result = await engine.fullSync();
-
-		expect(result.pulled).toBe(2);
-		expect(mockApi.getSyncChanges).toHaveBeenCalledWith(undefined, expect.any(Number));
-		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-	});
-
-	test("fullSync emits climbing download progress across cursor pages", async () => {
-		const engine = createEngine();
-		const pulling: number[] = [];
-		engine.onSyncProgress = (p) => {
-			if (p.phase === "pulling") pulling.push(p.current);
-		};
-
-		// Two-page genesis feed: page 1 has_more, page 2 terminal.
-		(mockApi.getSyncChanges as jest.Mock)
-			.mockResolvedValueOnce({
-				changes: [syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" })],
-				next_cursor: "C2",
-				has_more: true,
-			})
-			.mockResolvedValueOnce({
-				changes: [syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" })],
-				next_cursor: null,
-				has_more: false,
-			});
+		const catchUp = jest.spyOn(engine, "catchUp").mockResolvedValue(0);
+		const pull = jest.spyOn(engine as any, "pull");
+		const pushModified = jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
 
 		await engine.fullSync();
 
-		// One pulling event per applied page, current = real downloads so far.
-		expect(pulling).toEqual([1, 2]);
+		expect(catchUp).toHaveBeenCalledTimes(1);
+		expect(pushModified).toHaveBeenCalledTimes(1);
+		expect(pull).not.toHaveBeenCalled();
 	});
 
-	test("fullSync completion recap counts downloads, not just uploads", async () => {
+	test("fullSync completion recap counts catch-up downloads, not just uploads", async () => {
 		const engine = createEngine();
 		let completeCurrent: number | null = null;
 		engine.onSyncProgress = (p) => {
 			if (p.phase === "complete") completeCurrent = p.current;
 		};
 
-		// Download-only sync: 2 notes pulled, nothing local to push.
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" }),
-				syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" }),
-			]),
-		);
+		// Download-only sync: 2 ops applied via seq-replay, nothing local to push.
+		jest.spyOn(engine, "catchUp").mockResolvedValue(2);
+		jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
 
 		const { pulled, pushed } = await engine.fullSync();
 
@@ -2909,13 +2871,13 @@ describe("SyncEngine auth validation", () => {
 
 	test("fullSync proceeds when auth succeeds", async () => {
 		(mockApi.ping as jest.Mock).mockResolvedValueOnce({ ok: true });
-		// fullSync → pull → bootstrap → genesis cursor pull (B2).
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
+		// fullSync → catchUp (reconcile + seq-replay) + pushModifiedFiles. With no
+		// crdt/local files wired, both legs no-op to zero.
 		const engine = createEngine();
 
 		const result = await engine.fullSync();
 		expect(result).toEqual({ pulled: 0, pushed: 0 });
-		expect(mockApi.getSyncChanges).toHaveBeenCalled();
+		expect(mockApi.ping).toHaveBeenCalled();
 	});
 
 	test("pushAll throws on invalid API key", async () => {

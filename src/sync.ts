@@ -3289,24 +3289,67 @@ export class SyncEngine {
 	private seqReplayRunning = false;
 	private seqReplayAgain = false;
 
-	async catchupViaSeqReplay(): Promise<void> {
+	/** Returns the number of ops applied across this replay (incl. any coalesced
+	 *  re-run). A coalesced call that folds into an in-flight replay returns 0 —
+	 *  the running call reports the total. */
+	async catchupViaSeqReplay(): Promise<number> {
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return;
+			return 0;
 		}
 		this.seqReplayRunning = true;
+		let applied = 0;
 		try {
 			do {
 				this.seqReplayAgain = false;
-				await this.runSeqReplayOnce();
+				applied += await this.runSeqReplayOnce();
 			} while (this.seqReplayAgain);
 		} finally {
 			this.seqReplayRunning = false;
 		}
+		return applied;
 	}
 
-	private async runSeqReplayOnce(): Promise<void> {
-		if (!this.crdtCatchupSince || !this.crdt) return;
+	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
+	 *  recovers on reconnect, Todd's call). Three responsibilities a bare op-log
+	 *  replay can't cover, run around it:
+	 *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
+	 *      seed LOCAL empty-folder markers to the server.
+	 *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
+	 *      content (the authoritative delivery path).
+	 *   3. `syncExplicitFolders` — pull the server's empty-folder markers to disk
+	 *      and propagate remote folder deletes.
+	 *  Returns the applied-op count (for the progress recap / poll notice). Never
+	 *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
+	 *  never has to guard it. reconcile's returned offline-created files are
+	 *  ignored here: pushModifiedFiles (the push half) already pushes never-synced
+	 *  files. */
+	async catchUp(): Promise<number> {
+		try {
+			await this.reconcileFromManifest();
+			const applied = await this.catchupViaSeqReplay();
+			try {
+				await this.syncExplicitFolders();
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
+			}
+			return applied;
+		} catch (e) {
+			rlog().error(
+				"pull",
+				`Catch-up failed: ${errMsg(e)}`,
+				e instanceof Error ? e.stack : undefined,
+			);
+			return 0;
+		}
+	}
+
+	private async runSeqReplayOnce(): Promise<number> {
+		if (!this.crdtCatchupSince || !this.crdt) return 0;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -3316,6 +3359,7 @@ export class SyncEngine {
 		// idempotent, so a redundant-from-0 replay is safe.
 		const activeVault = this.settings.vaultId ?? null;
 		let cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+		let applied = 0;
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
 		for (let page = 0; page < 100_000; page++) {
@@ -3324,11 +3368,12 @@ export class SyncEngine {
 				resp = await this.crdtCatchupSince(cursor, 500);
 			} catch (e) {
 				rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
-				return;
+				return applied;
 			}
 			for (const c of resp.changes) {
 				try {
 					await this.applySyncChange(c);
+					applied += 1;
 				} catch (e) {
 					// One bad op (e.g. illegal filename) must not wedge the feed — log
 					// and skip, same isolation as pullViaCursor.
@@ -3343,6 +3388,7 @@ export class SyncEngine {
 			if (!resp.has_more) break;
 			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
 		}
+		return applied;
 	}
 
 	async catchupViaSocket(): Promise<void> {
@@ -4653,9 +4699,10 @@ export class SyncEngine {
 				// materializeRelocated backstop may ALSO decline (fresh-boot
 				// receiver, STEP2 not landed yet) — leaving the note invisible on
 				// this device until the next scheduled poll, up to 5 minutes
-				// (final review MINOR-7). Kick an immediate pull so that window
-				// is one pull instead.
-				void this.pull();
+				// (final review MINOR-7). Kick an immediate op-log catch-up so
+				// that window is one replay instead — the missed op carries the
+				// relocated note's content.
+				void this.catchupViaSeqReplay();
 			}
 		}
 	}
@@ -5808,7 +5855,7 @@ export class SyncEngine {
 		// the old and new lastSync values.
 		const prePullSync = this.lastSync;
 
-		const pulled = await this.pull(true);
+		const pulled = await this.catchUp();
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").

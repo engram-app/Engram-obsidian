@@ -2344,13 +2344,16 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncInterval = window.setInterval(() => {
 			void (async () => {
 				try {
-					const pulled = await this.syncEngine.pull();
+					// Socket-only fallback poll (no REST): reconcile manifest
+					// server-deletes/folder-markers + replay the op-log. No-ops when
+					// the socket is down; a wedged socket recovers on reconnect.
+					const pulled = await this.syncEngine.catchUp();
 					if (pulled > 0) {
 						new Notice(`Engram Sync: pulled ${pulled} changes`);
 					}
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: periodic pull failed", e);
+					console.error("Engram Sync: periodic catch-up failed", e);
 				}
 			})();
 		}, EngramSyncPlugin.FALLBACK_POLL_MS);

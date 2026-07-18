@@ -565,7 +565,8 @@ describe("catchupViaSeqReplay", () => {
 			next_seq: null,
 		}));
 
-		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
+		// seq=5 throws, seq=6 applies → 1 applied, cursor still advances past both.
+		await expect(engine.catchupViaSeqReplay()).resolves.toBe(1);
 		expect(engine.getCatchupSeq()).toBe(6);
 	});
 
@@ -635,7 +636,7 @@ describe("catchupViaSeqReplay", () => {
 
 	test("no-op (never throws) when the socket fetcher is unwired", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
+		await expect(engine.catchupViaSeqReplay()).resolves.toBe(0);
 	});
 });
 
