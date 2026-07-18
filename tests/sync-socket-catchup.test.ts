@@ -569,6 +569,44 @@ describe("catchupViaSeqReplay", () => {
 		expect(engine.getCatchupSeq()).toBe(6);
 	});
 
+	test("replays from genesis when the cursor belongs to a DIFFERENT vault (OAuth swap)", async () => {
+		// seq is per-vault: a cursor from vault-old is meaningless in vault-new, so
+		// a stale high value must NOT suppress the new vault's catch-up (e2e test_48).
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCatchupSeq(500); // stale cursor from the previous vault
+		(engine as any).syncStateVaultId = "vault-old";
+		(engine as any).settings.vaultId = "vault-new";
+
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [op(2, "id-a", "Notes/a.md")], has_more: false, next_seq: null };
+		});
+
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0]); // genesis, NOT the stale 500
+	});
+
+	test("uses the persisted cursor when the vault matches", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCatchupSeq(42);
+		(engine as any).syncStateVaultId = "vault-x";
+		(engine as any).settings.vaultId = "vault-x";
+
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([42]);
+	});
+
 	test("no-op (never throws) when the socket fetcher is unwired", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();

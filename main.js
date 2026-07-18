@@ -19533,8 +19533,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materializes via applySyncChange. Never throws into the caller; a socket
    *  drop mid-replay is logged and resumed from the persisted cursor next join. */
   async catchupViaSeqReplay() {
+    var _a;
     if (!this.crdtCatchupSince || !this.crdt) return;
-    let cursor = this.getCatchupSeq();
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
       try {

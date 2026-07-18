@@ -3297,7 +3297,15 @@ export class SyncEngine {
 	 *  drop mid-replay is logged and resumed from the persisted cursor next join. */
 	async catchupViaSeqReplay(): Promise<void> {
 		if (!this.crdtCatchupSince || !this.crdt) return;
-		let cursor = this.getCatchupSeq();
+		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
+		// from one vault is meaningless in another. If our recorded per-vault
+		// state belongs to a DIFFERENT vault than the active one — an OAuth /
+		// account swap whose vault-change reset hasn't reconciled yet — a stale
+		// high cursor would suppress the new vault's catch-up entirely (e2e
+		// test_48). Replay that vault from genesis instead; applySyncChange is
+		// idempotent, so a redundant-from-0 replay is safe.
+		const activeVault = this.settings.vaultId ?? null;
+		let cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
 		for (let page = 0; page < 100_000; page++) {
