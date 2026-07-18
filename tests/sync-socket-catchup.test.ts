@@ -638,3 +638,92 @@ describe("catchupViaSeqReplay", () => {
 		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
 	});
 });
+
+// Phase C Step 1 — the single deterministic apply. `applyOp` is the seam BOTH
+// live fan-out and catch-up replay route through; `applySyncChange` becomes a
+// thin adapter that maps a merged-feed entry to an op. These tests pin applyOp's
+// OWN responsibilities (id learning on upsert, id retirement on delete, dispatch
+// to the shared applyChange core) — the deep converge/merge/resurrection logic
+// stays owned + tested by applyChange.
+describe("applyOp", () => {
+	test("upsert op learns the note id, confirms it, and dispatches an upsert to applyChange", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		const changes: any[] = [];
+		(engine as any).applyChange = mock(async (nc: any) => {
+			changes.push(nc);
+			return true;
+		});
+
+		const applied = await (engine as any).applyOp({
+			kind: "upsert",
+			id: "id-new",
+			path: "Notes/new.md",
+			title: "new",
+			content: "hello",
+			content_hash: "h1",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		});
+
+		expect(applied).toBe(true);
+		expect(map.pathForId("id-new")).toBe("Notes/new.md"); // id learned from the op
+		expect((engine as any).isNoteConfirmed("id-new")).toBe(true); // confirmed for CRDT routing
+		expect(changes).toHaveLength(1);
+		expect(changes[0]).toMatchObject({
+			path: "Notes/new.md",
+			content: "hello",
+			deleted: false,
+		});
+	});
+
+	test("delete op dispatches a tombstone to applyChange, then retires the id mapping", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const map = (engine as any).noteIdMap as NoteIdMap;
+		map.set("Notes/a.md", "id-a");
+		let mappedAtApply: string | null = "unset";
+		(engine as any).applyChange = mock(async (nc: any) => {
+			// The delete branch of applyChange needs the path->id mapping intact to
+			// classify the note as CRDT-managed — retirement is DEFERRED until after.
+			mappedAtApply = map.pathForId("id-a");
+			expect(nc.deleted).toBe(true);
+			return true;
+		});
+
+		await (engine as any).applyOp({
+			kind: "delete",
+			id: "id-a",
+			path: "Notes/a.md",
+			title: "a",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		});
+
+		expect(mappedAtApply).toBe("Notes/a.md"); // still mapped DURING applyChange
+		expect(map.pathForId("id-a")).toBeNull(); // retired AFTER
+	});
+
+	test("a null-path op (folder marker) is skipped quietly, never reaching applyChange", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const applyChange = mock(async () => true);
+		(engine as any).applyChange = applyChange;
+
+		const applied = await (engine as any).applyOp({
+			kind: "upsert",
+			id: "id-marker",
+			path: null,
+			title: "",
+			folder: "",
+			tags: [],
+			mtime: 1,
+			updated_at: "2026-01-01T00:00:00Z",
+		});
+
+		expect(applied).toBe(false);
+		expect(applyChange).not.toHaveBeenCalled();
+	});
+});
