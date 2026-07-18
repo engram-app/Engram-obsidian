@@ -186,6 +186,28 @@ export interface SyncNoteChange {
 	parse_reason?: ParseReason | null;
 }
 
+/** The single markdown-sync op shape (Phase C). BOTH the live fan-out and the
+ *  catch-up replay produce this; `applyOp` is the sole apply path for it.
+ *  `kind` replaces the wire `deleted` flag. `seq` is the per-vault monotonic
+ *  sequence (absent on live ops until Phase D wires it through). Attachments are
+ *  NOT ops — they stay on the content-addressed binary channel. */
+export interface SyncOp {
+	kind: "upsert" | "delete";
+	id: string;
+	path: string;
+	seq?: number;
+	title: string;
+	content?: string;
+	content_hash?: string;
+	folder: string;
+	tags: string[];
+	mtime: number;
+	updated_at: string;
+	version?: number;
+	parse_status?: "ok" | "degraded";
+	parse_reason?: ParseReason | null;
+}
+
 /** An attachment entry from GET /sync/changes — metadata only, no bytes. */
 export interface SyncAttachmentChange {
 	type: "attachment";

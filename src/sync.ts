@@ -46,6 +46,7 @@ import type {
 	SyncIssueCategory,
 	SyncLogEntry,
 	SyncNoteChange,
+	SyncOp,
 	SyncPlan,
 	SyncProgress,
 	SyncStatus,
@@ -4669,9 +4670,9 @@ export class SyncEngine {
 		}
 	}
 
-	/** Apply one merged cursor-feed entry by dispatching to the existing note /
-	 *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
-	 *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
+	/** Apply one merged cursor-feed entry. Attachments route to their own
+	 *  primitive; note entries are reshaped into a `SyncOp` and applied through
+	 *  the single `applyOp` path (Phase C). The feed's `type` is stripped. */
 	async applySyncChange(c: SyncChange): Promise<boolean> {
 		if (c.type === "attachment") {
 			const ac: AttachmentChange = {
@@ -4684,67 +4685,11 @@ export class SyncEngine {
 			};
 			return this.applyAttachmentChange(ac);
 		}
-		// Folder-marker rows leak into the /sync/changes feed with a null path
-		// (markers carry no path_ciphertext server-side). They are unappliable
-		// client-side and previously THREW inside applyChange's shouldIgnore
-		// (`null.startsWith`), landing an rlog error ("Skipped note null") on
-		// every pull. Skip them quietly.
-		if (!c.path) return false;
-		// note_id-keyed CRDT rework (Task 5): learn this note's stable id from the
-		// merged feed (the only pull path whose entries carry `id` — the legacy
-		// GET /notes/changes NoteChange shape does not). A tombstone clears the
-		// mapping instead of recording it: a note later recreated at the same
-		// path is a NEW note server-side and must mint a fresh id, not resurrect
-		// the deleted one's — mirrors the CRDT doc teardown-on-delete rationale
-		// elsewhere in this file (no ghost lineage across a delete). The clear is
-		// DEFERRED to after applyChange (below): its delete branch needs the
-		// path→id mapping to classify the note as CRDT-managed and tear its room
-		// down, so retiring the id here would blind it.
-		if (!c.deleted) {
-			// Id-keyed move: the server sends a note's stable id at a NEW path, but
-			// this device still holds that id at a DIFFERENT local path. A rename
-			// moves one row server-side (delete old + resurrect at new, same id), so
-			// the seq-ordered /sync/changes feed carries only the upsert at the new
-			// path — never a separate delete for the old one. Relocate the old file
-			// so it isn't orphaned as a duplicate (e2e test_10). See moveIfIdRelocated.
-			// eventTs (final review IMPORTANT-2): without this, a pull-applied
-			// relocation never recorded lastRelocationTs for the id, so a LATER
-			// stale/reordered WS broadcast carrying the pre-rename path found no
-			// timestamp to compare against and relocated backward (cross-channel
-			// ping-pong). c.updated_at is an ISO-8601 string (seconds precision on
-			// the wire); normalize to the same epoch-ms basis moveIfIdRelocated's
-			// WS callers already use (event.timestamp, epoch ms) via Date.parse.
-			// An unparseable value degrades to "no timestamp" (undefined) rather
-			// than NaN, which would poison every future comparison for this id
-			// (NaN is never < anything, so the guard would silently stop
-			// protecting it for the rest of the session).
-			const relocationTs = Date.parse(c.updated_at);
-			await this.moveIfIdRelocated(
-				c.id,
-				c.path,
-				Number.isNaN(relocationTs) ? undefined : relocationTs,
-			);
-			this.noteIdMap?.set(c.path, c.id);
-			// Learned from the server's own feed — it unquestionably has a note
-			// row for this id, so future edits may route through CRDT (see
-			// confirmedNoteIds doc comment). A tombstone deliberately does NOT
-			// un-confirm: the id itself is retired (a recreate mints a fresh one),
-			// so there's nothing to revoke.
-			this.confirmNoteId(c.id);
-			// A note degraded on ANOTHER device surfaces here too: the feed carries
-			// parse_status/parse_reason on the raw SyncNoteChange, but the NoteChange
-			// mapping below deliberately drops them (that shape is also fed by the
-			// legacy GET /notes/changes, which never had these fields). Read them off
-			// `c` before the mapping erases them. Deleted entries skip this (a
-			// tombstone has no parse status). Ignored paths skip it too: applyChange
-			// below drops them, so a Sync Center card for an ignored note would be
-			// misleading (review minor #5).
-			if (!this.shouldIgnore(c.path)) {
-				this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
-			}
-		}
-		const nc: NoteChange = {
+		return this.applyOp({
+			kind: c.deleted ? "delete" : "upsert",
+			id: c.id,
 			path: c.path,
+			seq: c.seq,
 			title: c.title,
 			content: c.content,
 			content_hash: c.content_hash,
@@ -4752,13 +4697,88 @@ export class SyncEngine {
 			tags: c.tags,
 			mtime: c.mtime,
 			updated_at: c.updated_at,
-			deleted: c.deleted,
 			version: c.version,
+			parse_status: c.parse_status,
+			parse_reason: c.parse_reason,
+		});
+	}
+
+	/** THE single deterministic apply for markdown sync (Phase C). Every op —
+	 *  live fan-out or catch-up replay — converges through here, dispatched by
+	 *  `kind`. Owns id learning/retirement and id-keyed relocation; delegates the
+	 *  materialize/merge/tombstone/resurrection logic to the shared `applyChange`
+	 *  core. Attachments are NOT ops (they stay on the binary channel). */
+	async applyOp(op: SyncOp): Promise<boolean> {
+		// Folder-marker rows leak into the op feed with a null path (markers carry
+		// no path_ciphertext server-side). They are unappliable client-side and
+		// previously THREW inside applyChange's shouldIgnore (`null.startsWith`),
+		// landing an rlog error ("Skipped note null"). Skip them quietly.
+		if (!op.path) return false;
+		// note_id-keyed CRDT rework: learn this note's stable id from the op. A
+		// tombstone clears the mapping instead of recording it: a note later
+		// recreated at the same path is a NEW note server-side and must mint a
+		// fresh id, not resurrect the deleted one's — mirrors the CRDT doc
+		// teardown-on-delete rationale elsewhere in this file (no ghost lineage
+		// across a delete). The clear is DEFERRED to after applyChange (below):
+		// its delete branch needs the path→id mapping to classify the note as
+		// CRDT-managed and tear its room down, so retiring the id here would blind it.
+		if (op.kind === "upsert") {
+			// Id-keyed move: the server sends a note's stable id at a NEW path, but
+			// this device still holds that id at a DIFFERENT local path. A rename
+			// moves one row server-side (delete old + resurrect at new, same id), so
+			// the seq-ordered op feed carries only the upsert at the new path — never
+			// a separate delete for the old one. Relocate the old file so it isn't
+			// orphaned as a duplicate (e2e test_10). See moveIfIdRelocated.
+			// eventTs (final review IMPORTANT-2): without this, a pull-applied
+			// relocation never recorded lastRelocationTs for the id, so a LATER
+			// stale/reordered WS broadcast carrying the pre-rename path found no
+			// timestamp to compare against and relocated backward (cross-channel
+			// ping-pong). op.updated_at is an ISO-8601 string (seconds precision on
+			// the wire); normalize to the same epoch-ms basis moveIfIdRelocated's
+			// WS callers already use (event.timestamp, epoch ms) via Date.parse.
+			// An unparseable value degrades to "no timestamp" (undefined) rather
+			// than NaN, which would poison every future comparison for this id
+			// (NaN is never < anything, so the guard would silently stop
+			// protecting it for the rest of the session).
+			const relocationTs = Date.parse(op.updated_at);
+			await this.moveIfIdRelocated(
+				op.id,
+				op.path,
+				Number.isNaN(relocationTs) ? undefined : relocationTs,
+			);
+			this.noteIdMap?.set(op.path, op.id);
+			// Learned from the server's own feed — it unquestionably has a note
+			// row for this id, so future edits may route through CRDT (see
+			// confirmedNoteIds doc comment). A tombstone deliberately does NOT
+			// un-confirm: the id itself is retired (a recreate mints a fresh one),
+			// so there's nothing to revoke.
+			this.confirmNoteId(op.id);
+			// A note degraded on ANOTHER device surfaces here too: read parse status
+			// off the op before the NoteChange mapping erases it (that shape is also
+			// fed by the legacy GET /notes/changes, which never had these fields).
+			// Deleted entries skip this (a tombstone has no parse status). Ignored
+			// paths skip it too: applyChange below drops them, so a Sync Center card
+			// for an ignored note would be misleading (review minor #5).
+			if (!this.shouldIgnore(op.path)) {
+				this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
+			}
+		}
+		const nc: NoteChange = {
+			path: op.path,
+			title: op.title,
+			content: op.content,
+			content_hash: op.content_hash,
+			folder: op.folder,
+			tags: op.tags,
+			mtime: op.mtime,
+			updated_at: op.updated_at,
+			deleted: op.kind === "delete",
+			version: op.version,
 		};
 		const applied = await this.applyChange(nc);
 		// Retire the id now that applyChange has consumed the mapping (see the
 		// deferral note above). Idempotent with applyChange's own md teardown.
-		if (c.deleted) this.noteIdMap?.delete(c.path);
+		if (op.kind === "delete") this.noteIdMap?.delete(op.path);
 		return applied;
 	}
 
