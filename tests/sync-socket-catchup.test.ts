@@ -9,7 +9,7 @@ import type { EngramApi } from "../src/api";
 import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
-import { DEFAULT_SETTINGS } from "../src/types";
+import { DEFAULT_SETTINGS, type SyncNoteChange } from "../src/types";
 
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
@@ -488,5 +488,89 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 		);
 
 		await expect(engine.discoverAnnouncedNote("id-x", "Notes/x.md")).resolves.toBeUndefined();
+	});
+});
+
+// Single-path convergence: replay the seq-ordered op-log over the socket. Each
+// op carries full content and is applied via applySyncChange (spied here), so a
+// reconnecting device gets every missed op IN ORDER — the deaf-note fix. The
+// applySyncChange internals are covered by sync.test.ts; these tests pin the
+// replay loop: order, cursor advance/persist, pagination, failure isolation.
+describe("catchupViaSeqReplay", () => {
+	function op(seq: number, id: string, path: string): SyncNoteChange {
+		return {
+			type: "note",
+			id,
+			seq,
+			path,
+			title: path.replace(/^.*\//, "").replace(/\.md$/, ""),
+			content: `c${seq}`,
+			folder: "",
+			tags: [],
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted: false,
+		};
+	}
+
+	test("applies each op in seq order and advances the persisted cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const applied: number[] = [];
+		(engine as any).applySyncChange = mock(async (c: any) => {
+			applied.push(c.seq);
+			return true;
+		});
+
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [op(5, "id-a", "Notes/a.md"), op(7, "id-b", "Notes/b.md")],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.catchupViaSeqReplay();
+
+		expect(applied).toEqual([5, 7]);
+		expect(engine.getCatchupSeq()).toBe(7);
+	});
+
+	test("paginates while has_more, resuming each page from next_seq", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		const cursorsSeen: number[] = [];
+		const pages = [
+			{ changes: [op(3, "id-a", "Notes/a.md")], has_more: true, next_seq: 3 },
+			{ changes: [op(9, "id-b", "Notes/b.md")], has_more: false, next_seq: null },
+		];
+		let i = 0;
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return pages[i++];
+		});
+
+		await engine.catchupViaSeqReplay();
+
+		expect(cursorsSeen).toEqual([0, 3]);
+		expect(engine.getCatchupSeq()).toBe(9);
+	});
+
+	test("a per-op apply failure is caught and the cursor still advances past it", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async (c: any) => {
+			if (c.seq === 5) throw new Error("illegal filename");
+			return true;
+		});
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [op(5, "id-a", "Notes/a.md"), op(6, "id-b", "Notes/b.md")],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
+		expect(engine.getCatchupSeq()).toBe(6);
+	});
+
+	test("no-op (never throws) when the socket fetcher is unwired", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
 	});
 });

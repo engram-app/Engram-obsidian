@@ -45,6 +45,7 @@ import type {
 	SyncChangesResponse,
 	SyncIssueCategory,
 	SyncLogEntry,
+	SyncNoteChange,
 	SyncPlan,
 	SyncProgress,
 	SyncStatus,
@@ -1487,6 +1488,7 @@ export class SyncEngine {
 		private saveData: (data: {
 			lastSync?: string;
 			syncCursor?: string | null;
+			catchupSeq?: number;
 			// Signals the engine mutated the shared noteIdMap and it should be
 			// persisted. main.ts's savePluginData writes the map instance directly
 			// (same object), so the callback need not read this — it just triggers
@@ -1563,6 +1565,20 @@ export class SyncEngine {
 		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
 	}
 
+	/** Highest vault `seq` this device has replayed via the socket op-log catch-up
+	 *  (`catchupViaSeqReplay`). Persisted under `catchupSeq`; a reconnect resumes
+	 *  from here so only ops written while we were away are replayed. 0 = replay
+	 *  from genesis (first-ever connect / after a state wipe). */
+	private catchupSeq = 0;
+
+	getCatchupSeq(): number {
+		return this.catchupSeq;
+	}
+
+	setCatchupSeq(seq: number): void {
+		this.catchupSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
+	}
+
 	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
 	 *  (explicit picker `resetForVaultChange`, backstop
 	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
@@ -1572,8 +1588,10 @@ export class SyncEngine {
 		this.lastSync = "";
 		// The cursor marks a position in the OLD vault's ordered feed — drop it so
 		// the next sync re-bootstraps against the new vault (else a genesis pull
-		// would resume from a foreign vault's seq).
+		// would resume from a foreign vault's seq). Same reasoning for the socket
+		// op-log replay cursor: 0 → replay the new vault from genesis.
 		this.syncCursor = null;
+		this.catchupSeq = 0;
 		// The note-id map and confirmed set are per-vault identity state.
 		// Carrying them across vaults keys CRDT frames/rooms by another
 		// vault's note ids — the cross-vault flavor of the 2026-07-07
@@ -3247,6 +3265,66 @@ export class SyncEngine {
 	): void {
 		this.crdtCatchupHeads = heads;
 		this.crdtCatchupDelta = delta;
+	}
+
+	private crdtCatchupSince:
+		| ((
+				cursorSeq: number,
+				limit?: number,
+		  ) => Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }>)
+		| null = null;
+
+	setCrdtCatchupSince(
+		fn: (
+			cursorSeq: number,
+			limit?: number,
+		) => Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }>,
+	): void {
+		this.crdtCatchupSince = fn;
+	}
+
+	/** Single-path convergence on (re)connect: replay the seq-ordered op-log over
+	 *  the socket from our persisted cursor. Each op carries FULL content and is
+	 *  applied through the SAME `applySyncChange` the REST pull used — so a
+	 *  reconnecting device gets every op it missed, IN ORDER, causally complete.
+	 *
+	 *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
+	 *  mechanism: that delta could hand Yjs a causally-incomplete update, which
+	 *  pends while the device advances its head anyway (faked convergence → deaf
+	 *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+	 *  feed: a note another device created while we were away arrives as an op and
+	 *  materializes via applySyncChange. Never throws into the caller; a socket
+	 *  drop mid-replay is logged and resumed from the persisted cursor next join. */
+	async catchupViaSeqReplay(): Promise<void> {
+		if (!this.crdtCatchupSince || !this.crdt) return;
+		let cursor = this.getCatchupSeq();
+		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
+		// are idempotent, so persisting the cursor per page is at-least-once safe.
+		for (let page = 0; page < 100_000; page++) {
+			let resp: { changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null };
+			try {
+				resp = await this.crdtCatchupSince(cursor, 500);
+			} catch (e) {
+				rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
+				return;
+			}
+			for (const c of resp.changes) {
+				try {
+					await this.applySyncChange(c);
+				} catch (e) {
+					// One bad op (e.g. illegal filename) must not wedge the feed — log
+					// and skip, same isolation as pullViaCursor.
+					rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+				}
+				// Advance past every op we've SEEN (applied or skipped) so the cursor
+				// is monotonic and a permanently-unappliable op can't stall the feed.
+				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
+			}
+			this.setCatchupSeq(cursor);
+			await this.saveData({ catchupSeq: this.getCatchupSeq() });
+			if (!resp.has_more) break;
+			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
+		}
 	}
 
 	async catchupViaSocket(): Promise<void> {

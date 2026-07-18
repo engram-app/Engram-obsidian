@@ -103,7 +103,11 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			getStatus: () => "idle",
 			clearConfirmedNoteIds: () => {},
 			reconcileNoteIdMapFromManifest: opts?.reconcile ?? (() => Promise.resolve(0)),
-			catchupViaSocket: catchup,
+			// Reconnect convergence now replays the seq-ordered op-log over the
+			// socket (catchupViaSeqReplay). catchupViaSocket survives only for the
+			// on-open heal, which connectChannel does not exercise.
+			catchupViaSocket: () => Promise.resolve(),
+			catchupViaSeqReplay: catchup,
 			pull,
 			handleStreamEvent: () => Promise.resolve(),
 			isUnchangedSynced: () => false,
@@ -114,6 +118,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			setCrdtDelete: () => {},
 			setCrdtEnqueue: () => {},
 			setCrdtCatchup: () => {},
+			setCrdtCatchupSince: () => {},
 			setCrdtEnrollment: () => {},
 			setLiveBoundCheck: () => {},
 			setCrdtManager: () => {},
@@ -163,7 +168,7 @@ describe("connectChannel reconnect catch-up", () => {
 		expect(catchup).toHaveBeenCalledTimes(1);
 	});
 
-	test("on crdt join the engine runs socket catchup, not REST pull", async () => {
+	test("on crdt join the engine runs socket seq-replay, not REST pull", async () => {
 		const catchup = mock(() => Promise.resolve());
 		const pull = mock(() => Promise.resolve(0));
 		const fakeThis = makeFakeThis(catchup, pull);

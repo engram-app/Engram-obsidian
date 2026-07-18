@@ -13842,6 +13842,14 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   async crdtCatchupDelta(docId, sv) {
     return await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv });
   }
+  /** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
+   *  carries FULL content (a SyncNoteChange), so it is causally complete and
+   *  can never pend the way a state-vector delta can — this is what a
+   *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
+  async crdtCatchupSince(cursorSeq, limit) {
+    let payload = { cursor_seq: cursorSeq };
+    return limit !== void 0 && (payload.limit = limit), await this.sendRequest("crdt_catchup_since", payload);
+  }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
@@ -18036,6 +18044,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  skipped" notice in this plugin session. Re-armed only when the engine
      *  is destroyed/reloaded so the user isn't nagged on every fullSync. */
     this.attachmentLimitToastShown = !1;
+    /** Highest vault `seq` this device has replayed via the socket op-log catch-up
+     *  (`catchupViaSeqReplay`). Persisted under `catchupSeq`; a reconnect resumes
+     *  from here so only ops written while we were away are replayed. 0 = replay
+     *  from genesis (first-ever connect / after a state wipe). */
+    this.catchupSeq = 0;
     /** When true, vault delete events are suppressed (used during local wipe). */
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
@@ -18050,6 +18063,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  no-op. */
     this.crdtCatchupHeads = null;
     this.crdtCatchupDelta = null;
+    this.crdtCatchupSince = null;
     /** Ceiling on how long an edit may sit in pendingPostPullPushes while a
      *  pull runs (issue #244): a long post-swap pull chain — or a pull wedged
      *  on a half-open connection — kept `pulling` true for 60s+, and deferred
@@ -18700,13 +18714,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setSyncCursor(cursor) {
     this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
   }
+  getCatchupSeq() {
+    return this.catchupSeq;
+  }
+  setCatchupSeq(seq3) {
+    this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
+  }
   /** Wipe ALL per-vault sync + identity state. Both vault-change paths
    *  (explicit picker `resetForVaultChange`, backstop
    *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null });
+    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.catchupSeq = 0, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19496,6 +19516,44 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtCatchup(heads, delta) {
     this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
+  }
+  setCrdtCatchupSince(fn) {
+    this.crdtCatchupSince = fn;
+  }
+  /** Single-path convergence on (re)connect: replay the seq-ordered op-log over
+   *  the socket from our persisted cursor. Each op carries FULL content and is
+   *  applied through the SAME `applySyncChange` the REST pull used — so a
+   *  reconnecting device gets every op it missed, IN ORDER, causally complete.
+   *
+   *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
+   *  mechanism: that delta could hand Yjs a causally-incomplete update, which
+   *  pends while the device advances its head anyway (faked convergence → deaf
+   *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+   *  feed: a note another device created while we were away arrives as an op and
+   *  materializes via applySyncChange. Never throws into the caller; a socket
+   *  drop mid-replay is logged and resumed from the persisted cursor next join. */
+  async catchupViaSeqReplay() {
+    if (!this.crdtCatchupSince || !this.crdt) return;
+    let cursor = this.getCatchupSeq();
+    for (let page = 0; page < 1e5; page++) {
+      let resp;
+      try {
+        resp = await this.crdtCatchupSince(cursor, 500);
+      } catch (e) {
+        rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`);
+        return;
+      }
+      for (let c of resp.changes) {
+        try {
+          await this.applySyncChange(c);
+        } catch (e) {
+          rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
+        }
+        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq);
+      }
+      if (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() }), !resp.has_more) break;
+      typeof resp.next_seq == "number" && (cursor = resp.next_seq);
+    }
   }
   async catchupViaSocket() {
     var _a;
@@ -23202,7 +23260,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
@@ -23269,7 +23327,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }
     );
     let saved = await this.loadPluginData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -23492,7 +23550,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
         if (gateOpen)
           try {
-            (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSocket();
+            (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSeqReplay();
             let pushed = await this.syncEngine.pushModifiedFiles();
             pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
@@ -23635,6 +23693,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // Top-level cursor; like deviceId it must be re-listed here or the
       // next wholesale saveData() wipes it. null → omit (cursor cleared).
       syncCursor: (_b = this.syncEngine.getSyncCursor()) != null ? _b : void 0,
+      // Socket op-log replay cursor (seq). Re-listed for the same
+      // wholesale-save reason; 0 = replay from genesis.
+      catchupSeq: this.syncEngine.getCatchupSeq(),
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
@@ -23789,9 +23850,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     }
     (_a = this.crdtEnrollment) == null || _a.resetAll(), (_b = this.crdtWiring) == null || _b.clearStrandHealAttempts(), this.reEnrollOpenCrdtNotes();
     try {
-      await this.syncEngine.catchupViaSocket();
+      await this.syncEngine.catchupViaSeqReplay();
     } catch (e) {
-      rlog().warn("crdt", `socket catchup on reconnect failed: ${errMsg(e)}`);
+      rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
     }
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -23847,6 +23908,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchup(
         () => channel.crdtCatchupHeads(),
         (id2, sv) => channel.crdtCatchupDelta(id2, sv)
+      ), this.syncEngine.setCrdtCatchupSince(
+        (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
       ), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {

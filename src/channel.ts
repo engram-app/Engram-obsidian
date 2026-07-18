@@ -97,7 +97,7 @@ const LARGE_FRAME_WARN_BYTES = 1_000_000;
  *
  * Protocol: messages are JSON arrays [join_ref, ref, topic, event, payload]
  */
-import type { NoteStreamEvent } from "./types";
+import type { NoteStreamEvent, SyncNoteChange } from "./types";
 
 export class NoteChannel {
 	private ws: WebSocket | null = null;
@@ -396,6 +396,23 @@ export class NoteChannel {
 			doc_id: string;
 			b64: string;
 			head: string;
+		};
+	}
+
+	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
+	 *  carries FULL content (a SyncNoteChange), so it is causally complete and
+	 *  can never pend the way a state-vector delta can — this is what a
+	 *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
+	async crdtCatchupSince(
+		cursorSeq: number,
+		limit?: number,
+	): Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }> {
+		const payload: { cursor_seq: number; limit?: number } = { cursor_seq: cursorSeq };
+		if (limit !== undefined) payload.limit = limit;
+		return (await this.sendRequest("crdt_catchup_since", payload)) as {
+			changes: SyncNoteChange[];
+			has_more: boolean;
+			next_seq: number | null;
 		};
 	}
 

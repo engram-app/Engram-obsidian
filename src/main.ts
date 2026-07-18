@@ -107,6 +107,7 @@ interface PluginData {
 	 *  ordered sync feed (PR B2 cursor pull). Separate from `lastSync`, which is
 	 *  retained for rollback. Omitted when no cursor has been established yet. */
 	syncCursor?: string;
+	catchupSeq?: number;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -396,6 +397,9 @@ export default class EngramSyncPlugin extends Plugin {
 				// null clears the cursor (persisted as undefined/omitted).
 				this.syncEngine.setSyncCursor(data.syncCursor);
 			}
+			if (data.catchupSeq !== undefined) {
+				this.syncEngine.setCatchupSeq(data.catchupSeq);
+			}
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
@@ -535,6 +539,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.syncCursor) {
 			this.syncEngine.setSyncCursor(saved.syncCursor);
+		}
+		if (saved?.catchupSeq !== undefined) {
+			this.syncEngine.setCatchupSeq(saved.catchupSeq);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -982,7 +989,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// join has not landed yet onCrdtTopicJoined (channel.onCrdtJoined)
 					// runs the catch-up when it fires, so skipping here is safe.
 					if (this.noteStream?.isCrdtConnected()) {
-						await this.syncEngine.catchupViaSocket();
+						await this.syncEngine.catchupViaSeqReplay();
 					}
 					// ponytail: not sequenced after the crdtOpQueue flush (that flush is
 					// driven by the independent onCrdtJoined event; coordinating the two
@@ -1282,6 +1289,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Top-level cursor; like deviceId it must be re-listed here or the
 			// next wholesale saveData() wipes it. null → omit (cursor cleared).
 			syncCursor: this.syncEngine.getSyncCursor() ?? undefined,
+			// Socket op-log replay cursor (seq). Re-listed for the same
+			// wholesale-save reason; 0 = replay from genesis.
+			catchupSeq: this.syncEngine.getCatchupSeq(),
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.
@@ -1631,14 +1641,17 @@ export default class EngramSyncPlugin extends Plugin {
 		// counter left over from before the drift was fixed.
 		this.crdtWiring?.clearStrandHealAttempts();
 		this.reEnrollOpenCrdtNotes();
-		// Sole convergence path on (re)connect: already-known notes' diverged heads
-		// AND notes another device created during the disconnect, discovered via the
-		// head map (which carries the server-authoritative path). Never throws into
-		// the caller; a socket-drop mid-fetch is logged and left for the next join.
+		// Sole convergence path on (re)connect: replay the seq-ordered op-log from
+		// our persisted cursor. Every op missed while away is delivered IN ORDER
+		// with FULL content, so it can't pend the way the old state-vector delta
+		// could (deaf-note, e2e test_85). Discovery rides the same feed: a note
+		// another device created during the disconnect arrives as an op and
+		// materializes. Never throws into the caller; a socket-drop mid-replay is
+		// logged and resumed from the persisted cursor on the next join.
 		try {
-			await this.syncEngine.catchupViaSocket();
+			await this.syncEngine.catchupViaSeqReplay();
 		} catch (e) {
-			rlog().warn("crdt", `socket catchup on reconnect failed: ${errMsg(e)}`);
+			rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
 		}
 	}
 
@@ -1807,6 +1820,10 @@ export default class EngramSyncPlugin extends Plugin {
 				this.syncEngine.setCrdtCatchup(
 					() => channel.crdtCatchupHeads(),
 					(id, sv) => channel.crdtCatchupDelta(id, sv),
+				);
+				// Single-path convergence: seq-ordered op-log replayed over the socket.
+				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) =>
+					channel.crdtCatchupSince(cursorSeq, limit),
 				);
 
 				// Wire CRDT transport through this channel.
