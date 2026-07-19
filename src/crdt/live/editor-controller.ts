@@ -81,6 +81,16 @@ export class EditorController {
 		const epoch = ++this.bindEpoch;
 		const ytext = await this.deps.getYText(path);
 		if (this.released || epoch !== this.bindEpoch) return;
+		// View-identity guard (mirrors runDriftCheck's, at bind time). The await
+		// above — and, for a DEFERRED bind, the unbounded wait for the server seed
+		// (deferUntilSeeded → onSeed rebind, fired on a network event long after
+		// this call) — can span an Obsidian file switch that reused this editor for
+		// a DIFFERENT path. Binding/reconciling to `path` now would paint the old
+		// note's content into the visible new file and bind ySync across a file
+		// boundary (the 2026-07-07 cross-file pollution class). Never bind a view
+		// that no longer shows `path`; refresh() will bind whatever it now shows.
+		const shown = this.deps.viewPath?.();
+		if (shown !== undefined && shown !== path) return;
 		// Data-loss guard (deaf live-bound base loss, test_live_bound_both_ends):
 		// materialize writes base to DISK but leaves the Y.Doc EMPTY on purpose —
 		// the adopt-first gate has the server seed it on its OWN lineage (STEP2 /
@@ -92,6 +102,10 @@ export class EditorController {
 		// Defer the bind until the doc is seeded, then rebind (reconcile is then a
 		// no-op). Disk still converges meanwhile via the manager's remote-merge
 		// flush listener, independent of this editor binding.
+		// `editorText` is body-aligned with `ytext` (the reconcile below compares
+		// them directly), so a frontmatter-only note has an empty editor body here
+		// and does NOT defer — the guard only fires when a real base body is on
+		// disk while the doc is still unseeded.
 		const editorText = view.state.doc.toString();
 		if (ytext.length === 0 && editorText.length > 0) {
 			this.deferUntilSeeded(view, path, ytext, epoch);
@@ -118,6 +132,12 @@ export class EditorController {
 	 *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
 	private deferUntilSeeded(view: EditorView, path: string, ytext: Y.Text, epoch: number): void {
 		const onSeed = () => {
+			// Rebind on the FIRST non-empty state. Safe because a history-less doc
+			// adopts the server's FULL state atomically (one STEP2 transaction), so
+			// the first non-empty observation is already the complete base — the
+			// rebind's reconcile is a no-op, never a base-truncating delete. If a
+			// partial-first-update path to an unseeded doc were ever added, gate
+			// this on the seed covering the editor's length instead.
 			if (ytext.length === 0) return; // still unseeded — keep waiting
 			this.unhookPendingSeed();
 			// A newer bindTo or a release() supersedes this deferred bind.

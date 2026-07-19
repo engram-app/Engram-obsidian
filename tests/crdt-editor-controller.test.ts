@@ -336,6 +336,40 @@ describe("EditorController", () => {
 		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(false); // never bound
 	});
 
+	it("deferred rebind is aborted when the view swapped to another file (no cross-file pollution)", async () => {
+		// The defer window is unbounded (a network seed can land seconds later),
+		// so by the time onSeed fires Obsidian may have reused this editor for a
+		// DIFFERENT file. Rebinding to the original path then would paint its
+		// content into the visible new file and bind ySync across a file boundary
+		// (2026-07-07 pollution). The view-identity guard must abort that rebind.
+		const d = new Y.Doc();
+		const t = d.getText("content"); // EMPTY — unseeded → defers
+		const calls: string[] = [];
+		const dispatches: unknown[] = [];
+		let shown: string | null = "a.md";
+		const c = new EditorController({
+			getYText: async () => t,
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+			viewPath: () => shown,
+		});
+		const v = {
+			dispatch: mock((spec: unknown) => dispatches.push(spec)),
+			state: { doc: { toString: () => "# Base\nbase line.\n" } },
+		} as any;
+		await c.bindTo(v, "a.md");
+		expect(c.currentPath()).toBe(null); // deferred on a.md
+		// Obsidian swapped this editor to b.md; THEN a.md's seed lands.
+		shown = "b.md";
+		t.insert(0, "# Base\nbase line.\n");
+		await new Promise((r) => setTimeout(r, 5));
+		// The rebind must NOT bind a.md into the b.md view, and must not dispatch.
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(false);
+		expect(c.currentPath()).toBe(null);
+		expect(dispatches.length).toBe(0);
+	});
+
 	it("already-seeded doc: binds immediately (no defer) even under a non-empty editor", async () => {
 		// The guard must ONLY defer the unseeded case. A seeded doc binds normally
 		// so a genuine "user emptied the note" edit (a live edit AFTER bind on a
