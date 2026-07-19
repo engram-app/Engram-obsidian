@@ -1,7 +1,11 @@
 /**
- * Tests: Plan B1 Task 5 — socket vault-catchup (`catchupViaSocket`), the
- * socket twin of the REST `coldReceive`. Mirrors the mock-engine pattern
- * from tests/sync-cold-receive.test.ts.
+ * Tests: single-path convergence — announce-driven discovery
+ * (`discoverAnnouncedNote`) and the seq-ordered op-log replay
+ * (`catchupViaSeqReplay`, crdt_catchup_since). The retired `crdt_catchup_delta`
+ * socket path and its `catchupViaSocket`/`convergeNoteFromDelta` machinery were
+ * deleted (their bad_frame reply against the single-path backend caused a
+ * 0-byte materialize). Mirrors the mock-engine pattern from
+ * tests/sync-cold-receive.test.ts.
  */
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -88,314 +92,12 @@ function makeEngineWithCrdt(crdt: Partial<CrdtManager>): SyncEngine {
 	map.set("Notes/a.md", "id-a");
 	map.set("Notes/b.md", "id-b");
 	e.setNoteIdMap(map);
-	// No confirmed-set seeding: convergeNoteFromDelta is the sole convergence
-	// path and no longer gates on isNoteConfirmed — a note in the server head
-	// map is server-known by definition. This is exactly the reconnect
-	// catch-up the confirmed gate used to break (a reconnect cleared the set).
+	// No confirmed-set seeding: the seq-replay op-log is the sole convergence
+	// path and does not gate on isNoteConfirmed — an op in the feed is
+	// server-known by definition. This is exactly the reconnect catch-up the
+	// confirmed gate used to break (a reconnect cleared the set).
 	return e;
 }
-
-describe("catchupViaSocket", () => {
-	test("pulls deltas only for diverged notes", async () => {
-		const applied: string[] = [];
-		const crdt = {
-			applyRemoteUpdate: (id: string, _update: Uint8Array) => {
-				applied.push(id);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as any).setCrdtHead("Notes/a.md", "same"); // converged
-		(engine as any).setCrdtHead("Notes/b.md", "old"); // diverged
-
-		engine.setCrdtCatchup(
-			async () => ({
-				heads: {
-					"id-a": { path: "Notes/a.md", head: "same" },
-					"id-b": { path: "Notes/b.md", head: "new" },
-				},
-			}),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(applied).toEqual(["id-b"]); // only the diverged note
-		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("new");
-		expect((engine as any).getCrdtHead("Notes/a.md")).toBe("same"); // untouched
-	});
-
-	test("a per-note failure is caught, logged, and skipped — never throws", async () => {
-		const crdt = {
-			applyRemoteUpdate: (_id: string, _update: Uint8Array) => Promise.resolve(),
-			encodeStateVector: (_id: string) => Promise.reject(new Error("boom")),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-
-		engine.setCrdtCatchup(
-			async () => ({
-				heads: {
-					"id-a": { path: "Notes/a.md", head: "new" },
-					"id-b": { path: "Notes/b.md", head: "new" },
-				},
-			}),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
-		);
-
-		await expect(engine.catchupViaSocket()).resolves.toBeUndefined();
-		// Failed note's head is left unadvanced — retried next catch-up.
-		expect((engine as any).getCrdtHead("Notes/a.md")).toBeUndefined();
-	});
-
-	test("a whole-vault heads-fetch failure is caught — never throws into the caller", async () => {
-		const crdt = {
-			applyRemoteUpdate: (_id: string, _update: Uint8Array) => Promise.resolve(),
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		engine.setCrdtCatchup(
-			async () => {
-				throw new Error("socket down");
-			},
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
-		);
-		// Must resolve (matching coldReceive), not reject — honors the never-throw contract.
-		await expect(engine.catchupViaSocket()).resolves.toBeUndefined();
-	});
-
-	test("captures disk drift BEFORE applying the socket delta (#3 — un-pushed local edit not clobbered)", async () => {
-		// The socket path now routes through the shared guarded apply, so an
-		// un-pushed disk edit is merged into the Y.Doc before the remote delta
-		// (captureDiskDriftBeforeRemote) instead of being overwritten.
-		const order: string[] = [];
-		const crdt = {
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => {
-				order.push("apply");
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as any).setCrdtHead("Notes/b.md", "old");
-		(engine as any).captureDiskDriftBeforeRemote = async () => {
-			order.push("capture");
-		};
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(order).toEqual(["capture", "apply"]); // drift captured before the delta apply
-	});
-
-	test("a history-less note is adopted, not seeded+delta-applied (#234 — no content doubling)", async () => {
-		const applied: string[] = [];
-		let captured = false;
-		let adopted = false;
-		const crdt = {
-			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
-				applied.push(id);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-			hasHistory: (_id: string) => Promise.resolve(false), // never in IDB
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as any).setCrdtHead("Notes/b.md", "old");
-		(engine as any).captureDiskDriftBeforeRemote = async () => {
-			captured = true;
-		};
-		(engine as any).adoptHistoryLessNote = async (_p: string, _id: string) => {
-			adopted = true;
-			return "new";
-		};
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "new" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(adopted).toBe(true); // routed through adoptHistoryLessNote
-		expect(applied).toEqual([]); // bare delta NOT applied over a history-less doc
-		expect(captured).toBe(false); // and NOT seeded with disk drift (would double)
-		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("new");
-	});
-
-	test("a pending gap re-fetches and leaves the head unadvanced while still gapped", async () => {
-		let deltaCalls = 0;
-		const crdt = {
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-			hasPendingGap: (_id: string) => Promise.resolve(true), // never heals
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as any).setCrdtHead("Notes/b.md", "old");
-		(engine as any).captureDiskDriftBeforeRemote = async () => {};
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-b": { path: "Notes/b.md", head: "new" } } }),
-			async (docId: string) => {
-				deltaCalls++;
-				return { doc_id: docId, b64: "AAE=", head: "new" };
-			},
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(deltaCalls).toBe(2); // initial delta + gap-heal re-fetch
-		expect((engine as any).getCrdtHead("Notes/b.md")).toBe("old"); // still gapped → NOT advanced
-	});
-
-	test("first-discovery: a head-map entry for an UNKNOWN id materializes the note at its path", async () => {
-		// The head map is the sole discovery source now that REST receive is gone.
-		// An id not in the noteIdMap must be learned from the entry's path and
-		// converged (flushFromCrdt creates the missing file).
-		const applied: string[] = [];
-		const crdt = {
-			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
-				applied.push(id);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		const map = (engine as any).noteIdMap as NoteIdMap;
-
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-new": { path: "Notes/new.md", head: "h1" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		// The unknown id was learned from the head-map path and converged.
-		expect(map.pathForId("id-new")).toBe("Notes/new.md");
-		expect(applied).toEqual(["id-new"]);
-		expect((engine as any).getCrdtHead("Notes/new.md")).toBe("h1");
-	});
-
-	test("first-discovery history-less note materializes the FILE from the socket delta (no REST getUpdates)", async () => {
-		// A note created on ANOTHER device while this one was offline: present in
-		// the head map, absent locally (no id->path mapping, no file, empty Y.Doc =
-		// history-less). Catch-up must materialize it from the SOCKET delta, never
-		// fall back to REST getUpdates (dropped in the CRDT-authoritative rewire).
-		const getUpdates = mock().mockRejectedValue(
-			new Error("REST getUpdates must not be called on the socket catch-up path"),
-		);
-		const ref: { engine?: SyncEngine } = {};
-		const crdt = {
-			hasHistory: (_id: string) => Promise.resolve(false), // never in IDB — first-discovery
-			// Simulate the manager's onFlushToDisk wiring: a remote apply flushes the
-			// projected server content to disk (createFileWithFolders for a new note).
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) =>
-				ref.engine!.flushFromCrdt("Notes/new.md", "server body").then(() => undefined),
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		ref.engine = engine;
-		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
-		mockApp.vault.create.mockClear();
-
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-new": { path: "Notes/new.md", head: "h1" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
-		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/new.md", "server body");
-		expect((engine as any).getCrdtHead("Notes/new.md")).toBe("h1");
-	});
-
-	test("does NOT resurrect a note with a pending local delete not yet synced (minimal Task C guard)", async () => {
-		const applied: string[] = [];
-		const crdt = {
-			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
-				applied.push(id);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		// handleDelete's offline path: the note's mapping is gone and a delete is
-		// queued but not yet synced; the server still lists it in the head map.
-		await (engine as any).queue.enqueue({
-			path: "Notes/gone.md",
-			action: "delete",
-			kind: "note",
-			timestamp: Date.now(),
-		});
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-gone": { path: "Notes/gone.md", head: "h1" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(applied).toEqual([]); // NOT resurrected
-		expect((engine as any).noteIdMap.pathForId("id-gone")).toBeNull(); // not learned/mapped
-	});
-
-	test("no-op when catchup deps or crdt manager are unset", async () => {
-		const e = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setReady();
-		await expect(e.catchupViaSocket()).resolves.toBeUndefined();
-	});
-
-	// FIX 2 (e2e test_27 — empty note never materializes).
-	test("first-discovery of an EMPTY note materializes an empty file (test_27)", async () => {
-		// An empty note created on another device while this one was offline:
-		// present in the head map, absent locally (history-less). Its Y.Doc holds
-		// NO content, so applying the full server state integrates ZERO ops —
-		// unlike the non-empty case above, the manager's remote-update listener
-		// never fires and NO onFlushToDisk/flushFromCrdt runs. The adopt path's
-		// materialize backstop must still create the file: an empty markdown file
-		// is valid content, not "nothing to do".
-		const getUpdates = mock().mockRejectedValue(
-			new Error("REST getUpdates must not be called on the socket catch-up path"),
-		);
-		const crdt = {
-			hasHistory: (_id: string) => Promise.resolve(false), // history-less first-discovery
-			// Empty note: the full-state apply is a no-op, so (deliberately, unlike
-			// the non-empty first-discovery test) this triggers NO disk flush.
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
-			projectedText: (_id: string) => Promise.resolve(""), // empty projected body
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
-		mockApp.vault.create.mockClear();
-
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-empty": { path: "Notes/EmptyNote.md", head: "h1" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
-		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/EmptyNote.md", "");
-		expect((engine as any).getCrdtHead("Notes/EmptyNote.md")).toBe("h1");
-	});
-});
 
 describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty-note discovery)", () => {
 	// An empty note's genesis emits crdt_doc_ready with a path but ZERO Y.Doc ops,
@@ -404,49 +106,13 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 	// waiting ~30s for the level-triggered pull (the note landed at +31s in
 	// test_27, 1s past the deadline). It targets ONE note — never the whole-vault
 	// heads fetch — and is socket-native (no REST getUpdates).
-	test("materializes an empty file from the announce path alone (test_27)", async () => {
-		const getUpdates = mock().mockRejectedValue(
-			new Error("REST getUpdates must not be called on the socket discovery path"),
-		);
-		const crdt = {
-			hasHistory: (_id: string) => Promise.resolve(false), // history-less first-discovery
-			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(), // empty → no flush
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
-			projectedText: (_id: string) => Promise.resolve(""), // empty projected body
-			closeDoc: () => {},
-		};
-		const engine = makeEngineWithCrdt(crdt);
-		(engine as unknown as { api: { getUpdates: unknown } }).api.getUpdates = getUpdates;
-		mockApp.vault.create.mockClear();
-
-		// Only the delta channel matters — discovery targets one announced note.
-		let headsFetched = false;
-		engine.setCrdtCatchup(
-			async () => {
-				headsFetched = true;
-				return { heads: {} };
-			},
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
-
-		await engine.discoverAnnouncedNote("id-empty", "Notes/EmptyNote.md");
-
-		expect(headsFetched).toBe(false); // per-note, NOT a whole-vault heads fetch
-		expect(getUpdates).not.toHaveBeenCalled(); // socket-native, no REST fallback
-		expect(mockApp.vault.create).toHaveBeenCalledWith("Notes/EmptyNote.md", "");
-		// The id->path mapping was learned and the head recorded.
-		expect((engine as any).noteIdMap.pathForId("id-empty")).toBe("Notes/EmptyNote.md");
-		expect((engine as any).getCrdtHead("Notes/EmptyNote.md")).toBe("h1");
-	});
-
-	test("does NOT resurrect a note with a pending local delete", async () => {
-		const applied: string[] = [];
+	test("does NOT replay for a note with a pending local delete (no resurrection)", async () => {
+		// The announce for a note THIS device is deleting must not trigger a
+		// catch-up that re-materializes it — discoverAnnouncedNote returns before
+		// the seq-replay for a recentlyDeleted / queued-delete note.
 		const crdt = {
 			hasHistory: (_id: string) => Promise.resolve(false),
-			applyRemoteUpdate: (id: string, _u: Uint8Array) => {
-				applied.push(id);
-				return Promise.resolve();
-			},
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
 			projectedText: (_id: string) => Promise.resolve(""),
 			closeDoc: () => {},
@@ -459,14 +125,41 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 			timestamp: Date.now(),
 		});
 		mockApp.vault.create.mockClear();
-		engine.setCrdtCatchup(
-			async () => ({ heads: {} }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h1" }),
-		);
+		let replayed = false;
+		engine.setCrdtCatchupSince(async () => {
+			replayed = true;
+			return { changes: [], has_more: false, next_seq: null };
+		});
 
 		await engine.discoverAnnouncedNote("id-gone", "Notes/gone.md");
 
-		expect(applied).toEqual([]); // not resurrected
+		expect(replayed).toBe(false); // early-returned; no catch-up ran
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("does NOT replay for a note in the recentlyDeleted window (delete-wins #970)", async () => {
+		// The sibling of the queued-delete guard: a delete already SENT (dequeued)
+		// still holds recentlyDeleted for RECENT_DELETE_COOLDOWN_MS — an announce
+		// for that id in the window must not trigger a catch-up that resurrects it.
+		const crdt = {
+			hasHistory: (_id: string) => Promise.resolve(false),
+			applyRemoteUpdate: (_id: string, _u: Uint8Array) => Promise.resolve(),
+			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([0])),
+			projectedText: (_id: string) => Promise.resolve(""),
+			closeDoc: () => {},
+		};
+		const engine = makeEngineWithCrdt(crdt);
+		(engine as any).recentlyDeleted.set("id-gone", Date.now());
+		mockApp.vault.create.mockClear();
+		let replayed = false;
+		engine.setCrdtCatchupSince(async () => {
+			replayed = true;
+			return { changes: [], has_more: false, next_seq: null };
+		});
+
+		await engine.discoverAnnouncedNote("id-gone", "Notes/gone.md");
+
+		expect(replayed).toBe(false); // early-returned; no catch-up ran
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
@@ -479,14 +172,53 @@ describe("discoverAnnouncedNote (e2e test_27 — announce-driven immediate empty
 			closeDoc: () => {},
 		};
 		const engine = makeEngineWithCrdt(crdt);
-		engine.setCrdtCatchup(
-			async () => ({ heads: {} }),
-			async () => {
-				throw new Error("socket delta failed");
-			},
-		);
+		engine.setCrdtCatchupSince(async () => {
+			throw new Error("seq replay failed");
+		});
 
 		await expect(engine.discoverAnnouncedNote("id-x", "Notes/x.md")).resolves.toBeUndefined();
+	});
+
+	test("routes announce discovery through the seq-replay op-log, not the retired socket delta", async () => {
+		// The announce is a latency SIGNAL — run the one catch-up path
+		// (crdt_catchup_since). The announced note's op carries full content
+		// (empty notes included) and materializes via applySyncChange. The old
+		// crdt_catchup_delta socket frame was deleted server-side; sending it now
+		// gets a bad_frame reply (the 0-byte-materialize e2e regression).
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const applied: string[] = [];
+		(engine as any).applySyncChange = mock(async (c: any) => {
+			applied.push(c.path);
+			return true;
+		});
+		let sinceCalled = false;
+		engine.setCrdtCatchupSince(async () => {
+			sinceCalled = true;
+			return {
+				changes: [
+					{
+						type: "note",
+						id: "id-empty",
+						seq: 5,
+						path: "Notes/EmptyNote.md",
+						title: "EmptyNote",
+						content: "",
+						folder: "",
+						tags: [],
+						mtime: 5,
+						updated_at: "2026-01-01T00:00:00Z",
+						deleted: false,
+					},
+				],
+				has_more: false,
+				next_seq: null,
+			};
+		});
+
+		await engine.discoverAnnouncedNote("id-empty", "Notes/EmptyNote.md");
+
+		expect(sinceCalled).toBe(true); // converged via crdt_catchup_since
+		expect(applied).toContain("Notes/EmptyNote.md");
 	});
 });
 

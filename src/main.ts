@@ -1587,10 +1587,11 @@ export default class EngramSyncPlugin extends Plugin {
 	/**
 	 * Reconcile the id-map, re-arm CRDT enrollments, and run the socket catch-up
 	 * on a crdt: topic (re)join. Invoked ONLY from channel.onCrdtJoined, i.e. after
-	 * the crdt: join is server-acked (crdtJoined=true), so crdtCatchupHeads'
-	 * sendRequest is guaranteed past the join gate. Wiring the catch-up to the
-	 * sync-topic onStatusChange (which acks first) let the sendRequest reject with
-	 * "crdt topic not joined" and silently drop with no retry, the deaf-note class:
+	 * the crdt: join is server-acked (crdtJoined=true), so catchupViaSeqReplay's
+	 * crdt_catchup_since sendRequest is guaranteed past the join gate. Wiring the
+	 * catch-up to the sync-topic onStatusChange (which acks first) let the
+	 * sendRequest reject with "crdt topic not joined" and silently drop with no
+	 * retry, the deaf-note class:
 	 * idle notes and notes another device created during the disconnect never
 	 * converged. CRDT socket only, no REST fallback.
 	 */
@@ -1722,8 +1723,9 @@ export default class EngramSyncPlugin extends Plugin {
 						// The noteIdMap reconcile, CRDT re-enrollment, and socket catch-up
 						// do NOT run here. This is the SYNC-topic ack, which fires BEFORE
 						// the crdt: topic join sets crdtJoined=true. Running catch-up now
-						// makes crdtCatchupHeads' sendRequest reject with "crdt topic not
-						// joined" and silently drop, the deaf-note reconnect race. They run
+						// makes catchupViaSeqReplay's crdt_catchup_since sendRequest reject
+						// with "crdt topic not joined" and silently drop, the deaf-note
+						// reconnect race. They run
 						// from channel.onCrdtJoined (onCrdtTopicJoined) instead, which fires
 						// only after the crdt: join is server-acked.
 					} else {
@@ -1806,10 +1808,6 @@ export default class EngramSyncPlugin extends Plugin {
 				this.syncEngine.setCrdtDelete((id) => channel.crdtDeleteAcked(id));
 				// Delete (and durable create genesis) now route through the plugin-
 				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
-				this.syncEngine.setCrdtCatchup(
-					() => channel.crdtCatchupHeads(),
-					(id, sv) => channel.crdtCatchupDelta(id, sv),
-				);
 				// Single-path convergence: seq-ordered op-log replayed over the socket.
 				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) =>
 					channel.crdtCatchupSince(cursorSeq, limit),

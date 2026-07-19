@@ -4,7 +4,7 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
-import { encodeUpdateFrame, fromB64, toB64 } from "./crdt/channel";
+import { encodeUpdateFrame, toB64 } from "./crdt/channel";
 import type { CrdtManager } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import { uuid7 } from "./crdt/uuid7";
@@ -66,13 +66,6 @@ export const MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024;
  *  serverHead → skip`) always runs at least once after create and overwrites
  *  this with the authoritative head. */
 export const CRDT_HEAD_CREATED = "__crdt_created__";
-
-/** Sentinel serverHead for announce-driven per-note discovery
- *  (`discoverAnnouncedNote`): a `crdt_doc_ready` announce carries no head, so we
- *  pass a value that can never equal a stored crdtHead — the note has no local
- *  file (checked first), so its crdtHead is unset and the convergence cost gate
- *  can't short-circuit the adopt. */
-const CRDT_HEAD_ANNOUNCED = "__crdt_announced__";
 
 /** True when `content` is too large to enter the Yjs doc: seeding it would
  *  produce a base64 `crdt_msg` past Bandit's 8 MB WebSocket frame limit → 1009,
@@ -334,14 +327,13 @@ export class SyncEngine {
 	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
 	private recentlyFlushed: Map<string, number> = new Map();
 	/** note_ids THIS device recently deleted. Both CRDT convergence paths
-	 *  (catchupViaSocket's head-map loop and applyPushedNoteUpdate's fan-out)
-	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. The
-	 *  server head map lists only surviving notes and carries no tombstone, so a
-	 *  just-deleted note that is still (transiently) in the head map, or a
-	 *  late-arriving fan-out for it, would otherwise re-materialize it. Keyed by
-	 *  note_id (the key both paths iterate by), unlike the path-keyed
-	 *  offline-queue `hasPendingDelete` guard which only covers a delete STILL
-	 *  queued (this covers one already sent/dequeued). */
+	 *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
+	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
+	 *  UPSERT replayed (or fanned out) before the server's tombstone lands would
+	 *  otherwise re-materialize a just-deleted note; a later tombstone op still
+	 *  applies. Keyed by note_id (the key both paths check by), unlike the
+	 *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
+	 *  delete STILL queued (this covers one already sent/dequeued). */
 	private recentlyDeleted: Map<string, number> = new Map();
 	private pulling = false;
 	private lastSync = "";
@@ -1088,11 +1080,10 @@ export class SyncEngine {
 	 *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
 	 *  own failure, never throws.
 	 *
-	 *  `fetchFull` supplies the FULL-state bytes for the empty doc. It defaults to
-	 *  REST getUpdates (the fan-out caller's transport), but the socket catch-up
-	 *  path injects `crdt_catchup_delta` — sending the empty-doc state vector makes
-	 *  the server return full state either way, so the adopt is CRDT-native with no
-	 *  REST fallback (the rewire's sole-socket-transport invariant). */
+	 *  `fetchFull` supplies the FULL-state bytes for the empty doc — it defaults
+	 *  to REST getUpdates, the fan-out caller's (applyPushedNoteUpdate) transport.
+	 *  Sending the empty-doc state vector (not an empty `since`) makes the server
+	 *  return full state. */
 	private async adoptHistoryLessNote(
 		path: string,
 		noteId: string,
@@ -3046,114 +3037,6 @@ export class SyncEngine {
 		}
 	}
 
-	/** Shared per-note convergence apply used by BOTH coldReceive (REST
-	 *  getUpdates) and catchupViaSocket (crdt_catchup_delta). The ONLY difference
-	 *  between the callers is how the delta bytes are obtained — injected as
-	 *  `fetchDelta`. ALL guards live here so the socket path inherits them:
-	 *  confirmed/live-bound/cost gates, the history-less adopt branch (#234),
-	 *  disk-drift capture (BUG 2 / #3), the pending-gap heal, head advance, and
-	 *  hibernate. Isolated: logs its own per-note failure and never throws.
-	 *  Returns "converged" only when the head was advanced for delivered data;
-	 *  "skipped" for a gate short-circuit; "failed" for a caught error / stalled
-	 *  adopt. */
-	private async convergeNoteFromDelta(
-		path: string,
-		noteId: string,
-		serverHead: string,
-		fetchDelta: (
-			noteId: string,
-			sinceB64: string,
-		) => Promise<{ update: Uint8Array; head: string }>,
-	): Promise<"converged" | "skipped" | "failed"> {
-		if (!this.crdt) return "skipped";
-		if (this.isLiveBound(normalizePath(path))) return "skipped"; // live channel owns it
-		if (this.getCrdtHead(path) === serverHead) return "skipped"; // cost gate: unchanged
-		try {
-			// A history-LESS doc (feed-synced, never in IDB) doubles on a disk-drift
-			// seed and can't reconstruct from a delta — adopt full server state +
-			// reconcile drift instead (#234). Default to history-full when the
-			// manager lacks hasHistory (partial test doubles) → pre-#234 behavior.
-			const historyFull =
-				typeof this.crdt.hasHistory === "function"
-					? await this.crdt.hasHistory(noteId)
-					: true;
-			if (!historyFull) {
-				// First-discovery / feed-synced note with an empty Y.Doc: adopt FULL
-				// server state, fetched over the SAME socket delta channel as the
-				// history-full branch below (empty-doc SV → server returns full). No
-				// REST fallback — the socket path stays CRDT-native.
-				const adopted = await this.adoptHistoryLessNote(path, noteId, fetchDelta);
-				if (adopted === null) return "failed"; // adopt stalled — retry next poll
-				this.setCrdtHead(path, adopted);
-				this.hibernateIfIdle(path, noteId);
-				return "converged";
-			}
-			// Merge any un-pushed disk drift into the Y.Doc first, so the fetched
-			// remote delta merges with it instead of overwriting it (BUG 2 / #3).
-			// Seeding before encodeStateVector keeps `since` consistent with the
-			// now-updated local state.
-			await this.captureDiskDriftBeforeRemote(path, noteId);
-			// Manager is keyed by noteId (docId identity) — pass noteId, NOT path.
-			const since = toB64(await this.crdt.encodeStateVector(noteId));
-			const { update, head } = await fetchDelta(noteId, since);
-			await this.crdt.applyRemoteUpdate(noteId, update);
-			// Gap heal (parity with applyPushedNoteUpdate): if the applied delta
-			// references state this device missed while off the channel, Yjs PENDS
-			// it — the doc has NOT reached `head`. Advancing crdtHead anyway would
-			// make the cost gate skip the note forever. Re-fetch from our REAL state
-			// vector and advance only to a head the doc actually reached.
-			const gapped =
-				typeof this.crdt.hasPendingGap === "function" &&
-				(await this.crdt.hasPendingGap(noteId));
-			if (gapped) {
-				const since2 = toB64(await this.crdt.encodeStateVector(noteId));
-				const { update: full, head: fullHead } = await fetchDelta(noteId, since2);
-				await this.crdt.applyRemoteUpdate(noteId, full);
-				if (!(await this.crdt.hasPendingGap(noteId))) this.setCrdtHead(path, fullHead);
-			} else {
-				this.setCrdtHead(path, head); // crdtHead persists under the vault path
-			}
-			// Idle notes are not channel-enrolled under the fan-out model (P2
-			// removed lazyEnrollment) — this doc was opened just for this
-			// convergence, so free it now that the head is durably recorded. A note
-			// that became live-bound during the awaits above stays resident
-			// (hibernateIfIdle re-checks).
-			this.hibernateIfIdle(path, noteId);
-			return "converged";
-		} catch (e) {
-			// Isolated: log, leave crdtHead unadvanced, retry next poll.
-			devLog().log("crdt", `convergeNoteFromDelta: ${path} failed — ${errMsg(e)}`);
-			rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`);
-			return "failed";
-		}
-	}
-
-	/** Socket-native vault catch-up (Plan B1, Task 5): fetch server heads over
-	 *  `crdt_catchup_heads`, and for each note whose stored crdtHead differs,
-	 *  pull the missing delta from the client's state vector over
-	 *  `crdt_catchup_delta` and apply it. Socket twin of `coldReceive` — same
-	 *  cost-gate (converged notes never open a doc) and same isolation (a
-	 *  per-note failure is logged and skipped, never thrown into the caller, so
-	 *  one bad note can't stall the vault). Unset deps / no crdt manager ->
-	 *  no-op. */
-	private crdtCatchupHeads:
-		| (() => Promise<{ heads: Record<string, { path: string; head: string }> }>)
-		| null = null;
-	private crdtCatchupDelta:
-		| ((docId: string, sv: string) => Promise<{ doc_id: string; b64: string; head: string }>)
-		| null = null;
-
-	setCrdtCatchup(
-		heads: () => Promise<{ heads: Record<string, { path: string; head: string }> }>,
-		delta: (
-			docId: string,
-			sv: string,
-		) => Promise<{ doc_id: string; b64: string; head: string }>,
-	): void {
-		this.crdtCatchupHeads = heads;
-		this.crdtCatchupDelta = delta;
-	}
-
 	private crdtCatchupSince:
 		| ((
 				cursorSeq: number,
@@ -3175,10 +3058,11 @@ export class SyncEngine {
 	 *  applied through the SAME `applySyncChange` the REST pull used — so a
 	 *  reconnecting device gets every op it missed, IN ORDER, causally complete.
 	 *
-	 *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
-	 *  mechanism: that delta could hand Yjs a causally-incomplete update, which
-	 *  pends while the device advances its head anyway (faked convergence → deaf
-	 *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+	 *  This is the sole catch-up mechanism; it replaced the retired
+	 *  `crdt_catchup_delta` state-vector delta, which could hand Yjs a
+	 *  causally-incomplete update that pends while the device advances its head
+	 *  anyway (faked convergence → deaf note, e2e test_85). A full-content op
+	 *  cannot pend. Discovery rides the same
 	 *  feed: a note another device created while we were away arrives as an op and
 	 *  materializes via applySyncChange. Never throws into the caller; a socket
 	 *  drop mid-replay is logged and resumed from the persisted cursor next join.
@@ -3379,86 +3263,35 @@ export class SyncEngine {
 		return applied;
 	}
 
-	async catchupViaSocket(): Promise<void> {
-		if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
-		let heads: Record<string, { path: string; head: string }>;
-		try {
-			({ heads } = await this.crdtCatchupHeads());
-		} catch (e) {
-			// Whole-vault heads fetch failed (socket drop, etc). Log and return so
-			// the method honors its never-throw-into-caller contract.
-			rlog().warn("crdt", `socket catchup: heads fetch failed — ${errMsg(e)}`);
-			return;
-		}
-		let learned = false;
-		for (const [noteId, entry] of Object.entries(heads)) {
-			// The head map carries the server-authoritative path, so this is the
-			// SOLE discovery source: a note this device has never seen (no local
-			// id->path mapping) is learned here and materialized by the converge
-			// below (flushFromCrdt creates a missing file). Prefer the server path
-			// over any local mapping so a rename converges to the new path too.
-			const serverPath = entry.path;
-			if (this.shouldIgnore(serverPath)) continue;
-			// A note this device deleted stays in the server head map until the
-			// delete commits (the map lists surviving notes, is_nil(deleted_at)) —
-			// recreating it here would resurrect a user delete. Two guards, keyed
-			// differently on purpose: recentlyDeleted (by note_id) covers a delete
-			// already SENT/dequeued for the delete-wins window (backend #970);
-			// hasPendingDelete (by path) covers one still sitting in the offline
-			// queue. Either one wins → skip.
-			if (this.recentlyDeleted.has(noteId)) {
-				rlog().info("crdt", `catchup skip (recent local delete): ${serverPath}`);
-				continue;
-			}
-			if (this.queue.hasPendingDelete(serverPath, this.settings.vaultId ?? undefined)) {
-				rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
-				continue;
-			}
-			if (this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath) {
-				this.noteIdMap.set(serverPath, noteId);
-				learned = true;
-			}
-			// Same guarded per-note apply as the fan-out path — only the delta
-			// fetcher differs (crdt_catchup_delta over the socket vs REST
-			// getUpdates). This is how the socket path inherits the live-bound/cost
-			// gates, the history-less adopt (#234), disk-drift capture (#3), and the
-			// gap heal.
-			await this.convergeNoteFromDelta(serverPath, noteId, entry.head, (id, sv) =>
-				this.crdtCatchupDelta!(id, sv).then((x) => ({
-					update: fromB64(x.b64),
-					head: x.head,
-				})),
-			);
-		}
-		// Persist any id->path mappings learned via discovery so a restart keeps
-		// them (the head map is authoritative, but re-fetching every session is
-		// wasteful and a mid-session offline edit needs the mapping already local).
-		if (learned && this.noteIdMap) await this.saveData({ noteIds: this.noteIdMap.toJSON() });
-	}
-
 	/** Per-note discovery from a room-open announce that carries a path
 	 *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
 	 *  ZERO Y.Doc ops, so no `note_yjs_update` ever fans out — without this the
 	 *  note is only found ~30s later via the level-triggered pull (e2e test_27,
-	 *  which materialized it at +31s, 1s past the deadline). Learn the id->path
-	 *  mapping, confirm the id (an announce is authoritative proof the server holds
-	 *  the row), and converge just this note over the SAME socket catch-up delta
-	 *  channel `catchupViaSocket` uses, so the history-less adopt + empty
-	 *  materialize backstop (`adoptHistoryLessNote` step 5) runs in seconds. Never
-	 *  opens a dedicated room (the connect-storm) and never fabricates content: a
-	 *  non-empty note adopts full server state, only a genuinely empty one hits the
-	 *  backstop. Gate-safe and failure-isolated: never throws into the caller. */
+	 *  which materialized it at +31s, 1s past the deadline).
+	 *
+	 *  The announce is a latency SIGNAL, not a data channel: run the ONE catch-up
+	 *  path (`catchupViaSeqReplay`, crdt_catchup_since) NOW rather than waiting for
+	 *  the next poll. The announced note's op sits after this device's cursor and
+	 *  carries FULL content (empty notes included), so the seq replay materializes
+	 *  it via applySyncChange — no per-note socket delta, no history-less adopt
+	 *  race. This replaced the retired `crdt_catchup_delta` frame, whose bad_frame
+	 *  reply against the single-path backend caused a 0-byte materialize (the
+	 *  test_86/test_82 e2e regression). Single-flight coalesced, so an announce
+	 *  burst collapses to one replay. Learn the id->path mapping first (discovery
+	 *  source + so a downstream delete-wins guard can key off it). Gate-safe and
+	 *  failure-isolated: never throws into the caller. */
 	async discoverAnnouncedNote(noteId: string, path: string): Promise<void> {
-		if (!this.crdt || !this.crdtCatchupDelta) return;
+		if (!this.crdt || !this.crdtCatchupSince) return;
 		if (this.isSyncBlocked()) return;
 		const normalized = normalizePath(path);
 		if (this.shouldIgnore(normalized)) return;
 		if (this.isLiveBound(normalized)) return; // the live room owns it
 		// Already on disk — a content STEP2, a prior converge, or the user made it.
 		if (this.app.vault.getAbstractFileByPath(normalized) instanceof TFile) return;
-		// A note THIS device deleted must not be resurrected (mirrors
-		// catchupViaSocket): recentlyDeleted covers the delete-wins window (#970),
-		// hasPendingDelete covers one still in the offline queue.
+		// A note THIS device deleted must not be resurrected: recentlyDeleted covers
+		// the delete-wins window (#970), hasPendingDelete covers one still in the
+		// offline queue. The seq replay's applyOp re-checks these per op, but the
+		// early return also avoids a pointless replay for a note we're deleting.
 		if (this.recentlyDeleted.has(noteId)) return;
 		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) return;
 		try {
@@ -3468,14 +3301,9 @@ export class SyncEngine {
 				await this.saveData({ noteIds: this.noteIdMap.toJSON() });
 			}
 			this.confirmNoteId(noteId);
-			// Converge the single note over the socket catch-up delta channel — same
-			// guarded per-note apply as catchupViaSocket, only the trigger differs.
-			await this.convergeNoteFromDelta(normalized, noteId, CRDT_HEAD_ANNOUNCED, (id, sv) =>
-				this.crdtCatchupDelta!(id, sv).then((x) => ({
-					update: fromB64(x.b64),
-					head: x.head,
-				})),
-			);
+			// Converge via the single seq-ordered op-log path — the op carries full
+			// content and can never pend (unlike the retired crdt_catchup_delta).
+			await this.catchupViaSeqReplay();
 		} catch (e) {
 			rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
 		}
@@ -3627,11 +3455,12 @@ export class SyncEngine {
 		try {
 			// Opened but never handshaked (discovered via catch-up/fan-out): the REST
 			// restConvergeLiveBound fast path needs a confirmed server row, so converge
-			// it over the SOCKET instead — a cold note must not stay unmaterialized
-			// until the next reconnect. Socket-native; the head cost-gate makes an
-			// already-converged note a near-no-op.
+			// it over the seq-ordered op-log instead — a cold note must not stay
+			// unmaterialized until the next reconnect. Single-flight coalesced and
+			// cursor-based, so an already-converged vault is a near-no-op; the note's
+			// op carries full content (the one catch-up path, crdt_catchup_since).
 			if (!this.isNoteConfirmed(noteId)) {
-				await this.catchupViaSocket();
+				await this.catchupViaSeqReplay();
 				return;
 			}
 			if (!this.isLiveBound(normalized)) return; // idle confirmed notes heal on reconnect (#5)
@@ -4467,6 +4296,26 @@ export class SyncEngine {
 		// previously THREW inside applyChange's shouldIgnore (`null.startsWith`),
 		// landing an rlog error ("Skipped note null"). Skip them quietly.
 		if (!op.path) return false;
+		// A note THIS device just deleted must not be resurrected by a stale
+		// UPSERT replayed before the server's tombstone lands in the feed
+		// (delete-wins window, backend #970). Two guards, keyed differently — the
+		// same pair the retired catchupViaSocket loop held: recentlyDeleted (by
+		// note_id, ~60s TTL) covers a delete already SENT/dequeued; hasPendingDelete
+		// (by path) covers one still sitting in the offline queue (a fromZero replay
+		// can deliver the stale upsert while the delete is unsent and the id's TTL
+		// has lapsed). A tombstone op for the same id still falls through and applies
+		// (idempotent delete), so convergence isn't blocked.
+		if (
+			op.kind === "upsert" &&
+			(this.recentlyDeleted.has(op.id) ||
+				this.queue.hasPendingDelete(
+					normalizePath(op.path),
+					this.settings.vaultId ?? undefined,
+				))
+		) {
+			rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`);
+			return false;
+		}
 		// note_id-keyed CRDT rework: learn this note's stable id from the op. A
 		// tombstone clears the mapping instead of recording it: a note later
 		// recreated at the same path is a NEW note server-side and must mint a

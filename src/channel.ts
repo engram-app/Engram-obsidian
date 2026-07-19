@@ -387,28 +387,6 @@ export class NoteChannel {
 		};
 	}
 
-	/** Vault-level head map for catch-up divergence detection AND first-discovery.
-	 *  Each entry carries the note's server head plus its decrypted vault path, so
-	 *  a device that has never seen an id can materialize it at that path (the
-	 *  head map is the sole discovery source now that REST receive is gone). */
-	async crdtCatchupHeads(): Promise<{ heads: Record<string, { path: string; head: string }> }> {
-		return (await this.sendRequest("crdt_catchup_heads", {})) as {
-			heads: Record<string, { path: string; head: string }>;
-		};
-	}
-
-	/** Missing ops for one diverged note, given the client's base64 state vector. */
-	async crdtCatchupDelta(
-		docId: string,
-		sv: string,
-	): Promise<{ doc_id: string; b64: string; head: string }> {
-		return (await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv })) as {
-			doc_id: string;
-			b64: string;
-			head: string;
-		};
-	}
-
 	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
 	 *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
 	 *  merged notes+attachments feed), so it is causally complete and can

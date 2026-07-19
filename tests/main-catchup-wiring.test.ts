@@ -4,8 +4,8 @@
  *
  * Root cause the race fix addresses: catch-up was triggered from the sync-topic
  * onStatusChange(true), which acks BEFORE the crdt: topic join sets
- * crdtJoined=true. catchupViaSocket → crdtCatchupHeads → channel.sendRequest is
- * refused with "crdt topic not joined" until the crdt join lands, so the sole
+ * crdtJoined=true. catchupViaSeqReplay → crdt_catchup_since → channel.sendRequest
+ * is refused with "crdt topic not joined" until the crdt join lands, so the sole
  * convergence path was silently skipped and never retried (idle notes and
  * cross-device changes never converged until a later reconnect / manual sync).
  * The fix moves the reconcile + re-enroll + catch-up onto channel.onCrdtJoined,
@@ -103,10 +103,8 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			getStatus: () => "idle",
 			clearConfirmedNoteIds: () => {},
 			reconcileNoteIdMapFromManifest: opts?.reconcile ?? (() => Promise.resolve(0)),
-			// Reconnect convergence now replays the seq-ordered op-log over the
-			// socket (catchupViaSeqReplay). catchupViaSocket survives only for the
-			// on-open heal, which connectChannel does not exercise.
-			catchupViaSocket: () => Promise.resolve(),
+			// Reconnect convergence replays the seq-ordered op-log over the socket
+			// (catchupViaSeqReplay, crdt_catchup_since) — the sole catch-up path.
 			catchupViaSeqReplay: catchup,
 			pull,
 			handleStreamEvent: () => Promise.resolve(),
@@ -118,7 +116,6 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			setCrdtCreateBatch: () => {},
 			setCrdtDelete: () => {},
 			setCrdtEnqueue: () => {},
-			setCrdtCatchup: () => {},
 			setCrdtCatchupSince: () => {},
 			setCrdtEnrollment: () => {},
 			setLiveBoundCheck: () => {},

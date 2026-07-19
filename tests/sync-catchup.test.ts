@@ -508,14 +508,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 // check it tested no longer exists (verifyConvergenceOnOpen deleted from
 // src/sync.ts, along with the manifestPathHashes cache it solely read). Its
 // intent — heal a note whose local state diverged from the server without
-// waiting for the user to act — is now served by catchupViaSocket running on
-// every (re)connect instead of once per file-open; that mechanism has its
-// own non-redundant coverage in tests/sync-socket-catchup.test.ts
-// ("pulls deltas only for diverged notes" etc.). Re-pointing these two tests
-// at catchupViaSocket would just duplicate that coverage under a different
-// name — the manifest-hash-vs-serverHash comparison these tests exercised is
-// not a mechanism catchupViaSocket has (it compares crdtHead vs serverHead
-// instead), so there's no meaningful "same intent, new API" retarget to make.
+// waiting for the user to act — is now served by catchupViaSeqReplay
+// (crdt_catchup_since) running on every (re)connect instead of once per
+// file-open; that mechanism has its own non-redundant coverage in
+// tests/sync-socket-catchup.test.ts (the "catchupViaSeqReplay" describe).
+// Re-pointing these two tests at it would just duplicate that coverage under
+// a different name — the manifest-hash-vs-serverHash comparison these tests
+// exercised is not a mechanism the seq-replay has (it applies full-content
+// ops in seq order), so there's no meaningful "same intent, new API" retarget.
 
 describe("anti-stale apply guard (review 2026-07-15 — mid-pull push overwrite race)", () => {
 	test("a change at or below the already-synced version is skipped", async () => {

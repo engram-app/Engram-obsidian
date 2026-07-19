@@ -13851,17 +13851,6 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   async crdtDeleteAcked(docId) {
     return await this.sendRequest("crdt_delete", { doc_id: docId });
   }
-  /** Vault-level head map for catch-up divergence detection AND first-discovery.
-   *  Each entry carries the note's server head plus its decrypted vault path, so
-   *  a device that has never seen an id can materialize it at that path (the
-   *  head map is the sole discovery source now that REST receive is gone). */
-  async crdtCatchupHeads() {
-    return await this.sendRequest("crdt_catchup_heads", {});
-  }
-  /** Missing ops for one diverged note, given the client's base64 state vector. */
-  async crdtCatchupDelta(docId, sv) {
-    return await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv });
-  }
   /** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
    *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
    *  merged notes+attachments feed), so it is causally complete and can
@@ -17669,7 +17658,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__", CRDT_HEAD_ANNOUNCED = "__crdt_announced__";
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -17790,14 +17779,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  post-push cooldown — silently losing edits and breaking conflict detection. */
     this.recentlyFlushed = /* @__PURE__ */ new Map();
     /** note_ids THIS device recently deleted. Both CRDT convergence paths
-     *  (catchupViaSocket's head-map loop and applyPushedNoteUpdate's fan-out)
-     *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. The
-     *  server head map lists only surviving notes and carries no tombstone, so a
-     *  just-deleted note that is still (transiently) in the head map, or a
-     *  late-arriving fan-out for it, would otherwise re-materialize it. Keyed by
-     *  note_id (the key both paths iterate by), unlike the path-keyed
-     *  offline-queue `hasPendingDelete` guard which only covers a delete STILL
-     *  queued (this covers one already sent/dequeued). */
+     *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
+     *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
+     *  UPSERT replayed (or fanned out) before the server's tombstone lands would
+     *  otherwise re-materialize a just-deleted note; a later tombstone op still
+     *  applies. Keyed by note_id (the key both paths check by), unlike the
+     *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
+     *  delete STILL queued (this covers one already sent/dequeued). */
     this.recentlyDeleted = /* @__PURE__ */ new Map();
     this.pulling = !1;
     this.lastSync = "";
@@ -18051,26 +18039,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
-    /** Socket-native vault catch-up (Plan B1, Task 5): fetch server heads over
-     *  `crdt_catchup_heads`, and for each note whose stored crdtHead differs,
-     *  pull the missing delta from the client's state vector over
-     *  `crdt_catchup_delta` and apply it. Socket twin of `coldReceive` — same
-     *  cost-gate (converged notes never open a doc) and same isolation (a
-     *  per-note failure is logged and skipped, never thrown into the caller, so
-     *  one bad note can't stall the vault). Unset deps / no crdt manager ->
-     *  no-op. */
-    this.crdtCatchupHeads = null;
-    this.crdtCatchupDelta = null;
     this.crdtCatchupSince = null;
     /** Single-path convergence on (re)connect: replay the seq-ordered op-log over
      *  the socket from our persisted cursor. Each op carries FULL content and is
      *  applied through the SAME `applySyncChange` the REST pull used — so a
      *  reconnecting device gets every op it missed, IN ORDER, causally complete.
      *
-     *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
-     *  mechanism: that delta could hand Yjs a causally-incomplete update, which
-     *  pends while the device advances its head anyway (faked convergence → deaf
-     *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+     *  This is the sole catch-up mechanism; it replaced the retired
+     *  `crdt_catchup_delta` state-vector delta, which could hand Yjs a
+     *  causally-incomplete update that pends while the device advances its head
+     *  anyway (faked convergence → deaf note, e2e test_85). A full-content op
+     *  cannot pend. Discovery rides the same
      *  feed: a note another device created while we were away arrives as an op and
      *  materializes via applySyncChange. Never throws into the caller; a socket
      *  drop mid-replay is logged and resumed from the persisted cursor next join.
@@ -18481,11 +18460,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
    *  own failure, never throws.
    *
-   *  `fetchFull` supplies the FULL-state bytes for the empty doc. It defaults to
-   *  REST getUpdates (the fan-out caller's transport), but the socket catch-up
-   *  path injects `crdt_catchup_delta` — sending the empty-doc state vector makes
-   *  the server return full state either way, so the adopt is CRDT-native with no
-   *  REST fallback (the rewire's sole-socket-transport invariant). */
+   *  `fetchFull` supplies the FULL-state bytes for the empty doc — it defaults
+   *  to REST getUpdates, the fan-out caller's (applyPushedNoteUpdate) transport.
+   *  Sending the empty-doc state vector (not an empty `since`) makes the server
+   *  return full state. */
   async adoptHistoryLessNote(path, noteId, fetchFull = (id2, sv) => this.api.getUpdates(id2, sv)) {
     var _a;
     if (!this.crdt) return null;
@@ -19437,38 +19415,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         devLog().log("crdt", `hibernateIfIdle: closeDoc ${noteId} failed \u2014 ${errMsg(e)}`);
       }
   }
-  /** Shared per-note convergence apply used by BOTH coldReceive (REST
-   *  getUpdates) and catchupViaSocket (crdt_catchup_delta). The ONLY difference
-   *  between the callers is how the delta bytes are obtained — injected as
-   *  `fetchDelta`. ALL guards live here so the socket path inherits them:
-   *  confirmed/live-bound/cost gates, the history-less adopt branch (#234),
-   *  disk-drift capture (BUG 2 / #3), the pending-gap heal, head advance, and
-   *  hibernate. Isolated: logs its own per-note failure and never throws.
-   *  Returns "converged" only when the head was advanced for delivered data;
-   *  "skipped" for a gate short-circuit; "failed" for a caught error / stalled
-   *  adopt. */
-  async convergeNoteFromDelta(path, noteId, serverHead, fetchDelta) {
-    if (!this.crdt || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.getCrdtHead(path) === serverHead) return "skipped";
-    try {
-      if (!(typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)) {
-        let adopted = await this.adoptHistoryLessNote(path, noteId, fetchDelta);
-        return adopted === null ? "failed" : (this.setCrdtHead(path, adopted), this.hibernateIfIdle(path, noteId), "converged");
-      }
-      await this.captureDiskDriftBeforeRemote(path, noteId);
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await fetchDelta(noteId, since);
-      if (await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
-        let since2 = toB64(await this.crdt.encodeStateVector(noteId)), { update: full, head: fullHead } = await fetchDelta(noteId, since2);
-        await this.crdt.applyRemoteUpdate(noteId, full), await this.crdt.hasPendingGap(noteId) || this.setCrdtHead(path, fullHead);
-      } else
-        this.setCrdtHead(path, head);
-      return this.hibernateIfIdle(path, noteId), "converged";
-    } catch (e) {
-      return devLog().log("crdt", `convergeNoteFromDelta: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`), "failed";
-    }
-  }
-  setCrdtCatchup(heads, delta) {
-    this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
-  }
   setCrdtCatchupSince(fn) {
     this.crdtCatchupSince = fn;
   }
@@ -19593,68 +19539,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return applied;
   }
-  async catchupViaSocket() {
-    var _a;
-    if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
-    let heads;
-    try {
-      ({ heads } = await this.crdtCatchupHeads());
-    } catch (e) {
-      rlog().warn("crdt", `socket catchup: heads fetch failed \u2014 ${errMsg(e)}`);
-      return;
-    }
-    let learned = !1;
-    for (let [noteId, entry] of Object.entries(heads)) {
-      let serverPath = entry.path;
-      if (!this.shouldIgnore(serverPath)) {
-        if (this.recentlyDeleted.has(noteId)) {
-          rlog().info("crdt", `catchup skip (recent local delete): ${serverPath}`);
-          continue;
-        }
-        if (this.queue.hasPendingDelete(serverPath, (_a = this.settings.vaultId) != null ? _a : void 0)) {
-          rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
-          continue;
-        }
-        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath && (this.noteIdMap.set(serverPath, noteId), learned = !0), await this.convergeNoteFromDelta(
-          serverPath,
-          noteId,
-          entry.head,
-          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
-            update: fromB64(x.b64),
-            head: x.head
-          }))
-        );
-      }
-    }
-    learned && this.noteIdMap && await this.saveData({ noteIds: this.noteIdMap.toJSON() });
-  }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
    *  ZERO Y.Doc ops, so no `note_yjs_update` ever fans out — without this the
    *  note is only found ~30s later via the level-triggered pull (e2e test_27,
-   *  which materialized it at +31s, 1s past the deadline). Learn the id->path
-   *  mapping, confirm the id (an announce is authoritative proof the server holds
-   *  the row), and converge just this note over the SAME socket catch-up delta
-   *  channel `catchupViaSocket` uses, so the history-less adopt + empty
-   *  materialize backstop (`adoptHistoryLessNote` step 5) runs in seconds. Never
-   *  opens a dedicated room (the connect-storm) and never fabricates content: a
-   *  non-empty note adopts full server state, only a genuinely empty one hits the
-   *  backstop. Gate-safe and failure-isolated: never throws into the caller. */
+   *  which materialized it at +31s, 1s past the deadline).
+   *
+   *  The announce is a latency SIGNAL, not a data channel: run the ONE catch-up
+   *  path (`catchupViaSeqReplay`, crdt_catchup_since) NOW rather than waiting for
+   *  the next poll. The announced note's op sits after this device's cursor and
+   *  carries FULL content (empty notes included), so the seq replay materializes
+   *  it via applySyncChange — no per-note socket delta, no history-less adopt
+   *  race. This replaced the retired `crdt_catchup_delta` frame, whose bad_frame
+   *  reply against the single-path backend caused a 0-byte materialize (the
+   *  test_86/test_82 e2e regression). Single-flight coalesced, so an announce
+   *  burst collapses to one replay. Learn the id->path mapping first (discovery
+   *  source + so a downstream delete-wins guard can key off it). Gate-safe and
+   *  failure-isolated: never throws into the caller. */
   async discoverAnnouncedNote(noteId, path) {
     var _a;
-    if (!this.crdt || !this.crdtCatchupDelta || this.isSyncBlocked()) return;
+    if (!this.crdt || !this.crdtCatchupSince || this.isSyncBlocked()) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
     if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
       try {
-        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.convergeNoteFromDelta(
-          normalized,
-          noteId,
-          CRDT_HEAD_ANNOUNCED,
-          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
-            update: fromB64(x.b64),
-            head: x.head
-          }))
-        );
+        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.catchupViaSeqReplay();
       } catch (e) {
         rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
       }
@@ -19740,7 +19648,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (noteId)
       try {
         if (!this.isNoteConfirmed(noteId)) {
-          await this.catchupViaSocket();
+          await this.catchupViaSeqReplay();
           return;
         }
         if (!this.isLiveBound(normalized)) return;
@@ -20133,15 +20041,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materialize/merge/tombstone/resurrection logic to the shared `applyChange`
    *  core. Attachments are NOT ops (they stay on the binary channel). */
   async applyOp(op) {
-    var _a, _b;
+    var _a, _b, _c;
     if (!op.path) return !1;
+    if (op.kind === "upsert" && (this.recentlyDeleted.has(op.id) || this.queue.hasPendingDelete(
+      (0, import_obsidian21.normalizePath)(op.path),
+      (_a = this.settings.vaultId) != null ? _a : void 0
+    )))
+      return rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`), !1;
     if (op.kind === "upsert") {
       let relocationTs = Date.parse(op.updated_at);
       await this.moveIfIdRelocated(
         op.id,
         op.path,
         Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_a = this.noteIdMap) == null || _a.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
+      ), (_b = this.noteIdMap) == null || _b.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
     }
     let nc = {
       path: op.path,
@@ -20155,7 +20068,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       deleted: op.kind === "delete",
       version: op.version
     }, applied = await this.applyChange(nc);
-    return op.kind === "delete" && ((_b = this.noteIdMap) == null || _b.delete(op.path)), applied;
+    return op.kind === "delete" && ((_c = this.noteIdMap) == null || _c.delete(op.path)), applied;
   }
   /** Manifest-diff reconcile: trash files the server deleted while we were
    *  away (in baseline, absent from the manifest) and drop their baseline, then
@@ -23704,10 +23617,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   /**
    * Reconcile the id-map, re-arm CRDT enrollments, and run the socket catch-up
    * on a crdt: topic (re)join. Invoked ONLY from channel.onCrdtJoined, i.e. after
-   * the crdt: join is server-acked (crdtJoined=true), so crdtCatchupHeads'
-   * sendRequest is guaranteed past the join gate. Wiring the catch-up to the
-   * sync-topic onStatusChange (which acks first) let the sendRequest reject with
-   * "crdt topic not joined" and silently drop with no retry, the deaf-note class:
+   * the crdt: join is server-acked (crdtJoined=true), so catchupViaSeqReplay's
+   * crdt_catchup_since sendRequest is guaranteed past the join gate. Wiring the
+   * catch-up to the sync-topic onStatusChange (which acks first) let the
+   * sendRequest reject with "crdt topic not joined" and silently drop with no
+   * retry, the deaf-note class:
    * idle notes and notes another device created during the disconnect never
    * converged. CRDT socket only, no REST fallback.
    */
@@ -23783,10 +23697,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchup(
-        () => channel.crdtCatchupHeads(),
-        (id2, sv) => channel.crdtCatchupDelta(id2, sv)
-      ), this.syncEngine.setCrdtCatchupSince(
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
         (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
       ), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
