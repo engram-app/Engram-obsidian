@@ -579,6 +579,7 @@ describe("SyncEngine.pushAll with progress", () => {
 		(engine as any).catchupViaSeqReplay = async () => ({
 			applied: 1,
 			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set<string>(),
 		});
 
 		// Seed some sync state that should be cleared

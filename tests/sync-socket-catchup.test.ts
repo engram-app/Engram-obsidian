@@ -9,7 +9,7 @@ import type { EngramApi } from "../src/api";
 import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
-import { DEFAULT_SETTINGS, type SyncNoteChange } from "../src/types";
+import { DEFAULT_SETTINGS, type SyncAttachmentChange, type SyncNoteChange } from "../src/types";
 
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
@@ -512,6 +512,25 @@ describe("catchupViaSeqReplay", () => {
 		};
 	}
 
+	function attachmentOp(
+		seq: number,
+		id: string,
+		path: string,
+		deleted = false,
+	): SyncAttachmentChange {
+		return {
+			type: "attachment",
+			id,
+			seq,
+			path,
+			mime_type: "image/png",
+			size_bytes: 10,
+			mtime: seq,
+			updated_at: "2026-01-01T00:00:00Z",
+			deleted,
+		};
+	}
+
 	test("applies each op in seq order and advances the persisted cursor", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		const applied: number[] = [];
@@ -639,7 +658,29 @@ describe("catchupViaSeqReplay", () => {
 		await expect(engine.catchupViaSeqReplay()).resolves.toEqual({
 			applied: 0,
 			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
 		});
+	});
+
+	test("(#5b) collects non-deleted attachment paths into serverAttachmentPaths, excludes deleted", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				attachmentOp(1, "att-1", "Attachments/a.png"),
+				attachmentOp(2, "att-2", "Attachments/b.png", true), // deleted — excluded
+				op(3, "id-a", "Notes/a.md"), // a note change must not pollute the set
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		const { serverAttachmentPaths, serverIds } = await engine.catchupViaSeqReplay({
+			fromZero: true,
+		});
+
+		expect([...serverAttachmentPaths]).toEqual(["Attachments/a.png"]);
+		expect([...serverIds]).toEqual(["id-a"]);
 	});
 
 	test("catchupViaSeqReplay({fromZero}) starts at 0 and returns the server id-set", async () => {

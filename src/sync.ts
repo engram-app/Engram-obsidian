@@ -43,7 +43,6 @@ import type {
 	SyncChange,
 	SyncIssueCategory,
 	SyncLogEntry,
-	SyncNoteChange,
 	SyncOp,
 	SyncPlan,
 	SyncProgress,
@@ -3245,14 +3244,14 @@ export class SyncEngine {
 		| ((
 				cursorSeq: number,
 				limit?: number,
-		  ) => Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }>)
+		  ) => Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }>)
 		| null = null;
 
 	setCrdtCatchupSince(
 		fn: (
 			cursorSeq: number,
 			limit?: number,
-		) => Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }>,
+		) => Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }>,
 	): void {
 		this.crdtCatchupSince = fn;
 	}
@@ -3278,31 +3277,38 @@ export class SyncEngine {
 	private seqReplayAgain = false;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
-	 *  re-run) plus the set of server note-ids seen (non-deleted only) — used by
-	 *  the pull-all-delete / push-all-delete choices. A coalesced call that folds
-	 *  into an in-flight replay returns applied:0/an empty set — the running call
-	 *  reports the total. `fromZero` forces the replay to start at cursor 0
-	 *  regardless of the persisted `catchupSeq` (idempotent re-replay). */
+	 *  re-run) plus the sets of server note-ids and attachment paths seen
+	 *  (non-deleted only) — used by the pull-all-delete / push-all-delete
+	 *  choices. A coalesced call that folds into an in-flight replay returns
+	 *  applied:0/empty sets — the running call reports the total. `fromZero`
+	 *  forces the replay to start at cursor 0 regardless of the persisted
+	 *  `catchupSeq` (idempotent re-replay). */
 	async catchupViaSeqReplay(opts: { fromZero?: boolean } = {}): Promise<{
 		applied: number;
 		serverIds: Set<string>;
+		serverAttachmentPaths: Set<string>;
 	}> {
 		const serverIds = new Set<string>();
+		const serverAttachmentPaths = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return { applied: 0, serverIds };
+			return { applied: 0, serverIds, serverAttachmentPaths };
 		}
 		this.seqReplayRunning = true;
 		let applied = 0;
 		try {
 			do {
 				this.seqReplayAgain = false;
-				applied += await this.runSeqReplayOnce(opts.fromZero ?? false, serverIds);
+				applied += await this.runSeqReplayOnce(
+					opts.fromZero ?? false,
+					serverIds,
+					serverAttachmentPaths,
+				);
 			} while (this.seqReplayAgain);
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return { applied, serverIds };
+		return { applied, serverIds, serverAttachmentPaths };
 	}
 
 	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
@@ -3351,7 +3357,11 @@ export class SyncEngine {
 		}
 	}
 
-	private async runSeqReplayOnce(fromZero: boolean, serverIds: Set<string>): Promise<number> {
+	private async runSeqReplayOnce(
+		fromZero: boolean,
+		serverIds: Set<string>,
+		serverAttachmentPaths: Set<string>,
+	): Promise<number> {
 		if (!this.crdtCatchupSince || !this.crdt) return 0;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
@@ -3370,7 +3380,7 @@ export class SyncEngine {
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
 		for (let page = 0; page < 100_000; page++) {
-			let resp: { changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null };
+			let resp: { changes: SyncChange[]; has_more: boolean; next_seq: number | null };
 			try {
 				resp = await this.crdtCatchupSince(cursor, 500);
 			} catch (e) {
@@ -3389,10 +3399,15 @@ export class SyncEngine {
 				// Advance past every op we've SEEN (applied or skipped) so the cursor
 				// is monotonic and a permanently-unappliable op can't stall the feed.
 				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
-				// Every non-deleted id SEEN (applied or skipped) — the pull-all-delete /
-				// push-all-delete choices (Tasks 5/6) need the full server id-set, not
-				// just the successfully-applied subset.
-				if (c.id && !c.deleted) serverIds.add(c.id);
+				// Every non-deleted id/path SEEN (applied or skipped) — the
+				// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
+				// full server id-set and attachment-path-set, not just the
+				// successfully-applied subset.
+				if (c.type === "attachment") {
+					if (!c.deleted) serverAttachmentPaths.add(c.path);
+				} else if (c.id && !c.deleted) {
+					serverIds.add(c.id);
+				}
 			}
 			this.setCatchupSeq(cursor);
 			await this.saveData({ catchupSeq: this.getCatchupSeq() });
@@ -3717,15 +3732,15 @@ export class SyncEngine {
 		return this._pullAll(opts.deleteLocalExtras ?? false);
 	}
 
-	/** REST-purge Bucket B (Task 5): replay the note op-log from cursor 0
-	 *  instead of a REST `GET /notes/changes`/`GET /attachments/changes` fetch.
-	 *  `deleteLocalExtras` no longer blind-wipes every local file up front —
-	 *  it compares each locally-mapped note id against the replay's
-	 *  authoritative `serverIds` set and trashes only the ones absent
-	 *  (data-loss guard: a blind pre-wipe followed by a failed/partial
-	 *  refetch used to strand the vault empty). Attachments are untouched —
-	 *  the note replay carries no attachment ids, so out of scope here (still
-	 *  reconciled by `reconcileFromManifest` on the normal catch-up path). */
+	/** REST-purge Bucket B (Task 5 + 5b): replay the merged notes+attachments
+	 *  op-log from cursor 0 instead of a REST `GET /notes/changes`/`GET
+	 *  /attachments/changes` fetch. `deleteLocalExtras` no longer blind-wipes
+	 *  every local file up front — it compares each locally-mapped note id
+	 *  against the replay's authoritative `serverIds` set (notes) and each
+	 *  local attachment's path against `serverAttachmentPaths` (attachments),
+	 *  trashing only the ones absent from the server (data-loss guard: a
+	 *  blind pre-wipe followed by a failed/partial refetch used to strand the
+	 *  vault empty). */
 	private async _pullAll(wipe: boolean): Promise<number> {
 		if (this.pulling) return 0;
 
@@ -3741,11 +3756,13 @@ export class SyncEngine {
 		try {
 			this.onSyncProgress?.({ phase: "pulling", current: 0, total: 0, failed: 0 });
 
-			const { applied, serverIds } = await this.catchupViaSeqReplay({ fromZero: true });
+			const { applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+				fromZero: true,
+			});
 
 			devLog().log(
 				"pull",
-				`${label}: replay applied=${applied}, serverIds=${serverIds.size}`,
+				`${label}: replay applied=${applied}, serverIds=${serverIds.size}, serverAttachmentPaths=${serverAttachmentPaths.size}`,
 			);
 			rlog().info("pull", `${label} replay done — applied=${applied}`);
 
@@ -3755,13 +3772,12 @@ export class SyncEngine {
 				// below finishes (Obsidian's delete events fire asynchronously).
 				this.suppressDeletes = true;
 				const files = this.app.vault.getFiles();
-				const extras = files.filter(
-					(f) =>
-						this.isSyncable(f) &&
-						!this.shouldIgnore(f.path) &&
-						!this.isBinaryFile(f) && // attachments out of scope (no serverIds coverage)
-						!serverIds.has(this.noteIdMap?.get(f.path) ?? ""),
-				);
+				const extras = files.filter((f) => {
+					if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
+					return this.isBinaryFile(f)
+						? !serverAttachmentPaths.has(f.path)
+						: !serverIds.has(this.noteIdMap?.get(f.path) ?? "");
+				});
 				const total = extras.length;
 				this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
 				let deleteFailed = 0;

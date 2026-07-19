@@ -58,6 +58,7 @@ function makeApi(): EngramApi {
 		pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 		getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
+		deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
 		health: mock().mockResolvedValue(true),
 		ping: mock().mockResolvedValue({ ok: true }),
 		getManifest: mock().mockResolvedValue(null),
@@ -420,7 +421,11 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 		let fromZero: boolean | undefined;
 		(engine as any).catchupViaSeqReplay = async (o: any) => {
 			fromZero = o?.fromZero;
-			return { applied: 1, serverIds: new Set(["s1"]) };
+			return {
+				applied: 1,
+				serverIds: new Set(["s1"]),
+				serverAttachmentPaths: new Set<string>(),
+			};
 		};
 
 		const applied = await engine.pullAll({ deleteLocalExtras: false });
@@ -442,6 +447,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 		(engine as any).catchupViaSeqReplay = async () => ({
 			applied: 0,
 			serverIds: new Set(["kept-id"]),
+			serverAttachmentPaths: new Set<string>(),
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -468,6 +474,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 		(engine as any).catchupViaSeqReplay = async () => ({
 			applied: 0,
 			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set<string>(),
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -475,5 +482,40 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 
 		expect(enqueued).toEqual([]); // no crdt_delete echoed back to the server
 		expect(api.deleteNote).not.toHaveBeenCalled();
+	});
+
+	test("(#5b) pull-all-delete-local trashes a server-absent local attachment, keeps a server-present one", async () => {
+		const staleAtt = new TFile("Attachments/stale.png", Date.now());
+		const keptAtt = new TFile("Attachments/kept.png", Date.now());
+		const { engine, app } = makeEngine([staleAtt, keptAtt], {});
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set(["Attachments/kept.png"]),
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(app.fileManager.trashFile).toHaveBeenCalledTimes(1);
+		expect(app.fileManager.trashFile).toHaveBeenCalledWith(staleAtt);
+	});
+
+	test("(#5b) mirror invariant: the attachment wipe-trash does NOT echo-push a delete to the server", async () => {
+		// Uses the REAL trashRemotelyDeleted (not mocked) so its remotelyDeleted
+		// echo-suppression marker actually gets set, then simulates the vault's
+		// own 'delete' event firing on that same attachment post-trash — the
+		// attachment twin of the note mirror-invariant test above.
+		const staleAtt = new TFile("Attachments/stale.png", Date.now());
+		const { engine, api } = makeEngine([staleAtt], {});
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set<string>(),
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+		await engine.handleDelete(staleAtt); // the vault delete event the trash fires
+
+		expect(api.deleteAttachment).not.toHaveBeenCalled();
 	});
 });
