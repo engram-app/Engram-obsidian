@@ -704,6 +704,53 @@ describe("catchupViaSeqReplay", () => {
 		expect(applied).toBe(2);
 		expect([...serverIds]).toEqual(["n1"]); // deleted n2 excluded
 	});
+
+	// Task 6 fix: a push/replace enumeration must walk the server set WITHOUT
+	// applying it locally (that would download every remote extra into the
+	// vault as an orphan, which then resurrects on the next sync) and without
+	// moving the real catch-up cursor (a later genuine catch-up must still see
+	// every op this enumeration walked past).
+	test("enumerateOnly collects the server set but never applies locally and never moves the cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const applySpy = mock(async () => true);
+		(engine as any).applySyncChange = applySpy;
+		engine.setCatchupSeq(3); // real cursor, must be untouched by an enumerate pass
+
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [op(9, "id-a", "Notes/a.md"), attachmentOp(10, "att-1", "Attachments/a.png")],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		const { applied, serverIds, serverAttachmentPaths } = await engine.catchupViaSeqReplay({
+			fromZero: true,
+			enumerateOnly: true,
+		});
+
+		expect(applySpy).not.toHaveBeenCalled();
+		expect(applied).toBe(0);
+		expect([...serverIds]).toEqual(["id-a"]);
+		expect([...serverAttachmentPaths]).toEqual(["Attachments/a.png"]);
+		expect(engine.getCatchupSeq()).toBe(3); // untouched, NOT advanced to 10
+	});
+
+	test("without enumerateOnly, catchupViaSeqReplay still applies (no regression from option threading)", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const applySpy = mock(async () => true);
+		(engine as any).applySyncChange = applySpy;
+
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [op(4, "id-a", "Notes/a.md")],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		const { applied } = await engine.catchupViaSeqReplay({ fromZero: true });
+
+		expect(applySpy).toHaveBeenCalledTimes(1);
+		expect(applied).toBe(1);
+		expect(engine.getCatchupSeq()).toBe(4); // cursor DOES advance for a real apply pass
+	});
 });
 
 // Phase C Step 1 — the single deterministic apply. `applyOp` is the seam BOTH

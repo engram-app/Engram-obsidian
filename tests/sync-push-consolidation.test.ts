@@ -57,6 +57,7 @@ function makeApi(): EngramApi {
 		pushNote: mock().mockResolvedValue({ note: { path: "" }, chunks_indexed: 1 }),
 		pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 		getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
+		pushAttachment: mock().mockResolvedValue({ attachment: {} }),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 		deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
 		health: mock().mockResolvedValue(true),
@@ -517,5 +518,106 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 		await engine.handleDelete(staleAtt); // the vault delete event the trash fires
 
 		expect(api.deleteAttachment).not.toHaveBeenCalled();
+	});
+});
+
+describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-delete (Task 6)", () => {
+	test("deletes server-only note-ids AND attachment-paths absent locally, never trashes local", async () => {
+		const keepMd = new TFile("Keep.md", Date.now());
+		const keepPng = new TFile("Keep.png", Date.now());
+		const { engine, api } = makeEngine([keepMd, keepPng], { "Keep.md": "# keep" });
+		// A local note + attachment that ALSO exist on the server — must survive.
+		(engine as any).noteIdMap.set("Keep.md", "local-keep-id");
+
+		const deleted: string[] = [];
+		const delAttach: string[] = [];
+		(engine as any).crdtDelete = async (id: string) => {
+			deleted.push(id);
+			return { doc_id: id };
+		};
+		// Reuse the exact server-attachment-delete call wipeRemote used: api.deleteAttachment.
+		(api.deleteAttachment as any) = mock(async (p: string) => {
+			delAttach.push(p);
+			return { deleted: true, path: p };
+		});
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set(["local-keep-id", "remote-extra-id"]),
+			serverAttachmentPaths: new Set(["Keep.png", "remote-extra.png"]),
+		});
+		engine.setCrdtCreateBatch(async (creates) => ({
+			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
+		}));
+		// The sacred invariant tripwire: a replace-remote sync must NEVER trash a
+		// local file (the 2026-07-08 vault-wipe incident). Spy the only local-trash
+		// seam and assert it stays untouched.
+		const localTrashed: string[] = [];
+		(engine as any).trashRemotelyDeleted = async (f: any) => localTrashed.push(f.path);
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: engine.snapshotLocalPaths() });
+
+		expect(deleted).toEqual(["remote-extra-id"]); // only the server-only note-id
+		expect(delAttach).toEqual(["remote-extra.png"]); // only the server-only attachment-path
+		expect(localTrashed).toHaveLength(0); // NEVER delete local (decorative — replace-remote
+		// never calls trashRemotelyDeleted; the load-bearing checks are below)
+		// The real invariant: crdtDelete/deleteAttachment must never target a
+		// LOCALLY-PRESENT id/path. The `toEqual` checks above already pin this
+		// for THIS fixture (they'd fail if "local-keep-id" or "Keep.png" leaked
+		// in), but restate it explicitly so the test fails loudly if the
+		// enumeration ever starts including local entries.
+		expect(deleted).not.toContain("local-keep-id");
+		expect(delAttach).not.toContain("Keep.png");
+	});
+
+	// Fix-pass regression: the enumeration underneath replaceRemote used to be a
+	// PLAIN catchupViaSeqReplay({fromZero:true}) — an APPLYING replay — so
+	// enumerating the server set downloaded every remote-only note/attachment
+	// into the local vault as an orphan (which then resurrects on the next
+	// sync). Wires the REAL catchupViaSeqReplay (via crdtCatchupSince) instead
+	// of stubbing it, so this proves pushAll's enumeration pass never applies.
+	test("replace-remote enumeration never materializes remote-only extras locally", async () => {
+		const { engine, api } = makeEngine([]); // no local files at all
+		const applySpy = mock(async () => true);
+		(engine as any).applySyncChange = applySpy;
+		(engine as any).crdtDelete = async (id: string) => ({ doc_id: id });
+		(api.deleteAttachment as any) = mock().mockResolvedValue({ deleted: true, path: "" });
+		engine.setCrdtCreateBatch(async (creates) => ({
+			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),
+		}));
+
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "remote-note-id",
+					seq: 1,
+					path: "Remote.md",
+					title: "Remote",
+					content: "remote body",
+					folder: "",
+					tags: [],
+					mtime: 1,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+				{
+					type: "attachment",
+					id: "att-1",
+					seq: 2,
+					path: "Remote.png",
+					mime_type: "image/png",
+					size_bytes: 10,
+					mtime: 2,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.pushAll({ replaceRemote: true, localSnapshot: new Set<string>() });
+
+		expect(applySpy).not.toHaveBeenCalled(); // enumeration did NOT pull the extras in
 	});
 });

@@ -766,6 +766,41 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
 
+	test("delete event carrying our OWN device_id is dropped (#970)", async () => {
+		// Origin-attributed self-echo guard (sync.ts ~L3973): the server stamps
+		// the REST caller's X-Device-Id into delete broadcasts. A delete WE
+		// caused must never be re-applied to our own vault.
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		const existingFile = new TFile("Notes/Mine.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Mine.md",
+			timestamp: 1709345678,
+			device_id: "device-self",
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("delete event from a FOREIGN device still applies (#970)", async () => {
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		const file = new TFile("Notes/Theirs.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(file);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Theirs.md",
+			timestamp: 1709345678,
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
 	test("delete whose id matches the live note trashes it authoritatively (no pull)", async () => {
 		// CRDT-authoritative rewire: a received delete is applied directly on the
 		// socket receive path, never deferred to a REST pull (the old pull-defer
@@ -3764,36 +3799,12 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 		expect(mockApi.deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("replace mode (replaceRemote:true): wipes remote EXTRAS, preserves locally-present notes, then uploads local", async () => {
-		const engine = createEngine();
-		// .canvas for the shared local note so its in-place force re-push takes the
-		// LWW REST route (md converges over CRDT and would not fire pushNote).
-		const local = [new TFile("kept.canvas", Date.now())];
-		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
-		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Content");
-		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
-		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
-		// wipeRemote (before upload) and reconcile (after upload) both read the
-		// manifest — return the same snapshot for every call.
-		(mockApi.getManifest as jest.Mock).mockResolvedValue({
-			notes: [{ path: "kept.canvas" }, { path: "remote-a.md" }, { path: "remote-b.md" }],
-			attachments: [{ path: "old.png" }],
-		});
-
-		await engine.pushAll({ replaceRemote: true });
-
-		// The shared note (present locally) is NOT deleted: deleting it would
-		// tombstone its path and the backend delete-wins guard would then refuse
-		// the same-path re-push as `recently_deleted` (permanent loss — the
-		// test_86 regression). It is force-pushed in place instead.
-		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("kept.canvas");
-		// Only true remote extras (absent locally) are wiped.
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-a.md");
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-b.md");
-		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("old.png");
-		// Local was re-uploaded (server ends an exact mirror of local either way).
-		expect(mockApi.pushNote).toHaveBeenCalled();
-	});
+	// NOTE: the replace-remote server-side delete behavior (server-only note-ids
+	// via crdtDelete + server-only attachment-paths via deleteAttachment, and the
+	// never-trash-local invariant) is covered against the real CRDT harness in
+	// tests/sync-push-consolidation.test.ts ("replace-remote via crdtDelete +
+	// attachment-delete"). It replaced the manifest-based wipeRemote mechanism
+	// this describe used to exercise.
 
 	test("backward compat: no opts = no deletions", async () => {
 		const engine = createEngine();

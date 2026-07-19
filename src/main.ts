@@ -418,9 +418,10 @@ export default class EngramSyncPlugin extends Plugin {
 		// deletes (#970).
 		this.syncEngine.setDeviceId(this.deviceId);
 
-		// wipeRemote destroys Y.Docs for files that stay open on disk — detach
-		// all live editor bindings first so none spans the teardown. Rebind
-		// happens via the existing file-open/leaf/layout refresh events.
+		// Replace-remote (push-all-delete-remote) destroys Y.Docs via crdtDelete
+		// for files that stay open on disk — detach all live editor bindings
+		// first so none spans the teardown. Rebind happens via the existing
+		// file-open/leaf/layout refresh events.
 		this.syncEngine.setCrdtEditorDetach(() => this.crdtLiveViews?.detachAll());
 
 		// Genesis ADOPT under a live editor: rebind the editor off the orphaned
@@ -2044,8 +2045,9 @@ export default class EngramSyncPlugin extends Plugin {
 			case "push-all-delete-remote": {
 				// Snapshot local files BEFORE opening the gate: markSyncGateAccepted
 				// lets queued live WS events into the vault, and a race-delivered
-				// remote note would otherwise look "local" to wipeRemote and dodge
-				// the wipe (test_86 gate-open race). See SyncEngine.snapshotLocalPaths.
+				// remote note would otherwise look "local" to the replace-remote
+				// push and dodge the server-only delete (test_86 gate-open race).
+				// See SyncEngine.snapshotLocalPaths.
 				const localSnapshot = this.syncEngine.snapshotLocalPaths();
 				await this.markSyncGateAccepted();
 				const pushed = await this.syncEngine.pushAll({

@@ -195,9 +195,9 @@ export class CrdtLiveViews {
 	}
 
 	/** Release + drop every editor controller WITHOUT tearing down awareness or
-	 *  hooks — so no binding spans a Y.Doc teardown (wipeRemote destroys docs
-	 *  whose files stay open). The next refresh() re-binds current views with
-	 *  fresh controllers. */
+	 *  hooks — so no binding spans a Y.Doc teardown (replace-remote's crdtDelete
+	 *  destroys docs whose files stay open). The next refresh() re-binds current
+	 *  views with fresh controllers. */
 	detachAll(): void {
 		for (const [cm, ctrl] of this.controllers) {
 			ctrl.release(cm);

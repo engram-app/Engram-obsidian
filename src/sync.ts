@@ -229,15 +229,6 @@ function countFolders(paths: Iterable<string>): number {
 /** How long (ms) after a push completes to suppress WebSocket echoes for that path. */
 const ECHO_COOLDOWN_MS = 5000;
 
-/** How long (ms) after wipeRemote deletes a path to suppress the server's
- *  fanout echo of that delete. Much longer than ECHO_COOLDOWN_MS: a large
- *  vault's wipe + re-upload runs for minutes and echoes queue behind it, and
- *  against pre-#970 backends (no device_id on broadcasts) this TTL is the
- *  ONLY thing standing between a late echo and trashFile. Cheap to hold long:
- *  deletes attributed to a FOREIGN device bypass the suppression entirely, so
- *  on #970 backends a long TTL cannot swallow another device's real delete. */
-const WIPE_ECHO_COOLDOWN_MS = 10 * 60_000;
-
 /** How long (ms) after THIS device deletes a note to refuse resurrecting it
  *  via either CRDT convergence path (catch-up head map or vault-channel
  *  fan-out). Keyed by note_id — a recreate at the same path mints a fresh id
@@ -329,13 +320,6 @@ export class SyncEngine {
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
 	private recentlyPushed: Map<string, number> = new Map();
-	/** Paths whose remote copy THIS device just deleted via wipeRemote (the
-	 *  replace-remote sync). The server fans our own deletes back with no
-	 *  origin attribution; applying them trashed the entire local vault
-	 *  mid-replace (2026-07-08 incident). Deletes are otherwise exempt from
-	 *  echo suppression, so this set is the only thing standing between a
-	 *  remote wipe and the local files it is about to re-upload. */
-	private wipedRemote: Map<string, number> = new Map();
 	/** Paths whose local trash APPLIED a remote change (WS delete, pull
 	 *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
 	 *  trash fires must not push a DELETE back to the server: the server
@@ -445,8 +429,9 @@ export class SyncEngine {
 	/** This install's opaque device id (main.ts mints + persists it; the API
 	 *  client sends it as X-Device-Id on every REST call). The server stamps
 	 *  it into `note_changed` delete broadcasts (#970) so we can drop our own
-	 *  fanout echoes — the generic class fix behind the wipeRemote path
-	 *  marking below. Null in tests/older callers: the drop is then skipped. */
+	 *  fanout echoes — the origin-attributed guard used below (and by the
+	 *  editor-detach/rebind wiring just after it). Null in tests/older
+	 *  callers: the drop is then skipped. */
 	private deviceId: string | null = null;
 
 	setDeviceId(id: string | null): void {
@@ -454,12 +439,13 @@ export class SyncEngine {
 	}
 
 	/** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
-	 *  main.ts). wipeRemote destroys Y.Docs whose files stay on disk and may
-	 *  be OPEN — unlike the WS-delete path, no trashFile closes the view, so
-	 *  a still-attached binding would write keystrokes into a destroyed doc
-	 *  (the never-span-a-load class, crdt-editor-bind-race-pollution.md).
-	 *  Bindings re-establish via the normal refresh events; meanwhile edits
-	 *  flow through handleModify as plain pushes. */
+	 *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
+	 *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
+	 *  closes the view, so a still-attached binding would write keystrokes
+	 *  into a destroyed doc (the never-span-a-load class,
+	 *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
+	 *  normal refresh events; meanwhile edits flow through handleModify as
+	 *  plain pushes. */
 	private crdtEditorDetach: (() => void) | null = null;
 
 	setCrdtEditorDetach(fn: (() => void) | null): void {
@@ -3000,14 +2986,6 @@ export class SyncEngine {
 		return this.recentlyPushed.has(path);
 	}
 
-	/** Suppress the stream echo of a wipeRemote delete for this path. Marked
-	 *  BEFORE the REST delete is issued — the fanout can arrive faster than
-	 *  the HTTP response. Kept on error too: a client-side timeout can mask a
-	 *  delete that actually landed, and the TTL bounds the false-positive. */
-	private markWipedRemote(path: string): void {
-		this.markWithTtl(this.wipedRemote, path, WIPE_ECHO_COOLDOWN_MS);
-	}
-
 	/** Suppress the handleModify echo of a flushFromCrdt disk write for
 	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
 	 *  never swallows a genuine local edit. */
@@ -3282,8 +3260,14 @@ export class SyncEngine {
 	 *  choices. A coalesced call that folds into an in-flight replay returns
 	 *  applied:0/empty sets — the running call reports the total. `fromZero`
 	 *  forces the replay to start at cursor 0 regardless of the persisted
-	 *  `catchupSeq` (idempotent re-replay). */
-	async catchupViaSeqReplay(opts: { fromZero?: boolean } = {}): Promise<{
+	 *  `catchupSeq` (idempotent re-replay). `enumerateOnly` (implies `fromZero`)
+	 *  is a push/replace enumeration pass: it walks the same feed to collect
+	 *  `serverIds`/`serverAttachmentPaths` but never applies an op locally
+	 *  (`applySyncChange`) and never advances/persists the real `catchupSeq`
+	 *  cursor — a "replace remote with local" must download nothing (that would
+	 *  materialize remote extras as local orphans, which then resurrect on the
+	 *  next sync), and mustn't steal seq progress from a later genuine catch-up. */
+	async catchupViaSeqReplay(opts: { fromZero?: boolean; enumerateOnly?: boolean } = {}): Promise<{
 		applied: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
@@ -3300,9 +3284,10 @@ export class SyncEngine {
 			do {
 				this.seqReplayAgain = false;
 				applied += await this.runSeqReplayOnce(
-					opts.fromZero ?? false,
+					(opts.fromZero ?? false) || (opts.enumerateOnly ?? false),
 					serverIds,
 					serverAttachmentPaths,
+					opts.enumerateOnly ?? false,
 				);
 			} while (this.seqReplayAgain);
 		} finally {
@@ -3361,6 +3346,7 @@ export class SyncEngine {
 		fromZero: boolean,
 		serverIds: Set<string>,
 		serverAttachmentPaths: Set<string>,
+		enumerateOnly = false,
 	): Promise<number> {
 		if (!this.crdtCatchupSince || !this.crdt) return 0;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
@@ -3388,13 +3374,15 @@ export class SyncEngine {
 				return applied;
 			}
 			for (const c of resp.changes) {
-				try {
-					await this.applySyncChange(c);
-					applied += 1;
-				} catch (e) {
-					// One bad op (e.g. illegal filename) must not wedge the feed — log
-					// and skip, same isolation as pullViaCursor.
-					rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+				if (!enumerateOnly) {
+					try {
+						await this.applySyncChange(c);
+						applied += 1;
+					} catch (e) {
+						// One bad op (e.g. illegal filename) must not wedge the feed — log
+						// and skip, same isolation as pullViaCursor.
+						rlog().error("crdt", `seq-replay: skipped ${c.path} — ${errMsg(e)}`);
+					}
 				}
 				// Advance past every op we've SEEN (applied or skipped) so the cursor
 				// is monotonic and a permanently-unappliable op can't stall the feed.
@@ -3409,8 +3397,13 @@ export class SyncEngine {
 					serverIds.add(c.id);
 				}
 			}
-			this.setCatchupSeq(cursor);
-			await this.saveData({ catchupSeq: this.getCatchupSeq() });
+			// enumerateOnly must not move the real catch-up cursor — a later
+			// genuine catch-up needs to still see every op this enumeration walked
+			// past, since none of them were applied.
+			if (!enumerateOnly) {
+				this.setCatchupSeq(cursor);
+				await this.saveData({ catchupSeq: this.getCatchupSeq() });
+			}
 			if (!resp.has_more) break;
 			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
 		}
@@ -3981,20 +3974,6 @@ export class SyncEngine {
 			// echoes also drive id-relocation, so they are not dropped here.
 			if (this.deviceId && event.device_id === this.deviceId) {
 				rlog().info("ws", `Echo skip (own device): ${event.path}`);
-				return;
-			}
-			// Self-echo of a replace-remote wipe: WE deleted this path on the
-			// server moments ago (wipeRemote) and are about to re-upload it.
-			// The general delete-exemption from echo suppression must not let
-			// our own wipe come back and trash the vault (2026-07-08 incident).
-			// Kept alongside the device_id drop above — pre-#970 backends
-			// (self-host updates on its own cadence) send no device_id.
-			// A delete ATTRIBUTED to another device is provably not our echo:
-			// it bypasses the wipe guard, or B's real concurrent delete would
-			// be swallowed for the whole TTL and resurrected by our re-push.
-			const foreignAttributed = !!event.device_id && event.device_id !== this.deviceId;
-			if (this.wipedRemote.has(normalized) && !foreignAttributed) {
-				rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
 				return;
 			}
 			// A delete is an AUTHORITATIVE CRDT operation applied directly here — no
@@ -5443,7 +5422,7 @@ export class SyncEngine {
 		// trashFile dispatches Obsidian's vault "delete" event, which routes to
 		// handleFolderDelete; if the folder were still tracked there it would echo
 		// a real DELETE /folders back to the server (the folder-level twin of the
-		// wipeRemote echo). Removing it from the set first makes
+		// #970 own-device delete-echo guard). Removing it from the set first makes
 		// handleFolderDelete's membership guard suppress the echo — and covers the
 		// "user deleted all folders → []" case without a special guard.
 		await this.explicitFolders.replaceAll(names);
@@ -6625,21 +6604,41 @@ export class SyncEngine {
 		// Drop stale per-vault bookkeeping if the active vault changed.
 		await this.invalidateIfVaultChanged();
 
-		// Replace mode: wipe the entire remote BEFORE uploading so the server
-		// ends up an exact mirror of local. Runs first so the "Delete all on
-		// remote, then upload local files" label is literally true.
+		// Replace mode: enumerate the server's live note-ids + attachment-paths
+		// (a from-0 op-log replay — the same authoritative server-set the
+		// pull-all-delete path uses) so we can delete the server-ONLY extras
+		// AFTER the push below. Captured here, BEFORE the push, so a note we are
+		// about to (re)upload is never in the "server-only" set, and the local-id
+		// set is snapshot-truth-at-sync-start (a genesis adoption re-minting an id
+		// during the push cannot retroactively orphan a locally-present note).
+		// The actual deletes run push-FIRST (below) — push-then-delete avoids the
+		// 2026-07-08 wipe-before-enumerate vault-wipe incident.
+		let replaceExtras: { ids: string[]; attachments: string[] } | null = null;
 		if (opts.replaceRemote) {
-			await this.wipeRemote(opts.localSnapshot);
+			const { serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+				fromZero: true,
+				enumerateOnly: true,
+			});
+			const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
+			const localIds = new Set<string>();
+			for (const path of snap) {
+				const id = this.noteIdMap?.get(path);
+				if (id) localIds.add(id);
+			}
+			replaceExtras = {
+				ids: [...serverIds].filter((id) => !localIds.has(id)),
+				attachments: [...serverAttachmentPaths].filter((p) => !snap.has(normalizePath(p))),
+			};
 		}
 
 		const files = this.app.vault.getFiles();
 		let toSync = files.filter((f: TFile) => this.isSyncable(f) && !this.shouldIgnore(f.path));
 		// When a pre-gate snapshot is supplied (replace-remote), upload ONLY files
-		// that existed before markSyncGateAccepted opened the gate. A note the
-		// gate-open race delivered into the vault is a REMOTE note wipeRemote just
-		// deleted — re-pushing it here would resurrect it (test_86) or 404 via the
-		// delete-wins guard. Scoping both wipe and push to the snapshot makes the
-		// op exactly "remote := local-at-sync-start".
+		// that existed before the sync gate opened. A note the gate-open race
+		// delivered into the vault is a REMOTE extra (the delete step below removes
+		// it server-side) — re-pushing it here would resurrect it (test_86) or 404
+		// via the delete-wins guard. Scoping both push and the extras enumeration
+		// to the snapshot makes the op exactly "remote := local-at-sync-start".
 		if (opts.localSnapshot) {
 			const snap = opts.localSnapshot;
 			toSync = toSync.filter((f: TFile) => snap.has(normalizePath(f.path)));
@@ -6693,6 +6692,48 @@ export class SyncEngine {
 			this.emitPushing(pushed, total, failed, batch[batch.length - 1]!.path);
 		}
 
+		// Replace mode: every local file is now (re)pushed, so delete the
+		// server-ONLY extras enumerated above. Note-ids go over the durable CRDT
+		// op-log (`crdtDelete`); attachments are legitimately off the CRDT path (a
+		// spec non-goal), so they use the REST attachment-delete `wipeRemote` used.
+		// A locally-present note/attachment was just (re)pushed and is excluded
+		// from these sets, so nothing local is deleted. Failures are logged, not
+		// thrown, so a partial delete never aborts the sync.
+		if (replaceExtras) {
+			const delTotal = replaceExtras.ids.length + replaceExtras.attachments.length;
+			let delDone = 0;
+			this.onSyncProgress?.({ phase: "deleting", current: 0, total: delTotal, failed: 0 });
+			for (const id of replaceExtras.ids) {
+				try {
+					await this.crdtDelete?.(id);
+					this.logEntry("delete", id, "ok", undefined, "replace-remote");
+				} catch (e) {
+					this.logEntry("delete", id, "error", errMsg(e));
+				}
+				this.onSyncProgress?.({
+					phase: "deleting",
+					current: ++delDone,
+					total: delTotal,
+					failed: 0,
+				});
+			}
+			for (const path of replaceExtras.attachments) {
+				try {
+					await this.api.deleteAttachment(path);
+					this.logEntry("delete", path, "ok", undefined, "replace-remote");
+				} catch (e) {
+					this.logEntry("delete", path, "error", errMsg(e));
+				}
+				this.onSyncProgress?.({
+					phase: "deleting",
+					current: ++delDone,
+					total: delTotal,
+					failed: 0,
+					currentPath: path,
+				});
+			}
+		}
+
 		// Flush first so the terminal "complete" can report the plan-skipped
 		// tally (flush stashes it into lastBatchSkipped before resetting the
 		// live counter). skipped and failed are disjoint — plan-skips never hit
@@ -6732,8 +6773,8 @@ export class SyncEngine {
 				// Same snapshot fence as the main push loop: when replace-remote
 				// supplied a pre-gate snapshot, reconcile must not re-push a path
 				// outside it. reconcile re-enumerates getFiles(), so a gate-open
-				// race note wiped by wipeRemote would otherwise be classified
-				// "missing" and resurrected here (delete-wins only masks it).
+				// race note (a server extra the delete step removed) would otherwise
+				// be classified "missing" and resurrected here (delete-wins masks it).
 				const snap = opts.localSnapshot;
 				for (const path of toFix) {
 					if (snap && !snap.has(normalizePath(path))) {
@@ -6751,124 +6792,6 @@ export class SyncEngine {
 		await this.saveData({ lastSync: this.lastSync });
 
 		return pushed;
-	}
-
-	/** Delete EVERY remote note and attachment (the whole server vault), emitting
-	 *  a `deleting` progress phase. Used by `pushAll({replaceRemote:true})` before
-	 *  it re-uploads all local files, so the server ends up an exact mirror of
-	 *  local. This is intentionally a full wipe (shared files are deleted then
-	 *  recreated by the subsequent upload); the user confirms via the type-delete
-	 *  gate. Failures on individual deletes are logged, not thrown, so the
-	 *  re-upload still runs. */
-	private async wipeRemote(localSnapshot?: Set<string>): Promise<void> {
-		const manifest = await this.api.getManifest();
-		if (!manifest) {
-			rlog().warn("push", "wipeRemote skipped — backend has no /sync/manifest");
-			return;
-		}
-
-		// Only wipe true remote EXTRAS — notes/attachments absent from the local
-		// vault. A file that exists locally is about to be re-uploaded; deleting
-		// it first tombstones its path, and the backend delete-wins guard then
-		// refuses the same-path re-push as `recently_deleted` (permanent 404 —
-		// the e2e test_86 regression). Leaving it lets the follow-up force-push
-		// update it in place (id retained → CRDT room preserved, no tombstone).
-		//
-		// Prefer a caller-supplied PRE-GATE snapshot of local paths. push-all-
-		// delete-remote runs markSyncGateAccepted() before this wipe, which opens
-		// the gate and lets a queued live WS event inject a server-only note into
-		// the vault BEFORE getFiles() reads it here — that note would then look
-		// "local" and dodge the wipe (test_86 gate-open race: server proof showed
-		// the extra's only DELETE arrived ~30s late). The snapshot is local truth
-		// as of sync start, so a race-injected note is still wiped and genuinely-
-		// local files are still kept.
-		const localPaths =
-			localSnapshot ??
-			new Set(
-				this.app.vault
-					.getFiles()
-					.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path))
-					.map((f) => normalizePath(f.path)),
-			);
-		const notePaths = manifest.notes
-			.map((n) => n.path)
-			.filter((p) => !localPaths.has(normalizePath(p)));
-		const attachmentPaths = manifest.attachments
-			.map((a) => a.path)
-			.filter((p) => !localPaths.has(normalizePath(p)));
-		const total = notePaths.length + attachmentPaths.length;
-
-		rlog().info(
-			"push",
-			`wipeRemote — deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`,
-		);
-
-		let done = 0;
-		this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
-
-		// Detach every live editor binding BEFORE any Y.Doc teardown below.
-		// The wiped files stay on disk (nothing trashes them, so no view ever
-		// closes) and a binding spanning removeDoc would write into a
-		// destroyed doc. Rebind happens via the normal refresh events.
-		this.crdtEditorDetach?.();
-
-		for (const path of notePaths) {
-			const normalized = normalizePath(path);
-			// Mark BEFORE the delete — the fanout echo can beat the response.
-			this.markWipedRemote(normalized);
-			// Forget the note's server bindings UNCONDITIONALLY, not just on
-			// REST success: a client-side timeout can mask a delete that landed
-			// server-side, and retained bindings would crdt-skip/hash-skip the
-			// re-push while the tombstone pull trashes the local file. If the
-			// delete truly failed, the note is still live on the server and the
-			// path-keyed re-push upserts it — convergent either way. A retained
-			// serverHash would hash-skip every "unchanged" note (silent remote
-			// loss) and a retained note_id points at a tombstone (dead CRDT
-			// room, note_not_found join spam). The noteIdMap clear covers ALL
-			// manifest notes (.canvas included); Y.Doc teardown is md-only,
-			// same as the stream delete branch.
-			this.syncState.delete(normalized);
-			this.baseStore?.delete(normalized);
-			const noteId = this.noteIdMap?.get(normalized) ?? null;
-			this.noteIdMap?.delete(normalized);
-			if (noteId && normalized.endsWith(".md")) {
-				await this.crdt?.removeDoc(noteId);
-				this.crdtEnrollment?.reset(noteId);
-			}
-			try {
-				await this.api.deleteNote(path);
-				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
-			} catch (e) {
-				this.logEntry("delete", path, "error", errMsg(e));
-			}
-			done++;
-			this.onSyncProgress?.({
-				phase: "deleting",
-				current: done,
-				total,
-				failed: 0,
-				currentPath: path,
-			});
-		}
-		for (const path of attachmentPaths) {
-			const normalized = normalizePath(path);
-			this.markWipedRemote(normalized);
-			this.syncState.delete(normalized);
-			try {
-				await this.api.deleteAttachment(path);
-				this.logEntry("delete", path, "ok", undefined, "wipe-remote");
-			} catch (e) {
-				this.logEntry("delete", path, "error", errMsg(e));
-			}
-			done++;
-			this.onSyncProgress?.({
-				phase: "deleting",
-				current: done,
-				total,
-				failed: 0,
-				currentPath: path,
-			});
-		}
 	}
 
 	/** Reconcile local vault against server manifest.
@@ -7374,14 +7297,6 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.recentlyFlushed.clear();
-		// NOTE: a reload mid-replace-remote starts the NEW engine with an empty
-		// wipedRemote while old wipe echoes may still be in flight; on #970
-		// backends the device_id drop still covers them, on older backends the
-		// residual risk window is accepted (mid-wipe reloads are rare).
-		for (const timer of this.wipedRemote.values()) {
-			window.clearTimeout(timer);
-		}
-		this.wipedRemote.clear();
 		for (const timer of this.remotelyDeleted.values()) {
 			window.clearTimeout(timer);
 		}
