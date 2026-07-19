@@ -13,7 +13,9 @@ export function betaVersion(stable, n) {
 }
 
 export function prVersion(stable, prNum, shortSha) {
-	return `${nextPatch(stable)}-pr.${prNum}.${shortSha}`;
+	// `g`-prefix the sha (git-describe style) so an all-digit short sha with a
+	// leading zero (e.g. 0123456) stays a valid, non-numeric semver identifier.
+	return `${nextPatch(stable)}-pr.${prNum}.g${shortSha}`;
 }
 
 // CLI shim so workflows can call it without a bundler:

@@ -25,6 +25,14 @@ describe("betaVersion", () => {
 
 describe("prVersion", () => {
 	test("is a valid, unique-per-commit prerelease", () => {
-		expect(prVersion("1.12.26", 42, "a1b2c3d")).toBe("1.12.27-pr.42.a1b2c3d");
+		expect(prVersion("1.12.26", 42, "a1b2c3d")).toBe("1.12.27-pr.42.ga1b2c3d");
+	});
+	test("stays valid semver for an all-digit leading-zero short sha", () => {
+		const v = prVersion("1.12.26", 42, "0123456");
+		expect(v).toBe("1.12.27-pr.42.g0123456");
+		// Without the `g` prefix this id would be `0123456` — a numeric identifier
+		// with a leading zero, which is invalid semver. Valid versions order below
+		// the eventual stable; an invalid one wouldn't parse to a clean ordering.
+		expect(Bun.semver.order(v, "1.12.27")).toBe(-1);
 	});
 });
