@@ -288,6 +288,69 @@ describe("EditorController", () => {
 		expect(c.currentPath()).toBe("a.md");
 	});
 
+	it("unseeded doc + non-empty editor: DEFERS the bind (never deletes base), rebinds once seeded", async () => {
+		// Deaf live-bound base loss (test_live_bound_both_ends): materialize writes
+		// base to DISK but leaves the Y.Doc EMPTY (adopt-first: the server seeds it
+		// on its own lineage via STEP2 / REST converge). If bindTo reconciles the
+		// editor DOWN to the empty doc, it deletes base out of the editor, ySync
+		// forwards that as a local op, and the base is lost GLOBALLY. bindTo must
+		// DEFER while the doc is unseeded and rebind once it is seeded — never
+		// dispatch a base-deleting reconcile.
+		const d = new Y.Doc();
+		const t = d.getText("content"); // EMPTY — unseeded
+		const calls: string[] = [];
+		const dispatches: unknown[] = [];
+		const c = new EditorController(deps({ "a.md": t }, calls));
+		const v = {
+			dispatch: mock((spec: unknown) => dispatches.push(spec)),
+			state: { doc: { toString: () => "# Base\nbase line.\n" } },
+		} as any;
+		await c.bindTo(v, "a.md");
+		// Deferred: NOT bound, no onBind, and NOTHING dispatched — the editor's base
+		// is untouched (no destructive reconcile, so no bytes=0 wipe / pushed delete).
+		expect(c.currentPath()).toBe(null);
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(false);
+		expect(dispatches.length).toBe(0);
+
+		// The server seeds the doc (REMOTE, its own lineage).
+		t.insert(0, "# Base\nbase line.\n");
+		await new Promise((r) => setTimeout(r, 5)); // let the seed observer + async rebind run
+		// Now bound; the rebind's reconcile is a no-op (editor already equals the seed).
+		expect(c.currentPath()).toBe("a.md");
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(true);
+	});
+
+	it("release during a deferred (unseeded) bind: never rebinds after the doc is later seeded", async () => {
+		// The deferred-seed observer must be unhooked on release, or a seed that
+		// lands after the note was closed would rebind a released controller.
+		const d = new Y.Doc();
+		const t = d.getText("content");
+		const calls: string[] = [];
+		const c = new EditorController(deps({ "a.md": t }, calls));
+		const v = { dispatch: mock(() => {}), state: { doc: { toString: () => "base" } } } as any;
+		await c.bindTo(v, "a.md");
+		expect(c.currentPath()).toBe(null); // deferred
+		c.release(v);
+		t.insert(0, "base"); // seed AFTER release
+		await new Promise((r) => setTimeout(r, 5));
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(false); // never bound
+	});
+
+	it("already-seeded doc: binds immediately (no defer) even under a non-empty editor", async () => {
+		// The guard must ONLY defer the unseeded case. A seeded doc binds normally
+		// so a genuine "user emptied the note" edit (a live edit AFTER bind on a
+		// seeded doc) is never blocked.
+		const d = new Y.Doc();
+		const t = d.getText("content");
+		t.insert(0, "seeded");
+		const calls: string[] = [];
+		const c = new EditorController(deps({ "a.md": t }, calls));
+		const v = { dispatch: mock(() => {}), state: { doc: { toString: () => "seeded" } } } as any;
+		await c.bindTo(v, "a.md");
+		expect(c.currentPath()).toBe("a.md");
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(true);
+	});
+
 	it("drift check releases the binding when the view no longer shows the bound path", async () => {
 		// Relay's view-identity guard (their view.file check): if Obsidian swapped
 		// the file in this view and the rebind was missed, the 3s drift repair

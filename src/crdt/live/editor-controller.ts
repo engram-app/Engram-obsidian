@@ -52,6 +52,10 @@ export class EditorController {
 	private bindResult: BindResult | null = null;
 	private boundYtext: Y.Text | null = null;
 	private driftTimer: number | null = null;
+	/** Set while a bind is deferred waiting for an unseeded Y.Doc to be seeded
+	 *  by the server (see bindTo's data-loss guard). Holds the observed Y.Text +
+	 *  its one-shot observer so detach()/release() can unhook it. */
+	private pendingSeed: { ytext: Y.Text; onSeed: () => void } | null = null;
 
 	constructor(deps: ControllerDeps) {
 		this.deps = deps;
@@ -77,9 +81,25 @@ export class EditorController {
 		const epoch = ++this.bindEpoch;
 		const ytext = await this.deps.getYText(path);
 		if (this.released || epoch !== this.bindEpoch) return;
+		// Data-loss guard (deaf live-bound base loss, test_live_bound_both_ends):
+		// materialize writes base to DISK but leaves the Y.Doc EMPTY on purpose —
+		// the adopt-first gate has the server seed it on its OWN lineage (STEP2 /
+		// REST converge), because a local seed would double against that lineage
+		// (#846). An empty Y.Text next to a non-empty editor therefore means
+		// "not seeded yet", NOT "note is empty". Reconciling the editor DOWN to
+		// the empty doc would delete base out of the editor; ySync forwards that
+		// as a local op and the base is lost GLOBALLY (server + every device).
+		// Defer the bind until the doc is seeded, then rebind (reconcile is then a
+		// no-op). Disk still converges meanwhile via the manager's remote-merge
+		// flush listener, independent of this editor binding.
+		const editorText = view.state.doc.toString();
+		if (ytext.length === 0 && editorText.length > 0) {
+			this.deferUntilSeeded(view, path, ytext, epoch);
+			return;
+		}
 		// yCollab only forwards future deltas, so reconcile the editor to the
 		// current Y.Text content before activating the binding.
-		const changes = reconcileEditorToYText(view.state.doc.toString(), ytext);
+		const changes = reconcileEditorToYText(editorText, ytext);
 		const result = bindSpec(ytext, this.deps.awareness());
 		view.dispatch({
 			changes,
@@ -90,6 +110,29 @@ export class EditorController {
 		this.path = path;
 		this.deps.onBind(path, this.viewId);
 		this.scheduleDriftCheck(view);
+	}
+
+	/** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
+	 *  server, then rebind. Never seeds the doc locally (that would double against
+	 *  the server's lineage — the reason the doc is empty in the first place). A
+	 *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
+	private deferUntilSeeded(view: EditorView, path: string, ytext: Y.Text, epoch: number): void {
+		const onSeed = () => {
+			if (ytext.length === 0) return; // still unseeded — keep waiting
+			this.unhookPendingSeed();
+			// A newer bindTo or a release() supersedes this deferred bind.
+			if (this.released || epoch !== this.bindEpoch) return;
+			void this.bindTo(view, path);
+		};
+		this.pendingSeed = { ytext, onSeed };
+		ytext.observe(onSeed);
+	}
+
+	private unhookPendingSeed(): void {
+		if (this.pendingSeed) {
+			this.pendingSeed.ytext.unobserve(this.pendingSeed.onSeed);
+			this.pendingSeed = null;
+		}
 	}
 
 	/** Force a rebind even when this.path already equals `path`. detach() clears
@@ -115,6 +158,10 @@ export class EditorController {
 	 *  bindTo can re-bind the same view to a new path. */
 	private detach(view: EditorView): void {
 		this.clearDriftTimer();
+		// Unhook any deferred-seed observer FIRST — a deferred bind has this.path
+		// === null, so this must run before the early-return below (release() and
+		// a superseding bindTo both route through detach()).
+		this.unhookPendingSeed();
 		this.bindResult = null;
 		this.boundYtext = null;
 		if (!this.path) return;
