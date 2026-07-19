@@ -15,8 +15,9 @@ The AI never reaches into Obsidian directly. It goes through Engram, which holds
 ## Release channels
 
 - **Stable** (default): install from Obsidian Community Plugins. Auto-updates.
-- **Beta**: install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then "Add beta plugin" → `engram-app/Engram-obsidian`, enable beta versions. Tracks `main`.
-- **Testing a specific PR**: in BRAT, "Add beta plugin" with a **frozen version** = the PR build tag (`X.Y.Z-pr.<num>.<sha>`, shown on the PR's prerelease).
+- **Testing a specific PR**: install [BRAT](https://github.com/TfTHacker/obsidian42-brat), then "Add beta plugin" with a **frozen version** = the PR build tag (`X.Y.Z-pr.<num>.g<sha>`, shown on the PR's prerelease).
+
+> A `main`-tracking **Beta** channel is planned; until its release workflow ships, only Stable and per-PR frozen builds are published — don't enable BRAT "beta versions" on the repo yet, as it would install an arbitrary open-PR build.
 
 ## Other ways to install
 
