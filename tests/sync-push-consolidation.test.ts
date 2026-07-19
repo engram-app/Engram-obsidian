@@ -412,3 +412,68 @@ describe("encodeGenesisUpdate + encodeUpdateFrame — frame correctness", () => 
 		peer.destroy();
 	});
 });
+
+describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
+	test("pull-all-keep replays from 0 via catchupViaSeqReplay and never trashes local extras", async () => {
+		const localOnly = new TFile("LocalOnly.md", Date.now());
+		const { engine, app } = makeEngine([localOnly], { "LocalOnly.md": "# local" });
+		let fromZero: boolean | undefined;
+		(engine as any).catchupViaSeqReplay = async (o: any) => {
+			fromZero = o?.fromZero;
+			return { applied: 1, serverIds: new Set(["s1"]) };
+		};
+
+		const applied = await engine.pullAll({ deleteLocalExtras: false });
+
+		expect(fromZero).toBe(true);
+		expect(applied).toBe(1);
+		expect(app.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("pull-all-delete-local trashes local ids absent from the server set, keeps ids present", async () => {
+		const stale = new TFile("Stale.md", Date.now());
+		const kept = new TFile("Kept.md", Date.now());
+		const { engine, app } = makeEngine([stale, kept], {
+			"Stale.md": "# stale",
+			"Kept.md": "# kept",
+		});
+		(engine as any).noteIdMap.set("Stale.md", "local-stale-id");
+		(engine as any).noteIdMap.set("Kept.md", "kept-id");
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set(["kept-id"]),
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(app.fileManager.trashFile).toHaveBeenCalledTimes(1);
+		expect(app.fileManager.trashFile).toHaveBeenCalledWith(stale);
+	});
+
+	test("mirror invariant: the local wipe-trash does NOT echo-push a delete to the server", async () => {
+		// Uses the REAL trashRemotelyDeleted (not mocked) so its remotelyDeleted
+		// echo-suppression marker actually gets set, then simulates the vault's
+		// own 'delete' event firing on that same file post-trash (what Obsidian
+		// does after fileManager.trashFile resolves) — mirrors the test_86
+		// wipe/delete-wins regression class.
+		const stale = new TFile("Stale.md", Date.now());
+		const { engine, api } = makeEngine(
+			[stale],
+			{ "Stale.md": "# stale" },
+			mockCrdt({ removeDoc: async () => {} }),
+		);
+		(engine as any).noteIdMap.set("Stale.md", "local-stale-id");
+		const enqueued: unknown[] = [];
+		engine.setCrdtEnqueue((op: unknown) => enqueued.push(op));
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set<string>(),
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+		await engine.handleDelete(stale); // the vault delete event the trash fires
+
+		expect(enqueued).toEqual([]); // no crdt_delete echoed back to the server
+		expect(api.deleteNote).not.toHaveBeenCalled();
+	});
+});

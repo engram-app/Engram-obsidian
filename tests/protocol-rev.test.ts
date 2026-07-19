@@ -139,112 +139,14 @@ afterEach(() => {
 	activeEngines.length = 0;
 });
 
-// The meta-page pagination + serverHash body-skip + body-fetch-on-hash-diff
-// strategy these tests protect lives in fetchAllNoteChanges / resolveChangeBody,
-// exercised by pullAll() (the advanced-sync path over the legacy /notes/changes
-// feed — the only surviving REST change feed after the pull-cluster purge).
-describe("paginated pull (legacy meta feed via pullAll)", () => {
-	test("loops pages until has_more=false, passing the cursor through", async () => {
-		const engine = createEngine();
-		(mockApi.getChanges as jest.Mock)
-			.mockResolvedValueOnce({
-				changes: [metaChange("a.md", "h-a", 1)],
-				server_time: "2026-06-12T00:00:01Z",
-				has_more: true,
-				next_cursor: "cur1",
-			})
-			.mockResolvedValueOnce({
-				changes: [metaChange("b.md", "h-b", 1)],
-				server_time: "2026-06-12T00:00:02Z",
-				has_more: false,
-				next_cursor: null,
-			});
-		(mockApi.getNote as jest.Mock).mockImplementation((path: string) =>
-			Promise.resolve({
-				path,
-				title: path,
-				content: `body of ${path}`,
-				content_hash: `h-${path.replace(".md", "")}`,
-				folder: "",
-				tags: [],
-				mtime: 100,
-				created_at: "2026-06-12T00:00:00Z",
-				updated_at: "2026-06-12T00:00:00Z",
-				version: 1,
-			}),
-		);
-
-		const applied = await engine.pullAll();
-
-		expect(applied).toBe(2);
-		const calls = (mockApi.getChanges as jest.Mock).mock.calls;
-		expect(calls.length).toBe(2);
-		// Second call must carry the cursor from page 1.
-		expect(calls[1][1]).toMatchObject({ cursor: "cur1" });
-		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-	});
-
-	test("skips the body fetch when content_hash matches the stored serverHash", async () => {
-		const engine = createEngine();
-		// The skip requires the local file to exist — a missing file must
-		// always be re-fetched (pullAll restore case).
-		const local = new TFile("a.md");
-		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
-			p === "a.md" ? local : null,
-		);
-		engine.importSyncState({
-			"a.md": { hash: fnv1a("# Test"), version: 4, serverHash: "h-same" },
-		});
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [metaChange("a.md", "h-same", 5)],
-			server_time: "2026-06-12T00:00:01Z",
-			has_more: false,
-			next_cursor: null,
-		});
-
-		await engine.pullAll();
-
-		expect(mockApi.getNote).not.toHaveBeenCalled();
-		expect(mockApp.vault.create).not.toHaveBeenCalled();
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-
-		// Version advances so the next push doesn't 409 on a stale version.
-		const state = engine.exportSyncState();
-		expect(state["a.md"]?.version).toBe(5);
-		expect(state["a.md"]?.serverHash).toBe("h-same");
-	});
-
-	test("fetches the body when content_hash differs from the stored serverHash", async () => {
-		const engine = createEngine();
-		engine.importSyncState({
-			"a.md": { hash: fnv1a("old local"), version: 4, serverHash: "h-old" },
-		});
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [metaChange("a.md", "h-new", 5)],
-			server_time: "2026-06-12T00:00:01Z",
-			has_more: false,
-			next_cursor: null,
-		});
-		(mockApi.getNote as jest.Mock).mockResolvedValueOnce({
-			path: "a.md",
-			title: "a",
-			content: "new body",
-			content_hash: "h-new",
-			folder: "",
-			tags: [],
-			mtime: 100,
-			created_at: "2026-06-12T00:00:00Z",
-			updated_at: "2026-06-12T00:00:00Z",
-			version: 5,
-		});
-
-		await engine.pullAll();
-
-		expect(mockApi.getNote).toHaveBeenCalledWith("a.md");
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		expect(engine.exportSyncState()["a.md"]?.serverHash).toBe("h-new");
-	});
-});
+// REST-purge Bucket B (Task 5) — REMOVED: "paginated pull (legacy meta feed
+// via pullAll)" (3 tests: page-loop cursor threading, serverHash body-skip,
+// body-fetch-on-hash-diff). pullAll() no longer calls fetchAllNoteChanges /
+// resolveChangeBody at all — it replays the note op-log from cursor 0 via
+// catchupViaSeqReplay({fromZero:true}) (tests/sync-push-consolidation.test.ts,
+// "SyncEngine.pullAll — replay-from-0"). fetchAllNoteChanges/resolveChangeBody
+// still exist (another caller in the pushAll/wipeRemote reconcile path,
+// untouched by this task), just no longer reachable through pullAll.
 
 describe("hash-compare live sync", () => {
 	test("skips events whose content_hash matches the stored serverHash", async () => {
@@ -480,8 +382,11 @@ describe("reconcile (serverHash-based)", () => {
 //     "SyncEngine pullViaCursor". Re-pinning these to a watermark pull() no
 //     longer maintains would assert dead behavior.
 //
-// The body-fetch / serverHash meta-skip mechanics themselves remain covered via
-// pullAll() in the "paginated pull (legacy meta feed via pullAll)" suite above.
+// The body-fetch / serverHash meta-skip mechanics themselves were covered via
+// pullAll() in a "paginated pull (legacy meta feed via pullAll)" suite that
+// USED to sit above this comment — removed by Task 5 of the CRDT
+// single-push-path rework (see that removal note further up this file):
+// pullAll() no longer drives fetchAllNoteChanges/resolveChangeBody at all.
 
 describe("batch push sizing", () => {
 	test("notes above 10MB are routed through the single-note path", async () => {

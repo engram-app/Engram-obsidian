@@ -3717,6 +3717,15 @@ export class SyncEngine {
 		return this._pullAll(opts.deleteLocalExtras ?? false);
 	}
 
+	/** REST-purge Bucket B (Task 5): replay the note op-log from cursor 0
+	 *  instead of a REST `GET /notes/changes`/`GET /attachments/changes` fetch.
+	 *  `deleteLocalExtras` no longer blind-wipes every local file up front —
+	 *  it compares each locally-mapped note id against the replay's
+	 *  authoritative `serverIds` set and trashes only the ones absent
+	 *  (data-loss guard: a blind pre-wipe followed by a failed/partial
+	 *  refetch used to strand the vault empty). Attachments are untouched —
+	 *  the note replay carries no attachment ids, so out of scope here (still
+	 *  reconciled by `reconcileFromManifest` on the normal catch-up path). */
 	private async _pullAll(wipe: boolean): Promise<number> {
 		if (this.pulling) return 0;
 
@@ -3725,256 +3734,78 @@ export class SyncEngine {
 		this.lastError = "";
 		this.emitStatus();
 
-		if (wipe) {
-			// Suppress delete sync — we're wiping locally, not deleting from server
-			this.suppressDeletes = true;
-			devLog().log("pull", "pullAll(deleteLocalExtras): deleting all local syncable files");
-			rlog().info("pull", "pullAll(deleteLocalExtras) started — deleting local files");
-			const files = this.app.vault.getFiles();
-			const syncable = files.filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
-			const wipeTotal = syncable.length;
-			this.onSyncProgress?.({ phase: "deleting", current: 0, total: wipeTotal, failed: 0 });
-			let wipeFailed = 0;
-			for (let i = 0; i < syncable.length; i++) {
-				const file = syncable[i]!;
-				try {
-					await this.trashRemotelyDeleted(file);
-					this.logEntry("delete", file.path, "ok", undefined, "wipe");
-				} catch (e) {
-					wipeFailed++;
-					const msg = errMsg(e);
-					this.logEntry("delete", file.path, "error", msg);
-				}
-				this.onSyncProgress?.({
-					phase: "deleting",
-					current: i + 1,
-					total: wipeTotal,
-					failed: wipeFailed,
-					currentPath: file.path,
-				});
-				// Yield to UI thread periodically so progress modal can repaint
-				if ((i + 1) % 20 === 0) {
-					await new Promise((resolve) => window.setTimeout(resolve, 0));
-				}
-			}
-			// Reset sync state — everything will be re-synced from server
-			this.syncState.clear();
-			this.lastSync = "";
-			await this.saveData({ lastSync: "" });
-			devLog().log(
-				"pull",
-				`pullAll(deleteLocalExtras): deleted ${syncable.length} local files, sync state reset`,
-			);
-			rlog().info(
-				"pull",
-				`pullAll(deleteLocalExtras) deleted ${syncable.length} local files`,
-			);
-			// NOTE: suppressDeletes stays true until the entire pull completes.
-			// Obsidian's delete events fire asynchronously — resetting here would
-			// allow queued events to leak through and soft-delete server data.
-		}
+		const label = wipe ? "pullAll(deleteLocalExtras)" : "pullAll";
+		devLog().log("pull", `${label}: replaying note op-log from 0`);
+		rlog().info("pull", `${label} started — replay from 0`);
 
-		devLog().log(
-			"pull",
-			`${wipe ? "pullAll(deleteLocalExtras)" : "pullAll"}: fetching everything from server`,
-		);
-		rlog().info(
-			"pull",
-			`${wipe ? "pullAll(deleteLocalExtras)" : "pullAll"} started — fetching everything from epoch`,
-		);
 		try {
-			const epoch = "1970-01-01T00:00:00Z";
-			// Full-content pages: a force pull needs (nearly) every body, so
-			// per-note GETs would multiply requests by the vault size.
-			const [noteResp, attachResp] = await Promise.all([
-				this.fetchAllNoteChanges(epoch),
-				this.api.getAttachmentChanges(epoch),
-			]);
+			this.onSyncProgress?.({ phase: "pulling", current: 0, total: 0, failed: 0 });
+
+			const { applied, serverIds } = await this.catchupViaSeqReplay({ fromZero: true });
+
 			devLog().log(
 				"pull",
-				`pullAll: fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
+				`${label}: replay applied=${applied}, serverIds=${serverIds.size}`,
 			);
-			rlog().info(
-				"pull",
-				`PullAll fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-
-			// Pre-filter: skip notes whose local content already matches server.
-			// Skip filtering after a wipe — nothing local to compare against, and
-			// Obsidian's file cache may still return stale data for trashed files.
-			let noteChanges: typeof noteResp.changes;
-			let attachChanges: typeof attachResp.changes;
+			rlog().info("pull", `${label} replay done — applied=${applied}`);
 
 			if (wipe) {
-				noteChanges = noteResp.changes;
-				attachChanges = attachResp.changes;
-			} else {
-				noteChanges = [];
-				for (const change of noteResp.changes) {
-					if (change.deleted || this.shouldIgnore(change.path)) {
-						noteChanges.push(change);
-						continue;
-					}
-					const normalized = normalizePath(change.path);
-					const existing = this.app.vault.getFileByPath(normalized);
-					if (existing) {
-						const localContent = await this.app.vault.cachedRead(existing);
-						const stored = this.syncState.get(normalized);
-						const localUnchanged =
-							stored !== undefined && stored.hash === fnv1a(localContent);
-						// Protocol rev: meta pages carry content_hash, not content.
-						// (server hash unchanged, local unchanged) proves there is no
-						// work without fetching the body.
-						if (
-							change.content_hash !== undefined &&
-							stored?.serverHash === change.content_hash &&
-							localUnchanged
-						) {
-							this.syncState.set(normalized, {
-								...stored,
-								version: change.version ?? stored.version,
-							});
-							continue;
-						}
-						// Legacy backend: full content present — compare directly.
-						if (change.content !== undefined && localContent === change.content) {
-							this.syncState.set(normalized, {
-								hash: fnv1a(localContent),
-								version: change.version,
-								serverHash: change.content_hash,
-							});
-							if (change.version != null) {
-								this.baseStore?.set(normalized, change.content, change.version);
-							}
-							continue;
-						}
-					}
-					noteChanges.push(change);
-				}
-
-				attachChanges = attachResp.changes.filter((change) => {
-					if (change.deleted) return true;
-					return !this.app.vault.getFileByPath(normalizePath(change.path));
-				});
-			}
-
-			let applied = 0;
-			let failed = 0;
-			const noteCount = noteChanges.length;
-			const attachCount = attachChanges.length;
-			const total = noteCount + attachCount;
-
-			devLog().log(
-				"pull",
-				`pullAll: server returned ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`,
-			);
-			devLog().log(
-				"pull",
-				`pullAll: after filter: ${noteCount} notes, ${attachCount} attachments to apply (wipe=${wipe})`,
-			);
-
-			this.onSyncProgress?.({ phase: "pulling", current: 0, total, failed: 0 });
-
-			// Pull notes in batches of 10 for parallelism
-			for (let i = 0; i < noteChanges.length; i += 10) {
-				const batch = noteChanges.slice(i, i + 10);
-				const lastPath = batch[batch.length - 1]!.path;
-				const results = await Promise.all(
-					batch.map(async (change) => {
-						try {
-							const resolved = await this.resolveChangeBody(change, {
-								skipUnchanged: false,
-							});
-							const ok = resolved ? await this.applyChange(resolved, true) : false;
-							if (ok) {
-								this.logEntry("pull", change.path, "ok");
-							} else {
-								this.logEntry(
-									"skip",
-									change.path,
-									"skipped",
-									undefined,
-									"unchanged",
-								);
-							}
-							return ok ? ("ok" as const) : ("skip" as const);
-						} catch (e) {
-							const msg = errMsg(e);
-							rlog().error("pull", `Skipped note: ${change.path} — ${msg}`);
-							this.logEntry("pull", change.path, "error", msg);
-							return "error" as const;
-						}
-					}),
+				// Suppress delete sync — these are locally-decided extras, not a
+				// server-originated delete; stays true until the local trash pass
+				// below finishes (Obsidian's delete events fire asynchronously).
+				this.suppressDeletes = true;
+				const files = this.app.vault.getFiles();
+				const extras = files.filter(
+					(f) =>
+						this.isSyncable(f) &&
+						!this.shouldIgnore(f.path) &&
+						!this.isBinaryFile(f) && // attachments out of scope (no serverIds coverage)
+						!serverIds.has(this.noteIdMap?.get(f.path) ?? ""),
 				);
-				for (const r of results) {
-					if (r === "ok") applied++;
-					else if (r === "error") failed++;
+				const total = extras.length;
+				this.onSyncProgress?.({ phase: "deleting", current: 0, total, failed: 0 });
+				let deleteFailed = 0;
+				for (let i = 0; i < extras.length; i++) {
+					const file = extras[i]!;
+					try {
+						await this.trashRemotelyDeleted(file);
+						this.logEntry("delete", file.path, "ok", undefined, "wipe");
+					} catch (e) {
+						deleteFailed++;
+						const msg = errMsg(e);
+						this.logEntry("delete", file.path, "error", msg);
+					}
+					this.onSyncProgress?.({
+						phase: "deleting",
+						current: i + 1,
+						total,
+						failed: deleteFailed,
+						currentPath: file.path,
+					});
+					// Yield to UI thread periodically so progress modal can repaint
+					if ((i + 1) % 20 === 0) {
+						await new Promise((resolve) => window.setTimeout(resolve, 0));
+					}
 				}
-				this.onSyncProgress?.({
-					phase: "pulling",
-					current: applied,
-					total,
-					failed,
-					currentPath: lastPath,
-				});
-			}
-
-			// Pull attachments in batches of 5 (larger files)
-			for (let i = 0; i < attachChanges.length; i += 5) {
-				const batch = attachChanges.slice(i, i + 5);
-				const lastPath = batch[batch.length - 1]!.path;
-				const results = await Promise.all(
-					batch.map(async (change) => {
-						try {
-							const ok = await this.applyAttachmentChange(change);
-							if (ok) {
-								this.logEntry("pull", change.path, "ok");
-							} else {
-								this.logEntry(
-									"skip",
-									change.path,
-									"skipped",
-									undefined,
-									"unchanged",
-								);
-							}
-							return ok ? ("ok" as const) : ("skip" as const);
-						} catch (e) {
-							const msg = errMsg(e);
-							rlog().error("pull", `Skipped attachment: ${change.path} — ${msg}`);
-							this.logEntry("pull", change.path, "error", msg);
-							return "error" as const;
-						}
-					}),
+				devLog().log(
+					"pull",
+					`${label}: trashed ${extras.length - deleteFailed} local extras (failed=${deleteFailed})`,
 				);
-				for (const r of results) {
-					if (r === "ok") applied++;
-					else if (r === "error") failed++;
-				}
-				this.onSyncProgress?.({
-					phase: "pulling",
-					current: applied,
-					total,
-					failed,
-					currentPath: lastPath,
-				});
+				rlog().info(
+					"pull",
+					`${label} trashed ${extras.length - deleteFailed} local extras`,
+				);
 			}
 
-			this.onSyncProgress?.({ phase: "complete", current: applied, total, failed });
+			this.onSyncProgress?.({
+				phase: "complete",
+				current: applied,
+				total: applied,
+				failed: 0,
+			});
 
-			// Update lastSync to server time
-			const serverTime =
-				noteResp.server_time > attachResp.server_time
-					? noteResp.server_time
-					: attachResp.server_time;
-			this.lastSync = serverTime;
-			await this.saveData({ lastSync: this.lastSync });
-
-			devLog().log(
-				"pull",
-				`pullAll: done — applied=${applied}, failed=${failed}, total=${total}, lastSync=${this.lastSync}`,
-			);
-			rlog().info("pull", `PullAll done — applied=${applied}, failed=${failed}`);
+			devLog().log("pull", `${label}: done — applied=${applied}`);
+			rlog().info("pull", `${label} done — applied=${applied}`);
 			return applied;
 		} catch (e) {
 			// biome-ignore lint/suspicious/noConsole: error boundary

@@ -1205,54 +1205,13 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	// per-op skip-and-advance behavior is pinned in sync-socket-catchup.test.ts.
 	// The `pulling`→syncing flag survives via pullAll (below).
 
-	test("pullAll skips files that fail to apply and continues", async () => {
-		const goodChange = {
-			path: "Notes/PullAllGood.md",
-			title: "Good",
-			content: "# Good\nWorks fine",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			updated_at: "2026-03-01T12:00:00Z",
-			deleted: false,
-		};
-		const badChange = {
-			path: "Notes/Has:Colon.md",
-			title: "Bad",
-			content: "# Bad\nIllegal colon in name",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345679,
-			updated_at: "2026-03-01T12:01:00Z",
-			deleted: false,
-		};
-
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [badChange, goodChange],
-			server_time: "2026-03-01T12:02:00Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T12:02:00Z",
-		});
-
-		(mockApp.vault.create as jest.Mock).mockImplementation(async (path: string) => {
-			if (path.includes(":")) {
-				throw new Error(
-					'File name cannot contain any of the following characters: \\ / : * ? < > "',
-				);
-			}
-			return undefined;
-		});
-
-		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
-
-		const applied = await engine.pullAll();
-
-		expect(applied).toBe(1);
-		expect(engine.getLastSync()).toBe("2026-03-01T12:02:00Z");
-	});
+	// REST-purge Bucket B (Task 5) — REMOVED: "pullAll skips files that fail to
+	// apply and continues". pullAll() no longer runs its own per-note apply loop
+	// over a REST fetch — it replays via catchupViaSeqReplay({fromZero:true}),
+	// whose per-op skip-and-continue is pinned in sync-socket-catchup.test.ts
+	// ("a per-note failure is caught, logged, and skipped — never throws"), and
+	// whose applied-count passthrough via pullAll is pinned in
+	// tests/sync-push-consolidation.test.ts ("SyncEngine.pullAll — replay-from-0").
 
 	test("a per-file server error (502) queues a retry but stays ONLINE", async () => {
 		// A storage 502 on one file means that file failed, NOT that the backend
@@ -3116,17 +3075,12 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
 
 		// pullAll sets the `pulling` flag + drains post-sync pushes (the surviving
-		// carrier of the #244 defer). Fire a user edit mid-sync via its feed.
-		// Reset first — a leaked mockResolvedValueOnce from a prior test would fire
-		// before this implementation and skip the mid-sync edit.
-		(mockApi.getChanges as jest.Mock).mockReset().mockImplementation(async () => {
+		// carrier of the #244 defer). Fire a user edit mid-replay, from inside the
+		// (mocked) catchupViaSeqReplay call — `pulling` is still true at that point.
+		(engine as any).catchupViaSeqReplay = async () => {
 			engine.handleModify(file);
-			return { changes: [], server_time: "2026-03-01T12:00:00Z" };
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockReset().mockResolvedValue({
-			changes: [],
-			server_time: "2026-03-01T12:00:00Z",
-		});
+			return { applied: 0, serverIds: new Set<string>() };
+		};
 
 		await engine.pullAll();
 

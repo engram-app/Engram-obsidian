@@ -71,7 +71,9 @@ describe("bounded post-pull push deferral (#244)", () => {
 		const engine = createEngine();
 		engine.postPullMaxDeferMs = 30;
 
-		// Wedge a sync: every sync-side API call hangs forever.
+		// Wedge the sync: the replay itself hangs forever (mirrors a half-open
+		// socket never delivering `has_more:false`), keeping `pulling` true.
+		(engine as any).catchupViaSeqReplay = hang;
 		void engine.pullAll();
 		await flush(5);
 
@@ -101,6 +103,7 @@ describe("bounded post-pull push deferral (#244)", () => {
 		const engine = createEngine();
 		engine.postPullMaxDeferMs = 20;
 
+		(engine as any).catchupViaSeqReplay = hang;
 		void engine.pullAll();
 		await flush(5);
 
