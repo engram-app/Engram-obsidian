@@ -33,7 +33,6 @@ const mockApi = {
 	getManifest: mock().mockResolvedValue(null),
 	getNote: mock().mockResolvedValue(null),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
-	getSyncChanges: mock().mockResolvedValue({ changes: [], next_cursor: null, has_more: false }),
 	getAttachmentChanges: mock().mockResolvedValue({
 		changes: [],
 		server_time: "2026-01-01T00:00:00Z",
@@ -493,7 +492,6 @@ describe("FIX 1 (e2e test_47) — foreign-attributed delete of a confirmed-canon
 		});
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
-		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // pull NOT taken
 		expect(remotelyDeleted(engine).has("OAuthWSDelete.md")).toBe(true);
 	});
 
@@ -595,7 +593,6 @@ describe("CRDT-authoritative delete rewire (REST detour removed)", () => {
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
 		// No REST pull of any shape.
-		expect(mockApi.getSyncChanges).not.toHaveBeenCalled();
 		expect(mockApi.getManifest).not.toHaveBeenCalled();
 		expect(mockApi.getNote).not.toHaveBeenCalled();
 		// CRDT room for the deleted id torn down.
@@ -670,7 +667,6 @@ describe("CRDT-authoritative delete rewire (REST detour removed)", () => {
 			expect(createIdx).toBeGreaterThanOrEqual(0);
 			expect(trashIdx).toBeGreaterThanOrEqual(0);
 			expect(createIdx).toBeLessThan(trashIdx);
-			expect(mockApi.getSyncChanges).not.toHaveBeenCalled();
 		} finally {
 			mockApp.vault.create.mockReset().mockResolvedValue(undefined);
 			mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");

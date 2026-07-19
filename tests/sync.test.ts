@@ -2,7 +2,6 @@ import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:t
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { encodeCursor } from "../src/cursor";
 import { LimitExceededError } from "../src/limit-error";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -15,13 +14,6 @@ const mockApi = {
 	// pushes, which is exactly what these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
-	// Cursor feed (B2). Bootstrap + pullViaCursor consume this; default is an
-	// empty single page so tests that don't script it don't crash.
-	getSyncChanges: mock().mockResolvedValue({
-		changes: [],
-		next_cursor: null,
-		has_more: false,
-	}),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -136,9 +128,8 @@ function createEngine(overrides = {}, { ready = true } = {}): SyncEngine {
 	return engine;
 }
 
-/** Build a well-formed cursor-feed note entry (PR B2). pull() now drains the
- *  ordered /sync/changes feed via bootstrap → pullViaCursor, so pull tests
- *  script `getSyncChanges` with these instead of the legacy `getChanges`. */
+/** Build a well-formed merged-feed note entry. The socket seq-replay drives
+ *  these through applySyncChange (the surviving apply seam). */
 function syncNoteEntry(overrides: Partial<Record<string, unknown>> = {}) {
 	return {
 		type: "note" as const,
@@ -158,11 +149,6 @@ function syncNoteEntry(overrides: Partial<Record<string, unknown>> = {}) {
 	};
 }
 
-/** A single-page cursor feed response carrying the given entries. */
-function syncPage(changes: unknown[]) {
-	return { changes, next_cursor: null, has_more: false };
-}
-
 beforeEach(() => {
 	jest.clearAllMocks();
 	// Bun's clearAllMocks does NOT clear mockReturnValueOnce queues,
@@ -179,13 +165,9 @@ beforeEach(() => {
 		});
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
 	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockRejectedValue({ status: 404 });
-	// Cursor-feed defaults: empty manifest (no §F reconcile action) + empty
-	// single-page feed, so any pull() not explicitly scripting them is a no-op
-	// bootstrap rather than a crash.
+	// Empty manifest default (no reconcileFromManifest action) so a catch-up not
+	// explicitly scripting it is a no-op rather than a crash.
 	(mockApi.getManifest as jest.Mock).mockReset().mockResolvedValue(null);
-	(mockApi.getSyncChanges as jest.Mock)
-		.mockReset()
-		.mockResolvedValue({ changes: [], next_cursor: null, has_more: false });
 });
 
 afterEach(() => {
@@ -407,15 +389,13 @@ describe("SyncEngine.handleRename", () => {
 	});
 });
 
-describe("SyncEngine.pull", () => {
-	// PR B2: pull() drives the ordered cursor feed. With a persisted cursor it
-	// resumes via pullViaCursor (incremental); with none it bootstraps + genesis
-	// pulls. These tests exercise the incremental path by seeding a cursor, then
-	// scripting getSyncChanges. lastSync is no longer the pull watermark (the
-	// cursor is), so they assert cursor advancement instead.
-	test("applies remote changes from the cursor feed and advances the cursor", async () => {
+describe("SyncEngine.applySyncChange (apply behavior)", () => {
+	// The socket seq-replay drives every catch-up op through applySyncChange (the
+	// surviving apply seam). These pin the apply/tombstone/resurrection behavior
+	// directly against that seam — the REST cursor-pull driver was deleted, the
+	// behavior it exercised is unchanged.
+	test("applies a remote upsert to the vault", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 
 		const entry = syncNoteEntry({
 			id: "remote",
@@ -424,22 +404,18 @@ describe("SyncEngine.pull", () => {
 			title: "Remote Note",
 			content: "# Remote\n\nFrom MCP",
 		});
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([entry]));
 
-		const pulled = await engine.pull();
+		const applied = await engine.applySyncChange(entry);
 
-		expect(pulled).toBe(1);
+		expect(applied).toBe(true);
 		expect(mockApp.vault.create).toHaveBeenCalledWith(
 			"Notes/Remote.md",
 			"# Remote\n\nFrom MCP",
 		);
-		// Final page (next_cursor null) → cursor advances to the last entry's head.
-		expect(engine.getSyncCursor()).toBe(encodeCursor(entry.seq, entry.id));
 	});
 
-	test("trashes locally deleted notes from the cursor feed", async () => {
+	test("trashes a locally-clean note on a remote tombstone", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 
 		// Local file content matches its recorded syncedHash — no unsynced
 		// edits — so the remote delete should be honoured (clean delete sync).
@@ -452,28 +428,23 @@ describe("SyncEngine.pull", () => {
 			{ hash: fnv1a(syncedContent) },
 		);
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "del",
-					seq: 6,
-					path: "Notes/ToDelete.md",
-					title: "",
-					content: "",
-					folder: "",
-					deleted: true,
-				}),
-			]),
+		await engine.applySyncChange(
+			syncNoteEntry({
+				id: "del",
+				seq: 6,
+				path: "Notes/ToDelete.md",
+				title: "",
+				content: "",
+				folder: "",
+				deleted: true,
+			}),
 		);
-
-		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
 
 	test("skips tombstone when local file has unsynced edits (resurrection guard)", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 
 		// Local file content differs from syncedHash (or no syncState entry) —
 		// user has unsaved edits or recreated the path after another device
@@ -488,21 +459,17 @@ describe("SyncEngine.pull", () => {
 			note: { path: "Notes/Resurrected.canvas", version: 1 },
 		});
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "res",
-					seq: 7,
-					path: "Notes/Resurrected.canvas",
-					title: "",
-					content: "",
-					folder: "",
-					deleted: true,
-				}),
-			]),
+		await engine.applySyncChange(
+			syncNoteEntry({
+				id: "res",
+				seq: 7,
+				path: "Notes/Resurrected.canvas",
+				title: "",
+				content: "",
+				folder: "",
+				deleted: true,
+			}),
 		);
-
-		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).toHaveBeenCalled();
@@ -558,7 +525,6 @@ describe("SyncEngine.pull", () => {
 
 	test("a CRDT-delivered note is trashed (not resurrected) when the server tombstones it", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 		const path = "E2E/RenamedFolder/Old.md";
 		const content = "# Old\nCRDT-delivered body\n";
 
@@ -572,11 +538,9 @@ describe("SyncEngine.pull", () => {
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
 		mockApp.vault.cachedRead.mockResolvedValue(content);
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([syncNoteEntry({ id: "old", seq: 9, path, deleted: true, version: 2 })]),
+		await engine.applySyncChange(
+			syncNoteEntry({ id: "old", seq: 9, path, deleted: true, version: 2 }),
 		);
-
-		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
@@ -601,7 +565,6 @@ describe("SyncEngine.pull", () => {
 
 	test("honours a server tombstone for a CRDT note with no baseline (test_47)", async () => {
 		const { engine, removed } = makeCrdtDeleteEngine();
-		engine.setSyncCursor("CUR-0");
 		const path = "E2E/CrdtDelete/Note.md";
 
 		// This device learned the note's server id (CRDT-managed), but has NO
@@ -614,11 +577,9 @@ describe("SyncEngine.pull", () => {
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
 		mockApp.vault.cachedRead.mockResolvedValue("# Delete Me\n");
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([syncNoteEntry({ id: "id-crdt", seq: 9, path, deleted: true, version: 2 })]),
+		await engine.applySyncChange(
+			syncNoteEntry({ id: "id-crdt", seq: 9, path, deleted: true, version: 2 }),
 		);
-
-		await engine.pull();
 
 		// Trashed (not resurrected), and no keep-both copy for un-drifted content.
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
@@ -630,7 +591,6 @@ describe("SyncEngine.pull", () => {
 
 	test("preserves genuine drift as a keep-both copy before honouring a CRDT tombstone", async () => {
 		const { engine } = makeCrdtDeleteEngine();
-		engine.setSyncCursor("CUR-0");
 		const path = "E2E/CrdtDelete/Drifted.md";
 
 		const map = new NoteIdMap();
@@ -656,11 +616,9 @@ describe("SyncEngine.pull", () => {
 			order.push("trash");
 		});
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([syncNoteEntry({ id: "id-drift", seq: 9, path, deleted: true, version: 2 })]),
+		await engine.applySyncChange(
+			syncNoteEntry({ id: "id-drift", seq: 9, path, deleted: true, version: 2 }),
 		);
-
-		await engine.pull();
 
 		// Keep-both copy written FIRST (drift preserved), then the note trashed.
 		expect(order).toEqual(["create", "trash"]);
@@ -673,7 +631,6 @@ describe("SyncEngine.pull", () => {
 
 	test("still skips + resurrects a legacy (non-CRDT) note with unsynced edits", async () => {
 		const { engine } = makeCrdtDeleteEngine();
-		engine.setSyncCursor("CUR-0");
 		// No id mapping → not CRDT-managed → legacy resurrection protection.
 		engine.setNoteIdMap(new NoteIdMap());
 		// .canvas so the resurrection re-push takes the REST route (asserts pushNote).
@@ -684,11 +641,9 @@ describe("SyncEngine.pull", () => {
 		mockApp.vault.cachedRead.mockResolvedValue("# legacy\nnew local edit\n");
 		(mockApi.pushNote as jest.Mock).mockResolvedValueOnce({ note: { path, version: 1 } });
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([syncNoteEntry({ id: "id-legacy", seq: 9, path, deleted: true, version: 2 })]),
+		await engine.applySyncChange(
+			syncNoteEntry({ id: "id-legacy", seq: 9, path, deleted: true, version: 2 }),
 		);
-
-		await engine.pull();
 
 		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).toHaveBeenCalled();
@@ -818,7 +773,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// delete→recreate case is discriminated by id (see the recreate test),
 		// NOT by deferring an ambiguous delete to the ordered pull.
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-1");
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("E2E/Live.md", "id-live");
 		engine.setNoteIdMap(noteIdMap);
@@ -827,7 +781,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 		const liveFile = new TFile("E2E/Live.md");
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(liveFile);
 		(mockApp.fileManager.trashFile as jest.Mock).mockClear();
-		(mockApi.getSyncChanges as jest.Mock).mockClear();
 
 		await engine.handleStreamEvent({
 			event_type: "delete",
@@ -837,7 +790,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 		});
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(liveFile);
-		expect(mockApi.getSyncChanges).not.toHaveBeenCalled(); // never routes to REST pull
 	});
 
 	test("delete trashes when the path's id is not confirmed (defer guard falls through)", async () => {
@@ -1170,106 +1122,39 @@ describe("SyncEngine.handleStreamEvent", () => {
 	});
 });
 
-describe("SyncEngine.pull (fresh install)", () => {
-	// PR B2: a fresh install has no cursor → pull() bootstraps (manifest reconcile
-	// + genesis cursor pull). The genesis pull calls getSyncChanges with an
-	// undefined cursor — the cursor-flow equivalent of the legacy "epoch" default.
-	test("genesis pull (no cursor) calls getSyncChanges with undefined cursor", async () => {
+describe("SyncEngine.fullSync (catch-up wiring)", () => {
+	// fullSync's pull-half now routes through the single catch-up path
+	// (reconcile + socket seq-replay + folder markers), NOT the REST pull()
+	// cursor cluster. The genesis content-delivery mechanism is tested directly
+	// against bootstrap/pullViaCursor (sync-cursor-pull.test.ts) and the op-log
+	// replay (sync-socket-catchup.test.ts). NOTE: the seq-replay emits no
+	// per-page "pulling" progress (only the terminal recap), so fullSync no
+	// longer shows an incremental download bar during a large catch-up — a
+	// deliberate consequence of the single-path migration, matching the already
+	// silent reconnect/startup catch-up.
+	test("fullSync routes its pull-half through catchUp (seq-replay), not the REST pull()", async () => {
 		const engine = createEngine();
-		// Do NOT set a cursor — simulates a fresh install with no saved state.
-
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "existing",
-					path: "Notes/Existing.md",
-					title: "Existing Note",
-					content: "# Existing\n\nAlready on server",
-				}),
-			]),
-		);
-
-		const pulled = await engine.pull();
-
-		expect(pulled).toBe(1);
-		// Genesis pull: cursor arg is undefined (server starts from seq 0).
-		expect(mockApi.getSyncChanges).toHaveBeenCalledWith(undefined, expect.any(Number));
-		expect(mockApp.vault.create).toHaveBeenCalledWith(
-			"Notes/Existing.md",
-			"# Existing\n\nAlready on server",
-		);
-	});
-
-	test("fullSync on fresh engine genesis-pulls all notes without prior cursor", async () => {
-		const engine = createEngine();
-		// Fresh engine — no cursor, no prior sync state.
-
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "a",
-					seq: 1,
-					path: "Notes/A.md",
-					title: "Note A",
-					content: "# A",
-				}),
-				syncNoteEntry({
-					id: "b",
-					seq: 2,
-					path: "Notes/B.md",
-					title: "Note B",
-					content: "# B",
-				}),
-			]),
-		);
-
-		const result = await engine.fullSync();
-
-		expect(result.pulled).toBe(2);
-		expect(mockApi.getSyncChanges).toHaveBeenCalledWith(undefined, expect.any(Number));
-		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-	});
-
-	test("fullSync emits climbing download progress across cursor pages", async () => {
-		const engine = createEngine();
-		const pulling: number[] = [];
-		engine.onSyncProgress = (p) => {
-			if (p.phase === "pulling") pulling.push(p.current);
-		};
-
-		// Two-page genesis feed: page 1 has_more, page 2 terminal.
-		(mockApi.getSyncChanges as jest.Mock)
-			.mockResolvedValueOnce({
-				changes: [syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" })],
-				next_cursor: "C2",
-				has_more: true,
-			})
-			.mockResolvedValueOnce({
-				changes: [syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" })],
-				next_cursor: null,
-				has_more: false,
-			});
+		const catchUp = jest.spyOn(engine, "catchUp").mockResolvedValue(0);
+		const pull = jest.spyOn(engine as any, "pull");
+		const pushModified = jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
 
 		await engine.fullSync();
 
-		// One pulling event per applied page, current = real downloads so far.
-		expect(pulling).toEqual([1, 2]);
+		expect(catchUp).toHaveBeenCalledTimes(1);
+		expect(pushModified).toHaveBeenCalledTimes(1);
+		expect(pull).not.toHaveBeenCalled();
 	});
 
-	test("fullSync completion recap counts downloads, not just uploads", async () => {
+	test("fullSync completion recap counts catch-up downloads, not just uploads", async () => {
 		const engine = createEngine();
 		let completeCurrent: number | null = null;
 		engine.onSyncProgress = (p) => {
 			if (p.phase === "complete") completeCurrent = p.current;
 		};
 
-		// Download-only sync: 2 notes pulled, nothing local to push.
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", content: "# A" }),
-				syncNoteEntry({ id: "b", seq: 2, path: "Notes/B.md", content: "# B" }),
-			]),
-		);
+		// Download-only sync: 2 ops applied via seq-replay, nothing local to push.
+		jest.spyOn(engine, "catchUp").mockResolvedValue(2);
+		jest.spyOn(engine as any, "pushModifiedFiles").mockResolvedValue(0);
 
 		const { pulled, pushed } = await engine.fullSync();
 
@@ -1278,46 +1163,6 @@ describe("SyncEngine.pull (fresh install)", () => {
 		// The recap reads `current`; a download-only sync must report the 2
 		// pulled, not pushed=0 → "Already up to date. Nothing needed syncing."
 		expect(completeCurrent).toBe(2);
-	});
-
-	test("standalone pull() stays silent (no download progress on background pulls)", async () => {
-		const engine = createEngine();
-		const phases: string[] = [];
-		engine.onSyncProgress = (p) => phases.push(p.phase);
-
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([syncNoteEntry()]));
-
-		await engine.pull();
-
-		// pull() defaults emitProgress off → no "pulling" events → settings bar
-		// never lights up (and so never gets stuck "active" with no completion).
-		expect(phases).not.toContain("pulling");
-	});
-
-	test("first pull bootstraps; the persisted cursor makes the next pull incremental", async () => {
-		const engine = createEngine();
-
-		// First pull — fresh install, no cursor → genesis pull (undefined cursor).
-		const first = syncNoteEntry({
-			id: "first",
-			seq: 9,
-			path: "Notes/First.md",
-			title: "First",
-			content: "# First",
-		});
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([first]));
-
-		await engine.pull();
-		expect(mockApi.getSyncChanges).toHaveBeenLastCalledWith(undefined, expect.any(Number));
-		// The genesis pull advances + persists the cursor to the feed tip.
-		const advanced = encodeCursor(first.seq, first.id);
-		expect(engine.getSyncCursor()).toBe(advanced);
-
-		// Second pull — now has a cursor → resumes the feed from that position.
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
-
-		await engine.pull();
-		expect(mockApi.getSyncChanges).toHaveBeenLastCalledWith(advanced, expect.any(Number));
 	});
 });
 
@@ -1353,94 +1198,12 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(statuses.length).toBeGreaterThanOrEqual(1);
 	});
 
-	test("status shows syncing during pull", async () => {
-		// Use a slow getSyncChanges (cursor feed) to catch the syncing state.
-		let resolveChanges: (v: any) => void;
-		(mockApi.getSyncChanges as jest.Mock).mockImplementationOnce(
-			() =>
-				new Promise((r) => {
-					resolveChanges = r;
-				}),
-		);
-
-		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
-
-		const statuses: string[] = [];
-		engine.onStatusChange = (s) => statuses.push(s.state);
-
-		const pullPromise = engine.pull();
-
-		// Should have emitted syncing
-		expect(statuses).toContain("syncing");
-
-		// Resolve the pull
-		resolveChanges!({ changes: [], next_cursor: null, has_more: false });
-		await pullPromise;
-
-		// Last emitted status should be idle
-		expect(statuses[statuses.length - 1]).toBe("idle");
-	});
-
-	test("status shows error after failed pull", async () => {
-		(mockApi.getSyncChanges as jest.Mock).mockRejectedValueOnce(new Error("network error"));
-
-		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
-
-		await engine.pull();
-
-		const status = engine.getStatus();
-		expect(status.state).toBe("error");
-		expect(status.error).toBe("Pull failed: network error");
-	});
-
-	test("pull skips files that fail to apply and continues", async () => {
-		// Simulate a file with illegal characters (like ? on mobile)
-		// by making vault.create throw for one specific path
-		const badEntry = syncNoteEntry({
-			id: "bad",
-			seq: 10,
-			path: "Notes/Bad?.md",
-			title: "Bad",
-			content: "# Bad\nIllegal filename chars",
-		});
-		const goodEntry = syncNoteEntry({
-			id: "good",
-			seq: 11,
-			path: "Notes/Good.md",
-			title: "Good",
-			content: "# Good\nThis should work",
-		});
-
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([badEntry, goodEntry]),
-		);
-
-		// vault.create throws on the bad file, succeeds on the good one
-		(mockApp.vault.create as jest.Mock).mockImplementation(async (path: string) => {
-			if (path.includes("?")) {
-				throw new Error(
-					'File name cannot contain any of the following characters: \\ / : * ? < > "',
-				);
-			}
-			return undefined;
-		});
-
-		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
-
-		const applied = await engine.pull();
-
-		// Should have applied the good file (1), skipped the bad one
-		expect(applied).toBe(1);
-		// vault.create should have been called for both (bad one throws)
-		expect(mockApp.vault.create).toHaveBeenCalledTimes(2);
-		// The cursor still advances to the feed tip (one bad entry must not wedge it).
-		expect(engine.getSyncCursor()).toBe(encodeCursor(goodEntry.seq, goodEntry.id));
-		// Status should NOT be error — individual file failures don't fail the pull
-		expect(engine.getStatus().state).not.toBe("error");
-	});
+	// NOTE: the old pull()-driven status lifecycle tests (syncing/error status +
+	// skip-and-continue) were removed with the REST pull cluster. The socket
+	// catch-up (catchUp/catchupViaSeqReplay) sets no syncing/error status and
+	// swallows transient failures (a wedged socket recovers on reconnect); the
+	// per-op skip-and-advance behavior is pinned in sync-socket-catchup.test.ts.
+	// The `pulling`→syncing flag survives via pullAll (below).
 
 	test("pullAll skips files that fail to apply and continues", async () => {
 		const goodChange = {
@@ -1536,23 +1299,6 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 		expect(summary.firstMessage).toBe("failed to upload to storage backend");
 		// Draining resets the tally.
 		expect(engine.drainFailureSummary().count).toBe(0);
-	});
-
-	test("error clears on next successful sync", async () => {
-		(mockApi.getSyncChanges as jest.Mock).mockRejectedValueOnce(new Error("fail"));
-
-		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
-
-		await engine.pull();
-		expect(engine.getStatus().state).toBe("error");
-
-		// Successful pull clears error
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
-
-		await engine.pull();
-		expect(engine.getStatus().state).toBe("idle");
-		expect(engine.getStatus().error).toBeUndefined();
 	});
 });
 
@@ -2441,30 +2187,13 @@ describe("SyncEngine binary push", () => {
 	});
 });
 
-describe("SyncEngine pull with attachments", () => {
-	test("cursor feed carries both note and attachment entries", async () => {
+describe("SyncEngine applySyncChange with attachments", () => {
+	test("the merged seq feed carries both note and attachment entries", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 
-		// PR B2: the ordered feed merges notes + attachments into one stream.
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", title: "A", content: "# A" }),
-				{
-					type: "attachment",
-					id: "img",
-					seq: 2,
-					path: "Assets/img.png",
-					mime_type: "image/png",
-					size_bytes: 1000,
-					mtime: 100,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-					version: 1,
-				},
-			]),
-		);
-		// Attachment entries carry no bytes — applyAttachmentChange fetches them.
+		// The merged op feed interleaves notes + attachments; applySyncChange
+		// dispatches each by type. Attachment entries carry no bytes —
+		// applyAttachmentChange fetches them.
 		(mockApi.getAttachment as jest.Mock).mockResolvedValueOnce({
 			path: "Assets/img.png",
 			content_base64: "AQID",
@@ -2474,10 +2203,24 @@ describe("SyncEngine pull with attachments", () => {
 			updated_at: "2026-03-01T12:00:00Z",
 		});
 
-		const pulled = await engine.pull();
+		const note = await engine.applySyncChange(
+			syncNoteEntry({ id: "a", seq: 1, path: "Notes/A.md", title: "A", content: "# A" }),
+		);
+		const attachment = await engine.applySyncChange({
+			type: "attachment",
+			id: "img",
+			seq: 2,
+			path: "Assets/img.png",
+			mime_type: "image/png",
+			size_bytes: 1000,
+			mtime: 100,
+			updated_at: "2026-03-01T12:00:00Z",
+			deleted: false,
+			version: 1,
+		});
 
-		expect(pulled).toBe(2);
-		expect(mockApi.getSyncChanges).toHaveBeenCalled();
+		expect(note).toBe(true);
+		expect(attachment).toBe(true);
 		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/img.png");
 		expect(mockApp.vault.create).toHaveBeenCalled(); // note
 		expect(mockApp.vault.createBinary).toHaveBeenCalled(); // attachment
@@ -2512,25 +2255,20 @@ describe("SyncEngine pull accuracy", () => {
 		expect(getWrittenContent()).toBe("# Updated remotely");
 	});
 
-	test("pull returns accurate count when changes are skipped", async () => {
+	test("applySyncChange returns false (not counted) for an ignored path", async () => {
 		const engine = createEngine();
-		engine.setSyncCursor("CUR-0");
 
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "ws",
-					path: ".obsidian/workspace.json", // ignored path
-					title: "",
-					content: "{}",
-					folder: ".obsidian",
-				}),
-			]),
+		const applied = await engine.applySyncChange(
+			syncNoteEntry({
+				id: "ws",
+				path: ".obsidian/workspace.json", // ignored path
+				title: "",
+				content: "{}",
+				folder: ".obsidian",
+			}),
 		);
 
-		const pulled = await engine.pull();
-
-		expect(pulled).toBe(0); // ignored path should not count
+		expect(applied).toBe(false); // ignored path should not count
 	});
 
 	test("fullSync pushes files modified between old and new lastSync", async () => {
@@ -2909,13 +2647,13 @@ describe("SyncEngine auth validation", () => {
 
 	test("fullSync proceeds when auth succeeds", async () => {
 		(mockApi.ping as jest.Mock).mockResolvedValueOnce({ ok: true });
-		// fullSync → pull → bootstrap → genesis cursor pull (B2).
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(syncPage([]));
+		// fullSync → catchUp (reconcile + seq-replay) + pushModifiedFiles. With no
+		// crdt/local files wired, both legs no-op to zero.
 		const engine = createEngine();
 
 		const result = await engine.fullSync();
 		expect(result).toEqual({ pulled: 0, pushed: 0 });
-		expect(mockApi.getSyncChanges).toHaveBeenCalled();
+		expect(mockApi.ping).toHaveBeenCalled();
 	});
 
 	test("pushAll throws on invalid API key", async () => {
@@ -3247,26 +2985,19 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([file]);
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Existing\n\nContent");
 
-		// Simulate syncState being populated (as happens after pull)
-		// by doing a pull that writes this file, then clearing the mock
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [
-				{
-					path: "Notes/Existing.canvas",
-					title: "Existing",
-					content: "# Existing\n\nContent",
-					folder: "Notes",
-					tags: [],
-					mtime: 1709345678,
-					updated_at: "2026-03-01T12:00:00Z",
-					deleted: false,
-				},
-			],
-			server_time: "2026-03-01T12:00:01Z",
-		});
+		// Seed syncState by applying the note (as a catch-up op does), so the next
+		// pushAll must force past the matching hash.
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
-		engine.setLastSync("2026-01-01T00:00:00Z");
-		await engine.pull();
+		await engine.applyChange({
+			path: "Notes/Existing.canvas",
+			title: "Existing",
+			content: "# Existing\n\nContent",
+			folder: "Notes",
+			tags: [],
+			mtime: 1709345678,
+			updated_at: "2026-03-01T12:00:00Z",
+			deleted: false,
+		});
 
 		jest.clearAllMocks();
 		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
@@ -3338,21 +3069,17 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		const path = "Notes/EchoNoop.md";
 		const file = new TFile(path, Date.now());
 
-		// Seed syncState via a pull (no local pushFile call happens here, so
-		// recentlyPushed must still be empty for this path).
-		(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-			syncPage([
-				syncNoteEntry({
-					id: "echo-noop-id",
-					path,
-					title: "EchoNoop",
-					content: "# EchoNoop\n\nSynced content",
-				}),
-			]),
-		);
+		// Seed syncState by applying a catch-up op (no local pushFile call happens
+		// here, so recentlyPushed must still be empty for this path).
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(null);
-		engine.setLastSync("2026-01-01T00:00:00Z");
-		await engine.pull();
+		await engine.applySyncChange(
+			syncNoteEntry({
+				id: "echo-noop-id",
+				path,
+				title: "EchoNoop",
+				content: "# EchoNoop\n\nSynced content",
+			}),
+		);
 
 		expect(engine.isRecentlyPushed(path)).toBe(false);
 
@@ -3380,27 +3107,31 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(getWrittenContent()).toBe("# EchoNoop\n\nSecond real update");
 	});
 
-	test("handleModify during pull queues for post-pull push", async () => {
+	test("handleModify during a sync queues for post-sync push (#244)", async () => {
 		const engine = createEngine({ debounceMs: 10 });
-		// .canvas so the post-pull drain pushes via the LWW REST route.
+		// .canvas so the post-sync drain pushes via the LWW REST route.
 		const file = new TFile("Notes/DuringPull.canvas", Date.now());
 		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# User edit during pull");
 		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
 
-		// Start a pull — mock the cursor feed to fire a user edit mid-flight.
-		(mockApi.getSyncChanges as jest.Mock).mockImplementation(async () => {
-			// While pull is in progress, simulate a user edit
+		// pullAll sets the `pulling` flag + drains post-sync pushes (the surviving
+		// carrier of the #244 defer). Fire a user edit mid-sync via its feed.
+		// Reset first — a leaked mockResolvedValueOnce from a prior test would fire
+		// before this implementation and skip the mid-sync edit.
+		(mockApi.getChanges as jest.Mock).mockReset().mockImplementation(async () => {
 			engine.handleModify(file);
-			return { changes: [], next_cursor: null, has_more: false };
+			return { changes: [], server_time: "2026-03-01T12:00:00Z" };
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockReset().mockResolvedValue({
+			changes: [],
+			server_time: "2026-03-01T12:00:00Z",
 		});
 
-		engine.setSyncCursor("CUR-0");
-		await engine.pull();
+		await engine.pullAll();
 
-		// The file should NOT have been debounce-pushed (was during pull)
-		// but should have been pushed via flushPostPullPushes
-		// Wait for async flush
+		// The file should NOT have been debounce-pushed (edited mid-sync) but must
+		// have been pushed via the post-sync drain.
 		await new Promise((r) => setTimeout(r, 50));
 
 		expect(mockApi.pushNote).toHaveBeenCalledWith(
@@ -3703,9 +3434,8 @@ describe("SyncEngine Obsidian API best practices", () => {
 			expect(mockApp.vault.read).not.toHaveBeenCalled();
 		});
 
-		test("pull conflict detection uses cachedRead for local content", async () => {
+		test("apply conflict detection uses cachedRead for local content", async () => {
 			const engine = createEngine();
-			engine.setSyncCursor("CUR-0");
 
 			const existingFile = new TFile("Notes/Conflict.md");
 			mockApp.vault.getFileByPath.mockReturnValueOnce(existingFile);
@@ -3713,21 +3443,17 @@ describe("SyncEngine Obsidian API best practices", () => {
 			mockApp.vault.read.mockClear();
 			mockApp.vault.cachedRead.mockResolvedValueOnce("local content");
 
-			(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-				syncPage([
-					syncNoteEntry({
-						id: "conflict",
-						path: "Notes/Conflict.md",
-						title: "Conflict",
-						content: "remote content",
-						mtime: Date.now() / 1000 + 100,
-						version: 2,
-						updated_at: new Date().toISOString(),
-					}),
-				]),
+			await engine.applySyncChange(
+				syncNoteEntry({
+					id: "conflict",
+					path: "Notes/Conflict.md",
+					title: "Conflict",
+					content: "remote content",
+					mtime: Date.now() / 1000 + 100,
+					version: 2,
+					updated_at: new Date().toISOString(),
+				}),
 			);
-
-			await engine.pull();
 
 			expect(mockApp.vault.cachedRead).toHaveBeenCalledWith(existingFile);
 			expect(mockApp.vault.read).not.toHaveBeenCalled();
@@ -3735,29 +3461,24 @@ describe("SyncEngine Obsidian API best practices", () => {
 	});
 
 	describe("uses getFileByPath for file lookups", () => {
-		test("pull uses getFileByPath instead of getAbstractFileByPath for notes", async () => {
+		test("apply uses getFileByPath instead of getAbstractFileByPath for notes", async () => {
 			const engine = createEngine();
-			engine.setSyncCursor("CUR-0");
 
 			mockApp.vault.getFileByPath.mockClear();
 			mockApp.vault.getAbstractFileByPath.mockClear();
 			mockApp.vault.getFileByPath.mockReturnValue(null);
 
-			(mockApi.getSyncChanges as jest.Mock).mockResolvedValueOnce(
-				syncPage([
-					syncNoteEntry({
-						id: "new",
-						path: "Notes/New.md",
-						title: "New",
-						content: "new content",
-						mtime: Date.now() / 1000,
-						version: 1,
-						updated_at: new Date().toISOString(),
-					}),
-				]),
+			await engine.applySyncChange(
+				syncNoteEntry({
+					id: "new",
+					path: "Notes/New.md",
+					title: "New",
+					content: "new content",
+					mtime: Date.now() / 1000,
+					version: 1,
+					updated_at: new Date().toISOString(),
+				}),
 			);
-
-			await engine.pull();
 
 			expect(mockApp.vault.getFileByPath).toHaveBeenCalled();
 		});

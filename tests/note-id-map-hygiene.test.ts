@@ -23,7 +23,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
-	getSyncChanges: mock().mockResolvedValue({ changes: [], next_cursor: null, has_more: false }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),

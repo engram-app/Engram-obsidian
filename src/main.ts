@@ -103,10 +103,6 @@ interface PluginData {
 	/** Durable outbound CRDT ops (create/delete) held across reloads. Mirrors
 	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
 	crdtOpQueue?: CrdtOp[];
-	/** Opaque cursor marking the durably-applied position in the backend's
-	 *  ordered sync feed (PR B2 cursor pull). Separate from `lastSync`, which is
-	 *  retained for rollback. Omitted when no cursor has been established yet. */
-	syncCursor?: string;
 	catchupSeq?: number;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
@@ -385,17 +381,13 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-			// Merge whichever of {lastSync, syncCursor} the engine handed us into
+			// Merge whichever of {lastSync, catchupSeq} the engine handed us into
 			// the in-memory engine state, then persist the WHOLE PluginData via
 			// savePluginData (saveData overwrites data.json wholesale). Each field
 			// the payload omits falls through to the engine's current value, so a
-			// lastSync-only write never clobbers syncCursor and vice-versa.
+			// lastSync-only write never clobbers catchupSeq and vice-versa.
 			if (data.lastSync !== undefined) {
 				this.syncEngine.setLastSync(data.lastSync);
-			}
-			if (data.syncCursor !== undefined) {
-				// null clears the cursor (persisted as undefined/omitted).
-				this.syncEngine.setSyncCursor(data.syncCursor);
 			}
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
@@ -536,9 +528,6 @@ export default class EngramSyncPlugin extends Plugin {
 		const saved = await this.loadPluginData();
 		if (saved?.lastSync) {
 			this.syncEngine.setLastSync(saved.lastSync);
-		}
-		if (saved?.syncCursor) {
-			this.syncEngine.setSyncCursor(saved.syncCursor);
 		}
 		if (saved?.catchupSeq !== undefined) {
 			this.syncEngine.setCatchupSeq(saved.catchupSeq);
@@ -1286,11 +1275,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// Top-level, device-local; saveData() overwrites data.json wholesale,
 			// so every field must be re-listed here or it's wiped on the next save.
 			deviceId: this.deviceId ?? undefined,
-			// Top-level cursor; like deviceId it must be re-listed here or the
-			// next wholesale saveData() wipes it. null → omit (cursor cleared).
-			syncCursor: this.syncEngine.getSyncCursor() ?? undefined,
-			// Socket op-log replay cursor (seq). Re-listed for the same
-			// wholesale-save reason; 0 = replay from genesis.
+			// Socket op-log replay cursor (seq). Re-listed for the wholesale-save
+			// reason (like deviceId) or the next saveData() wipes it; 0 = replay
+			// from genesis.
 			catchupSeq: this.syncEngine.getCatchupSeq(),
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
@@ -2344,13 +2331,16 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncInterval = window.setInterval(() => {
 			void (async () => {
 				try {
-					const pulled = await this.syncEngine.pull();
+					// Socket-only fallback poll (no REST): reconcile manifest
+					// server-deletes/folder-markers + replay the op-log. No-ops when
+					// the socket is down; a wedged socket recovers on reconnect.
+					const pulled = await this.syncEngine.catchUp();
 					if (pulled > 0) {
 						new Notice(`Engram Sync: pulled ${pulled} changes`);
 					}
 				} catch (e) {
 					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: periodic pull failed", e);
+					console.error("Engram Sync: periodic catch-up failed", e);
 				}
 			})();
 		}, EngramSyncPlugin.FALLBACK_POLL_MS);

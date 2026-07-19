@@ -1,9 +1,10 @@
 /**
- * Issue #244 — edits made while a pull is running are deferred into
- * pendingPostPullPushes, which used to drain ONLY when the pull ended. A
- * wedged pull (half-open connection, long post-swap chain) kept `pulling`
+ * Issue #244 — edits made while a sync is running are deferred into
+ * pendingPostPullPushes, which used to drain ONLY when the sync ended. A
+ * wedged sync (half-open connection, long post-swap chain) kept `pulling`
  * true for 60s+ (indefinitely before the API timeout), so deferred edits
- * never pushed and sync looked dead both ways.
+ * never pushed and sync looked dead both ways. (Driven here via pullAll —
+ * the surviving carrier of the `pulling` flag + post-sync drain.)
  *
  * The deferral is an echo-traffic optimization, not a correctness gate —
  * pushFile's echo-hash gate filters sync-write echoes either way — so the
@@ -21,7 +22,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockImplementation(hang),
-	getSyncChanges: mock().mockImplementation(hang),
 	getManifest: mock().mockImplementation(hang),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
@@ -71,8 +71,8 @@ describe("bounded post-pull push deferral (#244)", () => {
 		const engine = createEngine();
 		engine.postPullMaxDeferMs = 30;
 
-		// Wedge a pull: every pull-side API call hangs forever.
-		void engine.pull();
+		// Wedge a sync: every sync-side API call hangs forever.
+		void engine.pullAll();
 		await flush(5);
 
 		// .canvas so the drained push takes the kept LWW REST path (md is
@@ -101,7 +101,7 @@ describe("bounded post-pull push deferral (#244)", () => {
 		const engine = createEngine();
 		engine.postPullMaxDeferMs = 20;
 
-		void engine.pull();
+		void engine.pullAll();
 		await flush(5);
 
 		const file = new TFile("user-edit.canvas");

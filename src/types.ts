@@ -225,14 +225,6 @@ export interface SyncAttachmentChange {
 /** A single entry in the merged ordered feed — note or attachment, tagged. */
 export type SyncChange = SyncNoteChange | SyncAttachmentChange;
 
-/** Response from GET /sync/changes (merged ordered feed, PR B2).
- *  `next_cursor` is an opaque token, present only when `has_more` is true. */
-export interface SyncChangesResponse {
-	changes: SyncChange[];
-	next_cursor: string | null;
-	has_more: boolean;
-}
-
 /** Response from DELETE /notes/{path} */
 export interface DeleteResponse {
 	deleted: boolean;

@@ -8,7 +8,6 @@ import { fromB64, toB64 } from "./crdt/channel";
 import type { CrdtManager } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import { uuid7 } from "./crdt/uuid7";
-import { MAX_CURSOR_UUID, encodeCursor } from "./cursor";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -42,7 +41,6 @@ import type {
 	QueueEntry,
 	ReconcileResult,
 	SyncChange,
-	SyncChangesResponse,
 	SyncIssueCategory,
 	SyncLogEntry,
 	SyncNoteChange,
@@ -217,16 +215,6 @@ function isHttpStatus(e: unknown, status: number): boolean {
 	return typeof e === "object" && e !== null && (e as { status?: number }).status === status;
 }
 
-/** Thrown when the backend returns 410 HISTORY_EXPIRED — the cursor is below
- *  the retention floor (post-compaction). The caller drops the cursor and
- *  re-bootstraps. Dormant until backend PR D turns on compaction. */
-export class HistoryExpiredError extends Error {
-	constructor() {
-		super("history_expired");
-		this.name = "HistoryExpiredError";
-	}
-}
-
 /** Count distinct parent folders across the given file paths. Files at the
  *  root contribute nothing; "a/b/c.md" contributes "a/b". Used by the sync
  *  preview to surface "how many folders contain files" per side. */
@@ -374,17 +362,7 @@ export class SyncEngine {
 	 *  queued (this covers one already sent/dequeued). */
 	private recentlyDeleted: Map<string, number> = new Map();
 	private pulling = false;
-	/** A pull() requested while one was already in flight. Set by the re-entry
-	 *  guard, drained in pull()'s finally to run exactly one follow-up pull.
-	 *  Without this, a reconnect catch-up that lands mid-pull is lost (#646). */
-	private pullPending = false;
 	private lastSync = "";
-	/** Opaque cursor marking the plugin's durably-applied position in the
-	 *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
-	 *  untouched for rollback). `null` = no cursor yet (genesis pull). Persisted
-	 *  under the `syncCursor` key via the saveData callback; written/read by the
-	 *  cursor-pull flow in later B2 tasks. */
-	private syncCursor: string | null = null;
 	private lastError = "";
 	private offline = false;
 	private healthCheckTimer: number | null = null;
@@ -1473,7 +1451,6 @@ export class SyncEngine {
 		private settings: EngramSyncSettings,
 		private saveData: (data: {
 			lastSync?: string;
-			syncCursor?: string | null;
 			catchupSeq?: number;
 			// Signals the engine mutated the shared noteIdMap and it should be
 			// persisted. main.ts's savePluginData writes the map instance directly
@@ -1543,14 +1520,6 @@ export class SyncEngine {
 		return this.lastSync;
 	}
 
-	getSyncCursor(): string | null {
-		return this.syncCursor;
-	}
-
-	setSyncCursor(cursor: string | null): void {
-		this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
-	}
-
 	/** Highest vault `seq` this device has replayed via the socket op-log catch-up
 	 *  (`catchupViaSeqReplay`). Persisted under `catchupSeq`; a reconnect resumes
 	 *  from here so only ops written while we were away are replayed. 0 = replay
@@ -1572,11 +1541,9 @@ export class SyncEngine {
 	private async wipePerVaultState(): Promise<void> {
 		this.syncState.clear();
 		this.lastSync = "";
-		// The cursor marks a position in the OLD vault's ordered feed — drop it so
-		// the next sync re-bootstraps against the new vault (else a genesis pull
-		// would resume from a foreign vault's seq). Same reasoning for the socket
-		// op-log replay cursor: 0 → replay the new vault from genesis.
-		this.syncCursor = null;
+		// The socket op-log replay cursor marks a position in the OLD vault's
+		// seq feed — reset to 0 so the next catch-up replays the new vault from
+		// genesis (else a stale high seq would suppress it entirely).
 		this.catchupSeq = 0;
 		// The note-id map and confirmed set are per-vault identity state.
 		// Carrying them across vaults keys CRDT frames/rooms by another
@@ -1592,7 +1559,7 @@ export class SyncEngine {
 		// id in the new vault. Living here (not just resetForVaultChange) keeps
 		// BOTH vault-change paths in lockstep, per this method's contract.
 		this.lastRelocationTs.clear();
-		await this.saveData({ lastSync: "", syncCursor: null });
+		await this.saveData({ lastSync: "" });
 	}
 
 	/** Reset all per-vault sync bookkeeping. Used when the user switches the
@@ -3289,24 +3256,75 @@ export class SyncEngine {
 	private seqReplayRunning = false;
 	private seqReplayAgain = false;
 
-	async catchupViaSeqReplay(): Promise<void> {
+	/** Returns the number of ops applied across this replay (incl. any coalesced
+	 *  re-run). A coalesced call that folds into an in-flight replay returns 0 —
+	 *  the running call reports the total. */
+	async catchupViaSeqReplay(): Promise<number> {
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return;
+			return 0;
 		}
 		this.seqReplayRunning = true;
+		let applied = 0;
 		try {
 			do {
 				this.seqReplayAgain = false;
-				await this.runSeqReplayOnce();
+				applied += await this.runSeqReplayOnce();
 			} while (this.seqReplayAgain);
 		} finally {
 			this.seqReplayRunning = false;
 		}
+		return applied;
 	}
 
-	private async runSeqReplayOnce(): Promise<void> {
-		if (!this.crdtCatchupSince || !this.crdt) return;
+	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
+	 *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
+	 *  replay can't cover, run around it:
+	 *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
+	 *      seed LOCAL empty-folder markers to the server.
+	 *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
+	 *      content (the authoritative delivery path).
+	 *   3. `healDivergedLiveBoundNotes` — re-converge any live-bound note the
+	 *      op-log replay could not deliver (its seq cursor already advanced past
+	 *      the edit on a prior/background catch-up that failed to converge). The
+	 *      manifest re-detects the divergence independent of the cursor. Before
+	 *      the REST purge, fullSync had its OWN cursor separate from the socket
+	 *      replay's, giving a live-bound note a second delivery chance; unifying
+	 *      onto one `catchupSeq` removed it, so this restores that guarantee.
+	 *   4. `syncExplicitFolders` — pull the server's empty-folder markers to disk
+	 *      and propagate remote folder deletes.
+	 *  Returns the applied-op count (for the progress recap / poll notice). Never
+	 *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
+	 *  never has to guard it. The manifest is fetched once and shared by steps 1
+	 *  and 3. */
+	async catchUp(): Promise<number> {
+		try {
+			const manifest = await this.api.getManifest();
+			await this.reconcileFromManifest(manifest);
+			const applied = await this.catchupViaSeqReplay();
+			await this.healDivergedLiveBoundNotes(manifest);
+			try {
+				await this.syncExplicitFolders();
+			} catch (e) {
+				rlog().error(
+					"pull",
+					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
+			}
+			return applied;
+		} catch (e) {
+			rlog().error(
+				"pull",
+				`Catch-up failed: ${errMsg(e)}`,
+				e instanceof Error ? e.stack : undefined,
+			);
+			return 0;
+		}
+	}
+
+	private async runSeqReplayOnce(): Promise<number> {
+		if (!this.crdtCatchupSince || !this.crdt) return 0;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
 		// state belongs to a DIFFERENT vault than the active one — an OAuth /
@@ -3316,6 +3334,7 @@ export class SyncEngine {
 		// idempotent, so a redundant-from-0 replay is safe.
 		const activeVault = this.settings.vaultId ?? null;
 		let cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+		let applied = 0;
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
 		for (let page = 0; page < 100_000; page++) {
@@ -3324,11 +3343,12 @@ export class SyncEngine {
 				resp = await this.crdtCatchupSince(cursor, 500);
 			} catch (e) {
 				rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
-				return;
+				return applied;
 			}
 			for (const c of resp.changes) {
 				try {
 					await this.applySyncChange(c);
+					applied += 1;
 				} catch (e) {
 					// One bad op (e.g. illegal filename) must not wedge the feed — log
 					// and skip, same isolation as pullViaCursor.
@@ -3343,6 +3363,7 @@ export class SyncEngine {
 			if (!resp.has_more) break;
 			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
 		}
+		return applied;
 	}
 
 	async catchupViaSocket(): Promise<void> {
@@ -3604,122 +3625,6 @@ export class SyncEngine {
 			await this.restConvergeLiveBound(normalized, noteId);
 		} catch (e) {
 			rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
-		}
-	}
-
-	/** Pull remote changes and apply to the vault via the ordered cursor feed.
-	 *
-	 *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
-	 *  files against the server, then a genesis cursor pull delivers content).
-	 *  A persisted cursor → resume the ordered feed from that position. A 410
-	 *  (history compacted past our cursor; PR D) surfaces as HistoryExpiredError
-	 *  → drop the cursor and re-bootstrap.
-	 *
-	 *  NOTE: `lastSync` is intentionally left untouched here. It is no longer the
-	 *  pull watermark (the cursor is), but `fullSync` still snapshots it as the
-	 *  pre-pull push boundary and it's retained for rollback to the legacy feed.
-	 *
-	 *  Explicit empty-folder markers ride a SEPARATE endpoint (not the cursor
-	 *  feed), so `syncExplicitFolders()` is still called post-apply — it both
-	 *  materializes server-marked empty folders and hydrates the
-	 *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
-	 *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-	async pull(emitProgress = false): Promise<number> {
-		if (this.syncBlocked) {
-			devLog().log("sync-blocked", "pull short-circuited — gate closed");
-			return 0;
-		}
-		// Re-entry: a pull is already running. Record the request and bail —
-		// the finally below re-runs one pull once the current one settles, so a
-		// reconnect catch-up that lands mid-pull isn't dropped (#646). Returns 0
-		// immediately; callers (e.g. onStatusChange) don't await the result.
-		if (this.pulling) {
-			this.pullPending = true;
-			return 0;
-		}
-		this.pulling = true;
-		this.lastError = "";
-		this.emitStatus();
-		rlog().info("pull", `Pull started cursor=${this.getSyncCursor() ?? "(bootstrap)"}`);
-		try {
-			// Self-heal a vault swap (e.g. OAuth re-login) BEFORE reading the
-			// cursor: the cursor is per-vault, and a stale cursor from the prior
-			// vault would query the new vault for seq > <foreign seq> and silently
-			// return nothing (the reconnect-catch-up bug). invalidateIfVaultChanged
-			// clears syncState + the cursor on a vault change so we re-bootstrap.
-			// pull() is the only sync entry the reconnect catch-up uses, so the
-			// check must live here (not just in fullSync/pullAll).
-			//
-			// GATED so it only runs when it would actually act — a genuine vault
-			// mismatch with a cursor to invalidate. When the vault is unchanged
-			// (the common case, incl. offline-queue recovery) this is skipped
-			// entirely, so it adds no async tick / timing perturbation to the
-			// hot recovery path.
-			if (
-				this.getSyncCursor() !== null &&
-				this.syncStateVaultId !== null &&
-				this.settings.vaultId != null &&
-				this.syncStateVaultId !== this.settings.vaultId
-			) {
-				await this.invalidateIfVaultChanged();
-			}
-
-			let applied: number;
-			if (!this.getSyncCursor()) {
-				applied = await this.bootstrap(emitProgress);
-			} else {
-				try {
-					applied = await this.pullViaCursor(
-						this.getSyncCursor() ?? undefined,
-						emitProgress,
-					);
-				} catch (e) {
-					if (e instanceof HistoryExpiredError) {
-						rlog().warn("pull", "HISTORY_EXPIRED — re-bootstrapping");
-						this.setSyncCursor(null);
-						await this.saveData({ syncCursor: null });
-						applied = await this.bootstrap(emitProgress);
-					} else {
-						throw e;
-					}
-				}
-			}
-
-			// Empty-folder markers are not in the cursor feed — sync them via their
-			// own endpoint. Non-fatal: a folder-sync failure must not fail the pull.
-			try {
-				await this.syncExplicitFolders();
-			} catch (e) {
-				rlog().error(
-					"pull",
-					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
-					e instanceof Error ? e.stack : undefined,
-				);
-			}
-
-			return applied;
-		} catch (e) {
-			// biome-ignore lint/suspicious/noConsole: error boundary
-			console.error("Engram Sync: pull failed", e);
-			rlog().error(
-				"pull",
-				`Pull failed: ${errMsg(e)}`,
-				e instanceof Error ? e.stack : undefined,
-			);
-			this.lastError = e instanceof Error ? `Pull failed: ${e.message}` : "Pull failed";
-			return 0;
-		} finally {
-			this.pulling = false;
-			this.emitStatus();
-			await this.flushPostPullPushes();
-			// Drain a request that arrived mid-pull. One follow-up covers any
-			// number of coalesced requests; if that rerun itself races another
-			// pull(), the flag is set again and we loop once more — bounded,
-			// since it only re-runs when a request actually landed.
-			if (this.pullPending) {
-				this.pullPending = false;
-				void this.pull();
-			}
 		}
 	}
 
@@ -4653,9 +4558,10 @@ export class SyncEngine {
 				// materializeRelocated backstop may ALSO decline (fresh-boot
 				// receiver, STEP2 not landed yet) — leaving the note invisible on
 				// this device until the next scheduled poll, up to 5 minutes
-				// (final review MINOR-7). Kick an immediate pull so that window
-				// is one pull instead.
-				void this.pull();
+				// (final review MINOR-7). Kick an immediate op-log catch-up so
+				// that window is one replay instead — the missed op carries the
+				// relocated note's content.
+				void this.catchupViaSeqReplay();
 			}
 		}
 	}
@@ -4772,160 +4678,108 @@ export class SyncEngine {
 		return applied;
 	}
 
-	/** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
-	 *  (delete server-deleted, push offline-created — disambiguated by the
-	 *  syncState baseline), then a genesis cursor pull delivers/refreshes content
-	 *  (3-way merging diverged files via applyChange). Returns count applied. */
-	private async bootstrap(emitProgress = false): Promise<number> {
-		rlog().info("pull", "Bootstrap — manifest reconcile + genesis cursor pull");
-		const manifest = await this.api.getManifest();
-
-		// No manifest endpoint (pre-B1 backend) → just genesis-pull; nothing to reconcile.
-		if (!manifest) return this.pullViaCursor(undefined, emitProgress);
+	/** Manifest-diff reconcile: trash files the server deleted while we were
+	 *  away (in baseline, absent from the manifest) and drop their baseline, then
+	 *  seed markers for folders the server can't derive (empty / non-syncable
+	 *  only). Does NOT pull content and does NOT push — content arrives via the
+	 *  seq-replay catch-up, and offline-created (never-synced) files push via
+	 *  pushModifiedFiles.
+	 *
+	 *  A manifest snapshot is the ONLY way to catch a server-delete once the
+	 *  op-log has GC'd the tombstone — a replay-from-0 cannot see it — so this is
+	 *  a standalone step in every catch-up path (fullSync, poll). Idempotent; a
+	 *  per-file trash failure is logged, never thrown, and leaves the baseline
+	 *  entry intact (clearing it would reclassify the file as offline-created and
+	 *  resurrect it on the next push). A null manifest (pre-B1 backend / 404) is
+	 *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
+	 *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
+	private async reconcileFromManifest(manifest?: ManifestResponse | null): Promise<void> {
+		const m = manifest === undefined ? await this.api.getManifest() : manifest;
+		if (!m) return;
 
 		const serverPaths = new Set<string>([
-			...manifest.notes.map((n) => normalizePath(n.path)),
-			...manifest.attachments.map((a) => normalizePath(a.path)),
+			...m.notes.map((n) => normalizePath(n.path)),
+			...m.attachments.map((a) => normalizePath(a.path)),
 		]);
 
 		// §F structural pass over local syncable files.
-		const toPush: TFile[] = [];
 		for (const file of this.app.vault.getFiles()) {
 			if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
 			const np = normalizePath(file.path);
-			if (serverPaths.has(np)) continue; // in manifest → content handled by the pull below
+			if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
+			if (!this.syncState.has(np)) continue; // never synced → pushModifiedFiles handles it
 
-			if (this.syncState.has(np)) {
-				// In baseline but gone from the server → server-deleted while away.
-				// Trash locally so the post-pull push step can't resurrect it. A
-				// trash failure (locked file / OS error) must NOT abort the whole
-				// bootstrap, and must NOT drop the baseline entry — leaving it as
-				// "in baseline" keeps it classified as server-deleted on the next
-				// run (clearing it would reclassify the file as offline-created and
-				// resurrect it on the next push). Log + carry on.
-				try {
-					await this.trashRemotelyDeleted(file);
-					this.syncState.delete(np);
-					this.baseStore?.delete(np);
-					rlog().info("pull", `Bootstrap: server-deleted → trashed ${file.path}`);
-				} catch (e) {
-					rlog().error(
-						"pull",
-						`Bootstrap trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-				}
-			} else {
-				// Never synced → created locally offline → push after content reconcile.
-				toPush.push(file);
-			}
-		}
-
-		// Content delivery: genesis pull (full content + tombstones, ordered).
-		// The manifest gives us a real up-front total for the progress bar (a
-		// genesis pull, unlike an incremental delta, knows its own size).
-		const knownTotal = manifest.notes.length + manifest.attachments.length;
-		const applied = await this.pullViaCursor(undefined, emitProgress, knownTotal);
-
-		// §E: an empty vault's genesis pull delivers no entries, so the cursor is
-		// still null. Seed it from the manifest's change_seq so the NEXT pull
-		// resumes incrementally (seq > change_seq) instead of re-bootstrapping —
-		// critical for the reconnect catch-up, which must have a position to
-		// resume from after a vault swap clears the cursor.
-		if (this.getSyncCursor() === null && typeof manifest.change_seq === "number") {
-			this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID));
-			await this.saveData({ syncCursor: this.getSyncCursor() });
-		}
-
-		// Push offline-created files now that deletes are reconciled.
-		for (const file of toPush) {
+			// In baseline but gone from the server → server-deleted while away.
 			try {
-				await this.pushFile(file, true);
+				await this.trashRemotelyDeleted(file);
+				this.syncState.delete(np);
+				this.baseStore?.delete(np);
+				rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
 			} catch (e) {
 				rlog().error(
 					"pull",
-					`Bootstrap push failed: ${file.path} — ${errMsg(e)}`,
+					`Reconcile trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
 			}
 		}
 
-		// Seed markers for folders the server can't derive (empty, or holding only
-		// non-syncable files). getFiles() above never sees folders, so without this
-		// a pre-existing vault's empty folders never reach the server. Best-effort.
+		// Markers for folders the server can't derive. getFiles() never sees
+		// folders, so without this a pre-existing vault's empty folders never
+		// reach the server. Best-effort.
 		await this.seedEmptyFolders();
-
-		return applied;
 	}
 
-	/** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
-	 *  server returns from seq 0). Applies each entry, persists the cursor after
-	 *  every page (at-least-once; applies are idempotent), returns count applied.
-	 *  Throws HistoryExpiredError on 410. */
-	private async pullViaCursor(
-		startCursor: string | undefined,
-		emitProgress = false,
-		knownTotal?: number,
-	): Promise<number> {
-		let cursor = startCursor;
-		let applied = 0;
+	/** Re-converge any LIVE-BOUND note whose server content (per the manifest)
+	 *  diverges from our recorded baseline — independent of the seq cursor.
+	 *
+	 *  The socket seq-replay advances `catchupSeq` past every op it sees
+	 *  (monotonic, so a permanently-unappliable op can't stall the feed). A
+	 *  live-bound note whose convergence FAILED on a prior catch-up (e.g. a
+	 *  background reconnect replay that consumed the edit op before the live
+	 *  Y.Doc could take it) is therefore never re-delivered by cursor alone.
+	 *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
+	 *  socket replay, so it re-delivered the diverged note and converged it; the
+	 *  cursor unification removed that. This restores it: a manifest snapshot
+	 *  re-detects the divergence every catch-up and re-fires the same idempotent
+	 *  `restConvergeLiveBound` (a converged note's serverHash already matches and
+	 *  is skipped). Only live-bound notes (the editor owns the body, so disk
+	 *  writes are unsafe) need it — idle divergences heal through the normal
+	 *  op-log apply. Best-effort; never throws into catchUp. */
+	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<void> {
+		if (!manifest || !this.crdt) return;
+		for (const entry of manifest.notes) {
+			const path = normalizePath(entry.path);
+			if (!this.isLiveBound(path)) continue;
+			const stored = this.syncState.get(path);
+			// Already converged (serverHash matches the server's current hash) → skip.
+			if (entry.content_hash && stored?.serverHash === entry.content_hash) continue;
 
-		for (let page = 0; page < 100_000; page++) {
-			let resp: SyncChangesResponse;
+			const noteId = this.noteIdMap?.get(path) ?? entry.id ?? null;
+			if (!noteId) continue;
+
 			try {
-				resp = await this.api.getSyncChanges(cursor, 500);
-			} catch (e) {
-				if ((e as { status?: number }).status === 410) throw new HistoryExpiredError();
-				throw e;
-			}
-
-			for (const c of resp.changes) {
-				try {
-					if (await this.applySyncChange(c)) applied++;
-				} catch (e) {
-					// Permanent local apply failure (e.g. illegal filename): log + skip,
-					// matching legacy pull semantics — one bad entry must not wedge the feed.
-					const msg = errMsg(e);
-					rlog().error(
-						"pull",
-						`Skipped ${c.type} ${c.path} — ${msg}`,
-						e instanceof Error ? e.stack : undefined,
-					);
+				const converged = await this.restConvergeLiveBound(path, noteId);
+				if (converged && entry.content_hash) {
+					// Record convergence so the next catch-up skips it. Mirror
+					// applyChange's live-bound success bookkeeping: the editor owns the
+					// body (no disk write), so keep the REAL local hash and only advance
+					// serverHash. Spread the existing entry — restConvergeLiveBound just
+					// recorded crdtHead into it, which coldReceive's cost gate reads.
+					const boundFile = this.app.vault.getFileByPath(path);
+					const localHash =
+						stored?.hash ??
+						(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+					this.syncState.set(path, {
+						...(this.syncState.get(path) ?? {}),
+						hash: localHash,
+						serverHash: entry.content_hash,
+					});
 				}
+			} catch (e) {
+				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
 			}
-
-			// Advance the persisted cursor to this page's tip. Mid-stream the server
-			// hands back an opaque next_cursor; on the final page it's null, so encode
-			// the head from the last entry (keeps the watermark moving for PR D GC).
-			const last = resp.changes[resp.changes.length - 1];
-			if (resp.next_cursor) {
-				this.setSyncCursor(resp.next_cursor);
-			} else if (last) {
-				this.setSyncCursor(encodeCursor(last.seq, last.id));
-			}
-			await this.saveData({ syncCursor: this.getSyncCursor() });
-
-			// Foreground (manual) sync only: report real downloads-so-far so the
-			// modal's Download row climbs instead of sitting frozen until done.
-			// `total` is only read by the settings bar (the modal keeps the plan
-			// total). Bootstrap passes a real manifest count; an incremental delta
-			// has no honest total, so emit 0 — the settings bar renders that as
-			// indeterminate (activity count, empty bar) rather than the old
-			// total==current which fabricated a permanent 100% bar.
-			if (emitProgress) {
-				this.onSyncProgress?.({
-					phase: "pulling",
-					current: applied,
-					total: knownTotal ?? 0,
-					failed: 0,
-				});
-			}
-
-			if (!resp.has_more || !resp.next_cursor) break;
-			cursor = resp.next_cursor;
 		}
-
-		return applied;
 	}
 
 	/** Apply a single remote change to the vault, with conflict detection.
@@ -5784,7 +5638,7 @@ export class SyncEngine {
 		// the old and new lastSync values.
 		const prePullSync = this.lastSync;
 
-		const pulled = await this.pull(true);
+		const pulled = await this.catchUp();
 		const pushed = await this.pushModifiedFiles(prePullSync);
 
 		// Close out the progress UI (mirrors pushAll's terminal "complete").

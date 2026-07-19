@@ -3,7 +3,7 @@
  * socket twin of the REST `coldReceive`. Mirrors the mock-engine pattern
  * from tests/sync-cold-receive.test.ts.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import type { EngramApi } from "../src/api";
 import type { CrdtManager } from "../src/crdt/manager";
@@ -15,7 +15,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
-	getSyncChanges: mock().mockResolvedValue({ changes: [], next_cursor: null, has_more: false }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "n.md",
@@ -565,7 +564,8 @@ describe("catchupViaSeqReplay", () => {
 			next_seq: null,
 		}));
 
-		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
+		// seq=5 throws, seq=6 applies → 1 applied, cursor still advances past both.
+		await expect(engine.catchupViaSeqReplay()).resolves.toBe(1);
 		expect(engine.getCatchupSeq()).toBe(6);
 	});
 
@@ -635,7 +635,7 @@ describe("catchupViaSeqReplay", () => {
 
 	test("no-op (never throws) when the socket fetcher is unwired", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		await expect(engine.catchupViaSeqReplay()).resolves.toBeUndefined();
+		await expect(engine.catchupViaSeqReplay()).resolves.toBe(0);
 	});
 });
 
@@ -725,5 +725,64 @@ describe("applyOp", () => {
 
 		expect(applied).toBe(false);
 		expect(applyChange).not.toHaveBeenCalled();
+	});
+});
+
+// REST-purge Bucket A regression guard (e2e test_deaf_live_bound_note_converges):
+// unifying fullSync's pull cursor and the socket replay's catchupSeq onto ONE
+// watermark removed a live-bound note's second delivery chance. catchUp now
+// re-detects a diverged live-bound note from the manifest and re-converges it
+// via restConvergeLiveBound, independent of the seq cursor.
+describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)", () => {
+	function manifestOf(notes: Array<{ id: string; path: string; content_hash: string }>) {
+		return {
+			notes,
+			attachments: [],
+			total_notes: notes.length,
+			total_attachments: 0,
+			change_seq: 1,
+		};
+	}
+
+	test("re-converges a diverged live-bound note independent of the seq cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
+		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+
+		await (engine as any).healDivergedLiveBoundNotes(
+			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
+		);
+
+		expect(converge).toHaveBeenCalledTimes(1);
+		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
+		// Convergence recorded (serverHash advanced) so the next catch-up skips it.
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");
+	});
+
+	test("skips a CONVERGED live-bound note (serverHash already matches the manifest)", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck(() => true);
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H2" } });
+		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+
+		await (engine as any).healDivergedLiveBoundNotes(
+			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
+		);
+
+		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("skips an IDLE (not live-bound) diverged note — the op-log apply owns it", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck(() => false);
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
+		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+
+		await (engine as any).healDivergedLiveBoundNotes(
+			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
+		);
+
+		expect(converge).not.toHaveBeenCalled();
 	});
 });
