@@ -5544,7 +5544,9 @@ export class SyncEngine {
 	 *  crdtHead, and stamp the echo baseline from the pushed content so a later
 	 *  identical edit is hash-skipped — the guard that prevents a second-lineage
 	 *  doubling (#846) since the device never seeds its own real doc from this
-	 *  content (it adopts the server lineage on the first handshake). */
+	 *  content (it adopts the server lineage on the first handshake). Only ever
+	 *  reached for a genuinely history-LESS note: the batch caller routes any note
+	 *  that already carries a local CRDT lineage to `pushFile` instead. */
 	private recordCrdtGenesisPushed(file: TFile, content: string, serverId: string): void {
 		const np = normalizePath(file.path);
 		this.noteIdMap?.set(np, serverId);
@@ -5687,6 +5689,24 @@ export class SyncEngine {
 			// unflushed keystrokes a disk-content frame would drop (pushFile's
 			// live-adopt transfers the in-flight buffer).
 			if (this.isLiveBound(np)) {
+				if (await this.pushFile(file, true)) pushed++;
+				else failed++;
+				continue;
+			}
+			// A note that already carries a local CRDT lineage is NOT a true genesis
+			// (genesis = brand-new, no history anywhere). Its lineage may already be
+			// on the server (offline-captured then channel-synced before this sync),
+			// so minting a THROWAWAY second lineage via crdt_create_batch makes the
+			// server merge both → the note body DOUBLES (#188 class, test_86
+			// push-all-delete-remote with a second live client echoing the merge).
+			// Route it to pushFile, which diffs disk into its REAL doc (idempotent on
+			// an unchanged body) and pushes THAT lineage — never a second one.
+			const existingId = this.noteIdMap?.get(np);
+			if (
+				existingId &&
+				typeof this.crdt?.hasHistory === "function" &&
+				(await this.crdt.hasHistory(existingId))
+			) {
 				if (await this.pushFile(file, true)) pushed++;
 				else failed++;
 				continue;
