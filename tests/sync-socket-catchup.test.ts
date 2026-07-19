@@ -659,6 +659,7 @@ describe("catchupViaSeqReplay", () => {
 			applied: 0,
 			serverIds: new Set(),
 			serverAttachmentPaths: new Set(),
+			ran: true,
 		});
 	});
 

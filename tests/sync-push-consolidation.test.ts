@@ -449,6 +449,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			applied: 0,
 			serverIds: new Set(["kept-id"]),
 			serverAttachmentPaths: new Set<string>(),
+			ran: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -476,6 +477,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			applied: 0,
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
+			ran: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -493,6 +495,7 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			applied: 0,
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set(["Attachments/kept.png"]),
+			ran: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
@@ -512,12 +515,60 @@ describe("SyncEngine.pullAll — replay-from-0 (Task 5)", () => {
 			applied: 0,
 			serverIds: new Set<string>(),
 			serverAttachmentPaths: new Set<string>(),
+			ran: true,
 		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
 		await engine.handleDelete(staleAtt); // the vault delete event the trash fires
 
 		expect(api.deleteAttachment).not.toHaveBeenCalled();
+	});
+});
+
+describe("destructive sync choices — coalesced-replay whole-vault data-loss guard", () => {
+	// The catastrophic bug: when a background catch-up already holds the
+	// single-flight lock (seqReplayRunning), a destructive choice's OWN
+	// catchupViaSeqReplay COALESCES and returns EMPTY serverIds. Pre-fix,
+	// _pullAll's wipe branch then treats EVERY local file as a server-absent
+	// "extra" → trashes the whole vault. The gate-open live-WS race that fires a
+	// background `void this.catchupViaSeqReplay()` is exactly this contention.
+	test("pull-all-delete-local ABORTS (never trashes) when the replay COALESCES to an empty server set", async () => {
+		const a = new TFile("A.md", Date.now());
+		const b = new TFile("B.md", Date.now());
+		const { engine, app } = makeEngine([a, b], { "A.md": "# a", "B.md": "# b" });
+		(engine as any).noteIdMap.set("A.md", "id-a");
+		(engine as any).noteIdMap.set("B.md", "id-b");
+		// A background replay already holds the lock → the wipe's replay coalesces
+		// (returns EMPTY sets, ran:false) on every retry, so it exhausts and aborts.
+		(engine as any).seqReplayRunning = true;
+
+		const applied = await engine.pullAll({ deleteLocalExtras: true });
+
+		// Pre-fix this trashed BOTH files (whole vault). Post-fix: nothing trashed.
+		expect(app.fileManager.trashFile).not.toHaveBeenCalled();
+		expect(applied).toBe(0);
+	});
+
+	test("a GENUINE (ran:true) replay still trashes ONLY the true extras", async () => {
+		const stale = new TFile("Stale.md", Date.now());
+		const kept = new TFile("Kept.md", Date.now());
+		const { engine, app } = makeEngine([stale, kept], {
+			"Stale.md": "# s",
+			"Kept.md": "# k",
+		});
+		(engine as any).noteIdMap.set("Stale.md", "stale-id");
+		(engine as any).noteIdMap.set("Kept.md", "kept-id");
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 0,
+			serverIds: new Set(["kept-id"]),
+			serverAttachmentPaths: new Set<string>(),
+			ran: true,
+		});
+
+		await engine.pullAll({ deleteLocalExtras: true });
+
+		expect(app.fileManager.trashFile).toHaveBeenCalledTimes(1);
+		expect(app.fileManager.trashFile).toHaveBeenCalledWith(stale);
 	});
 });
 
@@ -544,6 +595,7 @@ describe("SyncEngine.pushAll — replace-remote via crdtDelete + attachment-dele
 			applied: 0,
 			serverIds: new Set(["local-keep-id", "remote-extra-id"]),
 			serverAttachmentPaths: new Set(["Keep.png", "remote-extra.png"]),
+			ran: true,
 		});
 		engine.setCrdtCreateBatch(async (creates) => ({
 			results: creates.map((c) => ({ doc_id: c.doc_id, status: "ok" as const })),

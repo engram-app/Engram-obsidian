@@ -3207,12 +3207,19 @@ export class SyncEngine {
 		applied: number;
 		serverIds: Set<string>;
 		serverAttachmentPaths: Set<string>;
+		/** `true` when THIS call executed the replay loop exclusively (so
+		 *  `serverIds`/`serverAttachmentPaths` are real + complete); `false` when it
+		 *  COALESCED behind an in-flight replay and returned EMPTY sets. Destructive
+		 *  delete decisions MUST trust the sets only when `ran === true` — an empty
+		 *  set from a coalesced call would mean "server has nothing" and trash the
+		 *  whole vault (the data-loss bug). Non-destructive callers ignore it. */
+		ran: boolean;
 	}> {
 		const serverIds = new Set<string>();
 		const serverAttachmentPaths = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return { applied: 0, serverIds, serverAttachmentPaths };
+			return { applied: 0, serverIds, serverAttachmentPaths, ran: false };
 		}
 		this.seqReplayRunning = true;
 		let applied = 0;
@@ -3229,7 +3236,33 @@ export class SyncEngine {
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return { applied, serverIds, serverAttachmentPaths };
+		return { applied, serverIds, serverAttachmentPaths, ran: true };
+	}
+
+	/** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
+	 *  push-all replace-remote). Retries until THIS call executes the replay
+	 *  exclusively (`ran === true`), so the returned server sets are real and
+	 *  complete. A coalesced call (a background catch-up holds the single-flight
+	 *  lock) returns EMPTY sets — trusting those would treat every local file as a
+	 *  server-absent extra and trash the whole vault. Between attempts we yield a
+	 *  short tick so the in-flight replay finishes and releases the lock. Returns
+	 *  `null` if contention never clears; the caller MUST abort the delete pass on
+	 *  `null` (never delete on untrustworthy sets — "empty set never means server
+	 *  empty"). */
+	private async catchupViaSeqReplayExclusive(opts: {
+		fromZero?: boolean;
+		enumerateOnly?: boolean;
+	}): Promise<{
+		applied: number;
+		serverIds: Set<string>;
+		serverAttachmentPaths: Set<string>;
+	} | null> {
+		for (let attempt = 0; attempt < 10; attempt++) {
+			const res = await this.catchupViaSeqReplay(opts);
+			if (res.ran) return res;
+			await new Promise((resolve) => window.setTimeout(resolve, 50));
+		}
+		return null;
 	}
 
 	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
@@ -3685,9 +3718,35 @@ export class SyncEngine {
 		try {
 			this.onSyncProgress?.({ phase: "pulling", current: 0, total: 0, failed: 0 });
 
-			const { applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
-				fromZero: true,
-			});
+			// Destructive wipe MUST decide the trash set from an EXCLUSIVE replay
+			// (real, complete server sets). A coalesced replay returns EMPTY sets —
+			// treating those as "server has nothing" trashes the whole vault. Abort
+			// the wipe rather than trash on untrustworthy sets. Pull-all-keep is
+			// non-destructive, so it may coalesce harmlessly.
+			let applied: number;
+			let serverIds: Set<string>;
+			let serverAttachmentPaths: Set<string>;
+			if (wipe) {
+				const replay = await this.catchupViaSeqReplayExclusive({ fromZero: true });
+				if (!replay) {
+					this.lastError =
+						"Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.";
+					devLog().log(
+						"error",
+						`${label} ABORTED — replay coalesced under contention; refusing to trash`,
+					);
+					rlog().error(
+						"pull",
+						`${label} ABORTED — replay never ran exclusively (persistent contention); refusing to trash on an untrustworthy (possibly empty) server set`,
+					);
+					return 0;
+				}
+				({ applied, serverIds, serverAttachmentPaths } = replay);
+			} else {
+				({ applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+					fromZero: true,
+				}));
+			}
 
 			devLog().log(
 				"pull",
@@ -6159,20 +6218,35 @@ export class SyncEngine {
 		// 2026-07-08 wipe-before-enumerate vault-wipe incident.
 		let replaceExtras: { ids: string[]; attachments: string[] } | null = null;
 		if (opts.replaceRemote) {
-			const { serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+			// The server-extra DELETE decision MUST come from an EXCLUSIVE replay: a
+			// coalesced replay returns EMPTY sets, which here would silently under-
+			// delete (no data loss, but the replace is incomplete). On persistent
+			// contention, abort the delete pass entirely (replaceExtras stays null) —
+			// the push below still runs (re-uploading local files is non-destructive).
+			const replay = await this.catchupViaSeqReplayExclusive({
 				fromZero: true,
 				enumerateOnly: true,
 			});
-			const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
-			const localIds = new Set<string>();
-			for (const path of snap) {
-				const id = this.noteIdMap?.get(path);
-				if (id) localIds.add(id);
+			if (!replay) {
+				rlog().error(
+					"push",
+					"replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes — the push still ran",
+				);
+			} else {
+				const { serverIds, serverAttachmentPaths } = replay;
+				const snap = opts.localSnapshot ?? this.snapshotLocalPaths();
+				const localIds = new Set<string>();
+				for (const path of snap) {
+					const id = this.noteIdMap?.get(path);
+					if (id) localIds.add(id);
+				}
+				replaceExtras = {
+					ids: [...serverIds].filter((id) => !localIds.has(id)),
+					attachments: [...serverAttachmentPaths].filter(
+						(p) => !snap.has(normalizePath(p)),
+					),
+				};
 			}
-			replaceExtras = {
-				ids: [...serverIds].filter((id) => !localIds.has(id)),
-				attachments: [...serverAttachmentPaths].filter((p) => !snap.has(normalizePath(p))),
-			};
 		}
 
 		const files = this.app.vault.getFiles();
