@@ -3278,24 +3278,31 @@ export class SyncEngine {
 	private seqReplayAgain = false;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
-	 *  re-run). A coalesced call that folds into an in-flight replay returns 0 —
-	 *  the running call reports the total. */
-	async catchupViaSeqReplay(): Promise<number> {
+	 *  re-run) plus the set of server note-ids seen (non-deleted only) — used by
+	 *  the pull-all-delete / push-all-delete choices. A coalesced call that folds
+	 *  into an in-flight replay returns applied:0/an empty set — the running call
+	 *  reports the total. `fromZero` forces the replay to start at cursor 0
+	 *  regardless of the persisted `catchupSeq` (idempotent re-replay). */
+	async catchupViaSeqReplay(opts: { fromZero?: boolean } = {}): Promise<{
+		applied: number;
+		serverIds: Set<string>;
+	}> {
+		const serverIds = new Set<string>();
 		if (this.seqReplayRunning) {
 			this.seqReplayAgain = true;
-			return 0;
+			return { applied: 0, serverIds };
 		}
 		this.seqReplayRunning = true;
 		let applied = 0;
 		try {
 			do {
 				this.seqReplayAgain = false;
-				applied += await this.runSeqReplayOnce();
+				applied += await this.runSeqReplayOnce(opts.fromZero ?? false, serverIds);
 			} while (this.seqReplayAgain);
 		} finally {
 			this.seqReplayRunning = false;
 		}
-		return applied;
+		return { applied, serverIds };
 	}
 
 	/** The single catch-up path (socket-only, no REST fallback — a wedged socket
@@ -3322,7 +3329,7 @@ export class SyncEngine {
 		try {
 			const manifest = await this.api.getManifest();
 			await this.reconcileFromManifest(manifest);
-			const applied = await this.catchupViaSeqReplay();
+			const { applied } = await this.catchupViaSeqReplay();
 			await this.healDivergedLiveBoundNotes(manifest);
 			try {
 				await this.syncExplicitFolders();
@@ -3344,7 +3351,7 @@ export class SyncEngine {
 		}
 	}
 
-	private async runSeqReplayOnce(): Promise<number> {
+	private async runSeqReplayOnce(fromZero: boolean, serverIds: Set<string>): Promise<number> {
 		if (!this.crdtCatchupSince || !this.crdt) return 0;
 		// The seq cursor is per-vault: `seq` is allocated per vault, so a cursor
 		// from one vault is meaningless in another. If our recorded per-vault
@@ -3354,7 +3361,11 @@ export class SyncEngine {
 		// test_48). Replay that vault from genesis instead; applySyncChange is
 		// idempotent, so a redundant-from-0 replay is safe.
 		const activeVault = this.settings.vaultId ?? null;
-		let cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+		let cursor = fromZero
+			? 0
+			: this.syncStateVaultId === activeVault
+				? this.getCatchupSeq()
+				: 0;
 		let applied = 0;
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
@@ -3378,6 +3389,10 @@ export class SyncEngine {
 				// Advance past every op we've SEEN (applied or skipped) so the cursor
 				// is monotonic and a permanently-unappliable op can't stall the feed.
 				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
+				// Every non-deleted id SEEN (applied or skipped) — the pull-all-delete /
+				// push-all-delete choices (Tasks 5/6) need the full server id-set, not
+				// just the successfully-applied subset.
+				if (c.id && !c.deleted) serverIds.add(c.id);
 			}
 			this.setCatchupSeq(cursor);
 			await this.saveData({ catchupSeq: this.getCatchupSeq() });

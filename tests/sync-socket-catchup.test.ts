@@ -565,7 +565,8 @@ describe("catchupViaSeqReplay", () => {
 		}));
 
 		// seq=5 throws, seq=6 applies → 1 applied, cursor still advances past both.
-		await expect(engine.catchupViaSeqReplay()).resolves.toBe(1);
+		const { applied } = await engine.catchupViaSeqReplay();
+		expect(applied).toBe(1);
 		expect(engine.getCatchupSeq()).toBe(6);
 	});
 
@@ -635,7 +636,32 @@ describe("catchupViaSeqReplay", () => {
 
 	test("no-op (never throws) when the socket fetcher is unwired", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
-		await expect(engine.catchupViaSeqReplay()).resolves.toBe(0);
+		await expect(engine.catchupViaSeqReplay()).resolves.toEqual({
+			applied: 0,
+			serverIds: new Set(),
+		});
+	});
+
+	test("catchupViaSeqReplay({fromZero}) starts at 0 and returns the server id-set", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		engine.setCatchupSeq(999); // stale high cursor must be ignored under fromZero
+
+		const cursorsSeen: number[] = [];
+		engine.setCrdtCatchupSince(async (cursor: number) => {
+			cursorsSeen.push(cursor);
+			return {
+				changes: [op(1, "n1", "A.md"), { ...op(2, "n2", "B.md"), deleted: true }],
+				has_more: false,
+				next_seq: null,
+			};
+		});
+
+		const { applied, serverIds } = await engine.catchupViaSeqReplay({ fromZero: true });
+
+		expect(cursorsSeen).toEqual([0]); // NOT the stale 999
+		expect(applied).toBe(2);
+		expect([...serverIds]).toEqual(["n1"]); // deleted n2 excluded
 	});
 });
 
