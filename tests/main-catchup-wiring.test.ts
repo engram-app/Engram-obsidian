@@ -115,6 +115,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			// Wired unconditionally by connectChannel; the fake must accept them to
 			// reach a clean, error-free assignment.
 			setCrdtCreate: () => {},
+			setCrdtCreateBatch: () => {},
 			setCrdtDelete: () => {},
 			setCrdtEnqueue: () => {},
 			setCrdtCatchup: () => {},

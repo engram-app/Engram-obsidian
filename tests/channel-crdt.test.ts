@@ -1048,6 +1048,27 @@ describe("NoteChannel CRDT frame senders", () => {
 		channel.disconnect();
 	});
 
+	test("crdtCreateBatch sends crdt_create_batch with the creates and returns results", async () => {
+		const { channel, ws } = await joinedCrdtChannel();
+		const creates = [{ doc_id: "id1", path: "A.md", b64: "Zg==" }];
+		const p = channel.crdtCreateBatch(creates);
+		const frame = ws.sent
+			.map((s: string) => JSON.parse(s))
+			.find((f: unknown[]) => f[3] === "crdt_create_batch");
+		expect(frame[4]).toEqual({ creates });
+		const reply = { results: [{ doc_id: "id1", status: "ok" }] };
+		simulateMessage(ws, [
+			null,
+			frame[1],
+			"crdt:u1:v1",
+			"phx_reply",
+			{ status: "ok", response: reply },
+		]);
+		await expect(p).resolves.toEqual(reply);
+
+		channel.disconnect();
+	});
+
 	test("crdtCatchupHeads sends the frame and returns heads", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
 		const p = channel.crdtCatchupHeads();

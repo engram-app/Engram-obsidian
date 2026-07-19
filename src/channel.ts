@@ -366,6 +366,16 @@ export class NoteChannel {
 		return res.doc_id;
 	}
 
+	/** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
+	 *  creates per request; chunking is the caller's concern). */
+	async crdtCreateBatch(creates: { doc_id: string; path: string; b64: string }[]): Promise<{
+		results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+	}> {
+		return (await this.sendRequest("crdt_create_batch", { creates })) as {
+			results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+		};
+	}
+
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
 	 *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
 	 *  resolve means the delete is durably applied; a reject carries a retryable

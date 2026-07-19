@@ -804,6 +804,27 @@ export class SyncEngine {
 		this.crdtCreate = fn;
 	}
 
+	/** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
+	 *  to the server's 100-create cap) is a later task; this is plumbing only. */
+	private crdtCreateBatch:
+		| ((creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
+				results: {
+					doc_id: string;
+					status: "ok" | "error";
+					reason?: string;
+					limit?: number;
+				}[];
+		  }>)
+		| null = null;
+
+	setCrdtCreateBatch(
+		fn: (creates: { doc_id: string; path: string; b64: string }[]) => Promise<{
+			results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+		}>,
+	): void {
+		this.crdtCreateBatch = fn;
+	}
+
 	/** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
 	 *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
 	 *  the new-path `crdt_create` resurrect: the backend relocates a note only via
