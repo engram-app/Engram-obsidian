@@ -538,27 +538,6 @@ export interface SyncProgress {
 	currentPath?: string;
 }
 
-/** One entry in the POST /notes/batch response (protocol rev). */
-export interface BatchUpsertResult {
-	/** Echoes the input path — the correlation key. */
-	path: string;
-	status: "ok" | "conflict" | "error";
-	id?: string;
-	version?: number;
-	content_hash?: string;
-	/** Canonical (sanitized) path — rename the local file when it differs. */
-	server_path?: string;
-	server_note?: VersionConflictResponse["server_note"];
-	errors?: unknown;
-	parse_status?: "ok" | "degraded";
-	parse_reason?: ParseReason | null;
-}
-
-/** Response from POST /notes/batch. */
-export interface BatchUpsertResponse {
-	results: BatchUpsertResult[];
-}
-
 /** 409 conflict response from the server when expected_version mismatches. */
 export interface VersionConflictResponse {
 	conflict: true;

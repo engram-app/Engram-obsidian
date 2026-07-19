@@ -206,125 +206,6 @@ describe("hash-compare live sync", () => {
 	});
 });
 
-describe("batch push", () => {
-	function okResult(path: string, version = 1, extra = {}) {
-		return {
-			path,
-			status: "ok",
-			id: `id-${path}`,
-			version,
-			content_hash: `srv-${path}`,
-			server_path: path,
-			...extra,
-		};
-	}
-
-	// Task 3 rewire: pushAll now routes GENESIS notes through crdtCreateBatch;
-	// the REST pushNotesViaBatch is kept (no caller) until Task 7 deletes it, so
-	// these REST-batch tests invoke it directly rather than through pushAll.
-	test("pushNotesViaBatch sends notes through POST /notes/batch in one request", async () => {
-		const engine = createEngine();
-		const files = [new TFile("a.md"), new TFile("b.md"), new TFile("c.md")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		mockApp.vault.cachedRead.mockImplementation((f: TFile) =>
-			Promise.resolve(`content of ${f.path}`),
-		);
-		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
-			results: files.map((f) => okResult(f.path)),
-		});
-
-		const { pushed } = await (engine as any).pushNotesViaBatch(files, true);
-
-		expect(pushed).toBe(3);
-		expect(mockApi.pushNotesBatch).toHaveBeenCalledTimes(1);
-		expect(mockApi.pushNote).not.toHaveBeenCalled();
-
-		const sent = (mockApi.pushNotesBatch as jest.Mock).mock.calls[0][0];
-		expect(sent.map((n: { path: string }) => n.path)).toEqual(["a.md", "b.md", "c.md"]);
-
-		const state = engine.exportSyncState();
-		expect(state["a.md"]?.serverHash).toBe("srv-a.md");
-		expect(state["a.md"]?.version).toBe(1);
-	});
-
-	test("falls back to per-note pushes when the batch endpoint is missing (404)", async () => {
-		const engine = createEngine();
-		// .canvas notes take the kept LWW single-note REST path (md notes route
-		// CRDT-sole and never REST-push), so they exercise the batch-unsupported
-		// → per-note fallback the same as pre-rev md did.
-		const files = [new TFile("a.canvas"), new TFile("b.canvas")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		(mockApi.pushNotesBatch as jest.Mock).mockRejectedValueOnce({ status: 404 });
-		(mockApi.pushNote as jest.Mock).mockResolvedValue({
-			note: { path: "", version: 1 },
-			chunks_indexed: 0,
-		});
-
-		const pushed = await engine.pushAll();
-
-		expect(pushed).toBe(2);
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
-	});
-
-	test("a conflict result falls back to the single-note push flow for that file", async () => {
-		const engine = createEngine();
-		// .canvas so the single-note fallback takes the kept LWW REST path (md is
-		// CRDT-sole). The batch-conflict → pushFile hand-off itself is unchanged.
-		const files = [new TFile("ok.md"), new TFile("conflicted.canvas")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
-			results: [
-				okResult("ok.md"),
-				{
-					path: "conflicted.canvas",
-					status: "conflict",
-					server_note: {
-						id: "x",
-						path: "conflicted.canvas",
-						title: "c",
-						content: "server content",
-						folder: "",
-						tags: [],
-						mtime: 100,
-						created_at: "2026-06-12T00:00:00Z",
-						updated_at: "2026-06-12T00:00:00Z",
-						version: 9,
-					},
-				},
-			],
-		});
-		(mockApi.pushNote as jest.Mock).mockResolvedValue({
-			note: { path: "conflicted.canvas", version: 10 },
-			chunks_indexed: 0,
-		});
-
-		await engine.pushAll();
-
-		// The conflicted file went through the single-note flow.
-		const pushNoteCalls = (mockApi.pushNote as jest.Mock).mock.calls;
-		expect(pushNoteCalls.some((c: unknown[]) => c[0] === "conflicted.canvas")).toBe(true);
-	});
-
-	test("renames the local file when the server sanitized the path", async () => {
-		const engine = createEngine();
-		const dirty = new TFile("dirty?.md");
-		mockApp.vault.getFiles.mockReturnValue([dirty]);
-		mockApp.vault.getFileByPath.mockImplementation((p: string) =>
-			p === "dirty?.md" ? dirty : null,
-		);
-		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
-			results: [okResult("dirty?.md", 1, { server_path: "dirty.md" })],
-		});
-
-		await (engine as any).pushNotesViaBatch([dirty], true);
-
-		expect(mockApp.vault.rename).toHaveBeenCalledWith(dirty, "dirty.md");
-		const state = engine.exportSyncState();
-		expect(state["dirty.md"]).toBeDefined();
-		expect(state["dirty?.md"]).toBeUndefined();
-	});
-});
-
 describe("reconcile (serverHash-based)", () => {
 	test("flags local-only files as missing and hash drift as diverged", async () => {
 		const engine = createEngine();
@@ -386,44 +267,17 @@ describe("reconcile (serverHash-based)", () => {
 // pullAll() in a "paginated pull (legacy meta feed via pullAll)" suite that
 // USED to sit above this comment — removed by Task 5 of the CRDT
 // single-push-path rework (see that removal note further up this file):
-// pullAll() no longer drives fetchAllNoteChanges/resolveChangeBody at all.
-
-describe("batch push sizing", () => {
-	test("notes above 10MB are routed through the single-note path", async () => {
-		const engine = createEngine();
-		const small = new TFile("small.md");
-		const huge = new TFile("huge.md", Date.now(), 11 * 1024 * 1024);
-		mockApp.vault.getFiles.mockReturnValue([small, huge]);
-		// The oversized single-note path only REST-pushes when the *content* also
-		// exceeds MAX_CRDT_NOTE_BYTES (4MB) — an in-cap md body routes CRDT-sole
-		// and returns false. Give huge.md a body past the cap so pushFile REST-pushes.
-		mockApp.vault.cachedRead.mockImplementation((f: TFile) =>
-			Promise.resolve(f.path === "huge.md" ? "x".repeat(5 * 1024 * 1024) : "# Test"),
-		);
-		(mockApi.pushNotesBatch as jest.Mock).mockResolvedValueOnce({
-			results: [
-				{
-					path: "small.md",
-					status: "ok",
-					id: "id-s",
-					version: 1,
-					content_hash: "h-s",
-					server_path: "small.md",
-				},
-			],
-		});
-		(mockApi.pushNote as jest.Mock).mockResolvedValue({
-			note: { path: "huge.md", version: 1 },
-			chunks_indexed: 0,
-		});
-
-		await (engine as any).pushNotesViaBatch([small, huge], true);
-
-		const sent = (mockApi.pushNotesBatch as jest.Mock).mock.calls[0][0];
-		expect(sent.map((n: { path: string }) => n.path)).toEqual(["small.md"]);
-		// The oversized file went through pushNote (single-note 413 path owns
-		// the too_large Sync Center categorization).
-		const single = (mockApi.pushNote as jest.Mock).mock.calls;
-		expect(single.some((c: unknown[]) => c[0] === "huge.md")).toBe(true);
-	});
-});
+// pullAll() no longer drives fetchAllNoteChanges/resolveChangeBody at all
+// (Task 7 deleted resolveChangeBody outright — its only remaining caller was
+// pullAll, already removed by Task 5. fetchAllNoteChanges survives: it still
+// backs computeSyncPlan's inventory query, tests/sync-plan.test.ts).
+//
+// The REST batch-push suites that used to sit here ("batch push", "batch push
+// sizing") exercised pushNotesViaBatch/recordBatchPushOk directly — both
+// deleted by Task 7 (dead since Task 3 routed pushAll's genesis notes through
+// crdtCreateBatch/pushGenesisBatch instead). Their invariants (chunking,
+// oversized→pushFile routing, mint-refusal, id-adoption, #245 mid-flight
+// rename) are pinned for the surviving producer in
+// tests/sync-push-consolidation.test.ts ("pushGenesisBatch — direct"); the
+// batch-specific sanitize-rename case is covered generically for pushFile in
+// tests/sync.test.ts ("Path sanitization on push").

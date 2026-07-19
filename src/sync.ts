@@ -29,7 +29,6 @@ import type { SyncLog } from "./sync-log";
 import { threeWayMerge } from "./three-way-merge";
 import type {
 	AttachmentChange,
-	BatchUpsertResult,
 	ConflictInfo,
 	ConflictResolution,
 	EngramSyncSettings,
@@ -672,33 +671,6 @@ export class SyncEngine {
 
 	private isNoteConfirmed(noteId: string | null): boolean {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
-	}
-
-	// "This note converges via CRDT ops, not the whole-doc push." Called only by
-	// pushNotesViaBatch now; pushFile routes on hasServerNote directly.
-	private isCrdtManaged(path: string, noteId: string | null): boolean {
-		// isCrdtManaged = isCrdtManagedOffline + the live-channel term, so the
-		// shared clauses live in one place and can't drift between the two.
-		return this.isCrdtManagedOffline(path, noteId) && (this.crdtLive?.() ?? true);
-	}
-
-	// Same predicate as isCrdtManaged, minus the live-channel term: true when a
-	// note WOULD converge via CRDT ops if the crdt: channel were joined right
-	// now (Task 5, single authority). Oracle is hasServerNote — the note's own
-	// CRDT state (crdtHead != null), the SAME oracle pushFile routes on, NOT the
-	// confirmed-set. The confirmed-set is wiped on every reconnect
-	// (clearConfirmedNoteIds); keying batch ownership on it re-routed a
-	// server-known note edited during a disconnect to legacy whole-doc REST,
-	// last-write-wins over a concurrent remote edit → lost merge (#230, DI-1).
-	// crdtHead survives reconnect, so a cold edit stays on CRDT and merges.
-	// Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
-	// idle note ships its edit channel-up or as a crdt-tagged durable /updates
-	// entry (runFlushQueue's noteId-keyed branch). pushNotesViaBatch uses this
-	// to keep a channel-down note off the legacy base_hash push; the crdt-live
-	// check is applied separately by the caller to pick channel-op vs
-	// durable-REST transport.
-	private isCrdtManagedOffline(_path: string, noteId: string | null): boolean {
-		return !!this.crdt && this.hasServerNote(noteId);
 	}
 
 	private confirmNoteId(noteId: string | null | undefined): void {
@@ -3000,7 +2972,7 @@ export class SyncEngine {
 	}
 
 	/** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
-	 *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
+	 *  mint seams route through: pushFile and pushGenesisBatch's flushChunk
 	 *  must honor identical ownership invariants
 	 *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
 	 *  never-synced local note". A file this engine itself recently flushed to
@@ -3047,42 +3019,6 @@ export class SyncEngine {
 			cursor = resp.next_cursor;
 		}
 		return { changes: all, server_time: serverTime };
-	}
-
-	/** Resolve a (possibly meta-only) change to one that carries content.
-	 *  Returns null when the change needs no work: the server hash matches the
-	 *  stored serverHash AND the local file still exists — only the version is
-	 *  advanced so the next push doesn't 409. */
-	private async resolveChangeBody(
-		change: NoteChange,
-		opts: { skipUnchanged: boolean } = { skipUnchanged: true },
-	): Promise<NoteChange | null> {
-		if (change.deleted) return change;
-
-		const normalized = normalizePath(change.path);
-
-		if (opts.skipUnchanged && change.content_hash !== undefined) {
-			const stored = this.syncState.get(normalized);
-			const exists = this.app.vault.getFileByPath(normalized) !== null;
-			if (exists && stored?.serverHash === change.content_hash) {
-				this.syncState.set(normalized, {
-					...stored,
-					version: change.version ?? stored.version,
-				});
-				devLog().log("pull", `skip (hash match): ${change.path}`);
-				return null;
-			}
-		}
-
-		if (change.content !== undefined) return change;
-
-		const note = await this.api.getNote(change.path);
-		return {
-			...change,
-			content: note.content,
-			content_hash: note.content_hash ?? change.content_hash,
-			version: note.version ?? change.version,
-		};
 	}
 
 	/** Free `noteId`'s Y.Doc after a remote update has been applied and its head
@@ -4162,7 +4098,7 @@ export class SyncEngine {
 						// overwrote server content it never saw (e2e test_83).
 						// Seed-only, never advance: serverHash means "server content this
 						// device actually CONVERGED to" everywhere it is read (hash-skip,
-						// resolveChangeBody). Stamping the
+						// computeSyncPlan's inventory). Stamping the
 						// announced hash over a real converged base would mark the note
 						// converged before the body lands — a missed room delivery then
 						// sticks silently, with every recovery path defeated. A stale
@@ -5535,13 +5471,9 @@ export class SyncEngine {
 	 *  vault-change case where we cleared sync state — neither would
 	 *  otherwise touch the push path because lastSync is empty and the
 	 *  mtime comparison short-circuits. */
-	/** Sticky "server has no POST /notes/batch" flag — set on the first
-	 *  404/405 so later bulk syncs skip the probe entirely. */
-	private batchPushUnsupported = false;
-
 	// Version gate: latched OFF the first time an /updates call 404/405s (a
 	// pre-Phase-1 backend). While off, CRDT notes fall back to the whole-doc
-	// base_hash push, exactly as before this feature. Mirrors batchPushUnsupported.
+	// base_hash push, exactly as before this feature.
 	private crdtOpsUnsupported = false;
 
 	// Capability comes SOLELY from the probe (Phase 2b remediation): ops are
@@ -5560,12 +5492,12 @@ export class SyncEngine {
 		}
 	}
 
-	/** Persist a content-free, crdt-tagged upsert to the durable queue. Both
-	 *  channel-down seams (pushFile and pushNotesViaBatch) must produce an
-	 *  IDENTICAL entry so runFlushQueue's noteId-keyed /updates branch delivers
-	 *  them the same way — keep the two producers in lockstep here rather than
-	 *  duplicating the object literal, so a new field can't be added to one seam
-	 *  and forgotten on the other. */
+	/** Persist a content-free, crdt-tagged upsert to the durable queue. Both of
+	 *  pushFile's channel-down seams must produce an IDENTICAL entry so
+	 *  runFlushQueue's noteId-keyed /updates branch delivers them the same way —
+	 *  keep the producers in lockstep here rather than duplicating the object
+	 *  literal, so a new field can't be added to one seam and forgotten on the
+	 *  other. */
 	private async enqueueCrdtEdit(file: TFile, noteId: string): Promise<void> {
 		await this.enqueueChange({
 			path: file.path,
@@ -5795,414 +5727,6 @@ export class SyncEngine {
 		}
 		await flush();
 		return { pushed, failed };
-	}
-
-	/** Bulk-push note files via POST /notes/batch in chunks of 100.
-	 *
-	 *  Returns null when the server lacks the endpoint (pre-rev backend) —
-	 *  the caller falls back to per-file pushes. Per-result handling:
-	 *  ok → record state (incl. server-sanitized renames); conflict → re-route
-	 *  through pushFile so the existing 3-way merge / interactive flow stays
-	 *  the single conflict path; error → record an issue. A transport error
-	 *  mid-bulk enqueues the remaining files and goes offline, mirroring the
-	 *  single-push error path. */
-	private async pushNotesViaBatch(
-		files: TFile[],
-		force: boolean,
-		onProgress?: (pushed: number, failed: number) => void,
-	): Promise<{ pushed: number; failed: number } | null> {
-		if (this.batchPushUnsupported) return null;
-
-		// Notes above the single-note size cap go through pushFile so the
-		// server's 413 produces the proper too_large Sync Center issue
-		// (terminal, with sizeBytes) instead of an opaque batch error — and
-		// so one huge note can't blow the request-body limit for 99 others.
-		const MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024;
-		// The server's Plug.Parsers cap is 11MB per request body — flush a
-		// chunk before the accumulated content would approach it. Margin
-		// covers JSON envelope + multibyte expansion.
-		const BATCH_PAYLOAD_BUDGET = 6_000_000;
-		const BATCH_MAX_NOTES = 100;
-
-		let pushed = 0;
-		let failed = 0;
-
-		type Entry = { file: TFile; content: string; hash: number; version?: number };
-		let chunk: Entry[] = [];
-		let chunkBytes = 0;
-		const oversized: TFile[] = [];
-
-		// Sends the accumulated chunk. Returns "ok" | "unsupported" | "transport".
-		const flushChunk = async (): Promise<"ok" | "unsupported" | "transport"> => {
-			if (chunk.length === 0) return "ok";
-			// Mint refusal (issue #217): same seam as pushFile's — an
-			// engine-flushed path whose id was relocated away must not mint here
-			// either. Drop it from the batch (skip, not fail); see shouldDeferMint.
-			const entries: Entry[] = [];
-			for (const e of chunk) {
-				if (this.shouldDeferMint(normalizePath(e.file.path))) {
-					rlog().info(
-						"push",
-						`Mint refused (engine-flushed file, id relocated away): ${e.file.path}`,
-					);
-					this.logEntry("skip", e.file.path, "skipped", undefined, "mint-deferred");
-					continue;
-				}
-				entries.push(e);
-			}
-			chunk = [];
-			chunkBytes = 0;
-			if (entries.length === 0) return "ok";
-
-			// Snapshot each entry's path for the lifetime of the request —
-			// TFile.path is LIVE, so a rename landing mid-request would otherwise
-			// desync result matching, the pushing set, and the sanitize check
-			// against what was actually sent (#245).
-			const sent = entries.map((e) => ({ ...e, pushedPath: e.file.path }));
-			for (const e of sent) this.pushing.add(e.pushedPath);
-			try {
-				const resp = await this.api.pushNotesBatch(
-					sent.map((e) => {
-						// Mint-and-send the client id, mirroring pushFile: a clean create
-						// keeps our uuidv7; a create-race is corrected when the response
-						// echoes the winning id (recordBatchPushOk adopts it).
-						const np = normalizePath(e.pushedPath);
-						let noteId = this.noteIdMap?.get(np) ?? null;
-						if (!noteId && this.noteIdMap) {
-							noteId = uuid7();
-							this.noteIdMap.set(np, noteId);
-						}
-						return {
-							path: e.pushedPath,
-							content: e.content,
-							mtime: e.file.stat.mtime / 1000,
-							version: e.version,
-							...(noteId ? { id: noteId } : {}),
-						};
-					}),
-				);
-				const byPath = new Map(resp.results.map((r) => [r.path, r]));
-
-				for (const e of sent) {
-					const r = byPath.get(e.pushedPath);
-					if (!r) {
-						failed++;
-						this.logEntry("push", e.pushedPath, "error", "missing batch result");
-						continue;
-					}
-					if (r.status === "ok") {
-						await this.recordBatchPushOk(e.file, e.content, e.hash, r, e.pushedPath);
-						pushed++;
-						this.logEntry("push", e.pushedPath, "ok");
-					} else if (r.status === "conflict") {
-						// Hand the file to the single-note flow, which owns 3-way
-						// merge + interactive resolution. It re-pushes with the
-						// stored version, gets the same 409, and resolves.
-						this.pushing.delete(e.pushedPath);
-						const ok = await this.pushFile(e.file, true);
-						if (ok) pushed++;
-					} else if (
-						(r.errors as { reason?: string } | undefined)?.reason === "recently_deleted"
-					) {
-						// Delete-wins (batch path): server refused this create because the
-						// path was deleted on another device within the window. Converge by
-						// trashing our local copy instead of retrying — not a failure.
-						rlog().info(
-							"push",
-							`recently_deleted — trashing local ${e.file.path} to honor remote delete`,
-						);
-						await this.trashRemotelyDeleted(e.file);
-						this.logEntry(
-							"push",
-							e.file.path,
-							"skipped",
-							"recently_deleted — honored remote delete",
-						);
-					} else {
-						failed++;
-						const msg = JSON.stringify(r.errors ?? "batch error");
-						this.issues.record({
-							path: e.file.path,
-							kind: "note",
-							category: "other",
-							message: msg,
-							firstFailedAt: Date.now(),
-							lastFailedAt: Date.now(),
-							attempts: 1,
-						});
-						this.logEntry("push", e.file.path, "error", msg);
-					}
-				}
-				this.goOnline();
-				return "ok";
-			} catch (err) {
-				const status = (err as { status?: number }).status;
-				if (status === 404 || status === 405) {
-					// Pre-rev backend — remember and let the caller fall back.
-					this.batchPushUnsupported = true;
-					rlog().info("push", "Batch endpoint unsupported — falling back to per-note");
-					return "unsupported";
-				}
-				// Transport/server failure: queue this chunk for retry,
-				// mirroring the single-push offline path. The caller queues
-				// whatever hasn't been read yet.
-				rlog().error(
-					"push",
-					`Batch push failed (${errMsg(err)}) — queueing ${entries.length} files`,
-				);
-				for (const e of entries) {
-					failed++;
-					await this.enqueueChange({
-						path: e.file.path,
-						action: "upsert",
-						kind: "note",
-						mtime: e.file.stat.mtime / 1000,
-						timestamp: Date.now(),
-						vaultId: this.settings.vaultId ?? undefined,
-					});
-				}
-				// A whole-batch failure with no HTTP response = connection loss.
-				// A batch 5xx is a server error, not a disconnect — stay online.
-				this.maybeGoOffline(err);
-				return "transport";
-			} finally {
-				for (const e of sent) {
-					this.pushing.delete(e.pushedPath);
-					this.markRecentlyPushed(e.pushedPath);
-				}
-			}
-		};
-
-		for (let i = 0; i < files.length; i++) {
-			const file = files[i]!;
-			// CRDT owns the body of a confirmed, live note: the socket delivers its
-			// edits (pushFile routes such notes through CRDT and never REST, even
-			// under force). Re-POSTing the full body here duplicates the content —
-			// the server re-seeds it into the live CRDT room, so the just-typed line
-			// reappears. Mirror pushFile's CRDT gate (and the pull-side C1 guard).
-			// An unconfirmed note (e.g. after a reconnect clears confirmations, or a
-			// never-synced note) still falls through to REST so the row is (re)created
-			// and its id re-verified — the durable fallback stays intact.
-			//
-			// Size gate: CRDT declines notes over MAX_CRDT_NOTE_BYTES (routeModify
-			// returns false → pushFile REST-pushes them), so an oversized note is NOT
-			// CRDT-owned and must reach REST here too — both its recovery push and the
-			// >10 MB → 413 too_large path below. stat.size is the on-disk UTF-8 byte
-			// count, the same measure routeModify caps on.
-			const noteId = this.noteIdMap?.get(file.path) ?? null;
-			if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-				this.logEntry("skip", file.path, "skipped", undefined, "crdt-owned");
-				continue;
-			}
-			// Task 5: a cold-but-managed note (channel down, so isCrdtManaged above
-			// is false) still owes its body to CRDT ops when the backend supports
-			// them — batch-pushing its full content here would duplicate the write
-			// the durable REST /updates flush is about to make. Unlike pushFile,
-			// this loop never touched the Y.Doc for this file, so it must SEED it
-			// first (mirrors pushFile's routeModify call) — skipping straight to a
-			// scheduled/queued flush without seeding was the batch-unseeded
-			// data-loss finding: the flush would have delivered stale/empty
-			// content. The queue entry is durable, NOT delivered — never counted
-			// toward `pushed`, and logged as queued rather than a completed skip.
-			if (
-				file.stat.size <= MAX_CRDT_NOTE_BYTES &&
-				noteId &&
-				this.crdt &&
-				this.crdtOpsAvailable() &&
-				this.isCrdtManagedOffline(file.path, noteId)
-			) {
-				const consumed = await routeModify(
-					{
-						isMarkdown: file.extension === "md",
-						noteId,
-						// Live read (see pushFile): frozen content would defeat the
-						// manager's stale-snapshot reread guard.
-						readContent: () => this.app.vault.cachedRead(file),
-					},
-					this.crdt,
-					MAX_CRDT_NOTE_BYTES,
-				);
-				// Only queue CRDT delivery when routeModify actually seeded the
-				// Y.Doc. A declined seed (e.g. a non-markdown .canvas note, or an
-				// empty doc awaiting STEP2) left the Y.Doc empty — enqueuing a
-				// crdt entry anyway would POST an EMPTY update and skip the REST
-				// push, silently losing the edit. On decline, fall through to the
-				// normal batch push below (mirrors pushFile's consumed check).
-				// `!== null`: "" is a legitimately consumed empty note.
-				if (consumed !== null) {
-					await this.enqueueCrdtEdit(file, noteId);
-					this.logEntry("skip", file.path, "skipped", undefined, "crdt-offline-queued");
-					continue;
-				}
-			}
-			if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
-				oversized.push(file);
-				continue;
-			}
-			const content = await this.app.vault.cachedRead(file);
-			const hash = fnv1a(content);
-			const existing = this.syncState.get(normalizePath(file.path));
-			if (!force && existing !== undefined && hash === existing.hash) {
-				this.logEntry("skip", file.path, "skipped", undefined, "unchanged");
-				continue;
-			}
-
-			if (
-				chunk.length >= BATCH_MAX_NOTES ||
-				(chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET)
-			) {
-				const outcome = await flushChunk();
-				if (outcome === "unsupported") return null;
-				if (outcome === "transport") {
-					// Queue everything not yet attempted (incl. this file).
-					for (const rest of [file, ...files.slice(i + 1), ...oversized]) {
-						failed++;
-						await this.enqueueChange({
-							path: rest.path,
-							action: "upsert",
-							kind: "note",
-							mtime: rest.stat.mtime / 1000,
-							timestamp: Date.now(),
-							vaultId: this.settings.vaultId ?? undefined,
-						});
-					}
-					onProgress?.(pushed, failed);
-					return { pushed, failed };
-				}
-				onProgress?.(pushed, failed);
-			}
-
-			chunk.push({ file, content, hash, version: existing?.version });
-			chunkBytes += content.length;
-		}
-
-		const outcome = await flushChunk();
-		if (outcome === "unsupported") return null;
-		if (outcome === "transport") {
-			for (const rest of oversized) {
-				failed++;
-				await this.enqueueChange({
-					path: rest.path,
-					action: "upsert",
-					kind: "note",
-					mtime: rest.stat.mtime / 1000,
-					timestamp: Date.now(),
-					vaultId: this.settings.vaultId ?? undefined,
-				});
-			}
-			onProgress?.(pushed, failed);
-			return { pushed, failed };
-		}
-		onProgress?.(pushed, failed);
-
-		// Oversized notes: single-note path → server 413 → proper terminal
-		// too_large issue with sizeBytes.
-		for (const file of oversized) {
-			try {
-				const ok = await this.pushFile(file, force);
-				if (ok) {
-					pushed++;
-					this.logEntry("push", file.path, "ok");
-				}
-			} catch (e) {
-				failed++;
-				this.logEntry("push", file.path, "error", errMsg(e));
-			}
-			onProgress?.(pushed, failed);
-		}
-
-		// Deliver any channel-down CRDT entries the loop just enqueued (Task 5).
-		// Mirrors pushFile's `void this.flushQueue()` right after its own
-		// enqueueChange — without this, a durably-queued entry sat undelivered
-		// until an unrelated trigger (manual "Retry Failed", or a later
-		// single-file edit) drained the queue. Single call after the loop, not
-		// per-note: flushQueue is single-flight (flushInFlight guard), so one
-		// call drains everything and a redundant call is a no-op.
-		void this.flushQueue();
-
-		return { pushed, failed };
-	}
-
-	/** Record a successful batch-push result: sync state, base store, issue
-	 *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
-	private async recordBatchPushOk(
-		file: TFile,
-		content: string,
-		hash: number,
-		result: BatchUpsertResult,
-		pushedPath: string,
-	): Promise<void> {
-		if (file.path !== pushedPath) {
-			// The file was renamed locally while the batch was in flight; the
-			// result describes the OLD location. Renaming back or recording state
-			// under either path would revert/poison the user's rename (#245) —
-			// handleRename already owns the new path.
-			rlog().info(
-				"push",
-				`Sanitize-rename skipped: file moved during batch push (${pushedPath} → ${file.path})`,
-			);
-			return;
-		}
-		const serverPath =
-			result.server_path && result.server_path !== pushedPath
-				? result.server_path
-				: undefined;
-
-		if (serverPath) {
-			const localFile = this.app.vault.getFileByPath(file.path);
-			if (localFile) {
-				await this.app.vault.rename(localFile, serverPath);
-				rlog().info("push", `Renamed: ${file.path} → ${serverPath} (server sanitized)`);
-				new Notice(
-					`Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`,
-				);
-			}
-			this.syncState.delete(normalizePath(file.path));
-			this.baseStore?.delete(normalizePath(file.path));
-			const np = normalizePath(serverPath);
-			this.syncState.set(np, {
-				hash,
-				version: result.version,
-				serverHash: result.content_hash,
-			});
-			if (result.version != null) {
-				this.baseStore?.set(np, content, result.version);
-			}
-		} else {
-			const np = normalizePath(file.path);
-			this.syncState.set(np, {
-				hash,
-				version: result.version,
-				serverHash: result.content_hash,
-			});
-			if (result.version != null) {
-				this.baseStore?.set(np, content, result.version);
-			}
-		}
-		// Adopt the authoritative id. The server echoes the winner even when a
-		// create-race means it differs from our mint (2026-07-07 incident: the
-		// batch path never adopted, so the CRDT receive path stayed keyed to a
-		// dead local id — announces for the real id were ignored until a
-		// cold-start reconcile). Mirrors pushFile's post-response adoption;
-		// set() evicts the stale mint (bijection), confirm unlocks CRDT routing.
-		if (result.id) {
-			// On a server rename, evict the OLD path first (mirror pushFile's
-			// sanitized-rename branch): when result.id also differs from the
-			// pre-request mint (create-race + sanitize together), set() alone
-			// leaves the dead mint dangling on the renamed-away path
-			// (#197 retro-review).
-			if (serverPath) this.noteIdMap?.delete(normalizePath(file.path));
-			const np = normalizePath(serverPath ?? file.path);
-			this.noteIdMap?.set(np, result.id);
-			this.confirmNoteId(result.id);
-		}
-		this.issues.clear(file.path);
-		this.recordParseStatus(
-			result.server_path ?? file.path,
-			"note",
-			result.parse_status,
-			result.parse_reason,
-		);
 	}
 
 	/** Record or clear a note's frontmatter parse issue from a backend

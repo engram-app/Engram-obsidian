@@ -1228,247 +1228,19 @@ describe("Task 4: local delete enqueues a durable crdt_delete", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Duplication guard (manual sync right after a live CRDT edit):
-// the REST batch push (fullSync → pushModifiedFiles → pushNotesViaBatch) must
-// skip a CRDT-owned note — one the socket already delivers (crdt wired && known
-// note_id && confirmed && live, within the CRDT size cap). Re-POSTing the full
-// body duplicates it: the server re-seeds it into the live CRDT room and the
-// doubled line flushes back. Mirrors pushFile's own CRDT gate. Notes CRDT does
-// NOT own (unconfirmed, or over the size cap) must still reach REST.
+// The REST batch-push duplication guard, channel-down seed+queue, and
+// mint-relocation-guard suites that used to sit here exercised
+// pushNotesViaBatch directly — deleted by Task 7 of the CRDT single-push-path
+// rework (dead since Task 3 routed pushAll's genesis notes through
+// crdtCreateBatch/pushGenesisBatch, leaving pushNotesViaBatch callerless).
+// The underlying predicate (isCrdtManaged/isCrdtManagedOffline) was itself
+// deleted as dead code in this same task (pushFile routes on hasServerNote
+// directly, pinned below in "BUG 3"); the mint-relocation guard
+// (shouldDeferMint) and channel-down seed+queue behavior are pinned for the
+// surviving producers in "Task 3: new-note genesis routes through crdt_create"
+// above (pushFile) and tests/sync-push-consolidation.test.ts
+// ("pushGenesisBatch — direct").
 // ---------------------------------------------------------------------------
-
-describe("batch push skips CRDT-owned notes so a live edit is not re-sent", () => {
-	test("a confirmed, live, in-cap note is skipped by pushNotesViaBatch (no duplicate re-send)", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("note.md", "id-note");
-		const engine = createEngine(noteIdMap);
-		const applyLocalEdit = mock(async (_id: string, c: string) => c);
-		engine.setCrdtManager({ applyLocalEdit } as any);
-		// rest-first fix: only a server-confirmed note routes through CRDT.
-		markConfirmed(engine, "id-note");
-
-		// Clean batch mock: resolve OK so a stray call registers a call (and does
-		// not flip batchPushUnsupported via the shared 404-reject default).
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
-
-		// Live edit: routed through CRDT, delivered over the socket.
-		const file = new TFile("note.md");
-		engine.handleModify(file);
-		await flush();
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-
-		// Manual sync's batch push must NOT re-send the note the socket already
-		// delivered.
-		await (
-			engine as unknown as {
-				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(batch).not.toHaveBeenCalled();
-	});
-
-	test("a confirmed note over the CRDT size cap is NOT skipped — CRDT declined it, so REST must still deliver", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("big.md", "id-big");
-		const engine = createEngine(noteIdMap);
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-big");
-
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [{ path: "big.md", status: "ok" }] });
-
-		// Over MAX_CRDT_NOTE_BYTES (4 MB), under the 10 MB batch cap: routeModify
-		// declines it in the live path (WS frame limit), so pushFile falls through
-		// to REST. The batch guard must NOT treat it as CRDT-owned, or manual Sync
-		// silently drops a note the socket never carried.
-		const file = new TFile("big.md");
-		(file as unknown as { stat: unknown }).stat = {
-			mtime: Date.now(),
-			ctime: 0,
-			size: 5 * 1024 * 1024,
-		};
-
-		await (
-			engine as unknown as {
-				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(batch).toHaveBeenCalledTimes(1);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Task 3 (Phase 2b remediation): a channel-down CRDT note hit by
-// pushNotesViaBatch must be SEEDED (mirrors pushFile's routeModify call —
-// this loop never otherwise touches the Y.Doc) and durably queued via the
-// same crdt-tagged offline queue entry pushFile uses, NOT reported as a
-// completed/delivered batch push. Closes the batch-unseeded + batch-false-done
-// findings: previously this branch only scheduled the now-retired in-memory
-// flush timer, with no seed at all — a later flush would have delivered
-// stale/empty content, or nothing (lost on unload).
-// ---------------------------------------------------------------------------
-
-describe("batch push durably queues a channel-down CRDT note (seeded, not falsely delivered)", () => {
-	test("a channel-down CRDT note is seeded then durably queued, not sent via the batch endpoint, and not counted as delivered", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("note.md", "id-note");
-		const engine = createEngine(noteIdMap);
-		markProbed(engine);
-		const applyLocalEdit = mock(async (_id: string, c: string) => c);
-		engine.setCrdtManager({ applyLocalEdit } as any);
-		markConfirmed(engine, "id-note");
-		engine.setCrdtLiveCheck(() => false); // channel down — isCrdtManaged is false,
-		// but isCrdtManagedOffline is true: the note still owes its body to CRDT ops.
-
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
-
-		const file = new TFile("note.md");
-		const res = await (
-			engine as unknown as {
-				pushNotesViaBatch: (
-					f: TFile[],
-					force: boolean,
-				) => Promise<{ pushed: number; failed: number } | null>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		// Seeded via routeModify -> applyLocalEdit, mirroring pushFile — the
-		// batch-unseeded data-loss finding.
-		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
-		expect(applyLocalEdit).toHaveBeenCalledWith(
-			"id-note",
-			"body",
-			undefined,
-			expect.any(Function),
-		);
-
-		// Never sent over the batch REST endpoint — the durable queue owns delivery.
-		expect(batch).not.toHaveBeenCalled();
-
-		// Durably persisted (crdt-tagged, noteId-keyed) instead of falsely
-		// reported delivered.
-		const queued = engine.queue.all().find((q) => q.path === "note.md");
-		expect(queued?.crdt).toBe(true);
-		expect(queued?.noteId).toBe("id-note");
-
-		// The batch-false-done finding: a queued-not-delivered entry must never
-		// count toward `pushed`.
-		expect(res?.pushed).toBe(0);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Delivery-latency gap: pushFile calls `void this.flushQueue()` right after
-// enqueueing a channel-down crdt entry (line ~1844), but pushNotesViaBatch's
-// identical seed-then-enqueue branch above did not — the durable entry was
-// correct (no data loss) but sat undelivered until an unrelated trigger
-// (manual "Retry Failed", or a later single-file channel-down edit) drained
-// it. Fix: flush once after the batch loop completes, mirroring pushFile.
-// ---------------------------------------------------------------------------
-
-describe("batch push flushes the queue after a channel-down CRDT note is enqueued", () => {
-	test("a channel-down CRDT note pushed via pushNotesViaBatch triggers a flushQueue call", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("note.md", "id-note");
-		const engine = createEngine(noteIdMap);
-		const applyLocalEdit = mock(async (_id: string, c: string) => c);
-		engine.setCrdtManager({ applyLocalEdit } as any);
-		markConfirmed(engine, "id-note");
-		engine.setCrdtLiveCheck(() => false); // channel down, REST still reachable
-
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [{ path: "note.md", status: "ok" }] });
-
-		// Spy on the single-flight flush wrapper instead of exercising real
-		// delivery — this pins the missing CALL, not the (already-covered)
-		// queue-entry shape from the test above.
-		const flushSpy = mock(() => Promise.resolve(0));
-		engine.flushQueue = flushSpy;
-
-		const file = new TFile("note.md");
-		await (
-			engine as unknown as {
-				pushNotesViaBatch: (
-					f: TFile[],
-					force: boolean,
-				) => Promise<{ pushed: number; failed: number } | null>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(flushSpy).toHaveBeenCalledTimes(1);
-	});
-});
-
-// ---------------------------------------------------------------------------
-// Mint-refusal guard in the batch path (issue #217 — same seam as PR #216 /
-// backend #972): pushFile refuses to mint an id for an engine-flushed
-// (recentlyFlushed) path whose id binding is gone — a relocation owns that
-// path's fate, and minting REST-creates the renamed-away old path server-side
-// under a fresh id forever. flushChunk in pushNotesViaBatch mints at the same
-// seam and must route through the same guard: the deferred path is SKIPPED
-// from the batch (not failed) — the next reconcile/fullSync retries it once
-// relocation lands. docs/context/crdt-batch-push-duplication.md: pushFile and
-// pushNotesViaBatch must honor identical ownership invariants.
-// ---------------------------------------------------------------------------
-
-describe("batch push routes mints through the relocation guard (issue #217)", () => {
-	test("an engine-flushed path with no id is skipped — no mint, not in the pushed batch, not failed", async () => {
-		const noteIdMap = new NoteIdMap();
-		const engine = createEngine(noteIdMap);
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [] });
-
-		// The engine itself flushed this path to disk (flushFromCrdt marks it
-		// recentlyFlushed) and a concurrent relocation evicted its id binding —
-		// noteIdMap has no entry, exactly the pushFile #972 window.
-		(engine as unknown as { markRecentlyFlushed(p: string): void }).markRecentlyFlushed(
-			"old/Note.md",
-		);
-
-		const file = new TFile("old/Note.md");
-		const res = await (
-			engine as unknown as {
-				pushNotesViaBatch: (
-					f: TFile[],
-					force: boolean,
-				) => Promise<{ pushed: number; failed: number } | null>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(batch).not.toHaveBeenCalled(); // never entered the pushed batch
-		expect(noteIdMap.get("old/Note.md")).toBeNull(); // no fresh mint
-		expect(res).toEqual({ pushed: 0, failed: 0 }); // skipped, not failed
-	});
-
-	test("a genuinely-new path NOT flushed by the engine still mints and pushes normally", async () => {
-		const noteIdMap = new NoteIdMap();
-		const engine = createEngine(noteIdMap);
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [{ path: "new/Fresh.md", status: "ok" }] });
-
-		const file = new TFile("new/Fresh.md");
-		const res = await (
-			engine as unknown as {
-				pushNotesViaBatch: (
-					f: TFile[],
-					force: boolean,
-				) => Promise<{ pushed: number; failed: number } | null>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(batch).toHaveBeenCalledTimes(1);
-		const sent = batch.mock.calls[0][0] as Array<{ path: string; id?: string }>;
-		expect(sent).toHaveLength(1);
-		expect(sent[0]?.path).toBe("new/Fresh.md");
-		// Minted a client id and sent it, mirroring pushFile's clean-create path.
-		expect(sent[0]?.id).toBe(noteIdMap.get("new/Fresh.md") as string);
-		expect(res).toEqual({ pushed: 1, failed: 0 });
-	});
-});
 
 // ---------------------------------------------------------------------------
 // Round 5 (e2e test_34, CI run 28919928915): concurrent materializations into
@@ -1539,59 +1311,6 @@ describe("flushFromCrdt survives check-then-create races (round 5, test_34)", ()
 });
 
 // ---------------------------------------------------------------------------
-// isCrdtManaged: shared predicate extracted from pushFile / pushNotesViaBatch
-// (Phase 2 Task 3). Pins the truth table both inline seams relied on.
-// ---------------------------------------------------------------------------
-
-describe("isCrdtManaged", () => {
-	function asPredicate(engine: SyncEngine): (path: string, noteId: string | null) => boolean {
-		return (
-			engine as unknown as {
-				isCrdtManaged(path: string, noteId: string | null): boolean;
-			}
-		).isCrdtManaged.bind(engine);
-	}
-
-	test("confirmed + live + eager (no lazy enrollment) → true", () => {
-		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-1");
-		engine.setCrdtLiveCheck(() => true);
-
-		expect(asPredicate(engine)("p.md", "id-1")).toBe(true);
-	});
-
-	test("channel down (crdtLive false) → false", () => {
-		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-1");
-		engine.setCrdtLiveCheck(() => false);
-
-		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
-	});
-
-	test("unconfirmed note_id → false", () => {
-		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		engine.setCrdtLiveCheck(() => true);
-		// not confirmed
-
-		expect(asPredicate(engine)("p.md", "id-1")).toBe(false);
-	});
-
-	test("confirmed + live + NOT live-bound (cold) → true (CRDT unconditional, anti-#230)", () => {
-		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-1");
-		engine.setCrdtLiveCheck(() => true);
-		// isLiveBound defaults to () => false — a cold note. It must still be
-		// CRDT-managed so cold edits merge instead of last-write-wins clobbering.
-
-		expect(asPredicate(engine)("p.md", "id-1")).toBe(true);
-	});
-});
-
-// ---------------------------------------------------------------------------
 // Discovery pull enrollment: STEP1 fires ONLY for live-bound notes. An idle
 // (not-open) discovered note gets its body room-free via flushFromCrdt below;
 // enrolling every discovered note on connect is the enrollment storm.
@@ -1650,8 +1369,8 @@ describe("discovery pull enrolls only live-bound notes", () => {
 // anti-#230 failure this branch exists to prevent). needsColdReconcile returns
 // false for a baseline-less note, so cold-start SKIPS seeding it; the concern
 // is whether the fullSync/push fallback then routes it LWW. It does not:
-// pushFile and pushNotesViaBatch gate CRDT on hasServerNote(noteId) (the
-// note's crdtHead), not the hash baseline. This pins that invariant.
+// pushFile gates CRDT on hasServerNote(noteId) (the note's crdtHead), not the
+// hash baseline. This pins that invariant.
 //
 // Investigation note: confirmedNoteIds is in-memory only (never serialized via
 // saveData) and cleared on every reconnect (clearConfirmedNoteIds) — so it
@@ -1660,63 +1379,25 @@ describe("discovery pull enrolls only live-bound notes", () => {
 // set/refresh the baseline in the same operation. Even so, the routing does not
 // depend on the baseline at all, so a transient confirmed-but-baseline-less
 // note still stays on CRDT. Proven below.
+//
+// Task 7: the two batch-push variants of this pin ("skips a confirmed
+// baseline-less note" / "DI-1: unconfirmed post-reconnect") were removed with
+// pushNotesViaBatch. isCrdtManaged/isCrdtManagedOffline (the batch-era
+// predicates that used to pin this) are gone too — pushFile's own oracle,
+// hasServerNote, is what still gates routing, so the invariant is re-expressed
+// against it directly below.
 // ---------------------------------------------------------------------------
 
 describe("BUG 3: a server-known note routes to CRDT even without a hash baseline (never whole-doc LWW)", () => {
-	test("isCrdtManagedOffline is true for a server-known note with no hash baseline", () => {
+	test("hasServerNote is true for a server-known note with no hash baseline", () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
 		markServerKnown(engine, "p.md", "id-1");
 		// crdtHead set (server-known), no hash baseline imported
 		const managed = (
-			engine as unknown as { isCrdtManagedOffline(p: string, id: string | null): boolean }
-		).isCrdtManagedOffline("p.md", "id-1");
+			engine as unknown as { hasServerNote(id: string | null): boolean }
+		).hasServerNote("id-1");
 		expect(managed).toBe(true);
-	});
-
-	test("batch push skips a confirmed baseline-less note as CRDT-owned (not whole-doc LWW)", async () => {
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("note.md", "id-note");
-		const engine = createEngine(noteIdMap);
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		markConfirmed(engine, "id-note");
-		engine.setCrdtLiveCheck(() => true);
-		// no baseline imported
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [] });
-
-		const file = new TFile("note.md");
-		await (
-			engine as unknown as {
-				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		// Skipped as crdt-owned — a confirmed note is never whole-doc REST-pushed,
-		// baseline or not.
-		expect(batch).not.toHaveBeenCalled();
-	});
-
-	test("DI-1: a server-known but UNCONFIRMED note (post-reconnect) is skipped by batch, never whole-doc LWW", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({ applyLocalEdit: mock(async (_id: string, c: string) => c) } as any);
-		// Server-known via crdtHead, confirmedNoteIds EMPTY: the exact state after
-		// clearConfirmedNoteIds() on a reconnect. Pre-fix the batch keyed on the
-		// confirmed-set and REST full-doc pushed this, clobbering a concurrent
-		// remote edit (#230).
-		markServerKnown(engine, "note.md", "id-note");
-		engine.setCrdtLiveCheck(() => true);
-		const batch = mockApi.pushNotesBatch as ReturnType<typeof mock>;
-		batch.mockReset().mockResolvedValue({ results: [] });
-
-		const file = new TFile("note.md");
-		await (
-			engine as unknown as {
-				pushNotesViaBatch: (f: TFile[], force: boolean) => Promise<unknown>;
-			}
-		).pushNotesViaBatch([file], false);
-
-		expect(batch).not.toHaveBeenCalled();
 	});
 });
 
