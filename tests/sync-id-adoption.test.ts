@@ -120,7 +120,9 @@ describe("batch push adopts the authoritative note id (create-race heal)", () =>
 			],
 		});
 
-		await engine.pushAll();
+		// Task 3: pushAll routes genesis via crdtCreateBatch now; the REST
+		// pushNotesViaBatch (kept until Task 7) is exercised directly here.
+		await (engine as any).pushNotesViaBatch(files, true);
 
 		// The request carried the plugin's minted uuidv7 (so a clean create
 		// keeps the client id — parity with pushFile).
@@ -159,7 +161,7 @@ describe("batch push does not revert a mid-flight local rename (#245)", () => {
 				};
 			});
 
-		const pushed = await engine.pushAll();
+		const { pushed } = await (engine as any).pushNotesViaBatch([file], true);
 
 		// Pre-fix failure modes: (a) server_path (RenameOld) !== live file.path
 		// (RenameNew) reads as "server sanitized" and renames the file BACK,

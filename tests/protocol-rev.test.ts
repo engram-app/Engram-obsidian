@@ -317,7 +317,10 @@ describe("batch push", () => {
 		};
 	}
 
-	test("pushAll sends notes through POST /notes/batch in one request", async () => {
+	// Task 3 rewire: pushAll now routes GENESIS notes through crdtCreateBatch;
+	// the REST pushNotesViaBatch is kept (no caller) until Task 7 deletes it, so
+	// these REST-batch tests invoke it directly rather than through pushAll.
+	test("pushNotesViaBatch sends notes through POST /notes/batch in one request", async () => {
 		const engine = createEngine();
 		const files = [new TFile("a.md"), new TFile("b.md"), new TFile("c.md")];
 		mockApp.vault.getFiles.mockReturnValue(files);
@@ -328,7 +331,7 @@ describe("batch push", () => {
 			results: files.map((f) => okResult(f.path)),
 		});
 
-		const pushed = await engine.pushAll();
+		const { pushed } = await (engine as any).pushNotesViaBatch(files, true);
 
 		expect(pushed).toBe(3);
 		expect(mockApi.pushNotesBatch).toHaveBeenCalledTimes(1);
@@ -411,7 +414,7 @@ describe("batch push", () => {
 			results: [okResult("dirty?.md", 1, { server_path: "dirty.md" })],
 		});
 
-		await engine.pushAll();
+		await (engine as any).pushNotesViaBatch([dirty], true);
 
 		expect(mockApp.vault.rename).toHaveBeenCalledWith(dirty, "dirty.md");
 		const state = engine.exportSyncState();
@@ -509,7 +512,7 @@ describe("batch push sizing", () => {
 			chunks_indexed: 0,
 		});
 
-		await engine.pushAll();
+		await (engine as any).pushNotesViaBatch([small, huge], true);
 
 		const sent = (mockApi.pushNotesBatch as jest.Mock).mock.calls[0][0];
 		expect(sent.map((n: { path: string }) => n.path)).toEqual(["small.md"]);

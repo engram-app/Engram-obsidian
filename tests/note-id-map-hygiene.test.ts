@@ -142,7 +142,9 @@ describe("batch server-rename evicts the old path mapping (#197 retro-review)", 
 			],
 		});
 
-		await engine.pushAll();
+		// Task 3: pushAll routes genesis via crdtCreateBatch now; exercise the kept
+		// REST pushNotesViaBatch directly (deleted in Task 7).
+		await (engine as any).pushNotesViaBatch(files, true);
 
 		// New path owns the winning id; the OLD path must not keep the dead mint
 		// (pushFile's sibling branch deletes it explicitly — mirror it).
