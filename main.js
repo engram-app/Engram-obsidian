@@ -19489,7 +19489,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
     if (this.seqReplayRunning)
-      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths };
+      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1 };
     this.seqReplayRunning = !0;
     let applied = 0;
     try {
@@ -19504,7 +19504,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } finally {
       this.seqReplayRunning = !1;
     }
-    return { applied, serverIds, serverAttachmentPaths };
+    return { applied, serverIds, serverAttachmentPaths, ran: !0 };
+  }
+  /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
+   *  push-all replace-remote). Retries until THIS call executes the replay
+   *  exclusively (`ran === true`), so the returned server sets are real and
+   *  complete. A coalesced call (a background catch-up holds the single-flight
+   *  lock) returns EMPTY sets — trusting those would treat every local file as a
+   *  server-absent extra and trash the whole vault. Between attempts we yield a
+   *  short tick so the in-flight replay finishes and releases the lock. Returns
+   *  `null` if contention never clears; the caller MUST abort the delete pass on
+   *  `null` (never delete on untrustworthy sets — "empty set never means server
+   *  empty"). */
+  async catchupViaSeqReplayExclusive(opts) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      let res = await this.catchupViaSeqReplay(opts);
+      if (res.ran) return res;
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    return null;
   }
   /** The single catch-up path (socket-only, no REST fallback — a wedged socket
    *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
@@ -19777,9 +19795,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     devLog().log("pull", `${label}: replaying note op-log from 0`), rlog().info("pull", `${label} started \u2014 replay from 0`);
     try {
       (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pulling", current: 0, total: 0, failed: 0 });
-      let { applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
-        fromZero: !0
-      });
+      let applied, serverIds, serverAttachmentPaths;
+      if (wipe) {
+        let replay = await this.catchupViaSeqReplayExclusive({ fromZero: !0 });
+        if (!replay)
+          return this.lastError = "Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.", devLog().log(
+            "error",
+            `${label} ABORTED \u2014 replay coalesced under contention; refusing to trash`
+          ), rlog().error(
+            "pull",
+            `${label} ABORTED \u2014 replay never ran exclusively (persistent contention); refusing to trash on an untrustworthy (possibly empty) server set`
+          ), 0;
+        ({ applied, serverIds, serverAttachmentPaths } = replay);
+      } else
+        ({ applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+          fromZero: !0
+        }));
       if (devLog().log(
         "pull",
         `${label}: replay applied=${applied}, serverIds=${serverIds.size}, serverAttachmentPaths=${serverAttachmentPaths.size}`
@@ -20688,7 +20719,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  crdtHead, and stamp the echo baseline from the pushed content so a later
    *  identical edit is hash-skipped — the guard that prevents a second-lineage
    *  doubling (#846) since the device never seeds its own real doc from this
-   *  content (it adopts the server lineage on the first handshake). */
+   *  content (it adopts the server lineage on the first handshake). Only ever
+   *  reached for a genuinely history-LESS note: the batch caller routes any note
+   *  that already carries a local CRDT lineage to `pushFile` instead. */
   recordCrdtGenesisPushed(file, content, serverId) {
     var _a, _b;
     let np = (0, import_obsidian21.normalizePath)(file.path);
@@ -20719,7 +20752,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  editor may hold keystrokes not yet on disk, and a disk-content frame would
    *  drop them — pushFile's live-adopt path transfers the in-flight buffer. */
   async pushGenesisBatch(files, onProgress) {
-    var _a, _b;
+    var _a, _b, _c, _d;
     if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
     let MAX_CREATES = 100, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
       var _a2;
@@ -20777,12 +20810,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
+      let existingId = (_a = this.noteIdMap) == null ? void 0 : _a.get(np);
+      if (existingId && typeof ((_b = this.crdt) == null ? void 0 : _b.hasHistory) == "function" && await this.crdt.hasHistory(existingId)) {
+        await this.pushFile(file, !0) ? pushed++ : failed++;
+        continue;
+      }
       let content = await this.app.vault.read(file);
       if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
-      let b64 = this.encodeGenesisFrame(content), size2 = b64.length, pushedPath = file.path, noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(np)) != null ? _b : uuid7();
+      let b64 = this.encodeGenesisFrame(content), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
       if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
@@ -21001,18 +21039,28 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.invalidateIfVaultChanged();
     let replaceExtras = null;
     if (opts.replaceRemote) {
-      let { serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+      let replay = await this.catchupViaSeqReplayExclusive({
         fromZero: !0,
         enumerateOnly: !0
-      }), snap = (_b = opts.localSnapshot) != null ? _b : this.snapshotLocalPaths(), localIds = /* @__PURE__ */ new Set();
-      for (let path of snap) {
-        let id2 = (_c = this.noteIdMap) == null ? void 0 : _c.get(path);
-        id2 && localIds.add(id2);
+      });
+      if (!replay)
+        rlog().error(
+          "push",
+          "replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes \u2014 the push still ran"
+        );
+      else {
+        let { serverIds, serverAttachmentPaths } = replay, snap = (_b = opts.localSnapshot) != null ? _b : this.snapshotLocalPaths(), localIds = /* @__PURE__ */ new Set();
+        for (let path of snap) {
+          let id2 = (_c = this.noteIdMap) == null ? void 0 : _c.get(path);
+          id2 && localIds.add(id2);
+        }
+        replaceExtras = {
+          ids: [...serverIds].filter((id2) => !localIds.has(id2)),
+          attachments: [...serverAttachmentPaths].filter(
+            (p) => !snap.has((0, import_obsidian21.normalizePath)(p))
+          )
+        };
       }
-      replaceExtras = {
-        ids: [...serverIds].filter((id2) => !localIds.has(id2)),
-        attachments: [...serverAttachmentPaths].filter((p) => !snap.has((0, import_obsidian21.normalizePath)(p)))
-      };
     }
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
     if (opts.localSnapshot) {
@@ -22109,21 +22157,46 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
     this.bindResult = null;
     this.boundYtext = null;
     this.driftTimer = null;
+    /** Set while a bind is deferred waiting for an unseeded Y.Doc to be seeded
+     *  by the server (see bindTo's data-loss guard). Holds the observed Y.Text +
+     *  its one-shot observer so detach()/release() can unhook it. */
+    this.pendingSeed = null;
     this.deps = deps;
   }
   currentPath() {
     return this.path;
   }
   async bindTo(view, path) {
+    var _a, _b;
     if (this.path === path) return;
     this.detach(view);
     let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
     if (this.released || epoch !== this.bindEpoch) return;
-    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
+    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
+    if (shown !== void 0 && shown !== path) return;
+    let editorText = view.state.doc.toString();
+    if (ytext.length === 0 && editorText.length > 0) {
+      this.deferUntilSeeded(view, path, ytext, epoch);
+      return;
+    }
+    let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
       effects: crdtCompartment.reconfigure(result.extension)
     }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+  }
+  /** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
+   *  server, then rebind. Never seeds the doc locally (that would double against
+   *  the server's lineage — the reason the doc is empty in the first place). A
+   *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
+  deferUntilSeeded(view, path, ytext, epoch) {
+    let onSeed = () => {
+      ytext.length !== 0 && (this.unhookPendingSeed(), !(this.released || epoch !== this.bindEpoch) && this.bindTo(view, path));
+    };
+    this.pendingSeed = { ytext, onSeed }, ytext.observe(onSeed);
+  }
+  unhookPendingSeed() {
+    this.pendingSeed && (this.pendingSeed.ytext.unobserve(this.pendingSeed.onSeed), this.pendingSeed = null);
   }
   /** Force a rebind even when this.path already equals `path`. detach() clears
    *  this.path SYNCHRONOUSLY (stopping keystrokes reaching the now-orphaned
@@ -22143,7 +22216,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
    *  drift timer stopped. Unlike release(), the controller stays usable so
    *  bindTo can re-bind the same view to a new path. */
   detach(view) {
-    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.clearDriftTimer(), this.unhookPendingSeed(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
   }
   clearDriftTimer() {
     this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
