@@ -17687,6 +17687,10 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
     return;
   }
   if (current !== file.diskContent) {
+    if (file.serverKnown && crdt.adopt && crdt.hasHistory && !await crdt.hasHistory(file.noteId)) {
+      await crdt.adopt(file.path, file.noteId);
+      return;
+    }
     try {
       file.reread ? await crdt.applyLocalEdit(file.noteId, file.diskContent, void 0, file.reread) : await crdt.applyLocalEdit(file.noteId, file.diskContent);
     } catch (e) {
@@ -18765,6 +18769,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!noteId) return !1;
     let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
     return path ? this.getCrdtHead(path) != null : !1;
+  }
+  /** Path-keyed "the server holds this note" — the map-FREE variant of
+   *  hasServerNote for the cold-start reconcile, where the noteIdMap may be
+   *  transiently empty on resume. crdtHead lives in syncState under the PATH
+   *  (persisted in data.json, rehydrated before cold-start), so this never
+   *  fails open the way an id→path lookup does. This is the discriminator that
+   *  routes a resumed known note to adopt instead of seed (#846/test_82). */
+  hasServerNoteAtPath(path) {
+    return this.getCrdtHead(path) != null;
+  }
+  /** Public cold-start entry: adopt the FULL server state for a history-less
+   *  KNOWN note (drift-safe keep-both / 3-way merge). main.ts's reconcileColdStart
+   *  wiring routes a resumed known note here instead of seeding a client lineage
+   *  that would double on the STEP2 adopt (#846/test_82). */
+  async adoptColdStartNote(path, noteId) {
+    return this.adoptHistoryLessNote(path, noteId);
   }
   /** Import legacy hash-only format (migration from old plugin versions). */
   importHashes(data) {
@@ -23312,12 +23332,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
                     // startup spans the longest entry-await (IndexedDB
                     // replay); a frozen diskContent diffed after a
                     // concurrent remote merge would revert the merge.
-                    reread: () => this.app.vault.cachedRead(file)
+                    reread: () => this.app.vault.cachedRead(file),
+                    // Map-FREE server-known signal (crdtHead under the path):
+                    // a resumed known note whose doc has no history adopts the
+                    // server lineage instead of seeding a client lineage that
+                    // would double on STEP2 (#846/test_82). Resolved by path so
+                    // the transiently-empty noteIdMap on resume can't misroute.
+                    serverKnown: this.syncEngine.hasServerNoteAtPath(file.path)
                   },
                   {
                     applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
                     getText: crdt.getText.bind(crdt),
                     projectedText: crdt.projectedText.bind(crdt),
+                    hasHistory: crdt.hasHistory.bind(crdt),
+                    adopt: (p, id2) => this.syncEngine.adoptColdStartNote(p, id2),
                     // STEP1 only for a live-bound (open) note. A drifted-but-idle
                     // note propagates its captured edit via the room-free /updates
                     // send (applyLocalEdit → manager.onUpdate) — no enrollment storm.

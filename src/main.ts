@@ -932,11 +932,19 @@ export default class EngramSyncPlugin extends Plugin {
 									// replay); a frozen diskContent diffed after a
 									// concurrent remote merge would revert the merge.
 									reread: () => this.app.vault.cachedRead(file),
+									// Map-FREE server-known signal (crdtHead under the path):
+									// a resumed known note whose doc has no history adopts the
+									// server lineage instead of seeding a client lineage that
+									// would double on STEP2 (#846/test_82). Resolved by path so
+									// the transiently-empty noteIdMap on resume can't misroute.
+									serverKnown: this.syncEngine.hasServerNoteAtPath(file.path),
 								},
 								{
 									applyLocalEdit: crdt.applyLocalEdit.bind(crdt),
 									getText: crdt.getText.bind(crdt),
 									projectedText: crdt.projectedText.bind(crdt),
+									hasHistory: crdt.hasHistory.bind(crdt),
+									adopt: (p, id) => this.syncEngine.adoptColdStartNote(p, id),
 									// STEP1 only for a live-bound (open) note. A drifted-but-idle
 									// note propagates its captured edit via the room-free /updates
 									// send (applyLocalEdit → manager.onUpdate) — no enrollment storm.
