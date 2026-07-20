@@ -18376,11 +18376,32 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Requires the sync gate to be open — returns early when blocked so inbound
    *  CRDT frames cannot overwrite local files before the user picks a direction. */
   async flushFromCrdt(path, content) {
+    var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
+    if (file instanceof import_obsidian21.TFile && content.trim() === "") {
+      let prev = "";
+      try {
+        prev = await this.app.vault.cachedRead(file);
+      } catch (e) {
+      }
+      if (prev.trim() !== "") {
+        let noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null, docText = "";
+        if (noteId && this.crdt)
+          try {
+            docText = await this.crdt.projectedText(noteId);
+          } catch (e) {
+          }
+        if (docText.trim() !== "")
+          return rlog().warn(
+            "crdt",
+            `flushFromCrdt: refused empty over ${prev.length}B for ${normalized} \u2014 CRDT doc still holds content (stale remote projection)`
+          ), !0;
+      }
+    }
     this.markRecentlyFlushed(normalized);
     try {
       return file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;

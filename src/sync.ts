@@ -962,6 +962,41 @@ export class SyncEngine {
 			this.recordCrdtBaseline(normalized, content);
 			return true;
 		}
+		// Content-loss guard: a CRDT flush must never blank a non-empty file with a
+		// STALE remote projection. The manager flushes projectNote(doc) on every
+		// REMOTE_ORIGIN update (manager.ts), so a self-echo fan-out landing during a
+		// genesis pre-seed window materializes the doc's transient EMPTY over the
+		// content the author just wrote — the e2e test_09 content loss (the author's
+		// own note is broadcast back to it). Mirrors Relay's rule that disk follows
+		// the authoritative doc, not a stale remote projection. Only blank when the
+		// doc has GENUINELY converged empty (a real remote clear, e2e test_27): if
+		// the doc still projects content, this empty is transient — skip the write.
+		if (file instanceof TFile && content.trim() === "") {
+			let prev = "";
+			try {
+				prev = await this.app.vault.cachedRead(file);
+			} catch {
+				// unreadable — leave prev empty so the guard below simply won't fire
+			}
+			if (prev.trim() !== "") {
+				const noteId = this.noteIdMap?.get(normalized) ?? null;
+				let docText = "";
+				if (noteId && this.crdt) {
+					try {
+						docText = await this.crdt.projectedText(noteId);
+					} catch {
+						// projection failed — leave docText empty; the write proceeds
+					}
+				}
+				if (docText.trim() !== "") {
+					rlog().warn(
+						"crdt",
+						`flushFromCrdt: refused empty over ${prev.length}B for ${normalized} — CRDT doc still holds content (stale remote projection)`,
+					);
+					return true;
+				}
+			}
+		}
 		this.markRecentlyFlushed(normalized);
 		try {
 			if (file instanceof TFile) {

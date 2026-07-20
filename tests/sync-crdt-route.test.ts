@@ -488,6 +488,44 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		expect(mockApp.vault.modify).toHaveBeenCalledWith(mockFile, "new content");
 	});
 
+	test("empty flush is REFUSED when the CRDT doc still holds content (stale echo — no blank)", async () => {
+		// e2e test_09 content-loss: a note's own fan-out is echoed back to the
+		// author and materializes an EMPTY projection (a self-echo landing during
+		// the genesis pre-seed window) over the content it just wrote. The doc
+		// still owns the content, so blanking the file is pure data loss.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const mockFile = new TFile("note.md");
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(mockFile);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("real content");
+		// The CRDT doc genuinely still holds the content → the empty is transient.
+		engine.setCrdtManager({ projectedText: mock(async () => "real content") } as any);
+
+		const ok = await engine.flushFromCrdt("note.md", "");
+
+		expect(ok).toBe(true);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled(); // file NOT blanked
+	});
+
+	test("empty flush WRITES THROUGH when the CRDT doc genuinely converged empty (legit remote clear)", async () => {
+		// The other side of the guard: a peer legitimately cleared the note to
+		// empty (test_27). The doc converged empty, so the empty IS authoritative
+		// and must materialize — the guard must not block a real clear.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("note.md", "id-note");
+		const engine = createEngine(noteIdMap);
+		const mockFile = new TFile("note.md");
+		(mockApp.vault.getAbstractFileByPath as ReturnType<typeof mock>).mockReturnValue(mockFile);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("old content");
+		// Doc converged empty → the clear is real.
+		engine.setCrdtManager({ projectedText: mock(async () => "") } as any);
+
+		await engine.flushFromCrdt("note.md", "");
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(mockFile, ""); // blanked, legitimately
+	});
+
 	test("creates the file when it does not exist yet (device-B discovery)", async () => {
 		const engine = createEngine();
 		// No local file — CRDT delivered content for a note this device has never
