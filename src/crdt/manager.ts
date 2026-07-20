@@ -383,22 +383,56 @@ export class CrdtManager {
 			return content;
 		}
 
+		this.seedContentInto(e.doc, e.text, content, lca);
+		return content;
+	}
+
+	/**
+	 * Ingest a disk-content string into a doc's Y.Text + frontmatter shared types
+	 * inside ONE transaction (frontmatter split/parse, then the seed-once +
+	 * minimal-diff body gate). Shared by `applyLocalEdit` (the note's live doc)
+	 * and `encodeGenesisUpdate` (a throwaway doc) so both produce byte-identical
+	 * CRDT ops for the same content — a divergent encoding would corrupt the note
+	 * when the two lineages merge. ONE transaction so bare ops don't ship as
+	 * separate updates that expose a truncated intermediate state (e2e test_83).
+	 */
+	private seedContentInto(doc: Y.Doc, text: Y.Text, content: string, lca: boolean): void {
 		const { fmBlock, body: splitBody } = splitFrontmatter(content);
 		const parsed = fmBlock === null ? null : parseFrontmatter(fmBlock);
 		const order = parsed ? parsed.order : [];
 		const values = parsed ? parsed.values : {};
 		// Malformed/absent frontmatter: treat the whole raw string as body.
 		const body = parsed !== null ? splitBody : content;
-
-		// ONE transaction for frontmatter + body: bare ops each ship as their
-		// own update, letting receivers observe (and flush) a truncated
-		// intermediate state of a single logical edit (e2e test_83).
-		e.doc.transact(() => {
-			this.applyFrontmatterInto(e.doc, order, values);
-			// Route body through the existing seed-once + minimal-diff gate.
-			if (!seedOnce(e.text, body, lca)) diffIntoYText(e.text, body);
+		doc.transact(() => {
+			this.applyFrontmatterInto(doc, order, values);
+			if (!seedOnce(text, body, lca)) diffIntoYText(text, body);
 		});
-		return content;
+	}
+
+	/**
+	 * Encode a brand-new note's initial content as a standalone Yjs v1 state
+	 * update — no IndexedDB persistence, no update listeners, no wire side
+	 * effects. The batch genesis path (`crdt_create_batch`) wraps this in a
+	 * `messageSync` frame and sends it INLINE with the create, so the server has
+	 * the content in one round-trip (unlike the single `crdt_create`, which makes
+	 * an empty row then seeds the body over a follow-up `crdt_msg`).
+	 *
+	 * Reuses `seedContentInto` (the same seed the live doc uses), so a peer
+	 * applying the frame reconstructs the note identically. The throwaway doc's
+	 * client id becomes the note's genesis lineage; the sending device never
+	 * seeds its OWN real doc from this content (the caller records a baseline hash
+	 * so a later identical edit is skipped), so there is no second-lineage
+	 * doubling (#846) — the real doc adopts the server lineage on its first
+	 * handshake.
+	 */
+	encodeGenesisUpdate(content: string): Uint8Array {
+		const doc = new Y.Doc();
+		try {
+			this.seedContentInto(doc, doc.getText(CONTENT_KEY), content, false);
+			return Y.encodeStateAsUpdate(doc);
+		} finally {
+			doc.destroy();
+		}
 	}
 
 	/**

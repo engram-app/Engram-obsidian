@@ -560,53 +560,41 @@ describe("SyncEngine.pushAll with progress", () => {
 		expect(engine.syncLog.entries().length).toBeGreaterThan(0);
 	});
 
-	test("pullAll({ deleteLocalExtras: true }) deletes local files and resets sync state before pulling", async () => {
+	test("pullAll({ deleteLocalExtras: true }) trashes local extras absent from the replay's server id-set", async () => {
+		// REST-purge Bucket B (Task 5): pullAll no longer blind-wipes every local
+		// file before a REST re-fetch — it replays via
+		// catchupViaSeqReplay({fromZero:true}) and trashes only local notes whose
+		// mapped id is absent from the replay's serverIds (both files here have
+		// no id mapping at all — createEngine() below never wires a noteIdMap —
+		// so both count as extras, same as the old "no id learned yet" case).
 		const file1 = makeTFile("notes/a.md");
 		const file2 = makeTFile("notes/b.md");
 		mockApp.vault.getFiles.mockReturnValue([file1, file2]);
 		mockApp.vault.cachedRead.mockResolvedValue("# Content");
-
-		// Server has one note to pull after wipe
-		(mockApi.getChanges as jest.Mock).mockResolvedValue({
-			changes: [
-				{
-					path: "notes/server.md",
-					title: "Server",
-					content: "# From Server",
-					folder: "notes",
-					tags: [],
-					mtime: Date.now() / 1000,
-					updated_at: new Date().toISOString(),
-					deleted: false,
-				},
-			],
-			server_time: "2026-01-01T00:00:00Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValue({
-			changes: [],
-			server_time: "2026-01-01T00:00:00Z",
-		});
-		// After wipe, getFileByPath returns null (files deleted)
 		mockApp.vault.getFileByPath.mockReturnValue(null);
 
 		const engine = createEngine();
 		const { SyncLog } = await import("../src/sync-log");
 		engine.syncLog = new SyncLog();
+		(engine as any).catchupViaSeqReplay = async () => ({
+			applied: 1,
+			serverIds: new Set<string>(),
+			serverAttachmentPaths: new Set<string>(),
+			ran: true,
+		});
 
 		// Seed some sync state that should be cleared
 		engine.importHashes({ "notes/a.md": 12345 });
 
-		await engine.pullAll({ deleteLocalExtras: true });
+		const applied = await engine.pullAll({ deleteLocalExtras: true });
 
+		expect(applied).toBe(1);
 		// Both local files should have been trashed
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledTimes(2);
 
 		// Sync log should have delete entries for the wipe
 		const deleteEntries = engine.syncLog.entries().filter((e) => e.action === "delete");
 		expect(deleteEntries).toHaveLength(2);
-
-		// Server note should have been created (pulled)
-		expect(mockApp.vault.create).toHaveBeenCalled();
 	});
 
 	test("logs errors to syncLog when push fails", async () => {

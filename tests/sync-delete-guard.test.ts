@@ -1,17 +1,12 @@
 /**
  * Tests: the recent-local-delete guard (Task C). A note THIS device deleted
- * must not be resurrected by either CRDT convergence path — `catchupViaSocket`
- * (the head-map discovery loop) nor `applyPushedNoteUpdate` (the vault-channel
- * fan-out) — for the delete-wins window that mirrors backend #970's 60s
- * same-user delete-then-recreate refusal. The prior `hasPendingDelete` guard
- * only covered a delete STILL sitting in the offline queue; once the delete is
- * SENT (dequeued) that guard lapses and the note resurrects.
- *
- * Also pins the inverse invariant (requirement c): catch-up must NEVER trash a
- * known local note merely because it is ABSENT from the head map. The server
- * head map lists only surviving notes (is_nil(deleted_at)); it conveys no
- * tombstone, so absence is not proof of deletion (a first-discovery note is
- * also absent). Trashing on absence would delete legitimate notes.
+ * must not be resurrected by either CRDT convergence path — the seq-ordered
+ * op-log replay (`applyOp`, driven by `catchupViaSeqReplay`) nor
+ * `applyPushedNoteUpdate` (the vault-channel fan-out) — for the delete-wins
+ * window that mirrors backend #970's 60s same-user delete-then-recreate
+ * refusal. The prior `hasPendingDelete` guard only covered a delete STILL
+ * sitting in the offline queue; once the delete is SENT (dequeued) that guard
+ * lapses and the note resurrects.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -79,29 +74,85 @@ function crdtDouble(applied: string[]): Partial<CrdtManager> {
 }
 
 describe("recent-local-delete guard", () => {
-	test("catchupViaSocket does NOT resurrect a note this device already deleted (sent, not queued)", async () => {
+	test("op-replay does NOT resurrect a note this device already deleted (sent, not queued)", async () => {
 		const applied: string[] = [];
 		const engine = makeEngine(crdtDouble(applied), applied);
+		mockApp.vault.create.mockClear();
 
 		// Delete the note. The delete is enqueued on the durable CRDT op queue
 		// (not the REST offline queue), so nothing lingers there; the
 		// hasPendingDelete guard from Task B does NOT cover this case.
 		await engine.handleDelete(new TFile("Notes/gone.md"));
 
-		// A reconnect catch-up whose head map STILL lists the just-deleted note
-		// (the server delete has not yet dropped it, or the head map was fetched
-		// before the delete committed). Without the tombstone the id is unknown
-		// (handleDelete cleared its mapping) and gets re-materialized as a
-		// first-discovery note.
-		engine.setCrdtCatchup(
-			async () => ({ heads: { "id-gone": { path: "Notes/gone.md", head: "h2" } } }),
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h2" }),
-		);
+		// A catch-up replay whose seq feed STILL carries an UPSERT for the
+		// just-deleted note (the server delete has not committed / the tombstone
+		// hasn't reached the feed). Without the recent-delete guard, applyOp would
+		// re-learn the id and re-materialize it as a first-discovery note.
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "id-gone",
+					seq: 9,
+					path: "Notes/gone.md",
+					title: "gone",
+					content: "resurrected?",
+					folder: "",
+					tags: [],
+					mtime: 9,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			has_more: false,
+			next_seq: null,
+		}));
 
-		await engine.catchupViaSocket();
+		await engine.catchupViaSeqReplay();
 
-		expect(applied).toEqual([]); // NOT resurrected
-		expect((engine as any).noteIdMap.pathForId("id-gone")).toBeNull();
+		expect(mockApp.vault.create).not.toHaveBeenCalled(); // NOT resurrected on disk
+		expect((engine as any).noteIdMap.pathForId("id-gone")).toBeNull(); // id not re-learned
+	});
+
+	test("op-replay does NOT resurrect a note with a delete still QUEUED (unsent, TTL lapsed)", async () => {
+		// The paired guard: a delete still sitting in the offline queue (never
+		// sent, so recentlyDeleted is empty / its ~60s TTL has lapsed). A fromZero
+		// replay can carry the stale upsert in this window — hasPendingDelete must
+		// still refuse it so the note isn't resurrected while the delete is unsent.
+		const applied: string[] = [];
+		const engine = makeEngine(crdtDouble(applied), applied);
+		mockApp.vault.create.mockClear();
+
+		await (engine as any).queue.enqueue({
+			path: "Notes/gone.md",
+			action: "delete",
+			kind: "note",
+			timestamp: Date.now(),
+		});
+
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "id-gone",
+					seq: 9,
+					path: "Notes/gone.md",
+					title: "gone",
+					content: "resurrected?",
+					folder: "",
+					tags: [],
+					mtime: 9,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			has_more: false,
+			next_seq: null,
+		}));
+
+		await engine.catchupViaSeqReplay();
+
+		expect(mockApp.vault.create).not.toHaveBeenCalled(); // NOT resurrected while delete is queued
 	});
 
 	test("applyPushedNoteUpdate does NOT resurrect a note this device already deleted", async () => {
@@ -118,25 +169,5 @@ describe("recent-local-delete guard", () => {
 		await engine.applyPushedNoteUpdate("id-gone", new Uint8Array([1]), "h2");
 
 		expect(applied).toEqual([]); // NOT resurrected by the fan-out
-	});
-
-	test("catchupViaSocket does NOT trash a known local note merely absent from the head map", async () => {
-		// Requirement (c): absence is not a tombstone. The server head map lists
-		// only surviving notes; a note absent from it may be a first-discovery
-		// note or a stale/partial map — never proof of deletion. Catch-up must
-		// leave the local note untouched (no trash, mapping intact).
-		const applied: string[] = [];
-		const engine = makeEngine(crdtDouble(applied), applied);
-		mockApp.fileManager.trashFile.mockClear();
-
-		engine.setCrdtCatchup(
-			async () => ({ heads: {} }), // id-a is KNOWN locally but absent here
-			async (docId: string) => ({ doc_id: docId, b64: "AAE=", head: "h2" }),
-		);
-
-		await engine.catchupViaSocket();
-
-		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
-		expect((engine as any).noteIdMap.pathForId("id-a")).toBe("Notes/a.md");
 	});
 });

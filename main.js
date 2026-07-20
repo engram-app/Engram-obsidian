@@ -12583,12 +12583,46 @@ var _CrdtManager = class _CrdtManager {
         return null;
     }
     let lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
-    if (!lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)))
-      return content;
+    return !lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)) || this.seedContentInto(e.doc, e.text, content, lca), content;
+  }
+  /**
+   * Ingest a disk-content string into a doc's Y.Text + frontmatter shared types
+   * inside ONE transaction (frontmatter split/parse, then the seed-once +
+   * minimal-diff body gate). Shared by `applyLocalEdit` (the note's live doc)
+   * and `encodeGenesisUpdate` (a throwaway doc) so both produce byte-identical
+   * CRDT ops for the same content — a divergent encoding would corrupt the note
+   * when the two lineages merge. ONE transaction so bare ops don't ship as
+   * separate updates that expose a truncated intermediate state (e2e test_83).
+   */
+  seedContentInto(doc2, text2, content, lca) {
     let { fmBlock, body: splitBody } = splitFrontmatter(content), parsed = fmBlock === null ? null : parseFrontmatter(fmBlock), order = parsed ? parsed.order : [], values = parsed ? parsed.values : {}, body = parsed !== null ? splitBody : content;
-    return e.doc.transact(() => {
-      this.applyFrontmatterInto(e.doc, order, values), seedOnce(e.text, body, lca) || diffIntoYText(e.text, body);
-    }), content;
+    doc2.transact(() => {
+      this.applyFrontmatterInto(doc2, order, values), seedOnce(text2, body, lca) || diffIntoYText(text2, body);
+    });
+  }
+  /**
+   * Encode a brand-new note's initial content as a standalone Yjs v1 state
+   * update — no IndexedDB persistence, no update listeners, no wire side
+   * effects. The batch genesis path (`crdt_create_batch`) wraps this in a
+   * `messageSync` frame and sends it INLINE with the create, so the server has
+   * the content in one round-trip (unlike the single `crdt_create`, which makes
+   * an empty row then seeds the body over a follow-up `crdt_msg`).
+   *
+   * Reuses `seedContentInto` (the same seed the live doc uses), so a peer
+   * applying the frame reconstructs the note identically. The throwaway doc's
+   * client id becomes the note's genesis lineage; the sending device never
+   * seeds its OWN real doc from this content (the caller records a baseline hash
+   * so a later identical edit is skipped), so there is no second-lineage
+   * doubling (#846) — the real doc adopts the server lineage on its first
+   * handshake.
+   */
+  encodeGenesisUpdate(content) {
+    let doc2 = new Doc();
+    try {
+      return this.seedContentInto(doc2, doc2.getText(CONTENT_KEY), content, !1), encodeStateAsUpdate(doc2);
+    } finally {
+      doc2.destroy();
+    }
   }
   /**
    * Apply a binary Yjs update received from the server.
@@ -12815,6 +12849,10 @@ function toB64(bytes) {
 function fromB64(b64) {
   return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
+function encodeUpdateFrame(update) {
+  let encoder = createEncoder();
+  return writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), toB64(toUint8Array(encoder));
+}
 var CrdtChannel = class {
   constructor(opts) {
     /**
@@ -12852,8 +12890,7 @@ var CrdtChannel = class {
    * update is guaranteed to be local (not REMOTE_ORIGIN).
    */
   sendUpdateRaw(docId, update) {
-    let encoder = createEncoder();
-    writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.transport(docId, toB64(toUint8Array(encoder)));
+    this.transport(docId, encodeUpdateFrame(update));
   }
   /**
    * Dispatch an inbound frame. `readSyncMessage` applies STEP2/UPDATE bytes to
@@ -13339,28 +13376,6 @@ var EngramApi = class _EngramApi {
     let params2 = new URLSearchParams({ since });
     return (opts == null ? void 0 : opts.limit) !== void 0 && params2.set("limit", String(opts.limit)), opts != null && opts.cursor && params2.set("cursor", opts.cursor), opts != null && opts.fields && params2.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params2.toString()}`)).json;
   }
-  /** Pull the merged ordered feed (notes ∪ attachments interleaved by
-   *  (seq,id), tombstones included) from GET /sync/changes (PR B2). Pass the
-   *  opaque `cursor` from the prior page; omit it for a genesis pull. */
-  async getSyncChanges(cursor, limit) {
-    let params2 = new URLSearchParams();
-    cursor && params2.set("cursor", cursor), limit !== void 0 && params2.set("limit", String(limit));
-    let qs = params2.toString();
-    return (await this.request("GET", `/sync/changes${qs ? `?${qs}` : ""}`)).json;
-  }
-  /** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).
-   *  Sends a fresh idempotency key per call — the server replays the cached
-   *  response on retry instead of re-executing the batch. Throws with
-   *  status 404/405 on pre-rev backends; callers fall back to per-note
-   *  pushes. */
-  async pushNotesBatch(notes) {
-    return (await this.request(
-      "POST",
-      "/notes/batch",
-      { notes },
-      { "X-Idempotency-Key": crypto.randomUUID() }
-    )).json;
-  }
   /** Get full note by path. */
   async getNote(path) {
     let encoded = encodePath(path);
@@ -13823,6 +13838,11 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   async crdtCreate(docId, path) {
     return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
   }
+  /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
+   *  creates per request; chunking is the caller's concern). */
+  async crdtCreateBatch(creates) {
+    return await this.sendRequest("crdt_create_batch", { creates });
+  }
   /** Delete a note over the socket, AWAITING the server ack (idempotent). The
    *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
    *  resolve means the delete is durably applied; a reject carries a retryable
@@ -13831,20 +13851,10 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   async crdtDeleteAcked(docId) {
     return await this.sendRequest("crdt_delete", { doc_id: docId });
   }
-  /** Vault-level head map for catch-up divergence detection AND first-discovery.
-   *  Each entry carries the note's server head plus its decrypted vault path, so
-   *  a device that has never seen an id can materialize it at that path (the
-   *  head map is the sole discovery source now that REST receive is gone). */
-  async crdtCatchupHeads() {
-    return await this.sendRequest("crdt_catchup_heads", {});
-  }
-  /** Missing ops for one diverged note, given the client's base64 state vector. */
-  async crdtCatchupDelta(docId, sv) {
-    return await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv });
-  }
   /** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
-   *  carries FULL content (a SyncNoteChange), so it is causally complete and
-   *  can never pend the way a state-vector delta can — this is what a
+   *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
+   *  merged notes+attachments feed), so it is causally complete and can
+   *  never pend the way a state-vector delta can — this is what a
    *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
   async crdtCatchupSince(cursorSeq, limit) {
     let payload = { cursor_seq: cursorSeq };
@@ -17470,12 +17480,6 @@ function uuid7() {
   ].join("-");
 }
 
-// src/cursor.ts
-var MAX_CURSOR_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
-function encodeCursor(seq3, id2) {
-  return btoa(`${seq3}:${id2}`).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
 // src/dev-log.ts
 var noopLog = {
   log(_cat, _msg) {
@@ -17654,7 +17658,7 @@ function threeWayMerge(base, local, remote) {
 }
 
 // src/sync.ts
-var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__", CRDT_HEAD_ANNOUNCED = "__crdt_announced__";
+var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
@@ -17694,11 +17698,6 @@ async function reconcileColdStart(file, crdt, onCorruption, maxBytes = MAX_CRDT_
 function isHttpStatus(e, status) {
   return typeof e == "object" && e !== null && e.status === status;
 }
-var HistoryExpiredError = class extends Error {
-  constructor() {
-    super("history_expired"), this.name = "HistoryExpiredError";
-  }
-};
 function countFolders(paths) {
   let set2 = /* @__PURE__ */ new Set();
   for (let p of paths) {
@@ -17707,7 +17706,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, WIPE_ECHO_COOLDOWN_MS = 10 * 6e4, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -17765,13 +17764,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
     this.recentlyPushed = /* @__PURE__ */ new Map();
-    /** Paths whose remote copy THIS device just deleted via wipeRemote (the
-     *  replace-remote sync). The server fans our own deletes back with no
-     *  origin attribution; applying them trashed the entire local vault
-     *  mid-replace (2026-07-08 incident). Deletes are otherwise exempt from
-     *  echo suppression, so this set is the only thing standing between a
-     *  remote wipe and the local files it is about to re-upload. */
-    this.wipedRemote = /* @__PURE__ */ new Map();
     /** Paths whose local trash APPLIED a remote change (WS delete, pull
      *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
      *  trash fires must not push a DELETE back to the server: the server
@@ -17787,27 +17779,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  post-push cooldown — silently losing edits and breaking conflict detection. */
     this.recentlyFlushed = /* @__PURE__ */ new Map();
     /** note_ids THIS device recently deleted. Both CRDT convergence paths
-     *  (catchupViaSocket's head-map loop and applyPushedNoteUpdate's fan-out)
-     *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. The
-     *  server head map lists only surviving notes and carries no tombstone, so a
-     *  just-deleted note that is still (transiently) in the head map, or a
-     *  late-arriving fan-out for it, would otherwise re-materialize it. Keyed by
-     *  note_id (the key both paths iterate by), unlike the path-keyed
-     *  offline-queue `hasPendingDelete` guard which only covers a delete STILL
-     *  queued (this covers one already sent/dequeued). */
+     *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
+     *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
+     *  UPSERT replayed (or fanned out) before the server's tombstone lands would
+     *  otherwise re-materialize a just-deleted note; a later tombstone op still
+     *  applies. Keyed by note_id (the key both paths check by), unlike the
+     *  path-keyed offline-queue `hasPendingDelete` guard which only covers a
+     *  delete STILL queued (this covers one already sent/dequeued). */
     this.recentlyDeleted = /* @__PURE__ */ new Map();
     this.pulling = !1;
-    /** A pull() requested while one was already in flight. Set by the re-entry
-     *  guard, drained in pull()'s finally to run exactly one follow-up pull.
-     *  Without this, a reconnect catch-up that lands mid-pull is lost (#646). */
-    this.pullPending = !1;
     this.lastSync = "";
-    /** Opaque cursor marking the plugin's durably-applied position in the
-     *  backend's ordered sync feed. SEPARATE from `lastSync` (which is kept
-     *  untouched for rollback). `null` = no cursor yet (genesis pull). Persisted
-     *  under the `syncCursor` key via the saveData callback; written/read by the
-     *  cursor-pull flow in later B2 tasks. */
-    this.syncCursor = null;
     this.lastError = "";
     this.offline = !1;
     this.healthCheckTimer = null;
@@ -17874,16 +17855,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     /** This install's opaque device id (main.ts mints + persists it; the API
      *  client sends it as X-Device-Id on every REST call). The server stamps
      *  it into `note_changed` delete broadcasts (#970) so we can drop our own
-     *  fanout echoes — the generic class fix behind the wipeRemote path
-     *  marking below. Null in tests/older callers: the drop is then skipped. */
+     *  fanout echoes — the origin-attributed guard used below (and by the
+     *  editor-detach/rebind wiring just after it). Null in tests/older
+     *  callers: the drop is then skipped. */
     this.deviceId = null;
     /** Detaches every live editor binding (CrdtLiveViews.detachAll, wired by
-     *  main.ts). wipeRemote destroys Y.Docs whose files stay on disk and may
-     *  be OPEN — unlike the WS-delete path, no trashFile closes the view, so
-     *  a still-attached binding would write keystrokes into a destroyed doc
-     *  (the never-span-a-load class, crdt-editor-bind-race-pollution.md).
-     *  Bindings re-establish via the normal refresh events; meanwhile edits
-     *  flow through handleModify as plain pushes. */
+     *  main.ts). Replace-remote's crdtDelete destroys Y.Docs whose files stay
+     *  on disk and may be OPEN — unlike the WS-delete path, no trashFile
+     *  closes the view, so a still-attached binding would write keystrokes
+     *  into a destroyed doc (the never-span-a-load class,
+     *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
+     *  normal refresh events; meanwhile edits flow through handleModify as
+     *  plain pushes. */
     this.crdtEditorDetach = null;
     /** Rebinds the live editor showing `path` off its current (now orphaned)
      *  Y.Doc onto the note's freshly-resolved id (CrdtLiveViews.rebindPath,
@@ -17980,6 +17963,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  falls through to the REST create (still functional in this additive phase,
      *  removed in Plan B2). Unset → genesis stays on the REST-first path. */
     this.crdtCreate = null;
+    /** Socket-native BATCH genesis. Consumer wiring (genesis routing / chunking
+     *  to the server's 100-create cap) is a later task; this is plumbing only. */
+    this.crdtCreateBatch = null;
     /** Direct AWAITED `crdt_delete` (resolves once the server has durably applied
      *  the tombstone). Used by handleRename to ORDER the old-path tombstone before
      *  the new-path `crdt_create` resurrect: the backend relocates a note only via
@@ -18053,26 +18039,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
     this.pendingPostPullPushes = /* @__PURE__ */ new Set();
-    /** Socket-native vault catch-up (Plan B1, Task 5): fetch server heads over
-     *  `crdt_catchup_heads`, and for each note whose stored crdtHead differs,
-     *  pull the missing delta from the client's state vector over
-     *  `crdt_catchup_delta` and apply it. Socket twin of `coldReceive` — same
-     *  cost-gate (converged notes never open a doc) and same isolation (a
-     *  per-note failure is logged and skipped, never thrown into the caller, so
-     *  one bad note can't stall the vault). Unset deps / no crdt manager ->
-     *  no-op. */
-    this.crdtCatchupHeads = null;
-    this.crdtCatchupDelta = null;
     this.crdtCatchupSince = null;
     /** Single-path convergence on (re)connect: replay the seq-ordered op-log over
      *  the socket from our persisted cursor. Each op carries FULL content and is
      *  applied through the SAME `applySyncChange` the REST pull used — so a
      *  reconnecting device gets every op it missed, IN ORDER, causally complete.
      *
-     *  This replaces `catchupViaSocket`'s state-vector delta as the convergence
-     *  mechanism: that delta could hand Yjs a causally-incomplete update, which
-     *  pends while the device advances its head anyway (faked convergence → deaf
-     *  note, e2e test_85). A full-content op cannot pend. Discovery rides the same
+     *  This is the sole catch-up mechanism; it replaced the retired
+     *  `crdt_catchup_delta` state-vector delta, which could hand Yjs a
+     *  causally-incomplete update that pends while the device advances its head
+     *  anyway (faked convergence → deaf note, e2e test_85). A full-content op
+     *  cannot pend. Discovery rides the same
      *  feed: a note another device created while we were away arrives as an op and
      *  materializes via applySyncChange. Never throws into the caller; a socket
      *  drop mid-replay is logged and resumed from the persisted cursor next join.
@@ -18139,12 +18116,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  vault-change case where we cleared sync state — neither would
      *  otherwise touch the push path because lastSync is empty and the
      *  mtime comparison short-circuits. */
-    /** Sticky "server has no POST /notes/batch" flag — set on the first
-     *  404/405 so later bulk syncs skip the probe entirely. */
-    this.batchPushUnsupported = !1;
     // Version gate: latched OFF the first time an /updates call 404/405s (a
     // pre-Phase-1 backend). While off, CRDT notes fall back to the whole-doc
-    // base_hash push, exactly as before this feature. Mirrors batchPushUnsupported.
+    // base_hash push, exactly as before this feature.
     this.crdtOpsUnsupported = !1;
     // Capability comes SOLELY from the probe (Phase 2b remediation): ops are
     // treated unavailable until getVaultHeads has actually confirmed them, so
@@ -18251,30 +18225,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
   }
-  // "This note converges via CRDT ops, not the whole-doc push." Called only by
-  // pushNotesViaBatch now; pushFile routes on hasServerNote directly.
-  isCrdtManaged(path, noteId) {
-    var _a, _b;
-    return this.isCrdtManagedOffline(path, noteId) && ((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null ? _b : !0);
-  }
-  // Same predicate as isCrdtManaged, minus the live-channel term: true when a
-  // note WOULD converge via CRDT ops if the crdt: channel were joined right
-  // now (Task 5, single authority). Oracle is hasServerNote — the note's own
-  // CRDT state (crdtHead != null), the SAME oracle pushFile routes on, NOT the
-  // confirmed-set. The confirmed-set is wiped on every reconnect
-  // (clearConfirmedNoteIds); keying batch ownership on it re-routed a
-  // server-known note edited during a disconnect to legacy whole-doc REST,
-  // last-write-wins over a concurrent remote edit → lost merge (#230, DI-1).
-  // crdtHead survives reconnect, so a cold edit stays on CRDT and merges.
-  // Enrollment (STEP1) is only the down-sync pull, never required to SEND: an
-  // idle note ships its edit channel-up or as a crdt-tagged durable /updates
-  // entry (runFlushQueue's noteId-keyed branch). pushNotesViaBatch uses this
-  // to keep a channel-down note off the legacy base_hash push; the crdt-live
-  // check is applied separately by the caller to pick channel-op vs
-  // durable-REST transport.
-  isCrdtManagedOffline(_path, noteId) {
-    return !!this.crdt && this.hasServerNote(noteId);
-  }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
   }
@@ -18315,6 +18265,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtCreate(fn) {
     this.crdtCreate = fn;
+  }
+  setCrdtCreateBatch(fn) {
+    this.crdtCreateBatch = fn;
   }
   setCrdtDelete(fn) {
     this.crdtDelete = fn;
@@ -18423,11 +18376,32 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Requires the sync gate to be open — returns early when blocked so inbound
    *  CRDT frames cannot overwrite local files before the user picks a direction. */
   async flushFromCrdt(path, content) {
+    var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
     if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
+    if (file instanceof import_obsidian21.TFile && content.trim() === "") {
+      let prev = "";
+      try {
+        prev = await this.app.vault.cachedRead(file);
+      } catch (e) {
+      }
+      if (prev.trim() !== "") {
+        let noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null, docText = "";
+        if (noteId && this.crdt)
+          try {
+            docText = await this.crdt.projectedText(noteId);
+          } catch (e) {
+          }
+        if (docText.trim() !== "")
+          return rlog().warn(
+            "crdt",
+            `flushFromCrdt: refused empty over ${prev.length}B for ${normalized} \u2014 CRDT doc still holds content (stale remote projection)`
+          ), !0;
+      }
+    }
     this.markRecentlyFlushed(normalized);
     try {
       return file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
@@ -18507,11 +18481,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
    *  own failure, never throws.
    *
-   *  `fetchFull` supplies the FULL-state bytes for the empty doc. It defaults to
-   *  REST getUpdates (the fan-out caller's transport), but the socket catch-up
-   *  path injects `crdt_catchup_delta` — sending the empty-doc state vector makes
-   *  the server return full state either way, so the adopt is CRDT-native with no
-   *  REST fallback (the rewire's sole-socket-transport invariant). */
+   *  `fetchFull` supplies the FULL-state bytes for the empty doc — it defaults
+   *  to REST getUpdates, the fan-out caller's (applyPushedNoteUpdate) transport.
+   *  Sending the empty-doc state vector (not an empty `since`) makes the server
+   *  return full state. */
   async adoptHistoryLessNote(path, noteId, fetchFull = (id2, sv) => this.api.getUpdates(id2, sv)) {
     var _a;
     if (!this.crdt) return null;
@@ -18663,26 +18636,23 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
     await this.flushFromCrdt(path, text2);
   }
-  /** Materialize a note at a NEW path after an id-keyed relocation
-   *  (`moveIfIdRelocated`) when this device's CRDT handshake for `noteId`
-   *  already completed earlier THIS session (e2e test_10, #189).
+  /** Materialize a relocated/first-delivery note at `path` from its CRDT doc
+   *  projection when this device's handshake for `noteId` has landed. Content-
+   *  ABSENT backstop only (a content-present op materializes via applyOp): a
+   *  rename carries no doc update so onFlushToDisk never fires, and an idle note
+   *  is not enrolled — without this the new path would appear only via the slow
+   *  pull (received=yes materialized=no). Gated on `crdt.isSynced(noteId)` (NOT
+   *  "already enrolled": enroll marks synchronously before STEP2 lands, so an
+   *  enrolled check could flush empty/partial content — the #547 class), so the
+   *  projected text is trustworthy; no-ops when the handshake hasn't landed
+   *  (the op-log seq-replay heals instead) or the file already exists.
    *
-   *  A rename changes no doc content, so it never produces a Y.Doc update —
-   *  `onFlushToDisk` never fires for it — and `crdtEnrollment.enroll()` is a
-   *  documented per-session no-op once a note_id is already enrolled (true
-   *  here: this device received the note live, at its old path, earlier this
-   *  session). With neither trigger left, the file at the new path is never
-   *  written: the event is received but never materialized. This closes that
-   *  gap by flushing the CRDT doc's already-known content directly.
-   *
-   *  Gated on `crdt.isSynced(noteId)` — NOT on "already enrolled". `enroll()`
-   *  marks a note_id enrolled synchronously, before its STEP2 handshake
-   *  resolves, so an "already enrolled" check would race a note's genuine
-   *  FIRST enrollment and could flush empty/partial content (the #547 class
-   *  of premature-empty-file bug). `isSynced` only turns true once a STEP2
-   *  has actually landed, so the content read here is trustworthy. No-ops
-   *  when the handshake hasn't completed yet (the ordinary STEP1/STEP2 path
-   *  still owns materializing it) or the file already exists at `path`. */
+   *  Identity re-check at WRITE time (issue #210, e2e test_34): a concurrent
+   *  id-keyed move can land during the projectedText await (it suspends on IDB),
+   *  so re-read the canonical path immediately before the write — writing a
+   *  moved-away path would re-create a tombstoned file and resurrect it. Defends
+   *  the MOVE case only; a tombstone delete clears the byId entry (canonical
+   *  null), where the isSynced gate is the backstop. */
   async materializeRelocated(path, noteId) {
     var _a, _b;
     if (!this.crdt || !path.endsWith(".md") || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
@@ -18727,12 +18697,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   getLastSync() {
     return this.lastSync;
   }
-  getSyncCursor() {
-    return this.syncCursor;
-  }
-  setSyncCursor(cursor) {
-    this.syncCursor = cursor && cursor.length > 0 ? cursor : null;
-  }
   getCatchupSeq() {
     return this.catchupSeq;
   }
@@ -18745,7 +18709,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.syncCursor = null, this.catchupSeq = 0, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "", syncCursor: null });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19407,13 +19371,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   isRecentlyPushed(path) {
     return this.recentlyPushed.has(path);
   }
-  /** Suppress the stream echo of a wipeRemote delete for this path. Marked
-   *  BEFORE the REST delete is issued — the fanout can arrive faster than
-   *  the HTTP response. Kept on error too: a client-side timeout can mask a
-   *  delete that actually landed, and the TTL bounds the false-positive. */
-  markWipedRemote(path) {
-    this.markWithTtl(this.wipedRemote, path, WIPE_ECHO_COOLDOWN_MS);
-  }
   /** Suppress the handleModify echo of a flushFromCrdt disk write for
    *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
    *  never swallows a genuine local edit. */
@@ -19426,7 +19383,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.markWithTtl(this.recentlyDeleted, noteId, RECENT_DELETE_COOLDOWN_MS);
   }
   /** MINT REFUSAL (backend #972, PRs #216/#217) — the single decision both
-   *  mint seams route through: pushFile and pushNotesViaBatch's flushChunk
+   *  mint seams route through: pushFile and pushGenesisBatch's flushChunk
    *  must honor identical ownership invariants
    *  (docs/context/crdt-batch-push-duplication.md). A mint means "brand-new,
    *  never-synced local note". A file this engine itself recently flushed to
@@ -19459,31 +19416,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return { changes: all2, server_time: serverTime };
   }
-  /** Resolve a (possibly meta-only) change to one that carries content.
-   *  Returns null when the change needs no work: the server hash matches the
-   *  stored serverHash AND the local file still exists — only the version is
-   *  advanced so the next push doesn't 409. */
-  async resolveChangeBody(change, opts = { skipUnchanged: !0 }) {
-    var _a, _b, _c;
-    if (change.deleted) return change;
-    let normalized = (0, import_obsidian21.normalizePath)(change.path);
-    if (opts.skipUnchanged && change.content_hash !== void 0) {
-      let stored = this.syncState.get(normalized);
-      if (this.app.vault.getFileByPath(normalized) !== null && (stored == null ? void 0 : stored.serverHash) === change.content_hash)
-        return this.syncState.set(normalized, {
-          ...stored,
-          version: (_a = change.version) != null ? _a : stored.version
-        }), devLog().log("pull", `skip (hash match): ${change.path}`), null;
-    }
-    if (change.content !== void 0) return change;
-    let note = await this.api.getNote(change.path);
-    return {
-      ...change,
-      content: note.content,
-      content_hash: (_b = note.content_hash) != null ? _b : change.content_hash,
-      version: (_c = note.version) != null ? _c : change.version
-    };
-  }
   /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
    *  durably recorded (P3, plugin #232-series). Idle notes are not
    *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
@@ -19504,141 +19436,154 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         devLog().log("crdt", `hibernateIfIdle: closeDoc ${noteId} failed \u2014 ${errMsg(e)}`);
       }
   }
-  /** Shared per-note convergence apply used by BOTH coldReceive (REST
-   *  getUpdates) and catchupViaSocket (crdt_catchup_delta). The ONLY difference
-   *  between the callers is how the delta bytes are obtained — injected as
-   *  `fetchDelta`. ALL guards live here so the socket path inherits them:
-   *  confirmed/live-bound/cost gates, the history-less adopt branch (#234),
-   *  disk-drift capture (BUG 2 / #3), the pending-gap heal, head advance, and
-   *  hibernate. Isolated: logs its own per-note failure and never throws.
-   *  Returns "converged" only when the head was advanced for delivered data;
-   *  "skipped" for a gate short-circuit; "failed" for a caught error / stalled
-   *  adopt. */
-  async convergeNoteFromDelta(path, noteId, serverHead, fetchDelta) {
-    if (!this.crdt || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || this.getCrdtHead(path) === serverHead) return "skipped";
-    try {
-      if (!(typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)) {
-        let adopted = await this.adoptHistoryLessNote(path, noteId, fetchDelta);
-        return adopted === null ? "failed" : (this.setCrdtHead(path, adopted), this.hibernateIfIdle(path, noteId), "converged");
-      }
-      await this.captureDiskDriftBeforeRemote(path, noteId);
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await fetchDelta(noteId, since);
-      if (await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
-        let since2 = toB64(await this.crdt.encodeStateVector(noteId)), { update: full, head: fullHead } = await fetchDelta(noteId, since2);
-        await this.crdt.applyRemoteUpdate(noteId, full), await this.crdt.hasPendingGap(noteId) || this.setCrdtHead(path, fullHead);
-      } else
-        this.setCrdtHead(path, head);
-      return this.hibernateIfIdle(path, noteId), "converged";
-    } catch (e) {
-      return devLog().log("crdt", `convergeNoteFromDelta: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `converge failed for ${path}: ${errMsg(e)}`), "failed";
-    }
-  }
-  setCrdtCatchup(heads, delta) {
-    this.crdtCatchupHeads = heads, this.crdtCatchupDelta = delta;
-  }
   setCrdtCatchupSince(fn) {
     this.crdtCatchupSince = fn;
   }
-  async catchupViaSeqReplay() {
-    if (this.seqReplayRunning) {
-      this.seqReplayAgain = !0;
-      return;
-    }
+  /** Returns the number of ops applied across this replay (incl. any coalesced
+   *  re-run) plus the sets of server note-ids and attachment paths seen
+   *  (non-deleted only) — used by the pull-all-delete / push-all-delete
+   *  choices. A coalesced call that folds into an in-flight replay returns
+   *  applied:0/empty sets — the running call reports the total. `fromZero`
+   *  forces the replay to start at cursor 0 regardless of the persisted
+   *  `catchupSeq` (idempotent re-replay). `enumerateOnly` (implies `fromZero`)
+   *  is a push/replace enumeration pass: it walks the same feed to collect
+   *  `serverIds`/`serverAttachmentPaths` but never applies an op locally
+   *  (`applySyncChange`) and never advances/persists the real `catchupSeq`
+   *  cursor — a "replace remote with local" must download nothing (that would
+   *  materialize remote extras as local orphans, which then resurrect on the
+   *  next sync), and mustn't steal seq progress from a later genuine catch-up. */
+  async catchupViaSeqReplay(opts = {}) {
+    var _a, _b, _c;
+    let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
+    if (this.seqReplayRunning)
+      return this.seqReplayAgain = !0, { applied: 0, serverIds, serverAttachmentPaths, ran: !1 };
     this.seqReplayRunning = !0;
+    let applied = 0;
     try {
       do
-        this.seqReplayAgain = !1, await this.runSeqReplayOnce();
+        this.seqReplayAgain = !1, applied += await this.runSeqReplayOnce(
+          ((_a = opts.fromZero) != null ? _a : !1) || ((_b = opts.enumerateOnly) != null ? _b : !1),
+          serverIds,
+          serverAttachmentPaths,
+          (_c = opts.enumerateOnly) != null ? _c : !1
+        );
       while (this.seqReplayAgain);
     } finally {
       this.seqReplayRunning = !1;
     }
+    return { applied, serverIds, serverAttachmentPaths, ran: !0 };
   }
-  async runSeqReplayOnce() {
+  /** Run `catchupViaSeqReplay` for a DESTRUCTIVE delete decision (pull-all wipe,
+   *  push-all replace-remote). Retries until THIS call executes the replay
+   *  exclusively (`ran === true`), so the returned server sets are real and
+   *  complete. A coalesced call (a background catch-up holds the single-flight
+   *  lock) returns EMPTY sets — trusting those would treat every local file as a
+   *  server-absent extra and trash the whole vault. Between attempts we yield a
+   *  short tick so the in-flight replay finishes and releases the lock. Returns
+   *  `null` if contention never clears; the caller MUST abort the delete pass on
+   *  `null` (never delete on untrustworthy sets — "empty set never means server
+   *  empty"). */
+  async catchupViaSeqReplayExclusive(opts) {
+    for (let attempt = 0; attempt < 10; attempt++) {
+      let res = await this.catchupViaSeqReplay(opts);
+      if (res.ran) return res;
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    return null;
+  }
+  /** The single catch-up path (socket-only, no REST fallback — a wedged socket
+   *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
+   *  replay can't cover, run around it:
+   *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
+   *      seed LOCAL empty-folder markers to the server.
+   *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
+   *      content (the authoritative delivery path).
+   *   3. `healDivergedLiveBoundNotes` — re-converge any live-bound note the
+   *      op-log replay could not deliver (its seq cursor already advanced past
+   *      the edit on a prior/background catch-up that failed to converge). The
+   *      manifest re-detects the divergence independent of the cursor. Before
+   *      the REST purge, fullSync had its OWN cursor separate from the socket
+   *      replay's, giving a live-bound note a second delivery chance; unifying
+   *      onto one `catchupSeq` removed it, so this restores that guarantee.
+   *   4. `syncExplicitFolders` — pull the server's empty-folder markers to disk
+   *      and propagate remote folder deletes.
+   *  Returns the applied-op count (for the progress recap / poll notice). Never
+   *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
+   *  never has to guard it. The manifest is fetched once and shared by steps 1
+   *  and 3. */
+  async catchUp() {
+    try {
+      let manifest = await this.api.getManifest();
+      await this.reconcileFromManifest(manifest);
+      let { applied } = await this.catchupViaSeqReplay();
+      await this.healDivergedLiveBoundNotes(manifest);
+      try {
+        await this.syncExplicitFolders();
+      } catch (e) {
+        rlog().error(
+          "pull",
+          `Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        );
+      }
+      return applied;
+    } catch (e) {
+      return rlog().error(
+        "pull",
+        `Catch-up failed: ${errMsg(e)}`,
+        e instanceof Error ? e.stack : void 0
+      ), 0;
+    }
+  }
+  async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
     var _a;
-    if (!this.crdtCatchupSince || !this.crdt) return;
-    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+    if (!this.crdtCatchupSince || !this.crdt) return 0;
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0, applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
       try {
         resp = await this.crdtCatchupSince(cursor, 500);
       } catch (e) {
-        rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`);
-        return;
+        return rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`), applied;
       }
       for (let c of resp.changes) {
-        try {
-          await this.applySyncChange(c);
-        } catch (e) {
-          rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
-        }
-        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq);
+        if (!enumerateOnly)
+          try {
+            await this.applySyncChange(c), applied += 1;
+          } catch (e) {
+            rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
+          }
+        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
       }
-      if (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() }), !resp.has_more) break;
+      if (enumerateOnly || (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() })), !resp.has_more) break;
       typeof resp.next_seq == "number" && (cursor = resp.next_seq);
     }
-  }
-  async catchupViaSocket() {
-    var _a;
-    if (!this.crdtCatchupHeads || !this.crdtCatchupDelta || !this.crdt) return;
-    let heads;
-    try {
-      ({ heads } = await this.crdtCatchupHeads());
-    } catch (e) {
-      rlog().warn("crdt", `socket catchup: heads fetch failed \u2014 ${errMsg(e)}`);
-      return;
-    }
-    let learned = !1;
-    for (let [noteId, entry] of Object.entries(heads)) {
-      let serverPath = entry.path;
-      if (!this.shouldIgnore(serverPath)) {
-        if (this.recentlyDeleted.has(noteId)) {
-          rlog().info("crdt", `catchup skip (recent local delete): ${serverPath}`);
-          continue;
-        }
-        if (this.queue.hasPendingDelete(serverPath, (_a = this.settings.vaultId) != null ? _a : void 0)) {
-          rlog().info("crdt", `catchup skip (pending local delete): ${serverPath}`);
-          continue;
-        }
-        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== serverPath && (this.noteIdMap.set(serverPath, noteId), learned = !0), await this.convergeNoteFromDelta(
-          serverPath,
-          noteId,
-          entry.head,
-          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
-            update: fromB64(x.b64),
-            head: x.head
-          }))
-        );
-      }
-    }
-    learned && this.noteIdMap && await this.saveData({ noteIds: this.noteIdMap.toJSON() });
+    return applied;
   }
   /** Per-note discovery from a room-open announce that carries a path
    *  (`crdt_doc_ready`, backend adds `path`). An EMPTY note's genesis integrates
    *  ZERO Y.Doc ops, so no `note_yjs_update` ever fans out — without this the
    *  note is only found ~30s later via the level-triggered pull (e2e test_27,
-   *  which materialized it at +31s, 1s past the deadline). Learn the id->path
-   *  mapping, confirm the id (an announce is authoritative proof the server holds
-   *  the row), and converge just this note over the SAME socket catch-up delta
-   *  channel `catchupViaSocket` uses, so the history-less adopt + empty
-   *  materialize backstop (`adoptHistoryLessNote` step 5) runs in seconds. Never
-   *  opens a dedicated room (the connect-storm) and never fabricates content: a
-   *  non-empty note adopts full server state, only a genuinely empty one hits the
-   *  backstop. Gate-safe and failure-isolated: never throws into the caller. */
+   *  which materialized it at +31s, 1s past the deadline).
+   *
+   *  The announce is a latency SIGNAL, not a data channel: run the ONE catch-up
+   *  path (`catchupViaSeqReplay`, crdt_catchup_since) NOW rather than waiting for
+   *  the next poll. The announced note's op sits after this device's cursor and
+   *  carries FULL content (empty notes included), so the seq replay materializes
+   *  it via applySyncChange — no per-note socket delta, no history-less adopt
+   *  race. This replaced the retired `crdt_catchup_delta` frame, whose bad_frame
+   *  reply against the single-path backend caused a 0-byte materialize (the
+   *  test_86/test_82 e2e regression). Single-flight coalesced, so an announce
+   *  burst collapses to one replay. Learn the id->path mapping first (discovery
+   *  source + so a downstream delete-wins guard can key off it). Gate-safe and
+   *  failure-isolated: never throws into the caller. */
   async discoverAnnouncedNote(noteId, path) {
     var _a;
-    if (!this.crdt || !this.crdtCatchupDelta || this.isSyncBlocked()) return;
+    if (!this.crdt || !this.crdtCatchupSince || this.isSyncBlocked()) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
     if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
       try {
-        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.convergeNoteFromDelta(
-          normalized,
-          noteId,
-          CRDT_HEAD_ANNOUNCED,
-          (id2, sv) => this.crdtCatchupDelta(id2, sv).then((x) => ({
-            update: fromB64(x.b64),
-            head: x.head
-          }))
-        );
+        this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.catchupViaSeqReplay();
       } catch (e) {
         rlog().warn("crdt", `discoverAnnouncedNote failed for ${path}: ${errMsg(e)}`);
       }
@@ -19724,7 +19669,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (noteId)
       try {
         if (!this.isNoteConfirmed(noteId)) {
-          await this.catchupViaSocket();
+          await this.catchupViaSeqReplay();
           return;
         }
         if (!this.isLiveBound(normalized)) return;
@@ -19732,67 +19677,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
       }
-  }
-  /** Pull remote changes and apply to the vault via the ordered cursor feed.
-   *
-   *  No persisted cursor → a manifest-authoritative bootstrap (reconcile local
-   *  files against the server, then a genesis cursor pull delivers content).
-   *  A persisted cursor → resume the ordered feed from that position. A 410
-   *  (history compacted past our cursor; PR D) surfaces as HistoryExpiredError
-   *  → drop the cursor and re-bootstrap.
-   *
-   *  NOTE: `lastSync` is intentionally left untouched here. It is no longer the
-   *  pull watermark (the cursor is), but `fullSync` still snapshots it as the
-   *  pre-pull push boundary and it's retained for rollback to the legacy feed.
-   *
-   *  Explicit empty-folder markers ride a SEPARATE endpoint (not the cursor
-   *  feed), so `syncExplicitFolders()` is still called post-apply — it both
-   *  materializes server-marked empty folders and hydrates the
-   *  `explicitFolders` set that `removeEmptyFolders` consults to avoid trashing
-   *  folders intentionally kept empty on another device. Best-effort/non-fatal. */
-  async pull(emitProgress = !1) {
-    var _a, _b;
-    if (this.syncBlocked)
-      return devLog().log("sync-blocked", "pull short-circuited \u2014 gate closed"), 0;
-    if (this.pulling)
-      return this.pullPending = !0, 0;
-    this.pulling = !0, this.lastError = "", this.emitStatus(), rlog().info("pull", `Pull started cursor=${(_a = this.getSyncCursor()) != null ? _a : "(bootstrap)"}`);
-    try {
-      this.getSyncCursor() !== null && this.syncStateVaultId !== null && this.settings.vaultId != null && this.syncStateVaultId !== this.settings.vaultId && await this.invalidateIfVaultChanged();
-      let applied;
-      if (!this.getSyncCursor())
-        applied = await this.bootstrap(emitProgress);
-      else
-        try {
-          applied = await this.pullViaCursor(
-            (_b = this.getSyncCursor()) != null ? _b : void 0,
-            emitProgress
-          );
-        } catch (e) {
-          if (e instanceof HistoryExpiredError)
-            rlog().warn("pull", "HISTORY_EXPIRED \u2014 re-bootstrapping"), this.setSyncCursor(null), await this.saveData({ syncCursor: null }), applied = await this.bootstrap(emitProgress);
-          else
-            throw e;
-        }
-      try {
-        await this.syncExplicitFolders();
-      } catch (e) {
-        rlog().error(
-          "pull",
-          `Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
-          e instanceof Error ? e.stack : void 0
-        );
-      }
-      return applied;
-    } catch (e) {
-      return console.error("Engram Sync: pull failed", e), rlog().error(
-        "pull",
-        `Pull failed: ${errMsg(e)}`,
-        e instanceof Error ? e.stack : void 0
-      ), this.lastError = e instanceof Error ? `Pull failed: ${e.message}` : "Pull failed", 0;
-    } finally {
-      this.pulling = !1, this.emitStatus(), await this.flushPostPullPushes(), this.pullPending && (this.pullPending = !1, this.pull());
-    }
   }
   /** Arm a one-shot bounded drain for the deferral above. Draining early is
    *  safe: pushFile's echo-hash gate filters sync-write echoes either way —
@@ -19823,163 +19707,81 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     return this.syncBlocked ? (devLog().log("sync-blocked", "pullAll short-circuited \u2014 gate closed"), 0) : this._pullAll((_a = opts.deleteLocalExtras) != null ? _a : !1);
   }
+  /** REST-purge Bucket B (Task 5 + 5b): replay the merged notes+attachments
+   *  op-log from cursor 0 instead of a REST `GET /notes/changes`/`GET
+   *  /attachments/changes` fetch. `deleteLocalExtras` no longer blind-wipes
+   *  every local file up front — it compares each locally-mapped note id
+   *  against the replay's authoritative `serverIds` set (notes) and each
+   *  local attachment's path against `serverAttachmentPaths` (attachments),
+   *  trashing only the ones absent from the server (data-loss guard: a
+   *  blind pre-wipe followed by a failed/partial refetch used to strand the
+   *  vault empty). */
   async _pullAll(wipe) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e;
     if (this.pulling) return 0;
-    if ((_a = this.syncLog) == null || _a.clear(), this.pulling = !0, this.lastError = "", this.emitStatus(), wipe) {
-      this.suppressDeletes = !0, devLog().log("pull", "pullAll(deleteLocalExtras): deleting all local syncable files"), rlog().info("pull", "pullAll(deleteLocalExtras) started \u2014 deleting local files");
-      let syncable = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), wipeTotal = syncable.length;
-      (_b = this.onSyncProgress) == null || _b.call(this, { phase: "deleting", current: 0, total: wipeTotal, failed: 0 });
-      let wipeFailed = 0;
-      for (let i = 0; i < syncable.length; i++) {
-        let file = syncable[i];
-        try {
-          await this.trashRemotelyDeleted(file), this.logEntry("delete", file.path, "ok", void 0, "wipe");
-        } catch (e) {
-          wipeFailed++;
-          let msg = errMsg(e);
-          this.logEntry("delete", file.path, "error", msg);
-        }
-        (_c = this.onSyncProgress) == null || _c.call(this, {
-          phase: "deleting",
-          current: i + 1,
-          total: wipeTotal,
-          failed: wipeFailed,
-          currentPath: file.path
-        }), (i + 1) % 20 === 0 && await new Promise((resolve) => window.setTimeout(resolve, 0));
-      }
-      this.syncState.clear(), this.lastSync = "", await this.saveData({ lastSync: "" }), devLog().log(
-        "pull",
-        `pullAll(deleteLocalExtras): deleted ${syncable.length} local files, sync state reset`
-      ), rlog().info(
-        "pull",
-        `pullAll(deleteLocalExtras) deleted ${syncable.length} local files`
-      );
-    }
-    devLog().log(
-      "pull",
-      `${wipe ? "pullAll(deleteLocalExtras)" : "pullAll"}: fetching everything from server`
-    ), rlog().info(
-      "pull",
-      `${wipe ? "pullAll(deleteLocalExtras)" : "pullAll"} started \u2014 fetching everything from epoch`
-    );
+    (_a = this.syncLog) == null || _a.clear(), this.pulling = !0, this.lastError = "", this.emitStatus();
+    let label = wipe ? "pullAll(deleteLocalExtras)" : "pullAll";
+    devLog().log("pull", `${label}: replaying note op-log from 0`), rlog().info("pull", `${label} started \u2014 replay from 0`);
     try {
-      let epoch = "1970-01-01T00:00:00Z", [noteResp, attachResp] = await Promise.all([
-        this.fetchAllNoteChanges(epoch),
-        this.api.getAttachmentChanges(epoch)
-      ]);
-      devLog().log(
+      (_b = this.onSyncProgress) == null || _b.call(this, { phase: "pulling", current: 0, total: 0, failed: 0 });
+      let applied, serverIds, serverAttachmentPaths;
+      if (wipe) {
+        let replay = await this.catchupViaSeqReplayExclusive({ fromZero: !0 });
+        if (!replay)
+          return this.lastError = "Pull all (delete extras) aborted: could not obtain an exclusive server snapshot (replay contention). Nothing was trashed.", devLog().log(
+            "error",
+            `${label} ABORTED \u2014 replay coalesced under contention; refusing to trash`
+          ), rlog().error(
+            "pull",
+            `${label} ABORTED \u2014 replay never ran exclusively (persistent contention); refusing to trash on an untrustworthy (possibly empty) server set`
+          ), 0;
+        ({ applied, serverIds, serverAttachmentPaths } = replay);
+      } else
+        ({ applied, serverIds, serverAttachmentPaths } = await this.catchupViaSeqReplay({
+          fromZero: !0
+        }));
+      if (devLog().log(
         "pull",
-        `pullAll: fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
-      ), rlog().info(
-        "pull",
-        `PullAll fetched ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
-      );
-      let noteChanges, attachChanges;
-      if (wipe)
-        noteChanges = noteResp.changes, attachChanges = attachResp.changes;
-      else {
-        noteChanges = [];
-        for (let change of noteResp.changes) {
-          if (change.deleted || this.shouldIgnore(change.path)) {
-            noteChanges.push(change);
-            continue;
+        `${label}: replay applied=${applied}, serverIds=${serverIds.size}, serverAttachmentPaths=${serverAttachmentPaths.size}`
+      ), rlog().info("pull", `${label} replay done \u2014 applied=${applied}`), wipe) {
+        this.suppressDeletes = !0;
+        let extras = this.app.vault.getFiles().filter((f) => {
+          var _a2, _b2;
+          return !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.isBinaryFile(f) ? !serverAttachmentPaths.has(f.path) : !serverIds.has((_b2 = (_a2 = this.noteIdMap) == null ? void 0 : _a2.get(f.path)) != null ? _b2 : "");
+        }), total = extras.length;
+        (_c = this.onSyncProgress) == null || _c.call(this, { phase: "deleting", current: 0, total, failed: 0 });
+        let deleteFailed = 0;
+        for (let i = 0; i < extras.length; i++) {
+          let file = extras[i];
+          try {
+            await this.trashRemotelyDeleted(file), this.logEntry("delete", file.path, "ok", void 0, "wipe");
+          } catch (e) {
+            deleteFailed++;
+            let msg = errMsg(e);
+            this.logEntry("delete", file.path, "error", msg);
           }
-          let normalized = (0, import_obsidian21.normalizePath)(change.path), existing = this.app.vault.getFileByPath(normalized);
-          if (existing) {
-            let localContent = await this.app.vault.cachedRead(existing), stored = this.syncState.get(normalized), localUnchanged = stored !== void 0 && stored.hash === fnv1a(localContent);
-            if (change.content_hash !== void 0 && (stored == null ? void 0 : stored.serverHash) === change.content_hash && localUnchanged) {
-              this.syncState.set(normalized, {
-                ...stored,
-                version: (_d = change.version) != null ? _d : stored.version
-              });
-              continue;
-            }
-            if (change.content !== void 0 && localContent === change.content) {
-              this.syncState.set(normalized, {
-                hash: fnv1a(localContent),
-                version: change.version,
-                serverHash: change.content_hash
-              }), change.version != null && ((_e = this.baseStore) == null || _e.set(normalized, change.content, change.version));
-              continue;
-            }
-          }
-          noteChanges.push(change);
+          (_d = this.onSyncProgress) == null || _d.call(this, {
+            phase: "deleting",
+            current: i + 1,
+            total,
+            failed: deleteFailed,
+            currentPath: file.path
+          }), (i + 1) % 20 === 0 && await new Promise((resolve) => window.setTimeout(resolve, 0));
         }
-        attachChanges = attachResp.changes.filter((change) => change.deleted ? !0 : !this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(change.path)));
-      }
-      let applied = 0, failed = 0, noteCount = noteChanges.length, attachCount = attachChanges.length, total = noteCount + attachCount;
-      devLog().log(
-        "pull",
-        `pullAll: server returned ${noteResp.changes.length} notes, ${attachResp.changes.length} attachments`
-      ), devLog().log(
-        "pull",
-        `pullAll: after filter: ${noteCount} notes, ${attachCount} attachments to apply (wipe=${wipe})`
-      ), (_f = this.onSyncProgress) == null || _f.call(this, { phase: "pulling", current: 0, total, failed: 0 });
-      for (let i = 0; i < noteChanges.length; i += 10) {
-        let batch = noteChanges.slice(i, i + 10), lastPath = batch[batch.length - 1].path, results = await Promise.all(
-          batch.map(async (change) => {
-            try {
-              let resolved = await this.resolveChangeBody(change, {
-                skipUnchanged: !1
-              }), ok = resolved ? await this.applyChange(resolved, !0) : !1;
-              return ok ? this.logEntry("pull", change.path, "ok") : this.logEntry(
-                "skip",
-                change.path,
-                "skipped",
-                void 0,
-                "unchanged"
-              ), ok ? "ok" : "skip";
-            } catch (e) {
-              let msg = errMsg(e);
-              return rlog().error("pull", `Skipped note: ${change.path} \u2014 ${msg}`), this.logEntry("pull", change.path, "error", msg), "error";
-            }
-          })
+        devLog().log(
+          "pull",
+          `${label}: trashed ${extras.length - deleteFailed} local extras (failed=${deleteFailed})`
+        ), rlog().info(
+          "pull",
+          `${label} trashed ${extras.length - deleteFailed} local extras`
         );
-        for (let r of results)
-          r === "ok" ? applied++ : r === "error" && failed++;
-        (_g = this.onSyncProgress) == null || _g.call(this, {
-          phase: "pulling",
-          current: applied,
-          total,
-          failed,
-          currentPath: lastPath
-        });
       }
-      for (let i = 0; i < attachChanges.length; i += 5) {
-        let batch = attachChanges.slice(i, i + 5), lastPath = batch[batch.length - 1].path, results = await Promise.all(
-          batch.map(async (change) => {
-            try {
-              let ok = await this.applyAttachmentChange(change);
-              return ok ? this.logEntry("pull", change.path, "ok") : this.logEntry(
-                "skip",
-                change.path,
-                "skipped",
-                void 0,
-                "unchanged"
-              ), ok ? "ok" : "skip";
-            } catch (e) {
-              let msg = errMsg(e);
-              return rlog().error("pull", `Skipped attachment: ${change.path} \u2014 ${msg}`), this.logEntry("pull", change.path, "error", msg), "error";
-            }
-          })
-        );
-        for (let r of results)
-          r === "ok" ? applied++ : r === "error" && failed++;
-        (_h = this.onSyncProgress) == null || _h.call(this, {
-          phase: "pulling",
-          current: applied,
-          total,
-          failed,
-          currentPath: lastPath
-        });
-      }
-      (_i = this.onSyncProgress) == null || _i.call(this, { phase: "complete", current: applied, total, failed });
-      let serverTime = noteResp.server_time > attachResp.server_time ? noteResp.server_time : attachResp.server_time;
-      return this.lastSync = serverTime, await this.saveData({ lastSync: this.lastSync }), devLog().log(
-        "pull",
-        `pullAll: done \u2014 applied=${applied}, failed=${failed}, total=${total}, lastSync=${this.lastSync}`
-      ), rlog().info("pull", `PullAll done \u2014 applied=${applied}, failed=${failed}`), applied;
+      return (_e = this.onSyncProgress) == null || _e.call(this, {
+        phase: "complete",
+        current: applied,
+        total: applied,
+        failed: 0
+      }), devLog().log("pull", `${label}: done \u2014 applied=${applied}`), rlog().info("pull", `${label} done \u2014 applied=${applied}`), applied;
     } catch (e) {
       return console.error("Engram Sync: pullAll failed", e), devLog().log("error", `pullAll failed: ${errMsg(e)}`), rlog().error(
         "pull",
@@ -19989,6 +19791,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     } finally {
       this.pulling = !1, this.suppressDeletes = !1, this.emitStatus(), await this.flushPostPullPushes();
     }
+  }
+  /** Resolve a stream event's authoritative body: the broadcast's inline
+   *  content when present, else ONE getNote fetch (hash-only broadcasts / empty
+   *  or meta-projected notes carry no body). A learned empty-hash retires the
+   *  fetch for later inline-"" upserts carrying the same hash (see the ingress
+   *  guard). Shared by the CRDT first-delivery path and the legacy fallback so
+   *  the fetch + empty-hash learn lives in exactly one place. (getNote-for-sync
+   *  removal is Phase E.) */
+  async resolveEventBody(event) {
+    if (event.content !== void 0) return event.content;
+    let body = (await this.api.getNote(event.path)).content;
+    return body === "" && event.content_hash && (this.emptyContentHash = event.content_hash), body;
+  }
+  /** Reshape a live stream event + resolved body into the single `SyncOp` shape
+   *  so the CRDT-managed first-delivery / rename new-leg both converge through
+   *  `applyOp`. */
+  eventToOp(event, content, id2) {
+    var _a, _b, _c, _d, _e;
+    return {
+      kind: "upsert",
+      id: id2,
+      path: event.path,
+      content,
+      content_hash: event.content_hash,
+      folder: (_a = event.folder) != null ? _a : "",
+      title: (_b = event.title) != null ? _b : "",
+      tags: (_c = event.tags) != null ? _c : [],
+      mtime: (_d = event.mtime) != null ? _d : Date.now(),
+      updated_at: (_e = event.updated_at) != null ? _e : (/* @__PURE__ */ new Date()).toISOString(),
+      version: event.version
+    };
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
@@ -20032,11 +19865,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let normalized = (0, import_obsidian21.normalizePath)(event.path);
       if (this.deviceId && event.device_id === this.deviceId) {
         rlog().info("ws", `Echo skip (own device): ${event.path}`);
-        return;
-      }
-      let foreignAttributed = !!event.device_id && event.device_id !== this.deviceId;
-      if (this.wipedRemote.has(normalized) && !foreignAttributed) {
-        rlog().info("ws", `Echo skip (wipe-remote): ${event.path}`);
         return;
       }
       let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, roomId = targetId != null ? targetId : currentId, relocatedPath = roomId && (_h = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(roomId)) != null ? _h : null;
@@ -20116,10 +19944,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             );
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
             if (priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np)) {
-              let body = event.content;
-              body === void 0 && (body = (await this.api.getNote(event.path)).content, body === "" && event.content_hash && (this.emptyContentHash = event.content_hash)), await this.flushFromCrdt(np, body);
+              let body = await this.resolveEventBody(event);
+              body !== void 0 && await this.applyOp(this.eventToOp(event, body, noteId));
             }
-            priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.flushFromCrdt(np, event.content) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
+            priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
           }
         } else if (event.content !== void 0)
           await this.applyChange({
@@ -20159,7 +19987,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
     if (eventTs !== void 0) {
       let lastTs = this.lastRelocationTs.get(id2);
-      if (lastTs !== void 0 && eventTs <= lastTs) {
+      if (lastTs !== void 0 && eventTs < lastTs) {
         rlog().info(
           "pull",
           `Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ${id2} -> ${newPath}`
@@ -20193,14 +20021,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().warn(
           "pull",
           `Id-keyed move file ops failed (old file vanished mid-flight?): ${priorPath} -> ${newPath} \u2014 ${errMsg(e)}`
-        ), this.pull();
+        ), this.catchupViaSeqReplay();
       }
   }
-  /** Apply one merged cursor-feed entry by dispatching to the existing note /
-   *  attachment apply primitives. The feed's `type`/`seq`/`id` are stripped;
-   *  applyChange / applyAttachmentChange own tombstone, merge, and skip logic. */
+  /** Apply one merged cursor-feed entry. Attachments route to their own
+   *  primitive; note entries are reshaped into a `SyncOp` and applied through
+   *  the single `applyOp` path (Phase C). The feed's `type` is stripped. */
   async applySyncChange(c) {
-    var _a, _b;
     if (c.type === "attachment") {
       let ac = {
         path: c.path,
@@ -20212,17 +20039,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       };
       return this.applyAttachmentChange(ac);
     }
-    if (!c.path) return !1;
-    if (!c.deleted) {
-      let relocationTs = Date.parse(c.updated_at);
-      await this.moveIfIdRelocated(
-        c.id,
-        c.path,
-        Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_a = this.noteIdMap) == null || _a.set(c.path, c.id), this.confirmNoteId(c.id), this.shouldIgnore(c.path) || this.recordParseStatus(c.path, "note", c.parse_status, c.parse_reason);
-    }
-    let nc = {
+    return this.applyOp({
+      kind: c.deleted ? "delete" : "upsert",
+      id: c.id,
       path: c.path,
+      seq: c.seq,
       title: c.title,
       content: c.content,
       content_hash: c.content_hash,
@@ -20230,90 +20051,124 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       tags: c.tags,
       mtime: c.mtime,
       updated_at: c.updated_at,
-      deleted: c.deleted,
-      version: c.version
-    }, applied = await this.applyChange(nc);
-    return c.deleted && ((_b = this.noteIdMap) == null || _b.delete(c.path)), applied;
+      version: c.version,
+      parse_status: c.parse_status,
+      parse_reason: c.parse_reason
+    });
   }
-  /** No-cursor bootstrap: manifest-authoritative §F reconcile of LOCAL files
-   *  (delete server-deleted, push offline-created — disambiguated by the
-   *  syncState baseline), then a genesis cursor pull delivers/refreshes content
-   *  (3-way merging diverged files via applyChange). Returns count applied. */
-  async bootstrap(emitProgress = !1) {
+  /** THE single deterministic apply for markdown sync (Phase C). Every op —
+   *  live fan-out or catch-up replay — converges through here, dispatched by
+   *  `kind`. Owns id learning/retirement and id-keyed relocation; delegates the
+   *  materialize/merge/tombstone/resurrection logic to the shared `applyChange`
+   *  core. Attachments are NOT ops (they stay on the binary channel). */
+  async applyOp(op) {
+    var _a, _b, _c;
+    if (!op.path) return !1;
+    if (op.kind === "upsert" && (this.recentlyDeleted.has(op.id) || this.queue.hasPendingDelete(
+      (0, import_obsidian21.normalizePath)(op.path),
+      (_a = this.settings.vaultId) != null ? _a : void 0
+    )))
+      return rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`), !1;
+    if (op.kind === "upsert") {
+      let relocationTs = Date.parse(op.updated_at);
+      await this.moveIfIdRelocated(
+        op.id,
+        op.path,
+        Number.isNaN(relocationTs) ? void 0 : relocationTs
+      ), (_b = this.noteIdMap) == null || _b.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
+    }
+    let nc = {
+      path: op.path,
+      title: op.title,
+      content: op.content,
+      content_hash: op.content_hash,
+      folder: op.folder,
+      tags: op.tags,
+      mtime: op.mtime,
+      updated_at: op.updated_at,
+      deleted: op.kind === "delete",
+      version: op.version
+    }, applied = await this.applyChange(nc);
+    return op.kind === "delete" && ((_c = this.noteIdMap) == null || _c.delete(op.path)), applied;
+  }
+  /** Manifest-diff reconcile: trash files the server deleted while we were
+   *  away (in baseline, absent from the manifest) and drop their baseline, then
+   *  seed markers for folders the server can't derive (empty / non-syncable
+   *  only). Does NOT pull content and does NOT push — content arrives via the
+   *  seq-replay catch-up, and offline-created (never-synced) files push via
+   *  pushModifiedFiles.
+   *
+   *  A manifest snapshot is the ONLY way to catch a server-delete once the
+   *  op-log has GC'd the tombstone — a replay-from-0 cannot see it — so this is
+   *  a standalone step in every catch-up path (fullSync, poll). Idempotent; a
+   *  per-file trash failure is logged, never thrown, and leaves the baseline
+   *  entry intact (clearing it would reclassify the file as offline-created and
+   *  resurrect it on the next push). A null manifest (pre-B1 backend / 404) is
+   *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
+   *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
+  async reconcileFromManifest(manifest) {
     var _a;
-    rlog().info("pull", "Bootstrap \u2014 manifest reconcile + genesis cursor pull");
-    let manifest = await this.api.getManifest();
-    if (!manifest) return this.pullViaCursor(void 0, emitProgress);
+    let m = manifest === void 0 ? await this.api.getManifest() : manifest;
+    if (!m) return;
     let serverPaths = /* @__PURE__ */ new Set([
-      ...manifest.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
-      ...manifest.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
-    ]), toPush = [];
+      ...m.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
+      ...m.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
+    ]);
     for (let file of this.app.vault.getFiles()) {
       if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
       let np = (0, import_obsidian21.normalizePath)(file.path);
-      if (!serverPaths.has(np))
-        if (this.syncState.has(np))
-          try {
-            await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Bootstrap: server-deleted \u2192 trashed ${file.path}`);
-          } catch (e) {
-            rlog().error(
-              "pull",
-              `Bootstrap trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
-              e instanceof Error ? e.stack : void 0
-            );
-          }
-        else
-          toPush.push(file);
-    }
-    let knownTotal = manifest.notes.length + manifest.attachments.length, applied = await this.pullViaCursor(void 0, emitProgress, knownTotal);
-    this.getSyncCursor() === null && typeof manifest.change_seq == "number" && (this.setSyncCursor(encodeCursor(manifest.change_seq, MAX_CURSOR_UUID)), await this.saveData({ syncCursor: this.getSyncCursor() }));
-    for (let file of toPush)
-      try {
-        await this.pushFile(file, !0);
-      } catch (e) {
-        rlog().error(
-          "pull",
-          `Bootstrap push failed: ${file.path} \u2014 ${errMsg(e)}`,
-          e instanceof Error ? e.stack : void 0
-        );
-      }
-    return await this.seedEmptyFolders(), applied;
-  }
-  /** Drain the ordered cursor feed from `startCursor` (undefined = genesis pull,
-   *  server returns from seq 0). Applies each entry, persists the cursor after
-   *  every page (at-least-once; applies are idempotent), returns count applied.
-   *  Throws HistoryExpiredError on 410. */
-  async pullViaCursor(startCursor, emitProgress = !1, knownTotal) {
-    var _a;
-    let cursor = startCursor, applied = 0;
-    for (let page = 0; page < 1e5; page++) {
-      let resp;
-      try {
-        resp = await this.api.getSyncChanges(cursor, 500);
-      } catch (e) {
-        throw e.status === 410 ? new HistoryExpiredError() : e;
-      }
-      for (let c of resp.changes)
+      if (!serverPaths.has(np) && this.syncState.has(np))
         try {
-          await this.applySyncChange(c) && applied++;
+          await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
         } catch (e) {
-          let msg = errMsg(e);
           rlog().error(
             "pull",
-            `Skipped ${c.type} ${c.path} \u2014 ${msg}`,
+            `Reconcile trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
           );
         }
-      let last2 = resp.changes[resp.changes.length - 1];
-      if (resp.next_cursor ? this.setSyncCursor(resp.next_cursor) : last2 && this.setSyncCursor(encodeCursor(last2.seq, last2.id)), await this.saveData({ syncCursor: this.getSyncCursor() }), emitProgress && ((_a = this.onSyncProgress) == null || _a.call(this, {
-        phase: "pulling",
-        current: applied,
-        total: knownTotal != null ? knownTotal : 0,
-        failed: 0
-      })), !resp.has_more || !resp.next_cursor) break;
-      cursor = resp.next_cursor;
     }
-    return applied;
+    await this.seedEmptyFolders();
+  }
+  /** Re-converge any LIVE-BOUND note whose server content (per the manifest)
+   *  diverges from our recorded baseline — independent of the seq cursor.
+   *
+   *  The socket seq-replay advances `catchupSeq` past every op it sees
+   *  (monotonic, so a permanently-unappliable op can't stall the feed). A
+   *  live-bound note whose convergence FAILED on a prior catch-up (e.g. a
+   *  background reconnect replay that consumed the edit op before the live
+   *  Y.Doc could take it) is therefore never re-delivered by cursor alone.
+   *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
+   *  socket replay, so it re-delivered the diverged note and converged it; the
+   *  cursor unification removed that. This restores it: a manifest snapshot
+   *  re-detects the divergence every catch-up and re-fires the same idempotent
+   *  `restConvergeLiveBound` (a converged note's serverHash already matches and
+   *  is skipped). Only live-bound notes (the editor owns the body, so disk
+   *  writes are unsafe) need it — idle divergences heal through the normal
+   *  op-log apply. Best-effort; never throws into catchUp. */
+  async healDivergedLiveBoundNotes(manifest) {
+    var _a, _b, _c, _d, _e;
+    if (!(!manifest || !this.crdt))
+      for (let entry of manifest.notes) {
+        let path = (0, import_obsidian21.normalizePath)(entry.path);
+        if (!this.isLiveBound(path)) continue;
+        let stored = this.syncState.get(path);
+        if (entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
+        let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
+        if (noteId)
+          try {
+            if (await this.restConvergeLiveBound(path, noteId) && entry.content_hash) {
+              let boundFile = this.app.vault.getFileByPath(path), localHash = (_d = stored == null ? void 0 : stored.hash) != null ? _d : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+              this.syncState.set(path, {
+                ...(_e = this.syncState.get(path)) != null ? _e : {},
+                hash: localHash,
+                serverHash: entry.content_hash
+              });
+            }
+          } catch (e) {
+            rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+          }
+      }
   }
   /** Apply a single remote change to the vault, with conflict detection.
    *  Returns true when a file was actually created, modified, or trashed.
@@ -20734,7 +20589,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), devLog().log("error", `fullSync auth failed: ${this.lastError}`), rlog().error("lifecycle", `Auth failed: ${this.lastError}`), new Error(this.lastError);
     await this.invalidateIfVaultChanged();
-    let prePullSync = this.lastSync, pulled = await this.pull(!0), pushed = await this.pushModifiedFiles(prePullSync), synced = pulled + pushed;
+    let prePullSync = this.lastSync, pulled = await this.catchUp(), pushed = await this.pushModifiedFiles(prePullSync), synced = pulled + pushed;
     return (_a = this.onSyncProgress) == null || _a.call(this, {
       phase: "complete",
       current: synced,
@@ -20749,12 +20604,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   markCrdtOpsUnsupported(status) {
     (status === 404 || status === 405) && (this.crdtOpsUnsupported = !0);
   }
-  /** Persist a content-free, crdt-tagged upsert to the durable queue. Both
-   *  channel-down seams (pushFile and pushNotesViaBatch) must produce an
-   *  IDENTICAL entry so runFlushQueue's noteId-keyed /updates branch delivers
-   *  them the same way — keep the two producers in lockstep here rather than
-   *  duplicating the object literal, so a new field can't be added to one seam
-   *  and forgotten on the other. */
+  /** Persist a content-free, crdt-tagged upsert to the durable queue. Both of
+   *  pushFile's channel-down seams must produce an IDENTICAL entry so
+   *  runFlushQueue's noteId-keyed /updates branch delivers them the same way —
+   *  keep the producers in lockstep here rather than duplicating the object
+   *  literal, so a new field can't be added to one seam and forgotten on the
+   *  other. */
   async enqueueCrdtEdit(file, noteId) {
     var _a;
     await this.enqueueChange({
@@ -20768,222 +20623,145 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       vaultId: (_a = this.settings.vaultId) != null ? _a : void 0
     });
   }
-  /** Bulk-push note files via POST /notes/batch in chunks of 100.
+  /** Split note files into genesis (never-server-known → crdt_create_batch) and
+   *  server-known (→ the per-file pushFile loop). Genesis is decided by the same
+   *  `hasServerNote` oracle pushFile routes on (crdtHead != null). When the batch
+   *  op is unwired, every note goes to the per-file side — pushFile's own
+   *  crdt_create / REST genesis still creates never-synced notes there. */
+  partitionGenesis(noteFiles) {
+    var _a, _b;
+    if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
+    let genesis = [], known = [];
+    for (let f of noteFiles) {
+      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian21.normalizePath)(f.path))) != null ? _b : null;
+      this.hasServerNote(id2) ? known.push(f) : genesis.push(f);
+    }
+    return { genesis, known };
+  }
+  /** Build the base64 `messageSync` frame that carries a brand-new note's
+   *  initial content inline in `crdt_create_batch`. Reuses the manager's exact
+   *  seed encoding (`encodeGenesisUpdate`) + the channel's exact update-frame
+   *  wrap (`encodeUpdateFrame`), so the frame the server applies via
+   *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
+   *  would deliver — a divergent encoding would corrupt content on merge. */
+  encodeGenesisFrame(content) {
+    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content));
+  }
+  /** Record local state after a genesis note's server row is created (batch
+   *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
+   *  adopt the authoritative id, flip the `hasServerNote` oracle via a sentinel
+   *  crdtHead, and stamp the echo baseline from the pushed content so a later
+   *  identical edit is hash-skipped — the guard that prevents a second-lineage
+   *  doubling (#846) since the device never seeds its own real doc from this
+   *  content (it adopts the server lineage on the first handshake). Only ever
+   *  reached for a genuinely history-LESS note: the batch caller routes any note
+   *  that already carries a local CRDT lineage to `pushFile` instead. */
+  recordCrdtGenesisPushed(file, content, serverId) {
+    var _a, _b;
+    let np = (0, import_obsidian21.normalizePath)(file.path);
+    (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
+    let existing = (_b = this.syncState.get(np)) != null ? _b : { hash: 0 };
+    this.syncState.set(np, {
+      ...existing,
+      hash: fnv1a(content),
+      crdtHead: CRDT_HEAD_CREATED
+    }), this.issues.clear(file.path);
+  }
+  /** Bulk-create genesis notes (never-server-known) through ONE
+   *  `crdt_create_batch` round-trip, carrying each note's initial content inline
+   *  as a `messageSync` frame. Server-known notes are NOT handled here — the
+   *  caller routes them through the per-file `pushFile` loop.
    *
-   *  Returns null when the server lacks the endpoint (pre-rev backend) —
-   *  the caller falls back to per-file pushes. Per-result handling:
-   *  ok → record state (incl. server-sanitized renames); conflict → re-route
-   *  through pushFile so the existing 3-way merge / interactive flow stays
-   *  the single conflict path; error → record an issue. A transport error
-   *  mid-bulk enqueues the remaining files and goes offline, mirroring the
-   *  single-push error path. */
-  async pushNotesViaBatch(files, force, onProgress) {
+   *  Preserves the batch edge cases pushNotesViaBatch owned:
+   *   - mint-refusal (#217): an engine-flushed, id-relocated path is skipped;
+   *   - id-adoption: the server-echoed winning `doc_id` (a create-race) is adopted;
+   *   - delete-wins: a `recently_deleted` result trashes the local file (converge);
+   *   - oversized: a note whose frame exceeds the payload budget routes to
+   *     pushFile so the server's 413 yields the proper too_large issue;
+   *   - #245 path snapshot: each entry's path is snapshotted for the request
+   *     lifetime (TFile.path is live);
+   *   - chunk ≤100 notes / ~6MB per request (the server caps creates at 100).
+   *
+   *  A live-bound genesis note is NOT batched (it routes to pushFile too): its
+   *  editor may hold keystrokes not yet on disk, and a disk-content frame would
+   *  drop them — pushFile's live-adopt path transfers the in-flight buffer. */
+  async pushGenesisBatch(files, onProgress) {
     var _a, _b, _c, _d;
-    if (this.batchPushUnsupported) return null;
-    let MAX_BATCH_NOTE_BYTES = 10 * 1024 * 1024, BATCH_PAYLOAD_BUDGET = 6e6, BATCH_MAX_NOTES = 100, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, oversized = [], flushChunk = async () => {
-      var _a2, _b2, _c2;
-      if (chunk.length === 0) return "ok";
-      let entries = [];
-      for (let e of chunk) {
-        if (this.shouldDeferMint((0, import_obsidian21.normalizePath)(e.file.path))) {
-          rlog().info(
-            "push",
-            `Mint refused (engine-flushed file, id relocated away): ${e.file.path}`
-          ), this.logEntry("skip", e.file.path, "skipped", void 0, "mint-deferred");
-          continue;
-        }
-        entries.push(e);
-      }
-      if (chunk = [], chunkBytes = 0, entries.length === 0) return "ok";
-      let sent = entries.map((e) => ({ ...e, pushedPath: e.file.path }));
+    if (!this.crdtCreateBatch || !this.crdt) return { pushed: 0, failed: 0 };
+    let MAX_CREATES = 100, PAYLOAD_BUDGET = 6e6, pushed = 0, failed = 0, chunk = [], chunkBytes = 0, flush = async () => {
+      var _a2;
+      if (chunk.length === 0) return;
+      let sent = chunk;
+      chunk = [], chunkBytes = 0;
       for (let e of sent) this.pushing.add(e.pushedPath);
+      let recentlyDeletedPaths = /* @__PURE__ */ new Set();
       try {
-        let resp = await this.api.pushNotesBatch(
-          sent.map((e) => {
-            var _a3, _b3;
-            let np = (0, import_obsidian21.normalizePath)(e.pushedPath), noteId = (_b3 = (_a3 = this.noteIdMap) == null ? void 0 : _a3.get(np)) != null ? _b3 : null;
-            return !noteId && this.noteIdMap && (noteId = uuid7(), this.noteIdMap.set(np, noteId)), {
-              path: e.pushedPath,
-              content: e.content,
-              mtime: e.file.stat.mtime / 1e3,
-              version: e.version,
-              ...noteId ? { id: noteId } : {}
-            };
-          })
-        ), byPath = new Map(resp.results.map((r) => [r.path, r]));
-        for (let e of sent) {
-          let r = byPath.get(e.pushedPath);
-          if (!r) {
-            failed++, this.logEntry("push", e.pushedPath, "error", "missing batch result");
-            continue;
-          }
-          if (r.status === "ok")
-            await this.recordBatchPushOk(e.file, e.content, e.hash, r, e.pushedPath), pushed++, this.logEntry("push", e.pushedPath, "ok");
-          else if (r.status === "conflict")
-            this.pushing.delete(e.pushedPath), await this.pushFile(e.file, !0) && pushed++;
-          else if (((_a2 = r.errors) == null ? void 0 : _a2.reason) === "recently_deleted")
+        let { results } = await this.crdtCreateBatch(
+          sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 }))
+        );
+        for (let i = 0; i < sent.length; i++) {
+          let e = sent[i], r = results[i];
+          if ((r == null ? void 0 : r.status) === "ok")
+            this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id), pushed++, this.logEntry("push", e.pushedPath, "ok");
+          else if ((r == null ? void 0 : r.reason) === "recently_deleted")
             rlog().info(
               "push",
               `recently_deleted \u2014 trashing local ${e.file.path} to honor remote delete`
-            ), await this.trashRemotelyDeleted(e.file), this.logEntry(
-              "push",
-              e.file.path,
-              "skipped",
-              "recently_deleted \u2014 honored remote delete"
-            );
+            ), this.pushing.delete(e.pushedPath), recentlyDeletedPaths.add(e.pushedPath), await this.trashRemotelyDeleted(e.file), this.logEntry("push", e.file.path, "skipped", "recently_deleted");
+          else if ((r == null ? void 0 : r.reason) === "id_conflict" || (r == null ? void 0 : r.reason) === "version_conflict")
+            this.pushing.delete(e.pushedPath), await this.pushFile(e.file, !0) ? pushed++ : failed++;
           else {
             failed++;
-            let msg = JSON.stringify((_b2 = r.errors) != null ? _b2 : "batch error");
+            let reason = (_a2 = r == null ? void 0 : r.reason) != null ? _a2 : "create_failed";
             this.issues.record({
               path: e.file.path,
               kind: "note",
               category: "other",
-              message: msg,
+              message: reason,
               firstFailedAt: Date.now(),
               lastFailedAt: Date.now(),
               attempts: 1
-            }), this.logEntry("push", e.file.path, "error", msg);
+            }), this.logEntry("push", e.file.path, "error", reason);
           }
         }
-        return this.goOnline(), "ok";
-      } catch (err) {
-        let status = err.status;
-        if (status === 404 || status === 405)
-          return this.batchPushUnsupported = !0, rlog().info("push", "Batch endpoint unsupported \u2014 falling back to per-note"), "unsupported";
-        rlog().error(
-          "push",
-          `Batch push failed (${errMsg(err)}) \u2014 queueing ${entries.length} files`
-        );
-        for (let e of entries)
-          failed++, await this.enqueueChange({
-            path: e.file.path,
-            action: "upsert",
-            kind: "note",
-            mtime: e.file.stat.mtime / 1e3,
-            timestamp: Date.now(),
-            vaultId: (_c2 = this.settings.vaultId) != null ? _c2 : void 0
-          });
-        return this.maybeGoOffline(err), "transport";
+        this.goOnline();
       } finally {
         for (let e of sent)
-          this.pushing.delete(e.pushedPath), this.markRecentlyPushed(e.pushedPath);
-      }
-    };
-    for (let i = 0; i < files.length; i++) {
-      let file = files[i], noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-      if (file.stat.size <= MAX_CRDT_NOTE_BYTES && this.isCrdtManaged(file.path, noteId)) {
-        this.logEntry("skip", file.path, "skipped", void 0, "crdt-owned");
-        continue;
-      }
-      if (file.stat.size <= MAX_CRDT_NOTE_BYTES && noteId && this.crdt && this.crdtOpsAvailable() && this.isCrdtManagedOffline(file.path, noteId) && await routeModify(
-        {
-          isMarkdown: file.extension === "md",
-          noteId,
-          // Live read (see pushFile): frozen content would defeat the
-          // manager's stale-snapshot reread guard.
-          readContent: () => this.app.vault.cachedRead(file)
-        },
-        this.crdt,
-        MAX_CRDT_NOTE_BYTES
-      ) !== null) {
-        await this.enqueueCrdtEdit(file, noteId), this.logEntry("skip", file.path, "skipped", void 0, "crdt-offline-queued");
-        continue;
-      }
-      if (file.stat.size > MAX_BATCH_NOTE_BYTES) {
-        oversized.push(file);
-        continue;
-      }
-      let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
-      if (!force && existing !== void 0 && hash === existing.hash) {
-        this.logEntry("skip", file.path, "skipped", void 0, "unchanged");
-        continue;
-      }
-      if (chunk.length >= BATCH_MAX_NOTES || chunk.length > 0 && chunkBytes + content.length > BATCH_PAYLOAD_BUDGET) {
-        let outcome2 = await flushChunk();
-        if (outcome2 === "unsupported") return null;
-        if (outcome2 === "transport") {
-          for (let rest of [file, ...files.slice(i + 1), ...oversized])
-            failed++, await this.enqueueChange({
-              path: rest.path,
-              action: "upsert",
-              kind: "note",
-              mtime: rest.stat.mtime / 1e3,
-              timestamp: Date.now(),
-              vaultId: (_c = this.settings.vaultId) != null ? _c : void 0
-            });
-          return onProgress == null || onProgress(pushed, failed), { pushed, failed };
-        }
-        onProgress == null || onProgress(pushed, failed);
-      }
-      chunk.push({ file, content, hash, version: existing == null ? void 0 : existing.version }), chunkBytes += content.length;
-    }
-    let outcome = await flushChunk();
-    if (outcome === "unsupported") return null;
-    if (outcome === "transport") {
-      for (let rest of oversized)
-        failed++, await this.enqueueChange({
-          path: rest.path,
-          action: "upsert",
-          kind: "note",
-          mtime: rest.stat.mtime / 1e3,
-          timestamp: Date.now(),
-          vaultId: (_d = this.settings.vaultId) != null ? _d : void 0
-        });
-      return onProgress == null || onProgress(pushed, failed), { pushed, failed };
-    }
-    onProgress == null || onProgress(pushed, failed);
-    for (let file of oversized) {
-      try {
-        await this.pushFile(file, force) && (pushed++, this.logEntry("push", file.path, "ok"));
-      } catch (e) {
-        failed++, this.logEntry("push", file.path, "error", errMsg(e));
+          this.pushing.delete(e.pushedPath), recentlyDeletedPaths.has(e.pushedPath) || this.markRecentlyPushed(e.pushedPath);
       }
       onProgress == null || onProgress(pushed, failed);
-    }
-    return this.flushQueue(), { pushed, failed };
-  }
-  /** Record a successful batch-push result: sync state, base store, issue
-   *  clearing, and the server-sanitized-path rename (mirrors pushFile). */
-  async recordBatchPushOk(file, content, hash, result, pushedPath) {
-    var _a, _b, _c, _d, _e, _f;
-    if (file.path !== pushedPath) {
-      rlog().info(
-        "push",
-        `Sanitize-rename skipped: file moved during batch push (${pushedPath} \u2192 ${file.path})`
-      );
-      return;
-    }
-    let serverPath = result.server_path && result.server_path !== pushedPath ? result.server_path : void 0;
-    if (serverPath) {
-      let localFile = this.app.vault.getFileByPath(file.path);
-      localFile && (await this.app.vault.rename(localFile, serverPath), rlog().info("push", `Renamed: ${file.path} \u2192 ${serverPath} (server sanitized)`), new import_obsidian21.Notice(
-        `Engram Sync: renamed "${file.path.split("/").pop()}" (unsupported characters)`
-      )), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), (_a = this.baseStore) == null || _a.delete((0, import_obsidian21.normalizePath)(file.path));
-      let np = (0, import_obsidian21.normalizePath)(serverPath);
-      this.syncState.set(np, {
-        hash,
-        version: result.version,
-        serverHash: result.content_hash
-      }), result.version != null && ((_b = this.baseStore) == null || _b.set(np, content, result.version));
-    } else {
+    };
+    for (let file of files) {
       let np = (0, import_obsidian21.normalizePath)(file.path);
-      this.syncState.set(np, {
-        hash,
-        version: result.version,
-        serverHash: result.content_hash
-      }), result.version != null && ((_c = this.baseStore) == null || _c.set(np, content, result.version));
+      if (this.shouldDeferMint(np)) {
+        rlog().info(
+          "push",
+          `Mint refused (engine-flushed, id relocated away): ${file.path}`
+        ), this.logEntry("skip", file.path, "skipped", void 0, "mint-deferred");
+        continue;
+      }
+      if (this.isLiveBound(np)) {
+        await this.pushFile(file, !0) ? pushed++ : failed++;
+        continue;
+      }
+      let existingId = (_a = this.noteIdMap) == null ? void 0 : _a.get(np);
+      if (existingId && typeof ((_b = this.crdt) == null ? void 0 : _b.hasHistory) == "function" && await this.crdt.hasHistory(existingId)) {
+        await this.pushFile(file, !0) ? pushed++ : failed++;
+        continue;
+      }
+      let content = await this.app.vault.read(file);
+      if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) {
+        await this.pushFile(file, !0) ? pushed++ : failed++;
+        continue;
+      }
+      let b64 = this.encodeGenesisFrame(content), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
+      if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
+        await this.pushFile(file, !0) ? pushed++ : failed++;
+        continue;
+      }
+      (chunk.length >= MAX_CREATES || chunkBytes + size2 > PAYLOAD_BUDGET) && await flush(), chunk.push({ file, pushedPath, noteId, b64, content }), chunkBytes += size2;
     }
-    if (result.id) {
-      serverPath && ((_d = this.noteIdMap) == null || _d.delete((0, import_obsidian21.normalizePath)(file.path)));
-      let np = (0, import_obsidian21.normalizePath)(serverPath != null ? serverPath : file.path);
-      (_e = this.noteIdMap) == null || _e.set(np, result.id), this.confirmNoteId(result.id);
-    }
-    this.issues.clear(file.path), this.recordParseStatus(
-      (_f = result.server_path) != null ? _f : file.path,
-      "note",
-      result.parse_status,
-      result.parse_reason
-    );
+    return await flush(), { pushed, failed };
   }
   /** Record or clear a note's frontmatter parse issue from a backend
    *  parse_status/parse_reason. Called on every push success + feed apply. When
@@ -21059,14 +20837,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
     total > 0 && this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
-      noteFiles,
-      !1,
-      (pushedSoFar, failedSoFar) => {
-        this.emitPushing(pushedSoFar, total, failedSoFar);
-      }
-    ), perFile;
-    batchOutcome ? (pushed += batchOutcome.pushed, perFile = attachFiles) : perFile = toSync;
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+      this.emitPushing(pushedSoFar, total, failedSoFar);
+    });
+    pushed += genesisOutcome.pushed;
+    let perFile = [...known, ...attachFiles];
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
       pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, 0);
@@ -21188,14 +20963,39 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
   }
   async pushAll(opts = {}) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pushAll short-circuited \u2014 gate closed"), 0;
     (_a = this.syncLog) == null || _a.clear();
     let { ok, error } = await this.api.ping();
     if (!ok)
       throw this.lastError = error != null ? error : "Connection failed", this.emitStatus(), new Error(this.lastError);
-    await this.invalidateIfVaultChanged(), opts.replaceRemote && await this.wipeRemote(opts.localSnapshot);
+    await this.invalidateIfVaultChanged();
+    let replaceExtras = null;
+    if (opts.replaceRemote) {
+      let replay = await this.catchupViaSeqReplayExclusive({
+        fromZero: !0,
+        enumerateOnly: !0
+      });
+      if (!replay)
+        rlog().error(
+          "push",
+          "replace-remote extras enumeration never ran exclusively (persistent replay contention); skipping server-extra deletes \u2014 the push still ran"
+        );
+      else {
+        let { serverIds, serverAttachmentPaths } = replay, snap = (_b = opts.localSnapshot) != null ? _b : this.snapshotLocalPaths(), localIds = /* @__PURE__ */ new Set();
+        for (let path of snap) {
+          let id2 = (_c = this.noteIdMap) == null ? void 0 : _c.get(path);
+          id2 && localIds.add(id2);
+        }
+        replaceExtras = {
+          ids: [...serverIds].filter((id2) => !localIds.has(id2)),
+          attachments: [...serverAttachmentPaths].filter(
+            (p) => !snap.has((0, import_obsidian21.normalizePath)(p))
+          )
+        };
+      }
+    }
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
     if (opts.localSnapshot) {
       let snap = opts.localSnapshot;
@@ -21203,14 +21003,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), batchOutcome = await this.pushNotesViaBatch(
-      noteFiles,
-      !0,
-      (pushedSoFar, failedSoFar) => {
-        this.emitPushing(pushedSoFar, total, failedSoFar);
-      }
-    ), perFile;
-    batchOutcome ? (pushed += batchOutcome.pushed, failed += batchOutcome.failed, perFile = attachFiles) : perFile = toSync;
+    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+      this.emitPushing(pushedSoFar, total, failedSoFar);
+    });
+    pushed += genesisOutcome.pushed, failed += genesisOutcome.failed;
+    let perFile = [...known, ...attachFiles];
     for (let i = 0; i < perFile.length; i += 10) {
       let batch = perFile.slice(i, i + 10), results = await Promise.all(
         batch.map(async (f) => {
@@ -21226,7 +21023,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, batch[batch.length - 1].path);
     }
-    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_b = this.onSyncProgress) == null || _b.call(this, {
+    if (replaceExtras) {
+      let delTotal = replaceExtras.ids.length + replaceExtras.attachments.length, delDone = 0;
+      (_d = this.onSyncProgress) == null || _d.call(this, { phase: "deleting", current: 0, total: delTotal, failed: 0 });
+      for (let id2 of replaceExtras.ids) {
+        try {
+          await ((_e = this.crdtDelete) == null ? void 0 : _e.call(this, id2)), this.logEntry("delete", id2, "ok", void 0, "replace-remote");
+        } catch (e) {
+          this.logEntry("delete", id2, "error", errMsg(e));
+        }
+        (_f = this.onSyncProgress) == null || _f.call(this, {
+          phase: "deleting",
+          current: ++delDone,
+          total: delTotal,
+          failed: 0
+        });
+      }
+      for (let path of replaceExtras.attachments) {
+        try {
+          await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "replace-remote");
+        } catch (e) {
+          this.logEntry("delete", path, "error", errMsg(e));
+        }
+        (_g = this.onSyncProgress) == null || _g.call(this, {
+          phase: "deleting",
+          current: ++delDone,
+          total: delTotal,
+          failed: 0,
+          currentPath: path
+        });
+      }
+    }
+    this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), (_h = this.onSyncProgress) == null || _h.call(this, {
       phase: "complete",
       current: pushed,
       total,
@@ -21259,64 +21087,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     return await this.saveData({ lastSync: this.lastSync }), pushed;
-  }
-  /** Delete EVERY remote note and attachment (the whole server vault), emitting
-   *  a `deleting` progress phase. Used by `pushAll({replaceRemote:true})` before
-   *  it re-uploads all local files, so the server ends up an exact mirror of
-   *  local. This is intentionally a full wipe (shared files are deleted then
-   *  recreated by the subsequent upload); the user confirms via the type-delete
-   *  gate. Failures on individual deletes are logged, not thrown, so the
-   *  re-upload still runs. */
-  async wipeRemote(localSnapshot) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    let manifest = await this.api.getManifest();
-    if (!manifest) {
-      rlog().warn("push", "wipeRemote skipped \u2014 backend has no /sync/manifest");
-      return;
-    }
-    let localPaths = localSnapshot != null ? localSnapshot : new Set(
-      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
-    ), notePaths = manifest.notes.map((n) => n.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), attachmentPaths = manifest.attachments.map((a) => a.path).filter((p) => !localPaths.has((0, import_obsidian21.normalizePath)(p))), total = notePaths.length + attachmentPaths.length;
-    rlog().info(
-      "push",
-      `wipeRemote \u2014 deleting ${notePaths.length} notes, ${attachmentPaths.length} attachments`
-    );
-    let done = 0;
-    (_a = this.onSyncProgress) == null || _a.call(this, { phase: "deleting", current: 0, total, failed: 0 }), (_b = this.crdtEditorDetach) == null || _b.call(this);
-    for (let path of notePaths) {
-      let normalized = (0, import_obsidian21.normalizePath)(path);
-      this.markWipedRemote(normalized), this.syncState.delete(normalized), (_c = this.baseStore) == null || _c.delete(normalized);
-      let noteId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null;
-      (_f = this.noteIdMap) == null || _f.delete(normalized), noteId && normalized.endsWith(".md") && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(noteId)), (_h = this.crdtEnrollment) == null || _h.reset(noteId));
-      try {
-        await this.api.deleteNote(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
-      } catch (e) {
-        this.logEntry("delete", path, "error", errMsg(e));
-      }
-      done++, (_i = this.onSyncProgress) == null || _i.call(this, {
-        phase: "deleting",
-        current: done,
-        total,
-        failed: 0,
-        currentPath: path
-      });
-    }
-    for (let path of attachmentPaths) {
-      let normalized = (0, import_obsidian21.normalizePath)(path);
-      this.markWipedRemote(normalized), this.syncState.delete(normalized);
-      try {
-        await this.api.deleteAttachment(path), this.logEntry("delete", path, "ok", void 0, "wipe-remote");
-      } catch (e) {
-        this.logEntry("delete", path, "error", errMsg(e));
-      }
-      done++, (_j = this.onSyncProgress) == null || _j.call(this, {
-        phase: "deleting",
-        current: done,
-        total,
-        failed: 0,
-        currentPath: path
-      });
-    }
   }
   /** Reconcile local vault against server manifest.
    *  Returns null if server doesn't support the manifest endpoint.
@@ -21622,9 +21392,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let timer of this.recentlyFlushed.values())
       window.clearTimeout(timer);
     this.recentlyFlushed.clear();
-    for (let timer of this.wipedRemote.values())
-      window.clearTimeout(timer);
-    this.wipedRemote.clear();
     for (let timer of this.remotelyDeleted.values())
       window.clearTimeout(timer);
     this.remotelyDeleted.clear();
@@ -22324,21 +22091,46 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
     this.bindResult = null;
     this.boundYtext = null;
     this.driftTimer = null;
+    /** Set while a bind is deferred waiting for an unseeded Y.Doc to be seeded
+     *  by the server (see bindTo's data-loss guard). Holds the observed Y.Text +
+     *  its one-shot observer so detach()/release() can unhook it. */
+    this.pendingSeed = null;
     this.deps = deps;
   }
   currentPath() {
     return this.path;
   }
   async bindTo(view, path) {
+    var _a, _b;
     if (this.path === path) return;
     this.detach(view);
     let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
     if (this.released || epoch !== this.bindEpoch) return;
-    let changes = reconcileEditorToYText(view.state.doc.toString(), ytext), result = bindSpec(ytext, this.deps.awareness());
+    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
+    if (shown !== void 0 && shown !== path) return;
+    let editorText = view.state.doc.toString();
+    if (ytext.length === 0 && editorText.length > 0) {
+      this.deferUntilSeeded(view, path, ytext, epoch);
+      return;
+    }
+    let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
       effects: crdtCompartment.reconfigure(result.extension)
     }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+  }
+  /** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
+   *  server, then rebind. Never seeds the doc locally (that would double against
+   *  the server's lineage — the reason the doc is empty in the first place). A
+   *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
+  deferUntilSeeded(view, path, ytext, epoch) {
+    let onSeed = () => {
+      ytext.length !== 0 && (this.unhookPendingSeed(), !(this.released || epoch !== this.bindEpoch) && this.bindTo(view, path));
+    };
+    this.pendingSeed = { ytext, onSeed }, ytext.observe(onSeed);
+  }
+  unhookPendingSeed() {
+    this.pendingSeed && (this.pendingSeed.ytext.unobserve(this.pendingSeed.onSeed), this.pendingSeed = null);
   }
   /** Force a rebind even when this.path already equals `path`. detach() clears
    *  this.path SYNCHRONOUSLY (stopping keystrokes reaching the now-orphaned
@@ -22358,7 +22150,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
    *  drift timer stopped. Unlike release(), the controller stays usable so
    *  bindTo can re-bind the same view to a new path. */
   detach(view) {
-    this.clearDriftTimer(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.clearDriftTimer(), this.unhookPendingSeed(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
   }
   clearDriftTimer() {
     this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
@@ -22604,9 +22396,9 @@ var ViewerRefcount = class {
     }
   }
   /** Release + drop every editor controller WITHOUT tearing down awareness or
-   *  hooks — so no binding spans a Y.Doc teardown (wipeRemote destroys docs
-   *  whose files stay open). The next refresh() re-binds current views with
-   *  fresh controllers. */
+   *  hooks — so no binding spans a Y.Doc teardown (replace-remote's crdtDelete
+   *  destroys docs whose files stay open). The next refresh() re-binds current
+   *  views with fresh controllers. */
   detachAll() {
     for (let [cm, ctrl] of this.controllers)
       ctrl.release(cm), this.controllers.delete(cm);
@@ -23282,7 +23074,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.syncCursor !== void 0 && this.syncEngine.setSyncCursor(data.syncCursor), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
@@ -23349,7 +23141,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }
     );
     let saved = await this.loadPluginData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), saved != null && saved.syncCursor && this.syncEngine.setSyncCursor(saved.syncCursor), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -23705,23 +23497,21 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     await atomicWriteJson(this.app.vault.adapter, this.pluginDataPath(), data);
   }
   async savePluginData(lastSync, offlineQueue) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c;
     await this.writePluginData({
       settings: this.settings,
       lastSync,
       // Top-level, device-local; saveData() overwrites data.json wholesale,
       // so every field must be re-listed here or it's wiped on the next save.
       deviceId: (_a = this.deviceId) != null ? _a : void 0,
-      // Top-level cursor; like deviceId it must be re-listed here or the
-      // next wholesale saveData() wipes it. null → omit (cursor cleared).
-      syncCursor: (_b = this.syncEngine.getSyncCursor()) != null ? _b : void 0,
-      // Socket op-log replay cursor (seq). Re-listed for the same
-      // wholesale-save reason; 0 = replay from genesis.
+      // Socket op-log replay cursor (seq). Re-listed for the wholesale-save
+      // reason (like deviceId) or the next saveData() wipes it; 0 = replay
+      // from genesis.
       catchupSeq: this.syncEngine.getCatchupSeq(),
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
-      crdtOpQueue: (_d = (_c = this.crdtOpQueue) == null ? void 0 : _c.all()) != null ? _d : [],
+      crdtOpQueue: (_c = (_b = this.crdtOpQueue) == null ? void 0 : _b.all()) != null ? _c : [],
       syncState: this.syncEngine.exportSyncState(),
       syncStateVaultId: this.syncEngine.getSyncStateVaultId(),
       // Dual-write legacy format for rollback safety (remove after one release cycle)
@@ -23848,10 +23638,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   /**
    * Reconcile the id-map, re-arm CRDT enrollments, and run the socket catch-up
    * on a crdt: topic (re)join. Invoked ONLY from channel.onCrdtJoined, i.e. after
-   * the crdt: join is server-acked (crdtJoined=true), so crdtCatchupHeads'
-   * sendRequest is guaranteed past the join gate. Wiring the catch-up to the
-   * sync-topic onStatusChange (which acks first) let the sendRequest reject with
-   * "crdt topic not joined" and silently drop with no retry, the deaf-note class:
+   * the crdt: join is server-acked (crdtJoined=true), so catchupViaSeqReplay's
+   * crdt_catchup_since sendRequest is guaranteed past the join gate. Wiring the
+   * catch-up to the sync-topic onStatusChange (which acks first) let the
+   * sendRequest reject with "crdt topic not joined" and silently drop with no
+   * retry, the deaf-note class:
    * idle notes and notes another device created during the disconnect never
    * converged. CRDT socket only, no REST fallback.
    */
@@ -23927,10 +23718,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchup(
-        () => channel.crdtCatchupHeads(),
-        (id2, sv) => channel.crdtCatchupDelta(id2, sv)
-      ), this.syncEngine.setCrdtCatchupSince(
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
         (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
       ), this.settings.enableCrdt && this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
@@ -24189,10 +23977,10 @@ Last sync: ${date.toLocaleString()}`;
     this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), this.hasAuthConfigured() && (this.syncInterval = window.setInterval(() => {
       (async () => {
         try {
-          let pulled = await this.syncEngine.pull();
+          let pulled = await this.syncEngine.catchUp();
           pulled > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
-          console.error("Engram Sync: periodic pull failed", e);
+          console.error("Engram Sync: periodic catch-up failed", e);
         }
       })();
     }, _EngramSyncPlugin.FALLBACK_POLL_MS), this.registerInterval(this.syncInterval));

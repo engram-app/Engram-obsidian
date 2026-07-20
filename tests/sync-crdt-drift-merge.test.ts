@@ -2,11 +2,11 @@
  * BUG 2: a fanned-out remote update must NOT clobber an un-pushed local disk
  * edit. A NOT-live-bound note edited on disk (external tool / reading view /
  * another device) lives only on disk until its debounce fires pushFile. If a
- * fanned-out remote update (applyPushedNoteUpdate) or a cold-receive poll
- * (coldReceive) lands in that window, applyRemoteUpdate flushes the REMOTE
- * projection to disk with no merge — the local edit was never in the Y.Doc, so
- * it is destroyed. The fix captures the disk drift into the Y.Doc (applyLocalEdit)
- * BEFORE applying the remote update, so CRDT MERGES both.
+ * fanned-out remote update (applyPushedNoteUpdate) lands in that window,
+ * applyRemoteUpdate flushes the REMOTE projection to disk with no merge — the
+ * local edit was never in the Y.Doc, so it is destroyed. The fix captures the
+ * disk drift into the Y.Doc (applyLocalEdit) BEFORE applying the remote update,
+ * so CRDT MERGES both.
  *
  * Uses the REAL CrdtManager so the merge is genuine, not mocked.
  */
@@ -15,7 +15,6 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import { toB64 } from "../src/crdt/channel";
 import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine, fnv1a } from "../src/sync";
@@ -35,39 +34,6 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 }
 function markProbed(engine: SyncEngine): void {
 	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
-}
-
-/** Drive the sole CRDT convergence path (catchupViaSocket → convergeNoteFromDelta)
- *  using the engine's already-wired getVaultHeads/getUpdates test doubles. Replaces
- *  the deleted REST coldReceive() driver; the convergence guarantees it exercised
- *  (history-less adopt, disk-drift merge, keep-both) are identical. */
-async function driveCatchup(engine: SyncEngine): Promise<void> {
-	const e = engine as unknown as {
-		api: {
-			getVaultHeads: () => Promise<{ heads: Record<string, string> }>;
-			getUpdates: (id: string, sv: string) => Promise<{ update: Uint8Array; head: string }>;
-		};
-		noteIdMap?: { pathForId(id: string): string | null };
-	};
-	const api = e.api;
-	engine.setCrdtCatchup(
-		// Adapt the legacy id->head test double into the new id->{path,head} head-map
-		// shape; the path is resolved from the engine's noteIdMap (these notes are
-		// already known — discovery is covered separately in sync-socket-catchup).
-		async () => {
-			const { heads } = await api.getVaultHeads();
-			const out: Record<string, { path: string; head: string }> = {};
-			for (const [id, head] of Object.entries(heads)) {
-				out[id] = { path: e.noteIdMap?.pathForId(id) ?? id, head };
-			}
-			return { heads: out };
-		},
-		async (id, sv) => {
-			const { update, head } = await api.getUpdates(id, sv);
-			return { doc_id: id, b64: toB64(update), head };
-		},
-	);
-	await engine.catchupViaSocket();
 }
 
 /** Build a shared-base local doc + a remote delta that adds " REMOTE" on that
@@ -284,40 +250,6 @@ describe("#234: history-less note adopts full state, never doubles/loses/incompl
 		expect(disk.get(conflictKey as string)).toBe("BASE local");
 		await mgr.destroy();
 	});
-
-	test("(v) socket catch-up: history-less + NO drift → adopts full server content, not doubled", async () => {
-		const { e, mgr, disk } = await historyLessScenario({
-			dbPrefix: "hl-cold-nodrift",
-			disk: "BASE",
-			baselineHash: fnv1a("BASE"),
-			serverFull: "BASE REMOTE",
-		});
-
-		await driveCatchup(e);
-
-		expect(await mgr.getText("id-a")).toBe("BASE REMOTE");
-		expect(disk.get("a.md")).toBe("BASE REMOTE");
-		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1);
-		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
-		await mgr.destroy();
-	});
-
-	test("(v) socket catch-up: history-less + drift + NO LCA → keep-both", async () => {
-		const { e, mgr, disk } = await historyLessScenario({
-			dbPrefix: "hl-cold-nolca",
-			disk: "BASE local",
-			baselineHash: fnv1a("BASE"),
-			serverFull: "BASE REMOTE",
-		});
-
-		await driveCatchup(e);
-
-		expect(disk.get("a.md")).toBe("BASE REMOTE");
-		const conflictKey = [...disk.keys()].find((k) => k.includes("(conflict"));
-		expect(conflictKey).toBeDefined();
-		expect(disk.get(conflictKey as string)).toBe("BASE local");
-		await mgr.destroy();
-	});
 });
 
 describe("I1: no-LCA keep-both preserves the local edit even if the copy write fails", () => {
@@ -389,22 +321,6 @@ describe("BUG 2: un-pushed disk drift is merged, not clobbered", () => {
 		expect(out).not.toBeNull();
 		expect(out).toContain("local"); // the un-pushed disk edit survived
 		expect(out).toContain("REMOTE"); // the remote change applied too
-	});
-
-	test("socket catch-up merges the un-pushed local disk edit with the pulled update", async () => {
-		const { e, remoteDelta, flushed } = await scenario("bug2-cold");
-		markProbed(e);
-		(e as any).api = {
-			getVaultHeads: async () => ({ heads: { "id-a": "HEAD" } }),
-			getUpdates: async () => ({ update: remoteDelta, head: "HEAD" }),
-		};
-
-		await driveCatchup(e);
-
-		const out = flushed();
-		expect(out).not.toBeNull();
-		expect(out).toContain("local");
-		expect(out).toContain("REMOTE");
 	});
 
 	test("crdt topic DOWN: the seeded drift is durably queued (reconnect-window ship guarantee)", async () => {

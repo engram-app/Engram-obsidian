@@ -5,15 +5,17 @@
  *    `noteIds` UNSCOPED while syncState is guarded by syncStateVaultId —
  *    switching vaults carried note-id mappings across vaults (cross-vault
  *    identity hazard, same family as the 2026-07-07 incidents).
- * 2. recordBatchPushOk's server-rename branch must evict the OLD path's map
- *    entry like pushFile's sibling branch does — a create-race combined with
- *    path sanitization left a dangling mint keyed to a nonexistent path.
+ * 2. (Removed by Task 7, CRDT single-push-path) recordBatchPushOk's
+ *    server-rename branch had to evict the OLD path's map entry like
+ *    pushFile's sibling branch does — a create-race combined with path
+ *    sanitization left a dangling mint keyed to a nonexistent path.
+ *    recordBatchPushOk/pushNotesViaBatch are deleted; pushFile's own branch
+ *    still covers this invariant (see the comment further down).
  * 3. ensureNoteIdMapped must be intrinsically gate-safe: its reconcile can
  *    reach sweepPendingOrphans (trashFile), so relying on every CALLER to
  *    check isSyncBlocked is fragile — the check belongs inside.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -121,35 +123,16 @@ describe("vault change wipes note identity (plugin #200)", () => {
 	});
 });
 
-describe("batch server-rename evicts the old path mapping (#197 retro-review)", () => {
-	test("create-race + sanitize rename: no dangling mint on the old path", async () => {
-		const engine = createEngine();
-		const map = new NoteIdMap();
-		engine.setNoteIdMap(map);
-
-		const files = [new TFile("bad:name.md")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		(mockApi.pushNotesBatch as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			results: [
-				{
-					path: "bad:name.md",
-					status: "ok",
-					id: "server-won-the-race", // differs from the local mint
-					version: 1,
-					content_hash: "srv-h",
-					server_path: "bad-name.md", // server sanitized the path
-				},
-			],
-		});
-
-		await engine.pushAll();
-
-		// New path owns the winning id; the OLD path must not keep the dead mint
-		// (pushFile's sibling branch deletes it explicitly — mirror it).
-		expect(map.get("bad-name.md")).toBe("server-won-the-race");
-		expect(map.get("bad:name.md")).toBeNull();
-	});
-});
+// Task 7 (CRDT single-push-path): "batch server-rename evicts the old path
+// mapping (#197 retro-review)" exercised recordBatchPushOk's server-rename
+// branch via pushNotesViaBatch directly — both deleted along with the REST
+// batch machinery (dead since Task 3). pushFile's own sibling branch
+// (src/sync.ts, the sanitized-rename case in the single-note push path) still
+// evicts the old path's mint the same way; the genesis-batch create-race path
+// (crdt_create_batch id_conflict) hands off to pushFile for the full adopt,
+// so this old-path-eviction invariant stays covered through pushFile there
+// too — see tests/sync.test.ts ("Path sanitization on push") for the general
+// sanitize-rename pin.
 
 describe("ensureNoteIdMapped is intrinsically gate-safe", () => {
 	test("does nothing while the sync gate is closed (reconcile can trashFile)", async () => {

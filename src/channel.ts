@@ -97,7 +97,7 @@ const LARGE_FRAME_WARN_BYTES = 1_000_000;
  *
  * Protocol: messages are JSON arrays [join_ref, ref, topic, event, payload]
  */
-import type { NoteStreamEvent, SyncNoteChange } from "./types";
+import type { NoteStreamEvent, SyncChange } from "./types";
 
 export class NoteChannel {
 	private ws: WebSocket | null = null;
@@ -366,6 +366,16 @@ export class NoteChannel {
 		return res.doc_id;
 	}
 
+	/** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
+	 *  creates per request; chunking is the caller's concern). */
+	async crdtCreateBatch(creates: { doc_id: string; path: string; b64: string }[]): Promise<{
+		results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+	}> {
+		return (await this.sendRequest("crdt_create_batch", { creates })) as {
+			results: { doc_id: string; status: "ok" | "error"; reason?: string; limit?: number }[];
+		};
+	}
+
 	/** Delete a note over the socket, AWAITING the server ack (idempotent). The
 	 *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
 	 *  resolve means the delete is durably applied; a reject carries a retryable
@@ -377,40 +387,19 @@ export class NoteChannel {
 		};
 	}
 
-	/** Vault-level head map for catch-up divergence detection AND first-discovery.
-	 *  Each entry carries the note's server head plus its decrypted vault path, so
-	 *  a device that has never seen an id can materialize it at that path (the
-	 *  head map is the sole discovery source now that REST receive is gone). */
-	async crdtCatchupHeads(): Promise<{ heads: Record<string, { path: string; head: string }> }> {
-		return (await this.sendRequest("crdt_catchup_heads", {})) as {
-			heads: Record<string, { path: string; head: string }>;
-		};
-	}
-
-	/** Missing ops for one diverged note, given the client's base64 state vector. */
-	async crdtCatchupDelta(
-		docId: string,
-		sv: string,
-	): Promise<{ doc_id: string; b64: string; head: string }> {
-		return (await this.sendRequest("crdt_catchup_delta", { doc_id: docId, sv })) as {
-			doc_id: string;
-			b64: string;
-			head: string;
-		};
-	}
-
 	/** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
-	 *  carries FULL content (a SyncNoteChange), so it is causally complete and
-	 *  can never pend the way a state-vector delta can — this is what a
+	 *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
+	 *  merged notes+attachments feed), so it is causally complete and can
+	 *  never pend the way a state-vector delta can — this is what a
 	 *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
 	async crdtCatchupSince(
 		cursorSeq: number,
 		limit?: number,
-	): Promise<{ changes: SyncNoteChange[]; has_more: boolean; next_seq: number | null }> {
+	): Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }> {
 		const payload: { cursor_seq: number; limit?: number } = { cursor_seq: cursorSeq };
 		if (limit !== undefined) payload.limit = limit;
 		return (await this.sendRequest("crdt_catchup_since", payload)) as {
-			changes: SyncNoteChange[];
+			changes: SyncChange[];
 			has_more: boolean;
 			next_seq: number | null;
 		};

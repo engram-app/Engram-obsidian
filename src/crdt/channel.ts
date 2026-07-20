@@ -31,6 +31,17 @@ export function fromB64(b64: string): Uint8Array {
 	return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
 }
 
+/** Wrap a raw Yjs v1 update as a base64 `messageSync` update frame — the EXACT
+ *  encoding `sendUpdateRaw` puts on the wire. Shared so a batch genesis frame
+ *  (`crdt_create_batch`) is byte-identical to a live `crdt_msg`, and both decode
+ *  through the server's `SharedDoc.send_yjs_message` the same way. */
+export function encodeUpdateFrame(update: Uint8Array): string {
+	const encoder = encoding.createEncoder();
+	encoding.writeVarUint(encoder, MESSAGE_SYNC);
+	syncProtocol.writeUpdate(encoder, update);
+	return toB64(encoding.toUint8Array(encoder));
+}
+
 export class CrdtChannel {
 	private readonly mgr: CrdtManager;
 	private readonly transport: (docId: string, frame: string) => void;
@@ -80,10 +91,7 @@ export class CrdtChannel {
 	 * update is guaranteed to be local (not REMOTE_ORIGIN).
 	 */
 	sendUpdateRaw(docId: string, update: Uint8Array): void {
-		const encoder = encoding.createEncoder();
-		encoding.writeVarUint(encoder, MESSAGE_SYNC);
-		syncProtocol.writeUpdate(encoder, update);
-		this.transport(docId, toB64(encoding.toUint8Array(encoder)));
+		this.transport(docId, encodeUpdateFrame(update));
 	}
 
 	/**

@@ -990,28 +990,28 @@ describe("crdtJoined resets on unclean close (#191)", () => {
 describe("NoteChannel.sendRequest", () => {
 	test("sendRequest resolves on the matching phx_reply ref", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
-		const p = channel.sendRequest("crdt_catchup_heads", {});
+		const p = channel.sendRequest("crdt_catchup_since", { cursor_seq: 0 });
 		// last outbound frame is the request; extract its ref (index 1 of the Phoenix array)
 		const frames = ws.sent.map((s: string) => JSON.parse(s));
-		const reqFrame = frames.find((f: unknown[]) => f[3] === "crdt_catchup_heads");
+		const reqFrame = frames.find((f: unknown[]) => f[3] === "crdt_catchup_since");
 		const ref = reqFrame[1];
 		simulateMessage(ws, [
 			null,
 			ref,
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
+			{ status: "ok", response: { changes: [], has_more: false, next_seq: null } },
 		]);
-		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
+		await expect(p).resolves.toEqual({ changes: [], has_more: false, next_seq: null });
 
 		channel.disconnect();
 	});
 
 	test("sendRequest rejects on an error reply", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
-		const p = channel.sendRequest("crdt_catchup_delta", { doc_id: "n1", sv: null });
+		const p = channel.sendRequest("crdt_catchup_since", { cursor_seq: 0 });
 		const frames = ws.sent.map((s: string) => JSON.parse(s));
-		const ref = frames.find((f: unknown[]) => f[3] === "crdt_catchup_delta")[1];
+		const ref = frames.find((f: unknown[]) => f[3] === "crdt_catchup_since")[1];
 		simulateMessage(ws, [
 			null,
 			ref,
@@ -1048,20 +1048,23 @@ describe("NoteChannel CRDT frame senders", () => {
 		channel.disconnect();
 	});
 
-	test("crdtCatchupHeads sends the frame and returns heads", async () => {
+	test("crdtCreateBatch sends crdt_create_batch with the creates and returns results", async () => {
 		const { channel, ws } = await joinedCrdtChannel();
-		const p = channel.crdtCatchupHeads();
-		const ref = ws.sent
+		const creates = [{ doc_id: "id1", path: "A.md", b64: "Zg==" }];
+		const p = channel.crdtCreateBatch(creates);
+		const frame = ws.sent
 			.map((s: string) => JSON.parse(s))
-			.find((f: unknown[]) => f[3] === "crdt_catchup_heads")[1];
+			.find((f: unknown[]) => f[3] === "crdt_create_batch");
+		expect(frame[4]).toEqual({ creates });
+		const reply = { results: [{ doc_id: "id1", status: "ok" }] };
 		simulateMessage(ws, [
 			null,
-			ref,
+			frame[1],
 			"crdt:u1:v1",
 			"phx_reply",
-			{ status: "ok", response: { heads: { n1: { path: "n1.md", head: "h1" } } } },
+			{ status: "ok", response: reply },
 		]);
-		await expect(p).resolves.toEqual({ heads: { n1: { path: "n1.md", head: "h1" } } });
+		await expect(p).resolves.toEqual(reply);
 
 		channel.disconnect();
 	});

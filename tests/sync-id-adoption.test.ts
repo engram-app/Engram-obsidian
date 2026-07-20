@@ -11,7 +11,6 @@
  * only healed at cold start.
  */
 import { beforeEach, describe, expect, mock, test } from "bun:test";
-import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -97,79 +96,15 @@ beforeEach(() => {
 	(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockReset().mockResolvedValue("body");
 });
 
-describe("batch push adopts the authoritative note id (create-race heal)", () => {
-	test("sends the minted id per entry and adopts result.id into the map + confirms it", async () => {
-		const engine = createEngine();
-		const map = new NoteIdMap();
-		engine.setNoteIdMap(map);
-
-		const files = [new TFile("fresh.md")];
-		mockApp.vault.getFiles.mockReturnValue(files);
-		(mockApi.pushNotesBatch as ReturnType<typeof mock>).mockReset().mockResolvedValue({
-			results: [
-				{
-					path: "fresh.md",
-					status: "ok",
-					// The create-race: another writer owns the path; the server
-					// keeps ITS id and echoes it — different from the plugin mint.
-					id: "server-won-the-race",
-					version: 1,
-					content_hash: "srv-h",
-					server_path: "fresh.md",
-				},
-			],
-		});
-
-		await engine.pushAll();
-
-		// The request carried the plugin's minted uuidv7 (so a clean create
-		// keeps the client id — parity with pushFile).
-		const sent = (mockApi.pushNotesBatch as ReturnType<typeof mock>).mock.calls[0][0];
-		expect(sent[0].id).toMatch(UUID_RE);
-
-		// The response id WON: the map is rebound to the server's identity and
-		// the id is confirmed so subsequent edits route CRDT (receive path alive).
-		expect(map.get("fresh.md")).toBe("server-won-the-race");
-		expect((engine as any).isNoteConfirmed("server-won-the-race")).toBe(true);
-	});
-});
-
-describe("batch push does not revert a mid-flight local rename (#245)", () => {
-	test("skips the sanitize-rename and state recording when the file moved during the batch", async () => {
-		const engine = createEngine();
-		const file = new TFile("RenameOld.md");
-		mockApp.vault.getFiles.mockReturnValue([file]);
-		(mockApp.vault.getFileByPath as ReturnType<typeof mock>)
-			.mockReset()
-			.mockImplementation((p: string) => (p === file.path ? file : null));
-		(mockApi.pushNotesBatch as ReturnType<typeof mock>)
-			.mockReset()
-			.mockImplementation(async (entries: Array<{ path: string }>) => {
-				// The user renames the file while the batch request is in flight.
-				file.path = "RenameNew.md";
-				return {
-					results: entries.map((e) => ({
-						path: e.path,
-						status: "ok",
-						id: "srv-id",
-						version: 1,
-						content_hash: "srv-h",
-						server_path: e.path, // no sanitization — echoes the pushed path
-					})),
-				};
-			});
-
-		const pushed = await engine.pushAll();
-
-		// Pre-fix failure modes: (a) server_path (RenameOld) !== live file.path
-		// (RenameNew) reads as "server sanitized" and renames the file BACK,
-		// losing the rename; (b) the result row is matched by LIVE path, misses,
-		// and a successful push is mis-counted as "missing batch result" failed.
-		expect(mockApp.vault.rename).not.toHaveBeenCalled();
-		expect(file.path).toBe("RenameNew.md");
-		expect(pushed).toBe(1);
-	});
-});
+// Task 7 (CRDT single-push-path): the "batch push adopts the authoritative
+// note id" and "batch push does not revert a mid-flight local rename (#245)"
+// suites that used to sit here exercised pushNotesViaBatch directly —
+// deleted along with it (dead since Task 3 routed pushAll's genesis notes
+// through crdtCreateBatch/pushGenesisBatch). Their invariants (create-race
+// id-adoption, #245 mid-flight-rename path snapshot) are pinned for the
+// surviving producer in tests/sync-push-consolidation.test.ts
+// ("pushGenesisBatch — direct": "id-adoption: an id_conflict..." and "#245: a
+// mid-flight rename during crdt_create_batch...").
 
 describe("offline-queue replay adopts the authoritative note id", () => {
 	test("sends the minted id and adopts resp.note.id into the map + confirms it", async () => {

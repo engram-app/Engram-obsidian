@@ -108,19 +108,22 @@ describe("healNoteOnOpen", () => {
 		expect(getUpdates).toHaveBeenCalledTimes(1);
 	});
 
-	test("idle (not live-bound) note: no-op in the first cut — no vault-wide heads fetch", async () => {
-		const crdtCatchupHeads = mock().mockResolvedValue({ heads: {} });
+	test("idle (not live-bound) confirmed note: no-op in the first cut — no catch-up replay", async () => {
 		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
 		const crdt = {
 			applyRemoteUpdate,
 			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
 		};
 		const engine = makeEngine(crdt, {}, { liveBound: false });
-		engine.setCrdtCatchup(crdtCatchupHeads, mock());
+		let replayed = false;
+		engine.setCrdtCatchupSince(async () => {
+			replayed = true;
+			return { changes: [], has_more: false, next_seq: null };
+		});
 
 		await engine.healNoteOnOpen("Notes/a.md");
 
-		expect(crdtCatchupHeads).not.toHaveBeenCalled();
+		expect(replayed).toBe(false); // confirmed + idle → left to reconnect catch-up (#5)
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
@@ -153,11 +156,11 @@ describe("healNoteOnOpen", () => {
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
-	test("opened-but-unconfirmed note: converges over the SOCKET (catchupViaSocket), not REST", async () => {
+	test("opened-but-unconfirmed note: converges over the seq-replay op-log, not REST", async () => {
 		// A note opened after being discovered via catch-up/fan-out but never
 		// handshaked (unconfirmed). It must not wait for the next reconnect — heal
-		// converges it over the socket, NOT via REST restConvergeLiveBound.
-		const heads = mock().mockResolvedValue({ heads: {} });
+		// converges it over the one catch-up path (crdt_catchup_since), NOT via
+		// REST restConvergeLiveBound.
 		const getUpdates = mock().mockResolvedValue({ update: new Uint8Array(), head: "h" });
 		const crdt = {
 			applyRemoteUpdate: mock().mockResolvedValue(undefined),
@@ -165,11 +168,15 @@ describe("healNoteOnOpen", () => {
 		};
 		const engine = makeEngine(crdt, { getUpdates });
 		(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.delete("id-a");
-		engine.setCrdtCatchup(heads, mock());
+		let replayed = false;
+		engine.setCrdtCatchupSince(async () => {
+			replayed = true;
+			return { changes: [], has_more: false, next_seq: null };
+		});
 
 		await engine.healNoteOnOpen("Notes/a.md");
 
-		expect(heads).toHaveBeenCalledTimes(1); // socket catch-up ran
+		expect(replayed).toBe(true); // seq-replay catch-up ran
 		expect(getUpdates).not.toHaveBeenCalled(); // NOT the REST heal path
 	});
 

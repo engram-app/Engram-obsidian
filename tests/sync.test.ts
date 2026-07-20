@@ -766,6 +766,41 @@ describe("SyncEngine.handleStreamEvent", () => {
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
 	});
 
+	test("delete event carrying our OWN device_id is dropped (#970)", async () => {
+		// Origin-attributed self-echo guard (sync.ts ~L3973): the server stamps
+		// the REST caller's X-Device-Id into delete broadcasts. A delete WE
+		// caused must never be re-applied to our own vault.
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		const existingFile = new TFile("Notes/Mine.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(existingFile);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Mine.md",
+			timestamp: 1709345678,
+			device_id: "device-self",
+		});
+
+		expect(mockApp.fileManager.trashFile).not.toHaveBeenCalled();
+	});
+
+	test("delete event from a FOREIGN device still applies (#970)", async () => {
+		const engine = createEngine();
+		engine.setDeviceId("device-self");
+		const file = new TFile("Notes/Theirs.md");
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValueOnce(file);
+
+		await engine.handleStreamEvent({
+			event_type: "delete",
+			path: "Notes/Theirs.md",
+			timestamp: 1709345678,
+			device_id: "device-other",
+		});
+
+		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(file);
+	});
+
 	test("delete whose id matches the live note trashes it authoritatively (no pull)", async () => {
 		// CRDT-authoritative rewire: a received delete is applied directly on the
 		// socket receive path, never deferred to a REST pull (the old pull-defer
@@ -1205,54 +1240,13 @@ describe("SyncEngine.getStatus + onStatusChange", () => {
 	// per-op skip-and-advance behavior is pinned in sync-socket-catchup.test.ts.
 	// The `pulling`→syncing flag survives via pullAll (below).
 
-	test("pullAll skips files that fail to apply and continues", async () => {
-		const goodChange = {
-			path: "Notes/PullAllGood.md",
-			title: "Good",
-			content: "# Good\nWorks fine",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			updated_at: "2026-03-01T12:00:00Z",
-			deleted: false,
-		};
-		const badChange = {
-			path: "Notes/Has:Colon.md",
-			title: "Bad",
-			content: "# Bad\nIllegal colon in name",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345679,
-			updated_at: "2026-03-01T12:01:00Z",
-			deleted: false,
-		};
-
-		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [badChange, goodChange],
-			server_time: "2026-03-01T12:02:00Z",
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
-			changes: [],
-			server_time: "2026-03-01T12:02:00Z",
-		});
-
-		(mockApp.vault.create as jest.Mock).mockImplementation(async (path: string) => {
-			if (path.includes(":")) {
-				throw new Error(
-					'File name cannot contain any of the following characters: \\ / : * ? < > "',
-				);
-			}
-			return undefined;
-		});
-
-		const engine = createEngine();
-		engine.setLastSync("2026-01-01T00:00:00Z");
-
-		const applied = await engine.pullAll();
-
-		expect(applied).toBe(1);
-		expect(engine.getLastSync()).toBe("2026-03-01T12:02:00Z");
-	});
+	// REST-purge Bucket B (Task 5) — REMOVED: "pullAll skips files that fail to
+	// apply and continues". pullAll() no longer runs its own per-note apply loop
+	// over a REST fetch — it replays via catchupViaSeqReplay({fromZero:true}),
+	// whose per-op skip-and-continue is pinned in sync-socket-catchup.test.ts
+	// ("a per-note failure is caught, logged, and skipped — never throws"), and
+	// whose applied-count passthrough via pullAll is pinned in
+	// tests/sync-push-consolidation.test.ts ("SyncEngine.pullAll — replay-from-0").
 
 	test("a per-file server error (502) queues a retry but stays ONLINE", async () => {
 		// A storage 502 on one file means that file failed, NOT that the backend
@@ -3116,17 +3110,12 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(file);
 
 		// pullAll sets the `pulling` flag + drains post-sync pushes (the surviving
-		// carrier of the #244 defer). Fire a user edit mid-sync via its feed.
-		// Reset first — a leaked mockResolvedValueOnce from a prior test would fire
-		// before this implementation and skip the mid-sync edit.
-		(mockApi.getChanges as jest.Mock).mockReset().mockImplementation(async () => {
+		// carrier of the #244 defer). Fire a user edit mid-replay, from inside the
+		// (mocked) catchupViaSeqReplay call — `pulling` is still true at that point.
+		(engine as any).catchupViaSeqReplay = async () => {
 			engine.handleModify(file);
-			return { changes: [], server_time: "2026-03-01T12:00:00Z" };
-		});
-		(mockApi.getAttachmentChanges as jest.Mock).mockReset().mockResolvedValue({
-			changes: [],
-			server_time: "2026-03-01T12:00:00Z",
-		});
+			return { applied: 0, serverIds: new Set<string>() };
+		};
 
 		await engine.pullAll();
 
@@ -3810,36 +3799,12 @@ describe("SyncEngine.pushAll with replaceRemote", () => {
 		expect(mockApi.deleteAttachment).not.toHaveBeenCalled();
 	});
 
-	test("replace mode (replaceRemote:true): wipes remote EXTRAS, preserves locally-present notes, then uploads local", async () => {
-		const engine = createEngine();
-		// .canvas for the shared local note so its in-place force re-push takes the
-		// LWW REST route (md converges over CRDT and would not fire pushNote).
-		const local = [new TFile("kept.canvas", Date.now())];
-		(mockApp.vault.getFiles as jest.Mock).mockReturnValue(local);
-		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# Content");
-		(mockApi.ping as jest.Mock).mockResolvedValue({ ok: true });
-		(mockApi.pushNote as jest.Mock).mockResolvedValue({ note: {}, chunks_indexed: 1 });
-		// wipeRemote (before upload) and reconcile (after upload) both read the
-		// manifest — return the same snapshot for every call.
-		(mockApi.getManifest as jest.Mock).mockResolvedValue({
-			notes: [{ path: "kept.canvas" }, { path: "remote-a.md" }, { path: "remote-b.md" }],
-			attachments: [{ path: "old.png" }],
-		});
-
-		await engine.pushAll({ replaceRemote: true });
-
-		// The shared note (present locally) is NOT deleted: deleting it would
-		// tombstone its path and the backend delete-wins guard would then refuse
-		// the same-path re-push as `recently_deleted` (permanent loss — the
-		// test_86 regression). It is force-pushed in place instead.
-		expect(mockApi.deleteNote).not.toHaveBeenCalledWith("kept.canvas");
-		// Only true remote extras (absent locally) are wiped.
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-a.md");
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("remote-b.md");
-		expect(mockApi.deleteAttachment).toHaveBeenCalledWith("old.png");
-		// Local was re-uploaded (server ends an exact mirror of local either way).
-		expect(mockApi.pushNote).toHaveBeenCalled();
-	});
+	// NOTE: the replace-remote server-side delete behavior (server-only note-ids
+	// via crdtDelete + server-only attachment-paths via deleteAttachment, and the
+	// never-trash-local invariant) is covered against the real CRDT harness in
+	// tests/sync-push-consolidation.test.ts ("replace-remote via crdtDelete +
+	// attachment-delete"). It replaced the manifest-based wipeRemote mechanism
+	// this describe used to exercise.
 
 	test("backward compat: no opts = no deletions", async () => {
 		const engine = createEngine();

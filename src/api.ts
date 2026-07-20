@@ -15,7 +15,6 @@ import type {
 	AttachmentChangesResponse,
 	AttachmentDetail,
 	AttachmentResponse,
-	BatchUpsertResponse,
 	ChangesResponse,
 	DeleteResponse,
 	ManifestResponse,
@@ -485,29 +484,6 @@ export class EngramApi {
 		if (opts?.fields) params.set("fields", opts.fields);
 		const resp = await this.request("GET", `/notes/changes?${params.toString()}`);
 		return resp.json as ChangesResponse;
-	}
-
-	/** Bulk-push up to 100 notes via POST /notes/batch (protocol rev).
-	 *  Sends a fresh idempotency key per call — the server replays the cached
-	 *  response on retry instead of re-executing the batch. Throws with
-	 *  status 404/405 on pre-rev backends; callers fall back to per-note
-	 *  pushes. */
-	async pushNotesBatch(
-		notes: Array<{
-			path: string;
-			content: string;
-			mtime: number;
-			version?: number;
-			id?: string;
-		}>,
-	): Promise<BatchUpsertResponse> {
-		const resp = await this.request(
-			"POST",
-			"/notes/batch",
-			{ notes },
-			{ "X-Idempotency-Key": crypto.randomUUID() },
-		);
-		return resp.json as BatchUpsertResponse;
 	}
 
 	/** Get full note by path. */
