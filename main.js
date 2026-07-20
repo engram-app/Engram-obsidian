@@ -19987,7 +19987,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
     if (eventTs !== void 0) {
       let lastTs = this.lastRelocationTs.get(id2);
-      if (lastTs !== void 0 && eventTs <= lastTs) {
+      if (lastTs !== void 0 && eventTs < lastTs) {
         rlog().info(
           "pull",
           `Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ${id2} -> ${newPath}`

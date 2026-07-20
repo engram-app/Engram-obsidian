@@ -819,12 +819,20 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 		expect(noteIdMap.pathForId("id-pull-then-ws")).toBe("New.md");
 	});
 
-	test("an event whose ts TIES the last-applied ts is treated as stale, not newer (review finding 5)", async () => {
-		// updated_at is only seconds-precision on the wire, so two genuinely
-		// different relocations for the same id within one second can produce
-		// the exact same normalized eventTs. A tie can't be proven newer than
-		// what's already applied, so it must not win — strict `<` alone would
-		// let it through.
+	test("an event whose ts TIES the last-applied ts now APPLIES (last-write-wins), so a shared-op rename is not self-blocked (e2e test_34)", async () => {
+		// A folder rename shares ONE server `updated_at` across every touched row,
+		// so the old-leg delete, the id-keyed move, and the new-path upsert collide
+		// on the exact same eventTs. A `<=` guard dropped the move that advances
+		// canonical to the new path once a same-ts sibling had stamped the
+		// watermark — canonical stayed OLD and the new-path upsert was then rejected
+		// (received=yes materialized=no). The guard is now strict `<`: a tie
+		// applies. This is safe because (a) distinct server ops get distinct
+		// `updated_at`, so a real tie is always the SAME op targeting the SAME path;
+		// (b) a genuine duplicate no-ops via the priorPath === newPath early-return;
+		// (c) a genuinely-OLDER event (older updated_at) is still refused — the next
+		// test pins that backward-stale guard, which `<` does not weaken.
+		// Consequence for an artificial tie between two DIFFERENT targets: the
+		// last-delivered relocation wins (below, the second event re-keys to Old).
 		const engine = createEngine();
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("Old.md", "id-tie");
@@ -860,10 +868,10 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 		} as any);
 		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
 
-		// A second, different relocation event whose `updated_at` normalizes to
-		// the exact same epoch-ms value as the pull's — must not be treated as
-		// newer. `timestamp` (client receipt) is irrelevant to the guard now;
-		// set it to something else entirely to prove that.
+		// A second relocation event whose `updated_at` ties the pull's exact
+		// epoch-ms value. Under strict `<` this now APPLIES (last-write-wins on a
+		// tie), so canonical re-keys to Old. `timestamp` (client receipt) is
+		// irrelevant to the guard — set it to something else to prove that.
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			kind: "note",
@@ -877,7 +885,7 @@ describe("pull-applied relocations record lastRelocationTs too (final review IMP
 			updated_at: "2026-01-01T00:00:10Z",
 		} as any);
 
-		expect(noteIdMap.pathForId("id-tie")).toBe("New.md");
+		expect(noteIdMap.pathForId("id-tie")).toBe("Old.md");
 	});
 });
 

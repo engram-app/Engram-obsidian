@@ -4185,7 +4185,15 @@ export class SyncEngine {
 		if (!priorPath || normalizePath(priorPath) === normalizePath(newPath)) return;
 		if (eventTs !== undefined) {
 			const lastTs = this.lastRelocationTs.get(id);
-			if (lastTs !== undefined && eventTs <= lastTs) {
+			// STRICT `<` (e2e test_34): the backend gives a whole folder-rename op ONE
+			// shared seq/ts, so sibling events (old-leg delete relocation + the id-keyed
+			// move + the new-path upsert) collide on ts. A `<=` guard dropped the move
+			// that advances canonical to the new path when a same-ts sibling had already
+			// stamped lastRelocationTs, so canonical stayed OLD and the new-path upsert
+			// was then rejected (received=yes materialized=no). `<` lets an equal-ts move
+			// that has NOT yet applied proceed; a genuine duplicate is still a no-op via
+			// the `priorPath === newPath` early-return above, so idempotency holds.
+			if (lastTs !== undefined && eventTs < lastTs) {
 				rlog().info(
 					"pull",
 					`Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ` +
