@@ -59,8 +59,8 @@
     "yjs": "^13.6.31"
   },
   "overrides": {
-    "brace-expansion": "^1.1.13",
+    "brace-expansion": "^1.1.16",
     "picomatch": "^2.3.2",
-    "js-yaml": "4.2.0"
+    "js-yaml": "^4.3.0"
   }
 }
