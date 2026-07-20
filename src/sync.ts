@@ -140,17 +140,7 @@ export async function reconcileColdStart(
 	// (IndexedDB whenSynced replay), and a frozen diskContent diffed after a
 	// concurrent remote merge would delete the remote ops (review sync.ts:153,
 	// same class as the pushFile/test_83 fix).
-	file: {
-		path: string;
-		noteId: string;
-		diskContent: string;
-		reread?: () => Promise<string>;
-		// True when the server already holds this note (crdtHead present). Keyed by
-		// PATH (map-free) by the caller so a resume-empty noteIdMap can't misroute a
-		// known note into the seed path (#846/test_82). A server-known + history-less
-		// doc adopts; a server-UNKNOWN note (genuine offline create) still seeds.
-		serverKnown?: boolean;
-	},
+	file: { path: string; noteId: string; diskContent: string; reread?: () => Promise<string> },
 	crdt: {
 		// Returns the consumed content (or null when declined) but the value is
 		// intentionally ignored here — a DECLINED write (handshake gate) is
@@ -166,12 +156,6 @@ export async function reconcileColdStart(
 		getText: (noteId: string) => Promise<string>;
 		projectedText: (noteId: string) => Promise<string>;
 		enroll?: (noteId: string) => void;
-		// True when the doc carries a baseline lineage (a prior STEP2 was applied).
-		// A history-LESS doc (false) for a server-known note must ADOPT, not seed.
-		hasHistory?: (noteId: string) => Promise<boolean>;
-		// Fetch + adopt the full server state onto the server lineage. Drift-safe:
-		// keep-both / 3-way merge preserves any un-pushed disk edit.
-		adopt?: (path: string, noteId: string) => Promise<unknown>;
 	},
 	onCorruption: () => void,
 	maxBytes: number = MAX_CRDT_NOTE_BYTES,
@@ -193,24 +177,6 @@ export async function reconcileColdStart(
 		return;
 	}
 	if (current === file.diskContent) return; // already in sync
-	// Resumed KNOWN note on a history-LESS doc: adopt the server lineage instead
-	// of seeding a client lineage. Seeding here mints a SECOND lineage that Yjs
-	// unions with the server's on the STEP2 adopt → doubled body (#846) → the
-	// resumed device pushes the double and clobbers the peer's real edit (e2e
-	// test_82). `serverKnown` is crdtHead (path-keyed, map-free) so a
-	// resume-empty noteIdMap can't misroute a known note into the seed path. A
-	// server-UNKNOWN note (genuine offline create) has no server state to adopt
-	// and falls through to the seed below. A history-FULL doc already carries its
-	// baseline lineage (site B), so its disk edit safely diffs onto it — no adopt.
-	if (
-		file.serverKnown &&
-		crdt.adopt &&
-		crdt.hasHistory &&
-		!(await crdt.hasHistory(file.noteId))
-	) {
-		await crdt.adopt(file.path, file.noteId);
-		return; // adopt is the handshake — skip the disk-seed + enroll below
-	}
 	try {
 		// Positional-args pattern: only pass the trailing reread when the caller
 		// supplied one — an explicit trailing `undefined` changes
@@ -1655,24 +1621,6 @@ export class SyncEngine {
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return false;
 		return this.getCrdtHead(path) != null;
-	}
-
-	/** Path-keyed "the server holds this note" — the map-FREE variant of
-	 *  hasServerNote for the cold-start reconcile, where the noteIdMap may be
-	 *  transiently empty on resume. crdtHead lives in syncState under the PATH
-	 *  (persisted in data.json, rehydrated before cold-start), so this never
-	 *  fails open the way an id→path lookup does. This is the discriminator that
-	 *  routes a resumed known note to adopt instead of seed (#846/test_82). */
-	hasServerNoteAtPath(path: string): boolean {
-		return this.getCrdtHead(path) != null;
-	}
-
-	/** Public cold-start entry: adopt the FULL server state for a history-less
-	 *  KNOWN note (drift-safe keep-both / 3-way merge). main.ts's reconcileColdStart
-	 *  wiring routes a resumed known note here instead of seeding a client lineage
-	 *  that would double on the STEP2 adopt (#846/test_82). */
-	async adoptColdStartNote(path: string, noteId: string): Promise<unknown> {
-		return this.adoptHistoryLessNote(path, noteId);
 	}
 
 	/** Import legacy hash-only format (migration from old plugin versions). */
