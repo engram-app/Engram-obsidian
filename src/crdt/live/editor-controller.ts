@@ -1,12 +1,10 @@
 import type { EditorView } from "@codemirror/view";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
-import { rlog } from "../../remote-log";
 import {
 	type BindResult,
 	bindSpec,
 	crdtCompartment,
-	isUnseededYText,
 	reconcileEditorToYText,
 } from "./ycollab-binding";
 
@@ -109,7 +107,7 @@ export class EditorController {
 		// and does NOT defer — the guard only fires when a real base body is on
 		// disk while the doc is still unseeded.
 		const editorText = view.state.doc.toString();
-		if (isUnseededYText(editorText, ytext)) {
+		if (ytext.length === 0 && editorText.length > 0) {
 			this.deferUntilSeeded(view, path, ytext, epoch);
 			return;
 		}
@@ -220,37 +218,7 @@ export class EditorController {
 			this.detach(view);
 			return;
 		}
-		const editorText = view.state.doc.toString();
-		// Data-loss guard (#256) + ORPHAN HEAL — the invariant bindTo enforces
-		// (#257), which this site lacked.
-		//
-		// Reaching this state proves the binding is already broken: ySync's
-		// observer is registered on this SAME Y.Text, so for a HEALTHY binding an
-		// empty Y.Text implies an empty buffer (the delete would have been mirrored
-		// into the view). A non-empty body beside an empty Y.Text therefore means
-		// this controller holds a Y.Text the manager has since torn down and
-		// replaced — closeDoc / removeDoc / flattenIfBloated each destroy the entry
-		// and mint a fresh doc, orphaning our cached reference.
-		//
-		// Repairing toward that orphan deletes base out of the buffer and Obsidian
-		// autosaves the wipe. But merely SKIPPING would strand the note: this.path
-		// stays set, so refresh()'s bindTo short-circuits and the note can never
-		// rebind — keystrokes keep flowing into a dead doc, silently unsynced.
-		// Rebind instead: it re-resolves getYText (dropping the orphan) and never
-		// removes text from the buffer, the same recovery the view-identity branch
-		// above performs. bindTo re-checks this condition and defers if the FRESH
-		// doc is genuinely unseeded, so this cannot loop.
-		if (isUnseededYText(editorText, this.boundYtext)) {
-			const orphanedPath = this.path;
-			rlog().warn(
-				"crdt",
-				`drift repair SKIPPED — unseeded/orphaned Y.Text, rebinding ${orphanedPath}`,
-			);
-			if (orphanedPath !== null) this.forceRebind(view, orphanedPath);
-			else this.detach(view);
-			return;
-		}
-		const changes = reconcileEditorToYText(editorText, this.boundYtext);
+		const changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
 		if (changes.length > 0) {
 			const captured = this.bindResult.getSyncAnnotation();
 			if (captured !== null) {

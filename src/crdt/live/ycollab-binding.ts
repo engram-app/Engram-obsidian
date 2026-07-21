@@ -20,7 +20,6 @@ import { EditorView, keymap } from "@codemirror/view";
 import { YSyncConfig, yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import type { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
-import { splitFrontmatter } from "../frontmatter-codec";
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
 
 /** The single Compartment that holds the active note's yCollab binding. The
@@ -232,35 +231,4 @@ export function bindSpec(ytext: Y.Text, awareness: Awareness): BindResult {
  *  [] when already equal. */
 export function reconcileEditorToYText(currentDoc: string, ytext: Y.Text): CmChangeSpec[] {
 	return textDiffToChangeSpec(currentDoc, ytext.toJSON());
-}
-
-/** True when `ytext` is UNSEEDED (or orphaned) rather than genuinely empty: it
- *  holds nothing while the editor still shows a non-empty BODY.
- *
- *  `SyncEngine.flushFromCrdt` materializes base to DISK and deliberately leaves
- *  the Y.Doc EMPTY (adopt-first #161 — the server seeds it on its own lineage;
- *  a local seed would double against that lineage, #846). So an empty Y.Text
- *  beside a non-empty editor body normally means "the seed has not arrived yet".
- *
- *  Reconciling the editor DOWN to such a Y.Text deletes base out of the buffer.
- *  Obsidian then autosaves the emptied buffer (the `modify bytes=0` data-loss
- *  signature) and, at the bind site, ySync forwards the delete as a LOCAL op so
- *  base is lost globally. Both reconcile sites refuse it: `bindTo` defers the
- *  bind (#257), the drift repair rebinds instead of repairing (#256).
- *
- *  BODY, not the raw buffer. The CRDT keeps frontmatter in separate Y.Map/Y.Array
- *  types and `content` holds only the body (`CrdtManager.seedContentInto`), while
- *  the CM6 buffer holds the whole file. Comparing raw text would classify every
- *  frontmatter-only note (non-empty buffer, empty body) as unseeded and strand it.
- *
- *  ACCEPTED TRADE-OFF — this is not an impossibility claim. A real "delete all"
- *  normally reaches the editor through ySync's remote->editor path rather than a
- *  reconcile, so it is unaffected. But when the Y.Doc is LEGITIMATELY empty and
- *  the buffer still holds stale text — e.g. the delete landed while the sync gate
- *  was closed, so `flushFromCrdt` returned early and never rewrote disk — these
- *  sites will not converge the editor down, and the stale body can be autosaved
- *  back. Losing a deletion is judged strictly better than destroying a note's
- *  content: a deletion re-arrives from the server, destroyed content does not. */
-export function isUnseededYText(editorText: string, ytext: Y.Text): boolean {
-	return ytext.length === 0 && splitFrontmatter(editorText).body.length > 0;
 }
