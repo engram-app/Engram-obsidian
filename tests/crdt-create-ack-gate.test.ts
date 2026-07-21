@@ -10,6 +10,20 @@
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { CrdtManager } from "../src/crdt/manager";
+import { SyncEngine } from "../src/sync";
+import { DEFAULT_SETTINGS } from "../src/types";
+
+/** Minimal SyncEngine for flush tests — app/api are untouched by
+ *  flushHeldEditsOnCreateAck, so bare stubs are enough (mirrors the lean
+ *  construction other sync.ts test files use, e.g. sync-crdt-route.test.ts). */
+function makeEngine(): SyncEngine {
+	return new SyncEngine(
+		{} as any,
+		{} as any,
+		{ ...DEFAULT_SETTINGS, enableCrdt: false },
+		mock().mockResolvedValue(undefined),
+	);
+}
 
 describe("create-ack gate on live send", () => {
 	test("a local edit for an UN-acked note does NOT call onUpdate", async () => {
@@ -50,5 +64,50 @@ describe("create-ack gate on live send", () => {
 		await mgr.applyLocalEdit("note-1", "hello");
 		expect(onUpdate).toHaveBeenCalled();
 		await mgr.destroy();
+	});
+});
+
+describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
+	test("on create-ack, the note's held state is flushed once via crdt_msg", async () => {
+		const sentMsgs: string[] = [];
+		const onUpdate = mock((docId: string) => sentMsgs.push(docId));
+		const engine = makeEngine();
+		const mgr = new CrdtManager({
+			dbPrefix: "flush-ack",
+			onUpdate,
+			onFlushToDisk: async () => {},
+			canSendLive: (id: string) => engine.isNoteConfirmed(id),
+		});
+		engine.setCrdtManager(mgr);
+
+		await mgr.applyLocalEdit("note-1", "typed before ack");
+		expect(sentMsgs).toHaveLength(0); // gated (Task 1)
+
+		await engine.flushHeldEditsOnCreateAck("note-1", "n.md"); // create just acked
+		expect(sentMsgs).toEqual(["note-1"]); // exactly one flush of current state
+
+		await mgr.destroy();
+	});
+
+	test("a note with no held edits still flushes without error", async () => {
+		const sentMsgs: string[] = [];
+		const onUpdate = mock((docId: string) => sentMsgs.push(docId));
+		const engine = makeEngine();
+		const mgr = new CrdtManager({
+			dbPrefix: "flush-ack-empty",
+			onUpdate,
+			onFlushToDisk: async () => {},
+		});
+		engine.setCrdtManager(mgr);
+
+		await expect(engine.flushHeldEditsOnCreateAck("note-2", "n2.md")).resolves.toBeUndefined();
+		expect(sentMsgs).toEqual(["note-2"]);
+
+		await mgr.destroy();
+	});
+
+	test("never throws into the caller when no CrdtManager is wired", async () => {
+		const engine = makeEngine();
+		await expect(engine.flushHeldEditsOnCreateAck("note-3", "n3.md")).resolves.toBeUndefined();
 	});
 });

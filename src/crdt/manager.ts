@@ -499,6 +499,21 @@ export class CrdtManager {
 		return Y.encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
 	}
 
+	/** Force-send `noteId`'s CURRENT full state via `onUpdate`, bypassing
+	 *  `canSendLive` — the "caller resends once acked" half of that option's
+	 *  contract. A note's `crdt_create` ack is the caller's cue: whatever local
+	 *  edits landed in the Y.Doc while the gate held them (never lost, just
+	 *  unsent) need one push now that the row exists. Reuses the exact transport
+	 *  `onUpdate` already goes through (CrdtChannel.sendUpdateRaw in
+	 *  production), so no separate send path is introduced. Lazily creates an
+	 *  empty entry if none exists yet, so a note with nothing held still
+	 *  resolves cleanly (sends a no-op-ish empty state, harmless to a peer). */
+	async flushHeldState(noteId: string): Promise<void> {
+		const id = this.docId(noteId);
+		const update = await this.encodeStateAsUpdate(noteId);
+		this.opts.onUpdate(id, update, "flush-on-ack");
+	}
+
 	/** Return the note body (frontmatter excluded). For the full file use projectedText. */
 	async getText(noteId: string): Promise<string> {
 		return (await this.entry(noteId)).text.toJSON();

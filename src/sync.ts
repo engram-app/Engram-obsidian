@@ -668,6 +668,26 @@ export class SyncEngine {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
 
+	/** Called immediately after a note's `crdt_create` is acked (its server row
+	 *  now exists) — from every create-ack path (inline pushFile genesis and the
+	 *  durable queued create-ack, `applyCrdtCreateAck`). Task 1's `canSendLive`
+	 *  gate silently HELD every local Y.Doc update for this note (including a
+	 *  create-ack path's own disk-content seed) while the row didn't exist yet,
+	 *  so nothing individually reached the wire. Sends the note's CURRENT full
+	 *  state once via `CrdtManager.flushHeldState`, which reuses the manager's
+	 *  existing `onUpdate` transport directly (bypassing `canSendLive`) rather
+	 *  than introducing a second send path. Never throws into the caller —
+	 *  logged and swallowed, matching this file's sibling error-handling
+	 *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch). */
+	async flushHeldEditsOnCreateAck(noteId: string, path: string): Promise<void> {
+		if (!this.crdt) return;
+		try {
+			await this.crdt.flushHeldState(noteId);
+		} catch (e) {
+			rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`);
+		}
+	}
+
 	private confirmNoteId(noteId: string | null | undefined): void {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
@@ -889,6 +909,12 @@ export class SyncEngine {
 			}
 		}
 		this.setCrdtHead(path, CRDT_HEAD_CREATED);
+		// Task 1's canSendLive gate held effectiveId's live update(s) (including
+		// the disk-content seed above) until this exact moment — confirm it, then
+		// flush the now-current full Y.Doc state as ONE crdt_msg. Mirrors
+		// pushFile's inline create-ack (sync.ts, crdtCreate success arm).
+		this.confirmNoteId(effectiveId);
+		await this.flushHeldEditsOnCreateAck(effectiveId, path);
 	}
 
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
@@ -2583,6 +2609,12 @@ export class SyncEngine {
 							// immediately true for this id (the server row now exists). The
 							// first convergence overwrites it with the authoritative head.
 							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
+							// Task 1's canSendLive gate held effectiveId's live update(s)
+							// (including the seed above) until this exact moment — confirm
+							// it, then flush the now-current full Y.Doc state as ONE crdt_msg
+							// so nothing typed during the crdtCreate await stays stranded.
+							this.confirmNoteId(effectiveId);
+							await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath);
 							if (consumed !== null) {
 								// Echo baseline from what the manager CONSUMED (mirrors the
 								// CRDT-op branch above) so a later revert isn't hash-skipped.
@@ -2631,6 +2663,8 @@ export class SyncEngine {
 								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`,
 							);
 							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
+							this.confirmNoteId(effectiveId);
+							await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath);
 							return true;
 						}
 					} catch (err) {
