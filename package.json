@@ -1,6 +1,6 @@
 {
   "name": "engram-obsidian",
-  "version": "1.12.33",
+  "version": "1.12.34",
   "description": "Your notes are your AI's memory. Sync your vault everywhere, search by meaning, and let Claude, Cursor, and other AI apps read and write your notes. Hosted or self-host, free to start.",
   "main": "main.js",
   "type": "module",
@@ -12,6 +12,7 @@
     "lint": "biome check src tests",
     "lint:obsidian": "eslint --max-warnings 0 'src/**/*.ts'",
     "lint:css": "stylelint --max-warnings 0 styles.css",
+    "lint:lockfile": "node scripts/check-lockfile-registry.mjs",
     "format": "biome format --write src tests",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "prepare": "lefthook install"
@@ -49,13 +50,13 @@
     "y-codemirror.next": "^0.3.5"
   },
   "dependencies": {
-    "@codemirror/state": "^6.0.0",
-    "@codemirror/view": "^6.0.0",
+    "@codemirror/state": "6.5.0",
+    "@codemirror/view": "6.38.6",
     "diff-match-patch": "^1.0.5",
     "lib0": "^0.2.117",
     "y-indexeddb": "^9.0.12",
     "y-protocols": "^1.0.7",
-    "yaml": "^2.5.0",
+    "yaml": "2.8.3",
     "yjs": "^13.6.31"
   },
   "overrides": {
