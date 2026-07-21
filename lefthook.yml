@@ -23,6 +23,13 @@ pre-commit:
       run: bun biome check --write {staged_files}
       stage_fixed: true
 
+    # A lockfile regenerated on a LAN machine carries the Verdaccio proxy host
+    # in every URL, which works here and breaks every outside consumer. Catch
+    # it at commit time rather than on the public listing. Offline, instant.
+    - name: lockfile-registry
+      glob: "{bun.lock,package-lock.json}"
+      run: node scripts/check-lockfile-registry.mjs
+
     # Block em-dash (—) and en-dash (–) in user-facing prose docs — an AI-slop
     # tell. Use , : ; ( ) or rephrase. Mirrors the CI gate in lint.yml.
     # Dev-internal docs (docs/internals.md, docs/engram-ops.md) are exempt.

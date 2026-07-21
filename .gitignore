@@ -2,7 +2,13 @@
 main.js
 *.js.map
 
-# bun is our package manager — no npm lockfile tracked
+# bun is our package manager — no npm lockfile tracked.
+#
+# If Obsidian's community scanner turns out to need an npm install path, this
+# is where that decision gets reversed. Generate the lockfile against the
+# PUBLIC registry, never on a LAN machine with the default ~/.npmrc — see
+# scripts/check-lockfile-registry.mjs, which enforces that for every lockfile
+# we do track.
 node_modules/
 package-lock.json
 
