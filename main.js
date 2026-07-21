@@ -14156,7 +14156,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       return;
     }
     if (event === "note_yjs_update" && payload) {
-      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, seq3 = payload.seq;
+      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq3 = Number.isInteger(rawSeq) ? rawSeq : void 0;
       noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq3));
       return;
     }
@@ -18797,15 +18797,32 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  commutative + idempotent, so seq never gates application; a stale seq
    *  on a live delta is normal (the backend's seq goes stale between
    *  checkpoints), not a duplicate.
-   *  - `seq` is `undefined` or `null` (old backend / note deleted
-   *    mid-flight): no signal, apply only.
-   *  - `seq <= catchupSeq`: stale, apply only, cursor unchanged.
-   *  - `seq === catchupSeq + 1`: in order, advance the cursor.
-   *  - `seq > catchupSeq + 1`: a gap — fire the (single-flighted)
-   *    seq-replay catch-up fire-and-forget and do NOT advance the cursor,
-   *    so the replay starts from the true last-applied position. */
-  applyLiveOpWithSeq(_noteId, seq3, apply) {
-    return apply(), seq3 == null || seq3 <= this.catchupSeq ? "applied" : seq3 === this.catchupSeq + 1 ? (this.setCatchupSeq(seq3), "advanced") : (this.catchupViaSeqReplay(), "healing");
+   *
+   *  This is a pure BEHIND-DETECTOR: a live op never advances or persists
+   *  the `catchupSeq` cursor, full stop. The prior "seq === cursor + 1 ->
+   *  advance" branch was removed (final review) because advancing off live
+   *  observation is unsound in three distinct ways: (1) a per-message
+   *  silent-skip apply (e.g. an illegal-filename op) consumes a feed entry
+   *  without the client ever seeing it, so a later "+1" looks in-order while
+   *  actually skipping the entry that would have carried a rename/delete;
+   *  (2) `seq` is shared/aliased across write kinds (note/attachment/folder),
+   *  so watching only note live-ops can walk straight past a missed rename
+   *  that consumed an intervening seq; (3) the live stream is unordered
+   *  across a multi-node, multi-note vault, so "+1" arithmetic over it fires
+   *  false gaps continuously rather than detecting real ones. `seq` here is
+   *  used ONLY to detect "we are behind"; `catchupViaSeqReplay` is the sole
+   *  writer of the cursor (it persists per page, see its call site), and it
+   *  is the only thing that can safely consume renames/deletes/creates in
+   *  order.
+   *  - `seq` fails `Number.isInteger` (undefined, null, string, NaN, a
+   *    float): not a valid signal, apply only, cursor unchanged.
+   *  - `seq <= catchupSeq`: stale (normal for a live delta between
+   *    checkpoints), apply only, cursor unchanged.
+   *  - `seq > catchupSeq`: we are behind — apply, fire the (single-flighted)
+   *    seq-replay catch-up fire-and-forget, and do NOT touch the cursor; the
+   *    replay reads the persisted cursor itself and advances/persists it. */
+  applyLiveOpWithSeq(noteId, seq3, apply) {
+    return apply(), !Number.isInteger(seq3) || seq3 <= this.catchupSeq ? "applied" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq3} cursor=${this.catchupSeq}`), this.catchupViaSeqReplay(), "healing");
   }
   /** Wipe ALL per-vault sync + identity state. Both vault-change paths
    *  (explicit picker `resetForVaultChange`, backstop
@@ -19666,7 +19683,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
       }
       if (enumerateOnly || (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() })), !resp.has_more) break;
-      typeof resp.next_seq == "number" && (cursor = resp.next_seq);
+      typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
     }
     return applied;
   }

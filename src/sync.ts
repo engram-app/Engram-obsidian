@@ -1596,26 +1596,40 @@ export class SyncEngine {
 	 *  commutative + idempotent, so seq never gates application; a stale seq
 	 *  on a live delta is normal (the backend's seq goes stale between
 	 *  checkpoints), not a duplicate.
-	 *  - `seq` is `undefined` or `null` (old backend / note deleted
-	 *    mid-flight): no signal, apply only.
-	 *  - `seq <= catchupSeq`: stale, apply only, cursor unchanged.
-	 *  - `seq === catchupSeq + 1`: in order, advance the cursor.
-	 *  - `seq > catchupSeq + 1`: a gap — fire the (single-flighted)
-	 *    seq-replay catch-up fire-and-forget and do NOT advance the cursor,
-	 *    so the replay starts from the true last-applied position. */
+	 *
+	 *  This is a pure BEHIND-DETECTOR: a live op never advances or persists
+	 *  the `catchupSeq` cursor, full stop. The prior "seq === cursor + 1 ->
+	 *  advance" branch was removed (final review) because advancing off live
+	 *  observation is unsound in three distinct ways: (1) a per-message
+	 *  silent-skip apply (e.g. an illegal-filename op) consumes a feed entry
+	 *  without the client ever seeing it, so a later "+1" looks in-order while
+	 *  actually skipping the entry that would have carried a rename/delete;
+	 *  (2) `seq` is shared/aliased across write kinds (note/attachment/folder),
+	 *  so watching only note live-ops can walk straight past a missed rename
+	 *  that consumed an intervening seq; (3) the live stream is unordered
+	 *  across a multi-node, multi-note vault, so "+1" arithmetic over it fires
+	 *  false gaps continuously rather than detecting real ones. `seq` here is
+	 *  used ONLY to detect "we are behind"; `catchupViaSeqReplay` is the sole
+	 *  writer of the cursor (it persists per page, see its call site), and it
+	 *  is the only thing that can safely consume renames/deletes/creates in
+	 *  order.
+	 *  - `seq` fails `Number.isInteger` (undefined, null, string, NaN, a
+	 *    float): not a valid signal, apply only, cursor unchanged.
+	 *  - `seq <= catchupSeq`: stale (normal for a live delta between
+	 *    checkpoints), apply only, cursor unchanged.
+	 *  - `seq > catchupSeq`: we are behind — apply, fire the (single-flighted)
+	 *    seq-replay catch-up fire-and-forget, and do NOT touch the cursor; the
+	 *    replay reads the persisted cursor itself and advances/persists it. */
 	applyLiveOpWithSeq(
-		_noteId: string,
+		noteId: string,
 		seq: number | undefined | null,
 		apply: () => void,
-	): "applied" | "advanced" | "healing" {
+	): "applied" | "healing" {
 		apply();
-		if (seq === undefined || seq === null || seq <= this.catchupSeq) {
+		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
 			return "applied";
 		}
-		if (seq === this.catchupSeq + 1) {
-			this.setCatchupSeq(seq);
-			return "advanced";
-		}
+		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
 		void this.catchupViaSeqReplay();
 		return "healing";
 	}
@@ -3389,7 +3403,19 @@ export class SyncEngine {
 				await this.saveData({ catchupSeq: this.getCatchupSeq() });
 			}
 			if (!resp.has_more) break;
-			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
+			// Guard against a `next_seq` that doesn't move forward (a backend quirk
+			// or malformed page) regressing the cursor mid-replay — `cursor` must
+			// stay monotonic across every page of THIS call so the per-page
+			// persisted write above can never move backwards. This intentionally
+			// does NOT compare against `this.getCatchupSeq()`: the cross-vault
+			// mismatch case above starts `cursor` at 0 on purpose to overwrite a
+			// stale higher cursor left by a different vault, and that reset must
+			// still be allowed to persist a lower value than what's currently
+			// stored (setCatchupSeq itself is intentionally left un-guarded so
+			// resets keep working; see final-review fix notes).
+			if (typeof resp.next_seq === "number" && resp.next_seq > cursor) {
+				cursor = resp.next_seq;
+			}
 		}
 		return applied;
 	}

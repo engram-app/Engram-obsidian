@@ -1,8 +1,11 @@
 /**
  * Task 2 (crdt-single-path Phase D2): SyncEngine.applyLiveOpWithSeq decision
  * function. seq NEVER gates application (Yjs updates are commutative +
- * idempotent) — apply() runs in every branch. seq only decides whether the
- * catchupSeq cursor advances or a gap-heal replay fires.
+ * idempotent) — apply() runs in every branch. Live ops are a pure
+ * behind-detector: they never advance or persist the catchupSeq cursor
+ * (final-review fix). Only catchupViaSeqReplay's per-page advance does that.
+ * An integer seq greater than the cursor fires the single-flight replay; a
+ * non-integer (string/NaN/float) is not a valid signal at all.
  *
  * Task 3: the wiring layer (createCrdtWiring's onNoteYjsUpdate) that threads a
  * live fan-out's seq through applyLiveOpWithSeq.
@@ -29,13 +32,17 @@ function makeEngine(): SyncEngine {
 }
 
 describe("SyncEngine.applyLiveOpWithSeq", () => {
-	test("an in-order op applies and advances the cursor", () => {
+	test("a fresh seq (cursor+1) applies AND fires the single-flight heal, cursor untouched", () => {
 		const engine = makeEngine();
 		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		} as any);
 		const apply = mock(() => {});
-		expect(engine.applyLiveOpWithSeq("n", 6, apply)).toBe("advanced");
+		expect(engine.applyLiveOpWithSeq("n", 6, apply)).toBe("healing");
 		expect(apply).toHaveBeenCalledTimes(1);
-		expect(engine.getCatchupSeq()).toBe(6);
+		expect(catchup).toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5); // ONLY the replay advances/persists the cursor
 	});
 
 	test("a gap STILL applies the op, triggers catch-up, does not advance", () => {
@@ -76,6 +83,41 @@ describe("SyncEngine.applyLiveOpWithSeq", () => {
 		expect(engine.applyLiveOpWithSeq("n", null as any, apply)).toBe("applied");
 		expect(apply).toHaveBeenCalledTimes(1);
 		expect(engine.getCatchupSeq()).toBe(5); // unchanged, no heal triggered
+	});
+
+	// Non-integer seq values are not a valid gap-heal signal (aliasing across
+	// write kinds proved unsound in review) — only Number.isInteger(seq) counts.
+	test("a string seq applies without advancing or healing", () => {
+		const engine = makeEngine();
+		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay");
+		const apply = mock(() => {});
+		expect(engine.applyLiveOpWithSeq("n", "42" as any, apply)).toBe("applied");
+		expect(apply).toHaveBeenCalledTimes(1);
+		expect(catchup).not.toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5);
+	});
+
+	test("a NaN seq applies without advancing or healing", () => {
+		const engine = makeEngine();
+		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay");
+		const apply = mock(() => {});
+		expect(engine.applyLiveOpWithSeq("n", Number.NaN, apply)).toBe("applied");
+		expect(apply).toHaveBeenCalledTimes(1);
+		expect(catchup).not.toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5);
+	});
+
+	test("a float seq applies without advancing or healing", () => {
+		const engine = makeEngine();
+		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay");
+		const apply = mock(() => {});
+		expect(engine.applyLiveOpWithSeq("n", 8.5, apply)).toBe("applied");
+		expect(apply).toHaveBeenCalledTimes(1);
+		expect(catchup).not.toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5);
 	});
 
 	test("fresh install (cursor unset at 0) treats the first live op as a gap and heals from 0", () => {
@@ -168,14 +210,18 @@ describe("createCrdtWiring.onNoteYjsUpdate — seq gap-heal threading", () => {
 		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
 	});
 
-	test("an in-order seq applies the update and advances the cursor", async () => {
+	test("a fresh seq applies the update, fires catch-up, and leaves the cursor untouched", async () => {
 		const { engine, wiring, applied } = wiredNote("id-a", "a.md");
 		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		} as any);
 
 		wiring.onNoteYjsUpdate("id-a", toB64(new Uint8Array([1, 2, 3])), "SRV", 6);
 
-		expect(engine.getCatchupSeq()).toBe(6);
-		await waitFor(() => applied.length === 1, "in-order update applied");
+		expect(catchup).toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5); // ONLY the replay advances/persists the cursor
+		await waitFor(() => applied.length === 1, "fresh-seq update applied");
 		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
 	});
 

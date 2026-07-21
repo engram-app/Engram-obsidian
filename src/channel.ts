@@ -953,10 +953,16 @@ export class NoteChannel {
 			const b64 = payload.b64 as string | undefined;
 			const head = payload.head as string | undefined;
 			// The backend's vault `seq` (Phase D2 gap-heal, Task 1). May be a
-			// number, null, or absent (old backend) — all pass through as-is;
-			// the gap-heal decision fn (SyncEngine.applyLiveOpWithSeq) treats
-			// undefined/null identically to a stale seq (apply-only, no heal).
-			const seq = payload.seq as number | null | undefined;
+			// number, null, or absent (old backend) — all pass through as-is
+			// to the gap-heal decision fn (SyncEngine.applyLiveOpWithSeq), which
+			// treats undefined/null identically to a stale seq (apply-only, no
+			// heal). The TS cast alone can't stop a malformed/foreign frame from
+			// smuggling a non-integer through the "number" type at runtime (a
+			// string, NaN, or a float), so guard it here at the frame boundary
+			// rather than trusting the cast — anything failing
+			// Number.isInteger becomes undefined before it reaches the decision fn.
+			const rawSeq = payload.seq;
+			const seq = Number.isInteger(rawSeq) ? (rawSeq as number) : undefined;
 			if (noteId && b64 && head) {
 				this.onNoteYjsUpdate?.(noteId, b64, head, seq);
 			}
