@@ -56,7 +56,7 @@ function engine(opts?: { crdt?: Partial<CrdtManager> }): SyncEngine {
 function noteEngine(opts: {
 	live?: (path: string) => boolean;
 	applyThrows?: boolean;
-	hasPendingGap?: () => Promise<boolean>;
+	hasHistory?: () => Promise<boolean>;
 }) {
 	const applied: Array<{ id: string; update: Uint8Array }> = [];
 	const closed: string[] = [];
@@ -66,7 +66,7 @@ function noteEngine(opts: {
 			applied.push({ id, update });
 		},
 		closeDoc: (id: string) => closed.push(id),
-		...(opts.hasPendingGap ? { hasPendingGap: opts.hasPendingGap } : {}),
+		...(opts.hasHistory ? { hasHistory: opts.hasHistory } : {}),
 	};
 	const e = engine({ crdt });
 	const map = new NoteIdMap();
@@ -109,23 +109,38 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual([]);
 	});
 
-	test("a live-bound note whose delta PARKS (pending gap) does not advance the head", async () => {
-		// A history-less or gapped doc parks the delta in pendingStructs instead of
-		// integrating it, so the doc has NOT reached `head`. Recording it anyway
-		// would make coldReceive's cost gate (getCrdtHead === serverHead → skip)
-		// skip the note and the gap would never heal.
+	test("a HISTORY-LESS live-bound note does NOT apply the bare delta (avoids a fragment)", async () => {
+		// A feed-synced doc with no CRDT history parks the ops it can't causally
+		// place and integrates the rest, so a bare delta would paint a FRAGMENT into
+		// the live editor. It needs full state (room STEP2 / catch-up), never a bare
+		// delta. Skip the apply; leave the head at baseline so nothing claims it
+		// converged.
 		const { e, applied, closed } = noteEngine({
 			live: () => true,
-			hasPendingGap: async () => true,
+			hasHistory: async () => false,
 		});
 		markConfirmed(e, "id-a");
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
-		// Head left at the seeded baseline so catch-up retries convergence.
-		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
+		expect(applied).toEqual([]); // no fragment painted into the editor
+		expect((e as any).getCrdtHead("a.md")).toBe("server-head"); // not claimed converged
 		expect(closed).toEqual([]);
+	});
+
+	test("a live-bound note is NOT converged while the sync gate is closed", async () => {
+		// During the first-sync direction choice / conflict resolution the gate is
+		// closed. Applying would let ySync paint the buffer and Obsidian autosave it
+		// BEFORE the user chose a direction — a silent overwrite. The delta is not
+		// lost: a reconnect/catch-up replays it after the gate opens.
+		const { e, applied } = noteEngine({ live: () => true });
+		markConfirmed(e, "id-a");
+		e.setSyncBlocked(true);
+
+		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+
+		expect(applied).toEqual([]);
+		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
 	});
 
 	test("a note that becomes live-bound DURING the apply is NOT hibernated (re-checked after the await)", async () => {

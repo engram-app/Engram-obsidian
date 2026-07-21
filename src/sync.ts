@@ -3446,42 +3446,61 @@ export class SyncEngine {
 			// DELIVER, don't defer (#256/#224). This used to skip, handing open notes
 			// to the per-note room — which made the room the SOLE delivery path for
 			// exactly the notes the user is watching. A lost or slow room broadcast
-			// left the note deaf until a REST heal (#242 added the log line below
-			// after the 2026-07-14 incident, then healed the symptom over REST), and
-			// REST is being removed from the sync path. Yjs updates are idempotent
-			// and commutative, so applying here is a no-op when the room already
-			// delivered and the ONLY delivery when it did not. ySync's observer
-			// paints the editor; the manager's remote-merge listener flushes disk.
+			// left the note deaf (#242 added the log line here after the 2026-07-14
+			// incident, then healed the symptom via catch-up). Yjs updates are
+			// idempotent and commutative, so applying here is a no-op when the room
+			// already delivered and the ONLY delivery when it did not. ySync's
+			// observer paints the editor, and Obsidian autosaves the painted buffer;
+			// nothing in THIS path writes disk (onFlushToDisk early-returns for a
+			// bound path — the editor owns the file).
 			//
-			// Deliberately NOT the cold path below:
-			//   - no captureDiskDriftBeforeRemote — the editor owns the buffer, and
-			//     merging disk drift under a live binding would fight it;
-			//   - no adoptHistoryLessNote — it rewrites the doc wholesale, which is
-			//     unsafe under a live editor binding. A history-less doc's bare delta
-			//     simply PARKS (see the head guard below), which is lossless;
-			//   - no hibernateIfIdle — the editor owns an open note's doc lifecycle.
+			// Never converge while the sync gate is closed (first-sync direction
+			// choice / conflict resolution): ySync would paint the buffer and it
+			// would autosave BEFORE the user chose a direction. Every sibling inbound
+			// path gates (flushFromCrdt, discoverAnnouncedNote, onCrdtDocReady); this
+			// one must too. The room delta is not lost — a reconnect/catch-up replays
+			// it after the gate opens.
+			if (this.syncBlocked) return;
+			// A history-LESS doc (feed-synced, no CRDT history yet) must NOT receive a
+			// bare incremental delta: Yjs integrates the ops whose causal deps are met
+			// and PARKS the rest, so a partial integration paints a FRAGMENT of the
+			// note into the live editor (then autosaved). It needs FULL state, never a
+			// bare delta. Skip the apply and let the convergence backstop deliver full
+			// state (room STEP1→STEP2, or healDivergedLiveBoundNotes). NOTE: that heal
+			// still has a REST leg today (restConvergeLiveBound → getUpdates); it is a
+			// Phase E (#1031) target for a socket delta-since-SV. Skipping here is
+			// correct regardless — it avoids the fragment; it does not add REST.
+			// (Defaults history-full when the manager lacks the probe, matching the
+			// cold path's safe default.)
+			const historyFull =
+				typeof this.crdt.hasHistory === "function"
+					? await this.crdt.hasHistory(noteId)
+					: true;
+			if (!historyFull) {
+				rlog().info(
+					"crdt",
+					`fan-out live-bound: history-less, deferring to full-state catch-up: ${path}`,
+				);
+				return;
+			}
+			// Deliberately NOT the cold path: no captureDiskDriftBeforeRemote (by the
+			// time isLiveBound is true, bindTo has already reconciled the buffer INTO
+			// the Y.Text and nothing here writes disk), and no hibernateIfIdle (the
+			// editor owns an open note's lifecycle; onLastViewerRelease frees it).
 			try {
 				await this.crdt.applyRemoteUpdate(noteId, update);
-				// Advance crdtHead ONLY if the doc actually reached it. A history-less
-				// or gapped doc parks the delta in pendingStructs instead of
-				// integrating it, so recording `head` would make coldReceive's cost
-				// gate (getCrdtHead === serverHead → skip) skip the note and the gap
-				// would never heal. Leave it unadvanced and let catch-up converge —
-				// deliberately NO REST getUpdates gap-heal here (the cold path's
-				// backstop is a REST call this path must not reintroduce).
-				const gapped =
-					typeof this.crdt.hasPendingGap === "function" &&
-					(await this.crdt.hasPendingGap(noteId));
-				if (gapped) {
-					rlog().info(
-						"crdt",
-						`fan-out live-bound: delta parked (pending gap), head held: ${path}`,
-					);
-				} else {
-					this.setCrdtHead(path, head);
-				}
+				// A fan-out is authoritative proof the server holds this note's row, so
+				// record a non-null crdtHead for hasServerNote's write-routing. Its
+				// VALUE gates no convergence path (the only reader tests != null), so a
+				// still-gapped doc is not stranded: catch-up re-converges it, keyed on
+				// serverHash, which this path never advances.
+				this.setCrdtHead(path, head);
 			} catch (e) {
-				rlog().warn("crdt", `Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`);
+				rlog().error(
+					"crdt",
+					`Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
 			}
 			return;
 		}
