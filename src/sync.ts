@@ -1617,9 +1617,17 @@ export class SyncEngine {
 	 *    float): not a valid signal, apply only, cursor unchanged.
 	 *  - `seq <= catchupSeq`: stale (normal for a live delta between
 	 *    checkpoints), apply only, cursor unchanged.
-	 *  - `seq > catchupSeq`: we are behind — apply, fire the (single-flighted)
-	 *    seq-replay catch-up fire-and-forget, and do NOT touch the cursor; the
-	 *    replay reads the persisted cursor itself and advances/persists it. */
+	 *  - `seq > catchupSeq`: we are behind — apply, schedule the (throttled,
+	 *    single-flighted) seq-replay catch-up, and do NOT touch the cursor;
+	 *    the replay reads the persisted cursor itself and advances/persists it.
+	 *
+	 *  THROTTLED, not per-op (CI run 29877041947): checkpoint/REST-origin
+	 *  fan-outs carry a FRESH seq (the "stale between checkpoints" assumption
+	 *  only holds for socket deltas), and the cursor only advances via replay,
+	 *  so in steady-state editing every delivered op looks "from the future" —
+	 *  firing a replay round-trip per op raced the live path suite-wide. The
+	 *  trailing throttle keeps the heal guarantee (a true miss replays within
+	 *  SEQ_HEAL_COOLDOWN_MS) while bounding replay rate to one per window. */
 	applyLiveOpWithSeq(
 		noteId: string,
 		seq: number | undefined | null,
@@ -1630,8 +1638,29 @@ export class SyncEngine {
 			return "applied";
 		}
 		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
-		void this.catchupViaSeqReplay();
+		this.scheduleSeqHeal();
 		return "healing";
+	}
+
+	/** Trailing-edge throttle for heal-triggered seq replays: the first
+	 *  trigger fires immediately; triggers inside the cooldown coalesce into
+	 *  ONE trailing replay at window end (never dropped — a dropped trailing
+	 *  run could strand a real miss until the next op). */
+	private scheduleSeqHeal(): void {
+		const now = Date.now();
+		const since = now - this.seqHealLastAt;
+		if (since >= SyncEngine.SEQ_HEAL_COOLDOWN_MS) {
+			this.seqHealLastAt = now;
+			void this.catchupViaSeqReplay();
+			return;
+		}
+		if (this.seqHealTimer !== null) return;
+		this.seqHealTimer = window.setTimeout(() => {
+			this.seqHealTimer = null;
+			this.seqHealLastAt = Date.now();
+			rlog().info("crdt", "gap-heal replay (trailing, throttled)");
+			void this.catchupViaSeqReplay();
+		}, SyncEngine.SEQ_HEAL_COOLDOWN_MS - since);
 	}
 
 	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
@@ -3218,6 +3247,9 @@ export class SyncEngine {
 	 *  committed during the replay is never missed. */
 	private seqReplayRunning = false;
 	private seqReplayAgain = false;
+	private seqHealLastAt = 0;
+	private seqHealTimer: number | null = null;
+	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
 	 *  re-run) plus the sets of server note-ids and attachment paths seen
@@ -6971,6 +7003,10 @@ export class SyncEngine {
 		}
 		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.seqHealTimer !== null) {
+			window.clearTimeout(this.seqHealTimer);
+			this.seqHealTimer = null;
+		}
 		if (this.postPullDrainTimer !== null) {
 			window.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;

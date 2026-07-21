@@ -132,6 +132,24 @@ describe("SyncEngine.applyLiveOpWithSeq", () => {
 		expect(catchup).toHaveBeenCalled();
 		expect(engine.getCatchupSeq()).toBe(0); // replay starts from true cursor 0 (full catch-up)
 	});
+
+	test("repeat heals inside the cooldown coalesce: one immediate replay, ops still apply", () => {
+		// Steady-state editing fans out FRESH seqs (CI run 29877041947 fired a
+		// replay per op) — the trailing throttle must bound that to one
+		// immediate run per window while every op still applies.
+		const engine = makeEngine();
+		const catchup = spyOn(engine, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		} as any);
+		const apply = mock(() => {});
+		expect(engine.applyLiveOpWithSeq("n", 1, apply)).toBe("healing");
+		expect(engine.applyLiveOpWithSeq("n", 2, apply)).toBe("healing");
+		expect(engine.applyLiveOpWithSeq("n", 3, apply)).toBe("healing");
+		expect(apply).toHaveBeenCalledTimes(3); // never gated
+		expect(catchup).toHaveBeenCalledTimes(1); // rest coalesce into the trailing run
+		engine.destroy(); // clears the armed trailing timer without firing
+		expect(catchup).toHaveBeenCalledTimes(1);
+	});
 });
 
 /** Polls until `cond` holds — applyPushedNoteUpdate's apply body runs as a
