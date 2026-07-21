@@ -64,19 +64,19 @@ jobs:
           fi
           echo "OK - no em/en dashes in prose docs."
 
-  npm-lockfile-sync:
-    name: npm lockfile sync
+  lockfile-registry:
+    name: lockfile registry
     runs-on: [self-hosted, linux, x64, isolated]
     steps:
       - uses: actions/checkout@v7
 
-      - name: package-lock.json matches package.json
-        # bun installs; npm's lockfile is tracked purely so Obsidian's
-        # community scanner can resolve `obsidian`'s types. If it drifts, the
-        # scanner sees an unresolvable module and the public scorecard fills
-        # with thousands of bogus no-unsafe-* findings. Offline structural
-        # check - see the header of the script for why not a regen-and-diff.
-        run: node scripts/check-npm-lockfile.mjs
+      - name: No private-registry URLs in lockfiles
+        # These runners point npm and bun at the LAN Verdaccio proxy, which
+        # gets baked into every tarball URL written to a lockfile. This repo
+        # is public, so such a lockfile breaks outside contributors and any
+        # external sandbox (including Obsidian's scanner) while working fine
+        # for us. See the script header for the two-month version of this.
+        run: node scripts/check-lockfile-registry.mjs
 
   claude-md-staleness:
     name: CLAUDE.md staleness

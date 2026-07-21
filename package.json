@@ -12,7 +12,8 @@
     "lint": "biome check src tests",
     "lint:obsidian": "eslint --max-warnings 0 'src/**/*.ts'",
     "lint:css": "stylelint --max-warnings 0 styles.css",
-    "lint:lockfile": "node scripts/check-npm-lockfile.mjs",
+    "lint:lockfile": "node scripts/check-lockfile-registry.mjs",
+    "lock:refresh": "rm -f bun.lock && bun install --registry=https://registry.npmjs.org/",
     "format": "biome format --write src tests",
     "version": "node version-bump.mjs && git add manifest.json versions.json",
     "prepare": "lefthook install"
