@@ -18264,9 +18264,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       })();
     }
   }
-  /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
-   *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.isNoteConfirmed(id) })`)
-   *  so a note's live crdt_msg sends stay held until its create is acked. */
+  /** Public: true once this SESSION observed this note's create-ack. Was
+   *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
+   *  gate is session-scoped (`confirmedNoteIds` is cleared on every WS
+   *  reconnect — see `clearConfirmedNoteIds`) while `canSendLive` needs a
+   *  signal that SURVIVES reconnect, so `canSendLive` is now wired to
+   *  `hasServerNote` instead (below). Still used for in-session bookkeeping
+   *  (e.g. `healNoteOnOpen`'s catch-up-vs-heal branch). */
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
   }
@@ -18280,13 +18284,27 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  existing `onUpdate` transport directly (bypassing `canSendLive`) rather
    *  than introducing a second send path. Never throws into the caller —
    *  logged and swallowed, matching this file's sibling error-handling
-   *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch). */
+   *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch).
+   *
+   *  Self-heal on failure (Defect 2 hardening): a thrown flush leaves the
+   *  held body UNSENT this session (data-safe — it's still in the Y.Doc,
+   *  never lost) but with no retry of its own. `reset+enroll` re-establishes
+   *  the room's sync half (the same pairing used at every other re-handshake
+   *  site here, e.g. `applyCrdtCreateAck`'s ADOPT branch). NOTE this is a
+   *  PULL, not a push: the client STEP1 makes the server send back what the
+   *  CLIENT is missing (server→client); the backend never STEP1s back, so the
+   *  handshake does NOT re-push the held body. The held content actually
+   *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
+   *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
+   *  Under a real transport fault the re-enroll STEP1 fails on the same
+   *  transport anyway, so next-edit is the honest recovery. */
   async flushHeldEditsOnCreateAck(noteId, path) {
+    var _a, _b;
     if (this.crdt)
       try {
         await this.crdt.flushHeldState(noteId);
       } catch (e) {
-        rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`);
+        rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId);
       }
   }
   confirmNoteId(noteId) {
@@ -18838,7 +18856,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let key = (0, import_obsidian21.normalizePath)(path), existing = this.syncState.get(key);
     this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
   }
-  /** CRDT-native replacement for the REST-era confirmed-set oracle: true when
+  /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
+   *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
+   *  so a note's live crdt_msg sends stay held until its create is acked —
+   *  see `isNoteConfirmed`'s doc comment for why `canSendLive` moved here
+   *  instead of the session-scoped `confirmedNoteIds`.
+   *
+   *  CRDT-native replacement for the REST-era confirmed-set oracle: true when
    *  the server is known to already hold a row for this note. `crdtHead` is set
    *  ONLY by server-delivered heads (convergence/apply) or by a successful
    *  `crdt_create` (the sentinel below), so `!= null` genuinely means "the
@@ -23816,7 +23840,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
           // a brand-new note's crdt_create must land before any crdt_msg, or the
           // server drops the edit (note_not_found) — see manager.ts canSendLive.
-          canSendLive: (id2) => this.syncEngine.isNoteConfirmed(id2)
+          // hasServerNote (crdtHead-backed), NOT isNoteConfirmed: confirmedNoteIds
+          // is cleared on every WS reconnect (clearConfirmedNoteIds) while
+          // re-enrollment does not re-confirm, so isNoteConfirmed would hold an
+          // existing note's edits forever after a mid-session reconnect.
+          // hasServerNote survives reconnect (syncState/crdtHead is untouched).
+          canSendLive: (id2) => this.syncEngine.hasServerNote(id2)
         });
         this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,
