@@ -297,7 +297,11 @@ export default class EngramSyncPlugin extends Plugin {
 	private async nudgeIfUpdateAvailable(): Promise<void> {
 		const latest = await checkForPluginUpdate(this.manifest.version);
 		if (!latest) return;
-		const frag = activeDocument.createDocumentFragment();
+		// Obsidian's global helper, not activeWindow.createFragment(): the latter
+		// is what the eslint autofix suggests, but `activeWindow` is typed as a
+		// plain Window, so the call resolves to `any` and cascades a dozen
+		// no-unsafe-* errors. The bare global is declared in obsidian.d.ts.
+		const frag = createFragment();
 		frag.append(`Engram Vault Sync ${latest} is available. `);
 		const link = frag.createEl("a", { text: "Update in settings", href: "#" });
 		frag.append(".");
