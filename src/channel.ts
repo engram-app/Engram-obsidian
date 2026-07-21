@@ -228,8 +228,12 @@ export class NoteChannel {
 	 *  (backend fan-out). `b64` is the raw v1 update, still base64-encoded — the
 	 *  CRDT layer decodes it. `head` is the server's post-apply head marker.
 	 *  Lets an IDLE note (no dedicated CRDT room) converge without ever
-	 *  STEP1-enrolling. */
-	onNoteYjsUpdate: ((noteId: string, b64: string, head: string) => void) | null = null;
+	 *  STEP1-enrolling. `seq` is the backend's vault op-log position (Phase D2
+	 *  gap-heal, Task 1) — undefined/null on an old backend or a note deleted
+	 *  mid-flight. */
+	onNoteYjsUpdate:
+		| ((noteId: string, b64: string, head: string, seq?: number | null) => void)
+		| null = null;
 
 	constructor(
 		baseUrl: string,
@@ -948,8 +952,19 @@ export class NoteChannel {
 			const noteId = payload.note_id as string | undefined;
 			const b64 = payload.b64 as string | undefined;
 			const head = payload.head as string | undefined;
+			// The backend's vault `seq` (Phase D2 gap-heal, Task 1). May be a
+			// number, null, or absent (old backend) — all pass through as-is
+			// to the gap-heal decision fn (SyncEngine.applyLiveOpWithSeq), which
+			// treats undefined/null identically to a stale seq (apply-only, no
+			// heal). The TS cast alone can't stop a malformed/foreign frame from
+			// smuggling a non-integer through the "number" type at runtime (a
+			// string, NaN, or a float), so guard it here at the frame boundary
+			// rather than trusting the cast — anything failing
+			// Number.isInteger becomes undefined before it reaches the decision fn.
+			const rawSeq = payload.seq;
+			const seq = Number.isInteger(rawSeq) ? (rawSeq as number) : undefined;
 			if (noteId && b64 && head) {
-				this.onNoteYjsUpdate?.(noteId, b64, head);
+				this.onNoteYjsUpdate?.(noteId, b64, head, seq);
 			}
 			return;
 		}
