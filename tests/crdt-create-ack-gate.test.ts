@@ -12,7 +12,7 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { SyncEngine } from "../src/sync";
+import { CRDT_HEAD_CREATED, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** Minimal SyncEngine for flush tests — app/api are untouched by
@@ -111,6 +111,79 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 	test("never throws into the caller when no CrdtManager is wired", async () => {
 		const engine = makeEngine();
 		await expect(engine.flushHeldEditsOnCreateAck("note-3", "n3.md")).resolves.toBeUndefined();
+	});
+
+	// Defect 2 hardening: a thrown flush must not strand the note. It triggers
+	// the existing reset+enroll re-handshake pairing (the same one every other
+	// re-handshake site in sync.ts uses) as a self-heal backstop, instead of
+	// only warn-logging and giving up.
+	test("on flush failure, re-enrollment (reset+enroll) fires as a self-heal backstop", async () => {
+		const engine = makeEngine();
+		const failingCrdt = {
+			flushHeldState: mock().mockRejectedValue(new Error("boom")),
+		};
+		engine.setCrdtManager(failingCrdt as any);
+		const reset = mock();
+		const enroll = mock();
+		engine.setCrdtEnrollment({ reset, enroll });
+
+		await expect(engine.flushHeldEditsOnCreateAck("note-4", "n4.md")).resolves.toBeUndefined(); // still never throws into the caller
+
+		expect(reset).toHaveBeenCalledWith("note-4");
+		expect(enroll).toHaveBeenCalledWith("note-4");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Defect 1 (post-crdt-rename-as-move review): canSendLive was wired to
+// isNoteConfirmed, but confirmedNoteIds is CLEARED on every WS reconnect
+// (clearConfirmedNoteIds) while re-enrollment (reEnrollOpenCrdtNotes) does NOT
+// re-confirm — so an EXISTING, already-server-known note edited after a
+// reconnect stayed held forever (mid-session sync stall). The fix wires
+// canSendLive to hasServerNote instead: it reads crdtHead, which is set once
+// by the create-ack and SURVIVES reconnect (clearConfirmedNoteIds never
+// touches syncState). This test wires the CrdtManager exactly as main.ts does
+// (mirrors the "nearest honest wire boundary" pattern from Task 3 below) —
+// literally isNoteConfirmed pre-fix, hasServerNote post-fix — so it fails
+// against the old wiring and passes against the new one.
+// ---------------------------------------------------------------------------
+
+describe("Defect 1: gate must survive reconnect for server-known notes", () => {
+	test("a server-known but session-unconfirmed note's edit reaches onUpdate (post-reconnect regression)", async () => {
+		const onUpdate = mock(() => {});
+		const engine = makeEngine();
+		engine.setNoteIdMap(new NoteIdMap());
+		(engine as unknown as { noteIdMap: NoteIdMap }).noteIdMap.set(
+			"existing.md",
+			"note-existing",
+		);
+		// The server already has this note (crdtHead persists in syncState,
+		// which a reconnect does NOT clear)...
+		(engine as unknown as { setCrdtHead(path: string, head: string): void }).setCrdtHead(
+			"existing.md",
+			CRDT_HEAD_CREATED,
+		);
+		// ...but a WS reconnect just cleared confirmedNoteIds, and re-enrollment
+		// does not re-confirm — so isNoteConfirmed is false even though the
+		// server row exists.
+		engine.clearConfirmedNoteIds();
+		expect(engine.isNoteConfirmed("note-existing")).toBe(false);
+		expect(engine.hasServerNote("note-existing")).toBe(true);
+
+		const mgr = new CrdtManager({
+			dbPrefix: "gate-reconnect",
+			onUpdate,
+			onFlushToDisk: async () => {},
+			// main.ts createCrdtWiring's canSendLive — mirrors the production
+			// wiring at main.ts's crdtWiring call site (src/main.ts).
+			canSendLive: (id: string) => engine.hasServerNote(id),
+		});
+		engine.setCrdtManager(mgr);
+
+		await mgr.applyLocalEdit("note-existing", "edited after reconnect");
+		expect(onUpdate).toHaveBeenCalled(); // must NOT stall: server already has this note
+
+		await mgr.destroy();
 	});
 });
 

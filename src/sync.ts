@@ -661,9 +661,13 @@ export class SyncEngine {
 	 *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
 	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
-	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
-	 *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.isNoteConfirmed(id) })`)
-	 *  so a note's live crdt_msg sends stay held until its create is acked. */
+	/** Public: true once this SESSION observed this note's create-ack. Was
+	 *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
+	 *  gate is session-scoped (`confirmedNoteIds` is cleared on every WS
+	 *  reconnect — see `clearConfirmedNoteIds`) while `canSendLive` needs a
+	 *  signal that SURVIVES reconnect, so `canSendLive` is now wired to
+	 *  `hasServerNote` instead (below). Still used for in-session bookkeeping
+	 *  (e.g. `healNoteOnOpen`'s catch-up-vs-heal branch). */
 	isNoteConfirmed(noteId: string | null): boolean {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
@@ -678,13 +682,24 @@ export class SyncEngine {
 	 *  existing `onUpdate` transport directly (bypassing `canSendLive`) rather
 	 *  than introducing a second send path. Never throws into the caller —
 	 *  logged and swallowed, matching this file's sibling error-handling
-	 *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch). */
+	 *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch).
+	 *
+	 *  Self-heal on failure (Defect 2 hardening): a thrown flush leaves the
+	 *  held body UNSENT this session (data-safe — it's still in the Y.Doc,
+	 *  never lost) but with no retry of its own. Force a fresh STEP1/STEP2
+	 *  handshake via `crdtEnrollment` (the same reset+enroll pairing used at
+	 *  every other re-handshake site in this file, e.g. `applyCrdtCreateAck`'s
+	 *  ADOPT branch) — re-running the handshake re-establishes sync and
+	 *  delivers the note's current full state, so the note self-heals on the
+	 *  next handshake round-trip instead of staying silently stranded. */
 	async flushHeldEditsOnCreateAck(noteId: string, path: string): Promise<void> {
 		if (!this.crdt) return;
 		try {
 			await this.crdt.flushHeldState(noteId);
 		} catch (e) {
 			rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`);
+			this.crdtEnrollment?.reset(noteId);
+			this.crdtEnrollment?.enroll(noteId);
 		}
 	}
 
@@ -1673,14 +1688,20 @@ export class SyncEngine {
 		this.syncState.set(key, { ...(existing ?? { hash: 0 }), crdtHead: head });
 	}
 
-	/** CRDT-native replacement for the REST-era confirmed-set oracle: true when
+	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
+	 *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
+	 *  so a note's live crdt_msg sends stay held until its create is acked —
+	 *  see `isNoteConfirmed`'s doc comment for why `canSendLive` moved here
+	 *  instead of the session-scoped `confirmedNoteIds`.
+	 *
+	 *  CRDT-native replacement for the REST-era confirmed-set oracle: true when
 	 *  the server is known to already hold a row for this note. `crdtHead` is set
 	 *  ONLY by server-delivered heads (convergence/apply) or by a successful
 	 *  `crdt_create` (the sentinel below), so `!= null` genuinely means "the
 	 *  server has this note." Keyed by note_id so a rename follows the note —
 	 *  `crdtHead` lives in syncState under the note's current path, resolved via
 	 *  the id map. The note's own CRDT state is the oracle, never a REST-era set. */
-	private hasServerNote(noteId: string | null): boolean {
+	hasServerNote(noteId: string | null): boolean {
 		if (!noteId) return false;
 		const path = this.noteIdMap?.pathForId(noteId);
 		if (!path) return false;
