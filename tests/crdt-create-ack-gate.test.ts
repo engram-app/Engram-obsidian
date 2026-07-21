@@ -91,7 +91,7 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		await mgr.destroy();
 	});
 
-	test("a note with no held edits still flushes without error", async () => {
+	test("a note with no edits flushes an empty state once without error", async () => {
 		const sentMsgs: string[] = [];
 		const onUpdate = mock((docId: string) => sentMsgs.push(docId));
 		const engine = makeEngine();

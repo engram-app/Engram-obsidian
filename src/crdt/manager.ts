@@ -511,7 +511,9 @@ export class CrdtManager {
 	async flushHeldState(noteId: string): Promise<void> {
 		const id = this.docId(noteId);
 		const update = await this.encodeStateAsUpdate(noteId);
-		this.opts.onUpdate(id, update, "flush-on-ack");
+		// origin is undefined (not REMOTE_ORIGIN): this is a genuine local send.
+		// The production wiring's onUpdate ignores the origin arg anyway.
+		this.opts.onUpdate(id, update, undefined);
 	}
 
 	/** Return the note body (frontmatter excluded). For the full file use projectedText. */

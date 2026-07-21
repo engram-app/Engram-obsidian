@@ -695,7 +695,12 @@ export class SyncEngine {
 	 *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
 	 *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
 	 *  Under a real transport fault the re-enroll STEP1 fails on the same
-	 *  transport anyway, so next-edit is the honest recovery. */
+	 *  transport anyway, so next-edit is the honest recovery.
+	 *
+	 *  Race note: a keystroke can land during the awaited `flushHeldState`
+	 *  (the gate is already open by now, so it streams its own delta). That is
+	 *  accepted-safe: the flush sends full state, the racing delta is a subset,
+	 *  and Yjs merges both idempotently — worst case is a harmless duplicate. */
 	async flushHeldEditsOnCreateAck(noteId: string, path: string): Promise<void> {
 		if (!this.crdt) return;
 		try {
