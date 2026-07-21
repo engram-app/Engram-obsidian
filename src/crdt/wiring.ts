@@ -32,6 +32,13 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
+	/** True once `noteId`'s crdt_create has been server-acked (its DB row
+	 *  exists) — CrdtManagerOptions.canSendLive. A brand-new note's live edits
+	 *  land in the Y.Doc immediately (never lost) but must NOT stream a
+	 *  crdt_msg before the row exists: the server silently drops it
+	 *  (note_not_found). Omitted in tests defaults to always-send (matches
+	 *  pre-gate behavior). */
+	canSendLive?: (noteId: string) => boolean;
 	/** Debounce before a stranded-flush batch reconciles + retries. */
 	strandHealDebounceMs?: number;
 	/** IndexedDB store namespace (CrdtManagerOptions.dbPrefix). Production omits
@@ -207,6 +214,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const manager = new CrdtManager({
 		dbPrefix: deps.dbPrefix,
 		onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
+		canSendLive: deps.canSendLive,
 		onFlushToDisk: async (noteId, content) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {

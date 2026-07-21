@@ -101,6 +101,14 @@ export interface CrdtManagerOptions {
 	 * is off (every history-less doc seeds — the pre-gate behavior).
 	 */
 	isUnchangedSynced?: (path: string, content: string) => boolean;
+	/**
+	 * Return false to HOLD a local update (the note's server row doesn't exist
+	 * yet — its `crdt_create` hasn't been acked). The edit stays safe in the
+	 * Y.Doc (never lost) and is not forwarded to `onUpdate`; the caller resends
+	 * once acked (see `entry()`'s local-update listener). Default: always send
+	 * (matches pre-gate behavior — every existing test is unaffected).
+	 */
+	canSendLive?: (docId: string) => boolean;
 }
 
 interface Entry {
@@ -761,6 +769,7 @@ export class CrdtManager {
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {
 			if (origin === REMOTE_ORIGIN) return;
+			if (this.opts.canSendLive && !this.opts.canSendLive(id)) return; // HOLD: not create-acked
 			this.opts.onUpdate(id, update, origin);
 		});
 

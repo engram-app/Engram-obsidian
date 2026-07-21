@@ -661,7 +661,10 @@ export class SyncEngine {
 	 *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
 	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
-	private isNoteConfirmed(noteId: string | null): boolean {
+	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
+	 *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.isNoteConfirmed(id) })`)
+	 *  so a note's live crdt_msg sends stay held until its create is acked. */
+	isNoteConfirmed(noteId: string | null): boolean {
 		return noteId !== null && this.confirmedNoteIds.has(noteId);
 	}
 

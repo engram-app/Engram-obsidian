@@ -1871,6 +1871,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// Backed lazily: crdtLiveViews is constructed just below, so this
 						// closure must read the field at call time, not capture a value.
 						isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+						// Gate live crdt_msg sends on the note's create-ack (create-before-edit):
+						// a brand-new note's crdt_create must land before any crdt_msg, or the
+						// server drops the edit (note_not_found) — see manager.ts canSendLive.
+						canSendLive: (id) => this.syncEngine.isNoteConfirmed(id),
 					});
 					this.crdtWiring = wiring;
 					this.crdtManager = wiring.manager;
