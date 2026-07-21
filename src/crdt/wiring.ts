@@ -18,6 +18,7 @@ type WiringSyncEngine = Pick<
 	| "ensureNoteIdMapped"
 	| "applyPushedNoteUpdate"
 	| "discoverAnnouncedNote"
+	| "applyLiveOpWithSeq"
 >;
 
 export interface CrdtWiringDeps {
@@ -62,8 +63,10 @@ export interface CrdtWiring {
 	 *  sync engine's coalesced live id-map reconcile (channel.onCrdtNoteNotFound). */
 	onCrdtNoteNotFound: (docId: string) => void;
 	/** Server-pushed Yjs update for an IDLE note, fanned out over the per-vault
-	 *  channel regardless of CRDT-room enrollment (channel.onNoteYjsUpdate). */
-	onNoteYjsUpdate: (noteId: string, b64: string, head: string) => void;
+	 *  channel regardless of CRDT-room enrollment (channel.onNoteYjsUpdate).
+	 *  `seq` (Phase D2 gap-heal, Task 3) routes through
+	 *  SyncEngine.applyLiveOpWithSeq — see its definition for the decision. */
+	onNoteYjsUpdate: (noteId: string, b64: string, head: string, seq?: number | null) => void;
 	/** Reconcile the noteIdMap from the manifest, then retry every stranded
 	 *  flush. Exposed for tests + teardown; production fires it via the debounce
 	 *  timer set in the manager's onFlushToDisk. */
@@ -290,8 +293,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// Vault-channel fan-out (P1): applies a server-pushed Yjs update to an IDLE
 	// note (no dedicated CRDT room) without ever STEP1-enrolling it. The sync
 	// engine itself guards confirmed/live-bound state and isolates failures.
-	const onNoteYjsUpdate = (noteId: string, b64: string, head: string): void => {
-		void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+	// Wrapped in applyLiveOpWithSeq (Phase D2 gap-heal, Task 3): the apply
+	// ALWAYS runs (every branch), seq only decides whether the catchupSeq
+	// cursor advances or a gap-heal replay additionally fires.
+	const onNoteYjsUpdate = (
+		noteId: string,
+		b64: string,
+		head: string,
+		seq?: number | null,
+	): void => {
+		syncEngine.applyLiveOpWithSeq(noteId, seq, () => {
+			void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+		});
 	};
 
 	// Discovery: when another device opens a room (server announces

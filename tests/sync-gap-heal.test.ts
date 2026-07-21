@@ -3,8 +3,16 @@
  * function. seq NEVER gates application (Yjs updates are commutative +
  * idempotent) — apply() runs in every branch. seq only decides whether the
  * catchupSeq cursor advances or a gap-heal replay fires.
+ *
+ * Task 3: the wiring layer (createCrdtWiring's onNoteYjsUpdate) that threads a
+ * live fan-out's seq through applyLiveOpWithSeq.
  */
 import { describe, expect, mock, spyOn, test } from "bun:test";
+import "fake-indexeddb/auto";
+import { toB64 } from "../src/crdt/channel";
+import type { CrdtManager } from "../src/crdt/manager";
+import { NoteIdMap } from "../src/crdt/note-id-map";
+import { createCrdtWiring } from "../src/crdt/wiring";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -81,5 +89,106 @@ describe("SyncEngine.applyLiveOpWithSeq", () => {
 		expect(apply).toHaveBeenCalledTimes(1);
 		expect(catchup).toHaveBeenCalled();
 		expect(engine.getCatchupSeq()).toBe(0); // replay starts from true cursor 0 (full catch-up)
+	});
+});
+
+/** Polls until `cond` holds — applyPushedNoteUpdate's apply body runs as a
+ *  fire-and-forget promise chain (several awaits deep), so a fixed sleep
+ *  would be racy. Mirrors tests/crdt/wiring.test.ts's waitFor. */
+async function waitFor(cond: () => boolean, label: string): Promise<void> {
+	for (let i = 0; i < 100; i++) {
+		if (cond()) return;
+		await new Promise((r) => setTimeout(r, 5));
+	}
+	throw new Error(`waitFor timed out: ${label}`);
+}
+
+/** A real SyncEngine + a real createCrdtWiring, wired around a fake CrdtManager
+ *  (applyRemoteUpdate/closeDoc only — mirrors tests/crdt/note-yjs-update.test.ts's
+ *  noteEngine). Drives the wiring's onNoteYjsUpdate callback end to end so the
+ *  seq threading (channel frame -> wiring -> applyLiveOpWithSeq -> apply) is
+ *  what's actually pinned, not just SyncEngine's decision function in isolation. */
+function wiredNote(noteId: string, path: string) {
+	const applied: Uint8Array[] = [];
+	const crdt = {
+		applyRemoteUpdate: async (_id: string, update: Uint8Array) => {
+			applied.push(update);
+		},
+		closeDoc: () => {},
+	};
+	const engine = new SyncEngine(
+		{
+			vault: {
+				configDir: ".obsidian",
+				getFileByPath: mock().mockReturnValue(null),
+				getAbstractFileByPath: mock().mockReturnValue(null),
+				cachedRead: mock().mockResolvedValue(""),
+			},
+			fileManager: { trashFile: mock().mockResolvedValue(undefined) },
+			workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
+		} as any,
+		{} as any,
+		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		mock().mockResolvedValue(undefined),
+	);
+	engine.setCrdtManager(crdt as unknown as CrdtManager);
+	engine.setReady();
+	const map = new NoteIdMap();
+	map.set(path, noteId);
+	engine.setNoteIdMap(map);
+	engine.setLiveBoundCheck(() => false);
+	(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.add(noteId);
+	engine.setCrdtHead(path, "server-head");
+
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: engine,
+		sendCrdt: () => {},
+		isBound: () => false,
+	});
+
+	return { engine, wiring, applied };
+}
+
+describe("createCrdtWiring.onNoteYjsUpdate — seq gap-heal threading", () => {
+	test("a gapped seq applies the update AND triggers catch-up", async () => {
+		const { engine, wiring, applied } = wiredNote("id-a", "a.md");
+		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		} as any);
+
+		wiring.onNoteYjsUpdate("id-a", toB64(new Uint8Array([1, 2, 3])), "SRV", 8);
+
+		// The gap-heal decision (cursor + catch-up trigger) is synchronous.
+		expect(catchup).toHaveBeenCalled();
+		expect(engine.getCatchupSeq()).toBe(5); // unchanged — replay starts from the true cursor
+		// The update itself still applies (fire-and-forget async chain).
+		await waitFor(() => applied.length === 1, "gapped update applied");
+		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
+	});
+
+	test("an in-order seq applies the update and advances the cursor", async () => {
+		const { engine, wiring, applied } = wiredNote("id-a", "a.md");
+		engine.setCatchupSeq(5);
+
+		wiring.onNoteYjsUpdate("id-a", toB64(new Uint8Array([1, 2, 3])), "SRV", 6);
+
+		expect(engine.getCatchupSeq()).toBe(6);
+		await waitFor(() => applied.length === 1, "in-order update applied");
+		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
+	});
+
+	test("a seq-less frame (old backend) applies exactly as today — no cursor move, no heal", async () => {
+		const { engine, wiring, applied } = wiredNote("id-a", "a.md");
+		engine.setCatchupSeq(5);
+		const catchup = spyOn(engine, "catchupViaSeqReplay");
+
+		wiring.onNoteYjsUpdate("id-a", toB64(new Uint8Array([1, 2, 3])), "SRV", undefined);
+
+		expect(engine.getCatchupSeq()).toBe(5);
+		expect(catchup).not.toHaveBeenCalled();
+		await waitFor(() => applied.length === 1, "seq-less update applied");
+		expect(applied).toEqual([new Uint8Array([1, 2, 3])]);
 	});
 });
