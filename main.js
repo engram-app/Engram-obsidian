@@ -8033,8 +8033,6 @@ var Alias = class extends NodeBase {
    * instance of the `source` anchor before this node.
    */
   resolve(doc2, ctx) {
-    if ((ctx == null ? void 0 : ctx.maxAliasCount) === 0)
-      throw new ReferenceError("Alias resolution is disabled");
     let nodes;
     ctx != null && ctx.aliasResolveCache ? nodes = ctx.aliasResolveCache : (nodes = [], visit(doc2, {
       Node: (_key, node) => {
@@ -8760,18 +8758,17 @@ var MERGE_KEY = "<<", merge = {
   stringify: () => MERGE_KEY
 }, isMergeKey = (ctx, key) => (merge.identify(key) || isScalar(key) && (!key.type || key.type === Scalar.PLAIN) && merge.identify(key.value)) && (ctx == null ? void 0 : ctx.doc.schema.tags.some((tag) => tag.tag === merge.tag && tag.default));
 function addMergeToJSMap(ctx, map3, value) {
-  let source = resolveAliasValue(ctx, value);
-  if (isSeq(source))
-    for (let it of source.items)
+  if (value = ctx && isAlias(value) ? value.resolve(ctx.doc) : value, isSeq(value))
+    for (let it of value.items)
       mergeValue(ctx, map3, it);
-  else if (Array.isArray(source))
-    for (let it of source)
+  else if (Array.isArray(value))
+    for (let it of value)
       mergeValue(ctx, map3, it);
   else
-    mergeValue(ctx, map3, source);
+    mergeValue(ctx, map3, value);
 }
 function mergeValue(ctx, map3, value) {
-  let source = resolveAliasValue(ctx, value);
+  let source = ctx && isAlias(value) ? value.resolve(ctx.doc) : value;
   if (!isMap(source))
     throw new Error("Merge sources must be maps or map aliases");
   let srcMap = source.toJSON(null, ctx, Map);
@@ -8783,9 +8780,6 @@ function mergeValue(ctx, map3, value) {
       configurable: !0
     });
   return map3;
-}
-function resolveAliasValue(ctx, value) {
-  return ctx && isAlias(value) ? value.resolve(ctx.doc, ctx) : value;
 }
 
 // node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
@@ -9197,7 +9191,7 @@ function stringifyNumber({ format, minFractionDigits, tag, value }) {
   if (!isFinite(num))
     return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
   let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
-  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
+  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^\d/.test(n)) {
     let i = n.indexOf(".");
     i < 0 && (i = n.length, n += ".");
     let d = minFractionDigits - (n.length - i - 1);
@@ -10695,7 +10689,7 @@ function doubleQuotedValue(source, onError) {
           for (next = source[++i + 1]; next === " " || next === "	"; )
             next = source[++i + 1];
         else if (next === "x" || next === "u" || next === "U") {
-          let length2 = next === "x" ? 2 : next === "u" ? 4 : 8;
+          let length2 = { x: 2, u: 4, U: 8 }[next];
           res += parseCharCode(source, i + 1, length2, onError), i += length2;
         } else {
           let raw = source.substr(i - 1, 2);
@@ -10759,12 +10753,11 @@ var escapeCodes = {
 };
 function parseCharCode(source, offset, length2, onError) {
   let cc = source.substr(offset, length2), code = cc.length === length2 && /^[0-9a-fA-F]+$/.test(cc) ? parseInt(cc, 16) : NaN;
-  try {
-    return String.fromCodePoint(code);
-  } catch (e) {
+  if (isNaN(code)) {
     let raw = source.substr(offset - 2, length2 + 2);
     return onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), raw;
   }
+  return String.fromCodePoint(code);
 }
 
 // node_modules/yaml/browser/dist/compose/compose-scalar.js
@@ -10964,14 +10957,7 @@ ${cb}` : comment;
 ${cb}` : comment;
       }
     }
-    if (afterDoc) {
-      for (let i = 0; i < this.errors.length; ++i)
-        doc2.errors.push(this.errors[i]);
-      for (let i = 0; i < this.warnings.length; ++i)
-        doc2.warnings.push(this.warnings[i]);
-    } else
-      doc2.errors = this.errors, doc2.warnings = this.warnings;
-    this.prelude = [], this.errors = [], this.warnings = [];
+    afterDoc ? (Array.prototype.push.apply(doc2.errors, this.errors), Array.prototype.push.apply(doc2.warnings, this.warnings)) : (doc2.errors = this.errors, doc2.warnings = this.warnings), this.prelude = [], this.errors = [], this.warnings = [];
   }
   /**
    * Current stream status information.
@@ -11324,7 +11310,7 @@ var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("012345678
       return this.setNext("block-start");
     if ((ch0 === "-" || ch0 === "?" || ch0 === ":") && isEmpty2(ch1)) {
       let n = (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0));
-      return this.indentNext = this.indentValue + 1, this.indentValue += n, "block-start";
+      return this.indentNext = this.indentValue + 1, this.indentValue += n, yield* this.parseBlockStart();
     }
     return "doc";
   }
@@ -11543,30 +11529,22 @@ var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("012345678
     return s ? (yield s, this.pos += s.length, s.length) : (allowEmpty && (yield ""), 0);
   }
   *pushIndicators() {
-    let n = 0;
-    loop: for (; ; ) {
-      switch (this.charAt(0)) {
-        case "!":
-          n += yield* this.pushTag(), n += yield* this.pushSpaces(!0);
-          continue loop;
-        case "&":
-          n += yield* this.pushUntil(isNotAnchorChar), n += yield* this.pushSpaces(!0);
-          continue loop;
-        case "-":
-        // this is an error
-        case "?":
-        // this is an error outside flow collections
-        case ":": {
-          let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
-          if (isEmpty2(ch1) || inFlow && flowIndicatorChars.has(ch1)) {
-            inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0);
-            continue loop;
-          }
-        }
+    switch (this.charAt(0)) {
+      case "!":
+        return (yield* this.pushTag()) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
+      case "&":
+        return (yield* this.pushUntil(isNotAnchorChar)) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
+      case "-":
+      // this is an error
+      case "?":
+      // this is an error outside flow collections
+      case ":": {
+        let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
+        if (isEmpty2(ch1) || inFlow && flowIndicatorChars.has(ch1))
+          return inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
       }
-      break loop;
     }
-    return n;
+    return 0;
   }
   *pushTag() {
     if (this.charAt(1) === "<") {
@@ -11692,17 +11670,10 @@ function getFirstKeyStartProps(prev) {
     ;
   return prev.splice(i, prev.length);
 }
-function arrayPushArray(target, source) {
-  if (source.length < 1e5)
-    Array.prototype.push.apply(target, source);
-  else
-    for (let i = 0; i < source.length; ++i)
-      target.push(source[i]);
-}
 function fixFlowSeqItems(fc) {
   if (fc.start.type === "flow-seq-start")
     for (let it of fc.items)
-      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? arrayPushArray(it.value.end, it.sep) : it.value.end = it.sep : arrayPushArray(it.start, it.sep), delete it.sep);
+      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? Array.prototype.push.apply(it.value.end, it.sep) : it.value.end = it.sep : Array.prototype.push.apply(it.start, it.sep), delete it.sep);
 }
 var Parser = class {
   /**
@@ -11972,7 +11943,7 @@ var Parser = class {
           if (this.atIndentedComment(it.start, map3.indent)) {
             let prev = map3.items[map3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              arrayPushArray(end, it.start), end.push(this.sourceToken), map3.items.pop();
+              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), map3.items.pop();
               return;
             }
           }
@@ -12104,7 +12075,7 @@ var Parser = class {
           if (this.atIndentedComment(it.start, seq3.indent)) {
             let prev = seq3.items[seq3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              arrayPushArray(end, it.start), end.push(this.sourceToken), seq3.items.pop();
+              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), seq3.items.pop();
               return;
             }
           }
@@ -12692,6 +12663,19 @@ var _CrdtManager = class _CrdtManager {
   async encodeStateAsUpdate(noteId, sv) {
     return encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
   }
+  /** Force-send `noteId`'s CURRENT full state via `onUpdate`, bypassing
+   *  `canSendLive` — the "caller resends once acked" half of that option's
+   *  contract. A note's `crdt_create` ack is the caller's cue: whatever local
+   *  edits landed in the Y.Doc while the gate held them (never lost, just
+   *  unsent) need one push now that the row exists. Reuses the exact transport
+   *  `onUpdate` already goes through (CrdtChannel.sendUpdateRaw in
+   *  production), so no separate send path is introduced. Lazily creates an
+   *  empty entry if none exists yet, so a note with nothing held still
+   *  resolves cleanly (sends a no-op-ish empty state, harmless to a peer). */
+  async flushHeldState(noteId) {
+    let id2 = this.docId(noteId), update = await this.encodeStateAsUpdate(noteId);
+    this.opts.onUpdate(id2, update, void 0);
+  }
   /** Return the note body (frontmatter excluded). For the full file use projectedText. */
   async getText(noteId) {
     return (await this.entry(noteId)).text.toJSON();
@@ -12840,7 +12824,7 @@ var _CrdtManager = class _CrdtManager {
       var _a, _b;
       return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, noteId, err);
     }), doc2.on("update", (update, origin) => {
-      origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
+      origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
       entry.remoteSeq += 1;
@@ -18251,8 +18235,53 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       })();
     }
   }
+  /** Public: true once this SESSION observed this note's create-ack. Was
+   *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
+   *  gate is session-scoped (`confirmedNoteIds` is cleared on every WS
+   *  reconnect — see `clearConfirmedNoteIds`) while `canSendLive` needs a
+   *  signal that SURVIVES reconnect, so `canSendLive` is now wired to
+   *  `hasServerNote` instead (below). Still used for in-session bookkeeping
+   *  (e.g. `healNoteOnOpen`'s catch-up-vs-heal branch). */
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
+  }
+  /** Called immediately after a note's `crdt_create` is acked (its server row
+   *  now exists) — from every create-ack path (inline pushFile genesis and the
+   *  durable queued create-ack, `applyCrdtCreateAck`). Task 1's `canSendLive`
+   *  gate silently HELD every local Y.Doc update for this note (including a
+   *  create-ack path's own disk-content seed) while the row didn't exist yet,
+   *  so nothing individually reached the wire. Sends the note's CURRENT full
+   *  state once via `CrdtManager.flushHeldState`, which reuses the manager's
+   *  existing `onUpdate` transport directly (bypassing `canSendLive`) rather
+   *  than introducing a second send path. Never throws into the caller —
+   *  logged and swallowed, matching this file's sibling error-handling
+   *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch).
+   *
+   *  Self-heal on failure (Defect 2 hardening): a thrown flush leaves the
+   *  held body UNSENT this session (data-safe — it's still in the Y.Doc,
+   *  never lost) but with no retry of its own. `reset+enroll` re-establishes
+   *  the room's sync half (the same pairing used at every other re-handshake
+   *  site here, e.g. `applyCrdtCreateAck`'s ADOPT branch). NOTE this is a
+   *  PULL, not a push: the client STEP1 makes the server send back what the
+   *  CLIENT is missing (server→client); the backend never STEP1s back, so the
+   *  handshake does NOT re-push the held body. The held content actually
+   *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
+   *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
+   *  Under a real transport fault the re-enroll STEP1 fails on the same
+   *  transport anyway, so next-edit is the honest recovery.
+   *
+   *  Race note: a keystroke can land during the awaited `flushHeldState`
+   *  (the gate is already open by now, so it streams its own delta). That is
+   *  accepted-safe: the flush sends full state, the racing delta is a subset,
+   *  and Yjs merges both idempotently — worst case is a harmless duplicate. */
+  async flushHeldEditsOnCreateAck(noteId, path) {
+    var _a, _b;
+    if (this.crdt)
+      try {
+        await this.crdt.flushHeldState(noteId);
+      } catch (e) {
+        rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId);
+      }
   }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
@@ -18370,7 +18399,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`
         );
       }
-    this.setCrdtHead(path, CRDT_HEAD_CREATED);
+    this.setCrdtHead(path, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, path);
   }
   setCrdtLiveCheck(fn) {
     this.crdtLive = fn;
@@ -18803,7 +18832,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let key = (0, import_obsidian21.normalizePath)(path), existing = this.syncState.get(key);
     this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
   }
-  /** CRDT-native replacement for the REST-era confirmed-set oracle: true when
+  /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
+   *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
+   *  so a note's live crdt_msg sends stay held until its create is acked —
+   *  see `isNoteConfirmed`'s doc comment for why `canSendLive` moved here
+   *  instead of the session-scoped `confirmedNoteIds`.
+   *
+   *  CRDT-native replacement for the REST-era confirmed-set oracle: true when
    *  the server is known to already hold a row for this note. `crdtHead` is set
    *  ONLY by server-delivered heads (convergence/apply) or by a successful
    *  `crdt_create` (the sentinel below), so `!= null` genuinely means "the
@@ -19176,7 +19211,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
                 ...existing,
                 hash: fnv1a(consumed),
                 crdtHead: CRDT_HEAD_CREATED
@@ -19194,7 +19229,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "crdt",
                 `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`
-              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), !0;
+              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), !0;
             }
           } catch (err) {
             return rlog().warn(
@@ -22638,6 +22673,7 @@ function createCrdtWiring(deps) {
   let box = { channel: null }, manager = new CrdtManager({
     dbPrefix: deps.dbPrefix,
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
+    canSendLive: deps.canSendLive,
     onFlushToDisk: async (noteId, content) => {
       let path = noteIdMap.pathForId(noteId);
       if (!path) {
@@ -23776,7 +23812,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           isBound: (path) => {
             var _a2, _b2;
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
-          }
+          },
+          // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
+          // a brand-new note's crdt_create must land before any crdt_msg, or the
+          // server drops the edit (note_not_found) — see manager.ts canSendLive.
+          // hasServerNote (crdtHead-backed), NOT isNoteConfirmed: confirmedNoteIds
+          // is cleared on every WS reconnect (clearConfirmedNoteIds) while
+          // re-enrollment does not re-confirm, so isNoteConfirmed would hold an
+          // existing note's edits forever after a mid-session reconnect.
+          // hasServerNote survives reconnect (syncState/crdtHead is untouched).
+          canSendLive: (id2) => this.syncEngine.hasServerNote(id2)
         });
         this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,

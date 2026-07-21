@@ -15,18 +15,35 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check version consistency (only when bumped)
+      # Under the release-please channel model, release-please owns the version:
+      # feature PRs must NOT bump manifest.json/package.json, only the Release
+      # PR does. That rule was documented (CLAUDE.md, lefthook.yml) and
+      # unenforced, so it held only as long as everyone read a current copy of
+      # the repo. Two feature PRs bumped 1.13.0 -> 1.13.1 -> 1.13.2 anyway,
+      # which puts main ahead of .release-please-manifest.json: release-please
+      # still plans the version AFTER what it last released, so the Release PR
+      # opens with a version main already claims, fails the manifest-compliance
+      # tests, and stays stuck until someone hand-aligns it.
+      - name: Version bumps belong to the Release PR
+        env:
+          HEAD_REF: ${{ github.head_ref }}
         run: |
           set -euo pipefail
           PR_MANIFEST=$(jq -r '.version' manifest.json)
           MAIN_MANIFEST=$(git show origin/main:manifest.json | jq -r '.version')
 
           if [[ "$PR_MANIFEST" == "$MAIN_MANIFEST" ]]; then
-            echo "manifest.json unchanged ($PR_MANIFEST) — no bump required under the channel model. OK."
+            echo "manifest.json unchanged ($PR_MANIFEST) — correct for a feature PR under the channel model. OK."
             exit 0
           fi
 
-          echo "Version bumped $MAIN_MANIFEST -> $PR_MANIFEST; enforcing consistency."
+          # The release-please branch is the one place a bump is legitimate.
+          if [[ "$HEAD_REF" != release-please--* ]]; then
+            echo "::error::manifest.json bumped $MAIN_MANIFEST -> $PR_MANIFEST on a feature branch. release-please owns versions; only the Release PR may bump them. Restore main's values: git checkout origin/main -- manifest.json package.json versions.json"
+            exit 1
+          fi
+
+          echo "Release PR ($HEAD_REF) bumped $MAIN_MANIFEST -> $PR_MANIFEST; enforcing consistency."
           ERRORS=()
           PR_PKG=$(jq -r '.version' package.json)
           [[ "$PR_PKG" == "$PR_MANIFEST" ]] || ERRORS+=("package.json ($PR_PKG) != manifest.json ($PR_MANIFEST)")
