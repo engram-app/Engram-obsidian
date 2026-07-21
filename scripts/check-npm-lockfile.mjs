@@ -31,8 +31,20 @@
  *      scanner's advisory scan looking at the vulnerable version). npm
  *      records `overrides` nowhere in the lockfile, so this cannot be a
  *      structural compare.
+ *   3. every `resolved` URL points at the PUBLIC npm registry. This is the
+ *      one that already bit us once. Our machines and self-hosted runners
+ *      set `registry=http://10.0.20.214:4873` (the LAN Verdaccio proxy) in
+ *      ~/.npmrc, and npm bakes that host into every `resolved` URL. A
+ *      lockfile full of RFC1918 URLs is unusable anywhere outside our LAN,
+ *      including in the scanner's sandbox, so it fails exactly like having
+ *      no lockfile at all. That is what defeated the first attempt at this
+ *      fix (plugin PR #125, 2026-05): a lockfile WAS committed, the audit
+ *      still flooded, and the conclusion drawn was "the audit ignores
+ *      package-lock.json" when in fact npm could not fetch a single tarball.
  *
- * Fix any failure with:  npm install --package-lock-only --ignore-scripts
+ * Fix any failure with:
+ *   npm install --package-lock-only --ignore-scripts \
+ *     --registry=https://registry.npmjs.org/
  * Run that in a directory WITHOUT node_modules, or npm reconciles against
  * bun's tree and emits a lockfile with no `resolved`/`integrity` fields.
  */
@@ -102,13 +114,37 @@ for (const [name, range] of Object.entries(pkg.overrides ?? {})) {
 	}
 }
 
+// 3. Every tarball must come from the public registry, not our LAN proxy.
+const PUBLIC_REGISTRY = "registry.npmjs.org";
+const badHosts = new Map();
+let firstOffender = null;
+for (const [path, entry] of Object.entries(lock.packages ?? {})) {
+	if (!entry.resolved) continue;
+	let host;
+	try {
+		host = new URL(entry.resolved).host;
+	} catch {
+		host = entry.resolved; // unparseable, report it verbatim
+	}
+	if (host === PUBLIC_REGISTRY) continue;
+	badHosts.set(host, (badHosts.get(host) ?? 0) + 1);
+	firstOffender ??= path;
+}
+for (const [host, count] of badHosts) {
+	errors.push(
+		`${count} package(s) resolve from "${host}" instead of ${PUBLIC_REGISTRY} — unreachable outside our LAN (first: ${firstOffender})`,
+	);
+}
+
 if (errors.length > 0) {
 	console.error("package-lock.json is out of sync with package.json:\n");
 	for (const e of errors) console.error(`  - ${e}`);
-	console.error("\nRegenerate it in a directory with no node_modules:");
+	console.error("\nRegenerate it in a directory with no node_modules,");
+	console.error("forcing the public registry (our ~/.npmrc points at the LAN proxy):");
 	console.error("  rm -rf /tmp/lockgen && mkdir -p /tmp/lockgen \\");
 	console.error("    && cp package.json /tmp/lockgen/ \\");
-	console.error("    && (cd /tmp/lockgen && npm install --package-lock-only --ignore-scripts) \\");
+	console.error("    && (cd /tmp/lockgen && npm install --package-lock-only --ignore-scripts \\");
+	console.error("         --registry=https://registry.npmjs.org/) \\");
 	console.error("    && cp /tmp/lockgen/package-lock.json .");
 	process.exit(1);
 }
