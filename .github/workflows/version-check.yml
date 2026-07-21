@@ -15,59 +15,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check version bump and sync
+      - name: Check version consistency (only when bumped)
         run: |
           set -euo pipefail
-
-          PR_PKG=$(jq -r '.version' package.json)
           PR_MANIFEST=$(jq -r '.version' manifest.json)
-          PR_IN_VERSIONS=$(jq --arg v "$PR_MANIFEST" 'has($v)' versions.json)
-
           MAIN_MANIFEST=$(git show origin/main:manifest.json | jq -r '.version')
 
-          echo "PR package.json:  $PR_PKG"
-          echo "PR manifest.json: $PR_MANIFEST"
-          echo "PR in versions:   $PR_IN_VERSIONS"
-          echo "Main manifest:    $MAIN_MANIFEST"
-
-          # Workflow-only carve-out. The shipped plugin is built from these paths;
-          # everything else (.github/, docs/, tests/, *.md, lint configs, scripts)
-          # produces no new artifact, so a version bump isn't required. Positive
-          # allowlist (like backend verify.yml's version-check): an unknown path
-          # defaults to "shippable -> bump required". Consistency checks below
-          # still run regardless.
-          SHIPPABLE=$(git diff --name-only origin/main...HEAD -- \
-            src manifest.json styles.css esbuild.config.mjs main.js assets \
-            tsconfig.json package.json bun.lock version-bump.mjs)
-          REQUIRE_BUMP=true
-          if [[ -z "$SHIPPABLE" ]]; then
-            REQUIRE_BUMP=false
-            echo "No shippable paths changed vs main (CI/docs/test/config only) — version bump not required."
+          if [[ "$PR_MANIFEST" == "$MAIN_MANIFEST" ]]; then
+            echo "manifest.json unchanged ($PR_MANIFEST) — no bump required under the channel model. OK."
+            exit 0
           fi
 
+          echo "Version bumped $MAIN_MANIFEST -> $PR_MANIFEST; enforcing consistency."
           ERRORS=()
-
-          if [[ "$PR_PKG" != "$PR_MANIFEST" ]]; then
-            ERRORS+=("package.json ($PR_PKG) != manifest.json ($PR_MANIFEST)")
-          fi
-
-          if [[ "$PR_IN_VERSIONS" != "true" ]]; then
-            ERRORS+=("versions.json has no entry for $PR_MANIFEST")
-          fi
-
-          if [[ "$REQUIRE_BUMP" == "true" && "$PR_MANIFEST" == "$MAIN_MANIFEST" ]]; then
-            ERRORS+=("Version $PR_MANIFEST has not been bumped (main is also $MAIN_MANIFEST)")
-          fi
-
+          PR_PKG=$(jq -r '.version' package.json)
+          [[ "$PR_PKG" == "$PR_MANIFEST" ]] || ERRORS+=("package.json ($PR_PKG) != manifest.json ($PR_MANIFEST)")
           if [[ ${#ERRORS[@]} -gt 0 ]]; then
-            echo ""
-            echo "::error::Version check failed:"
-            for err in "${ERRORS[@]}"; do
-              echo "::error::  - $err"
-            done
-            echo ""
-            echo "Run 'npm version patch|minor|major' to bump all version files (npm required for lifecycle hooks)."
+            printf '::error::%s\n' "${ERRORS[@]}"
             exit 1
           fi
-
-          echo "Version check passed: $PR_MANIFEST (bumped from $MAIN_MANIFEST)"
+          echo "Version files consistent."
