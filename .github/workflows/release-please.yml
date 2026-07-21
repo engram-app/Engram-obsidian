@@ -41,7 +41,15 @@ jobs:
         if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
-          PR_BRANCH: ${{ fromJson(steps.release.outputs.pr).headBranchName }}
+          # Short-circuit before fromJson. Step-level `env` expressions are
+          # evaluated at template-compile time, BEFORE `if:` is considered, so a
+          # bare fromJson(outputs.pr) throws "Error reading JToken from
+          # JsonReader" on every release run (outputs.pr is empty there) and
+          # fails the step instead of skipping it. That took down the whole job
+          # on 1.13.0, skipping build/test/attest/asset-upload and publishing a
+          # release with no main.js. The `&&`/`||` guard keeps the expression
+          # valid on both paths.
+          PR_BRANCH: ${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).headBranchName || '' }}
         run: |
           set -euo pipefail
           API="https://api.github.com/repos/${{ github.repository }}/contents"
@@ -139,6 +147,18 @@ jobs:
           META=$(gh release view "$TAG" --json isDraft,isPrerelease)
           [ "$(echo "$META" | jq -r .isPrerelease)" = "false" ] && [ "$(echo "$META" | jq -r .isDraft)" = "false" ] || { echo "::error::$TAG not published stable"; exit 1; }
           echo "Verified $TAG is published as stable (prerelease=false, draft=false)"
+
+          # Obsidian installs a plugin from these three assets. A release
+          # without them is published, "Latest", and completely unusable, which
+          # is exactly how 1.13.0 shipped: an earlier step failed, every step
+          # below it was skipped, and nothing noticed until a human looked.
+          # Draft/prerelease flags were both correct the whole time.
+          ASSETS=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
+          for f in main.js manifest.json styles.css; do
+            echo "$ASSETS" | jq -e --arg f "$f" 'index($f)' >/dev/null \
+              || { echo "::error::$TAG is missing required asset $f (assets: $ASSETS)"; exit 1; }
+          done
+          echo "Verified $TAG has main.js, manifest.json and styles.css"
 
       - name: Announce to Discord (#releases)
         if: steps.release.outputs.release_created == 'true' && env.WEBHOOK != ''
