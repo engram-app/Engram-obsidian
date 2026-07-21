@@ -21,28 +21,33 @@
  *
  * That second one already cost us two months. PR #125 (2026-05) committed a
  * package-lock.json to fix the scorecard, saw no change, and concluded "the
- * audit ignores package-lock.json" — but that lockfile had 466 of 466
- * tarballs on 10.0.20.214:4873, so npm could not fetch a single one. A
- * negative result from a silently invalid artifact is worse than no result.
+ * audit ignores package-lock.json". But that lockfile had 466 of 466 tarballs
+ * on 10.0.20.214:4873, so npm could not fetch a single one. A negative result
+ * from a silently invalid artifact is worse than no result: it gets written
+ * into a commit message as settled fact and closes off the right hypothesis.
  * This check exists so that cannot happen a third time.
  *
  * FIXING A FAILURE
  * ----------------
- * The URL path layout is identical (Verdaccio mirrors npm's), and integrity
- * hashes are content-based, so a plain rewrite is correct and preserves the
- * exact resolved versions:
+ * Make sure no registry is configured (`npm config get registry` should say
+ * registry.npmjs.org, and ~/.npmrc should have no bare `registry=` line),
+ * then delete the lockfile and reinstall:
  *
- *   sed -i 's|http://10.0.20.214:4873/|https://registry.npmjs.org/|g' bun.lock
+ *   rm bun.lock && bun install
  *
- * Do NOT try to fix this with `bun install --registry=...`. Measured: bun
+ * bun writes no tarball URL at all when the default registry is in use, so a
+ * correct lockfile has an empty registry field: ["pkg@1.2.3", "", {...}].
+ *
+ * Deleting it first is required, not tidiness. Measured on bun 1.3.11: bun
  * honours the URL baked into the lockfile over .npmrc, bunfig.toml, the
- * environment, AND the --registry flag. A lockfile written on a LAN machine
- * stays poisoned until the URLs are rewritten.
+ * environment, AND the --registry flag, so a poisoned lockfile cannot be
+ * repaired by configuration. Note this re-resolves floating ranges, so expect
+ * transitive version drift and run the full suite.
  *
- * ponytail: greps for private hosts rather than parsing each lockfile format.
- * bun.lock is JSONC and package-lock.json is JSON, so a shared parser would
- * be more code for no more safety. Switch to parsing if we ever need
- * per-package detail beyond "which line".
+ * ponytail: greps for private hosts rather than parsing each file format.
+ * bun.lock is JSONC, package-lock.json is JSON, .npmrc is ini, so a shared
+ * parser would be more code for no more safety. Switch to parsing if we ever
+ * need per-package detail beyond "which line".
  */
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -50,18 +55,30 @@ import { fileURLToPath } from "node:url";
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// package-lock.json is optional here: it is only tracked if something
-// external (the Obsidian scanner) turns out to need an npm install path.
-const LOCKFILES = ["bun.lock", "package-lock.json"];
+// Lockfiles carry the symptom; .npmrc and bunfig.toml carry the cause. A
+// committed `registry=http://10.0.20.214:4873` would re-poison the lockfile on
+// the next resolve and break every outside contributor, so check both.
+// package-lock.json is optional: only tracked if something external (the
+// Obsidian scanner) turns out to need an npm install path.
+//
+// yarn.lock and pnpm-lock.yaml are deliberately absent. Nothing in this repo
+// produces them and CLAUDE.md mandates bun.
+const FILES = ["bun.lock", "package-lock.json", ".npmrc", "bunfig.toml"];
 
-// RFC1918 plus loopback. Anything here is unreachable from outside our LAN.
+// RFC1918 plus loopback, anchored to a URL host position.
+//
+// The `://` anchor is load-bearing: matching a bare token made this fire on
+// any package NAMED after a host (`is-localhost-ip` and `localhost` are real
+// npm packages, and `-` counts as a word boundary) and on 4-segment version
+// strings like 10.0.20.1. The failure mode being guarded against is always a
+// URL host, never a bare token, so anchoring loses no coverage.
 const PRIVATE_HOST =
-	/\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost)\b/;
+	/:\/\/(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|127\.\d{1,3}\.\d{1,3}\.\d{1,3}|localhost)\b/;
 
 const errors = [];
-let checked = 0;
+const checked = [];
 
-for (const name of LOCKFILES) {
+for (const name of FILES) {
 	let content;
 	try {
 		content = readFileSync(join(root, name), "utf8");
@@ -69,7 +86,7 @@ for (const name of LOCKFILES) {
 		if (err.code === "ENOENT") continue; // not tracked in this repo
 		throw err;
 	}
-	checked++;
+	checked.push(name);
 
 	const hits = content
 		.split("\n")
@@ -78,26 +95,28 @@ for (const name of LOCKFILES) {
 
 	if (hits.length > 0) {
 		const first = hits[0];
-		const host = PRIVATE_HOST.exec(first.text)?.[0];
+		const host = PRIVATE_HOST.exec(first.text)?.[0].replace("://", "");
 		errors.push(
 			`${name}: ${hits.length} line(s) reference the private host "${host}" (first at ${name}:${first.line})`,
 		);
 	}
 }
 
-if (checked === 0) {
-	console.error("No lockfile found. Expected at least one of:", LOCKFILES.join(", "));
+// bun.lock is always tracked here, so its absence means someone deleted it or
+// moved this script, not that the repo legitimately has no lockfile.
+if (!checked.includes("bun.lock")) {
+	console.error("bun.lock not found. Expected it at the repo root, next to package.json.");
 	process.exit(1);
 }
 
 if (errors.length > 0) {
 	console.error("Lockfile points at a private registry, unusable outside our LAN:\n");
 	for (const e of errors) console.error(`  - ${e}`);
-	console.error("\nRewrite the URLs (preserves versions and integrity hashes):");
-	console.error("  sed -i 's|http://10.0.20.214:4873/|https://registry.npmjs.org/|g' bun.lock");
-	console.error("\nSee the header of scripts/check-lockfile-registry.mjs for why");
-	console.error("`bun install --registry=...` does NOT fix this.");
+	console.error("\nEnsure no registry is configured, then delete the lockfile and reinstall:");
+	console.error("  rm bun.lock && bun install");
+	console.error("\nDeleting it first is required: bun honours the URL in the lockfile over");
+	console.error("--registry, .npmrc, bunfig.toml and the environment.");
 	process.exit(1);
 }
 
-console.log(`OK - ${checked} lockfile(s) resolve from public registries.`);
+console.log(`OK - no private-registry hosts in: ${checked.join(", ")}`);
