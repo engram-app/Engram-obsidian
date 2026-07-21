@@ -3454,39 +3454,18 @@ export class SyncEngine {
 			// nothing in THIS path writes disk (onFlushToDisk early-returns for a
 			// bound path — the editor owns the file).
 			//
-			// Never converge while the sync gate is closed (first-sync direction
-			// choice / conflict resolution): ySync would paint the buffer and it
-			// would autosave BEFORE the user chose a direction. Every sibling inbound
-			// path gates (flushFromCrdt, discoverAnnouncedNote, onCrdtDocReady); this
-			// one must too. The room delta is not lost — a reconnect/catch-up replays
-			// it after the gate opens.
-			if (this.syncBlocked) return;
-			// A history-LESS doc (feed-synced, no CRDT history yet) must NOT receive a
-			// bare incremental delta: Yjs integrates the ops whose causal deps are met
-			// and PARKS the rest, so a partial integration paints a FRAGMENT of the
-			// note into the live editor (then autosaved). It needs FULL state, never a
-			// bare delta. Skip the apply and let the convergence backstop deliver full
-			// state (room STEP1→STEP2, or healDivergedLiveBoundNotes). NOTE: that heal
-			// still has a REST leg today (restConvergeLiveBound → getUpdates); it is a
-			// Phase E (#1031) target for a socket delta-since-SV. Skipping here is
-			// correct regardless — it avoids the fragment; it does not add REST.
-			// (Defaults history-full when the manager lacks the probe, matching the
-			// cold path's safe default.)
-			const historyFull =
-				typeof this.crdt.hasHistory === "function"
-					? await this.crdt.hasHistory(noteId)
-					: true;
-			if (!historyFull) {
-				rlog().info(
-					"crdt",
-					`fan-out live-bound: history-less, deferring to full-state catch-up: ${path}`,
-				);
-				return;
-			}
 			// Deliberately NOT the cold path: no captureDiskDriftBeforeRemote (by the
 			// time isLiveBound is true, bindTo has already reconciled the buffer INTO
 			// the Y.Text and nothing here writes disk), and no hibernateIfIdle (the
 			// editor owns an open note's lifecycle; onLastViewerRelease frees it).
+			//
+			// Two edge concerns are tracked in #275, NOT guarded here: (a) applying
+			// while the sync gate is closed (first-sync direction choice) could
+			// autosave a paint before the user chooses — but an unconditional
+			// `syncBlocked` gate here silently drops normal live delivery (the gate is
+			// closed during fresh-device setup), so it needs a narrower fix; (b) a
+			// bare delta on a history-LESS doc can partially integrate. Both need
+			// their own e2e coverage; a broad guard regressed the proven delivery.
 			try {
 				await this.crdt.applyRemoteUpdate(noteId, update);
 				// A fan-out is authoritative proof the server holds this note's row, so

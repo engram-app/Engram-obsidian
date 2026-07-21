@@ -56,7 +56,6 @@ function engine(opts?: { crdt?: Partial<CrdtManager> }): SyncEngine {
 function noteEngine(opts: {
 	live?: (path: string) => boolean;
 	applyThrows?: boolean;
-	hasHistory?: () => Promise<boolean>;
 }) {
 	const applied: Array<{ id: string; update: Uint8Array }> = [];
 	const closed: string[] = [];
@@ -66,7 +65,6 @@ function noteEngine(opts: {
 			applied.push({ id, update });
 		},
 		closeDoc: (id: string) => closed.push(id),
-		...(opts.hasHistory ? { hasHistory: opts.hasHistory } : {}),
 	};
 	const e = engine({ crdt });
 	const map = new NoteIdMap();
@@ -109,38 +107,17 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual([]);
 	});
 
-	test("a HISTORY-LESS live-bound note does NOT apply the bare delta (avoids a fragment)", async () => {
-		// A feed-synced doc with no CRDT history parks the ops it can't causally
-		// place and integrates the rest, so a bare delta would paint a FRAGMENT into
-		// the live editor. It needs full state (room STEP2 / catch-up), never a bare
-		// delta. Skip the apply; leave the head at baseline so nothing claims it
-		// converged.
-		const { e, applied, closed } = noteEngine({
-			live: () => true,
-			hasHistory: async () => false,
-		});
-		markConfirmed(e, "id-a");
-
-		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
-
-		expect(applied).toEqual([]); // no fragment painted into the editor
-		expect((e as any).getCrdtHead("a.md")).toBe("server-head"); // not claimed converged
-		expect(closed).toEqual([]);
-	});
-
-	test("a live-bound note is NOT converged while the sync gate is closed", async () => {
-		// During the first-sync direction choice / conflict resolution the gate is
-		// closed. Applying would let ySync paint the buffer and Obsidian autosave it
-		// BEFORE the user chose a direction — a silent overwrite. The delta is not
-		// lost: a reconnect/catch-up replays it after the gate opens.
+	test("a live-bound note records a non-null crdtHead after applying (write-routing)", async () => {
+		// A fan-out is authoritative proof the server holds the row, so hasServerNote
+		// must see a non-null head. The head's VALUE gates no convergence path (its
+		// only reader tests != null), so a still-gapped doc is not stranded.
 		const { e, applied } = noteEngine({ live: () => true });
 		markConfirmed(e, "id-a");
-		e.setSyncBlocked(true);
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(applied).toEqual([]);
-		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
 	});
 
 	test("a note that becomes live-bound DURING the apply is NOT hibernated (re-checked after the await)", async () => {
