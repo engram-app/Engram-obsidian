@@ -686,12 +686,16 @@ export class SyncEngine {
 	 *
 	 *  Self-heal on failure (Defect 2 hardening): a thrown flush leaves the
 	 *  held body UNSENT this session (data-safe — it's still in the Y.Doc,
-	 *  never lost) but with no retry of its own. Force a fresh STEP1/STEP2
-	 *  handshake via `crdtEnrollment` (the same reset+enroll pairing used at
-	 *  every other re-handshake site in this file, e.g. `applyCrdtCreateAck`'s
-	 *  ADOPT branch) — re-running the handshake re-establishes sync and
-	 *  delivers the note's current full state, so the note self-heals on the
-	 *  next handshake round-trip instead of staying silently stranded. */
+	 *  never lost) but with no retry of its own. `reset+enroll` re-establishes
+	 *  the room's sync half (the same pairing used at every other re-handshake
+	 *  site here, e.g. `applyCrdtCreateAck`'s ADOPT branch). NOTE this is a
+	 *  PULL, not a push: the client STEP1 makes the server send back what the
+	 *  CLIENT is missing (server→client); the backend never STEP1s back, so the
+	 *  handshake does NOT re-push the held body. The held content actually
+	 *  reaches the server on the note's NEXT local edit — `hasServerNote` is now
+	 *  true (create-ack set `crdtHead`), so `canSendLive` no longer holds it.
+	 *  Under a real transport fault the re-enroll STEP1 fails on the same
+	 *  transport anyway, so next-edit is the honest recovery. */
 	async flushHeldEditsOnCreateAck(noteId: string, path: string): Promise<void> {
 		if (!this.crdt) return;
 		try {
