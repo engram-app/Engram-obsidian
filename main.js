@@ -12692,6 +12692,19 @@ var _CrdtManager = class _CrdtManager {
   async encodeStateAsUpdate(noteId, sv) {
     return encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
   }
+  /** Force-send `noteId`'s CURRENT full state via `onUpdate`, bypassing
+   *  `canSendLive` — the "caller resends once acked" half of that option's
+   *  contract. A note's `crdt_create` ack is the caller's cue: whatever local
+   *  edits landed in the Y.Doc while the gate held them (never lost, just
+   *  unsent) need one push now that the row exists. Reuses the exact transport
+   *  `onUpdate` already goes through (CrdtChannel.sendUpdateRaw in
+   *  production), so no separate send path is introduced. Lazily creates an
+   *  empty entry if none exists yet, so a note with nothing held still
+   *  resolves cleanly (sends a no-op-ish empty state, harmless to a peer). */
+  async flushHeldState(noteId) {
+    let id2 = this.docId(noteId), update = await this.encodeStateAsUpdate(noteId);
+    this.opts.onUpdate(id2, update, "flush-on-ack");
+  }
   /** Return the note body (frontmatter excluded). For the full file use projectedText. */
   async getText(noteId) {
     return (await this.entry(noteId)).text.toJSON();
@@ -12840,7 +12853,7 @@ var _CrdtManager = class _CrdtManager {
       var _a, _b;
       return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, noteId, err);
     }), doc2.on("update", (update, origin) => {
-      origin !== REMOTE_ORIGIN && this.opts.onUpdate(id2, update, origin);
+      origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
     }), doc2.on("update", (_u, origin) => {
       if (origin !== REMOTE_ORIGIN) return;
       entry.remoteSeq += 1;
@@ -18251,8 +18264,30 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       })();
     }
   }
+  /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
+   *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.isNoteConfirmed(id) })`)
+   *  so a note's live crdt_msg sends stay held until its create is acked. */
   isNoteConfirmed(noteId) {
     return noteId !== null && this.confirmedNoteIds.has(noteId);
+  }
+  /** Called immediately after a note's `crdt_create` is acked (its server row
+   *  now exists) — from every create-ack path (inline pushFile genesis and the
+   *  durable queued create-ack, `applyCrdtCreateAck`). Task 1's `canSendLive`
+   *  gate silently HELD every local Y.Doc update for this note (including a
+   *  create-ack path's own disk-content seed) while the row didn't exist yet,
+   *  so nothing individually reached the wire. Sends the note's CURRENT full
+   *  state once via `CrdtManager.flushHeldState`, which reuses the manager's
+   *  existing `onUpdate` transport directly (bypassing `canSendLive`) rather
+   *  than introducing a second send path. Never throws into the caller —
+   *  logged and swallowed, matching this file's sibling error-handling
+   *  pattern (e.g. `applyCrdtCreateAck`'s body-seed catch). */
+  async flushHeldEditsOnCreateAck(noteId, path) {
+    if (this.crdt)
+      try {
+        await this.crdt.flushHeldState(noteId);
+      } catch (e) {
+        rlog().warn("crdt", `create-ack flush failed for ${path}: ${errMsg(e)}`);
+      }
   }
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
@@ -18370,7 +18405,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`
         );
       }
-    this.setCrdtHead(path, CRDT_HEAD_CREATED);
+    this.setCrdtHead(path, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, path);
   }
   setCrdtLiveCheck(fn) {
     this.crdtLive = fn;
@@ -19176,7 +19211,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
                 ...existing,
                 hash: fnv1a(consumed),
                 crdtHead: CRDT_HEAD_CREATED
@@ -19194,7 +19229,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "crdt",
                 `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`
-              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), !0;
+              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), !0;
             }
           } catch (err) {
             return rlog().warn(
@@ -22638,6 +22673,7 @@ function createCrdtWiring(deps) {
   let box = { channel: null }, manager = new CrdtManager({
     dbPrefix: deps.dbPrefix,
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
+    canSendLive: deps.canSendLive,
     onFlushToDisk: async (noteId, content) => {
       let path = noteIdMap.pathForId(noteId);
       if (!path) {
@@ -23776,7 +23812,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           isBound: (path) => {
             var _a2, _b2;
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
-          }
+          },
+          // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
+          // a brand-new note's crdt_create must land before any crdt_msg, or the
+          // server drops the edit (note_not_found) — see manager.ts canSendLive.
+          canSendLive: (id2) => this.syncEngine.isNoteConfirmed(id2)
         });
         this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
           app: this.app,
