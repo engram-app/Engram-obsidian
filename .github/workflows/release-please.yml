@@ -13,6 +13,11 @@ permissions:
 jobs:
   release-please:
     runs-on: [self-hosted, linux, x64, isolated]
+    # Job level, NOT step level: a step's own `env:` block is not in scope for
+    # that step's `if:`, so `env.WEBHOOK != ''` on the announce step below was
+    # permanently false and the Discord announce has never once fired.
+    env:
+      WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
     steps:
       - name: Mint App token
         id: app-token
@@ -52,6 +57,12 @@ jobs:
           PR_BRANCH: ${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).headBranchName || '' }}
         run: |
           set -euo pipefail
+          # An empty ref makes the GitHub contents API fall back to the DEFAULT
+          # BRANCH, so a blank PR_BRANCH would read and WRITE versions.json on
+          # main instead of the release PR. The `|| ''` guard above stops
+          # fromJson throwing, but turning a loud crash into a silent
+          # wrong-target write is a worse trade on a release path.
+          [ -n "${PR_BRANCH:-}" ] || { echo "::error::PR_BRANCH is empty; refusing to touch the default branch"; exit 1; }
           API="https://api.github.com/repos/${{ github.repository }}/contents"
           gh_get() {
             curl --fail -sS -H "Accept: application/vnd.github+json" \
@@ -105,7 +116,7 @@ jobs:
         if: steps.release.outputs.release_created == 'true'
         with:
           fetch-depth: 0
-          # App token so the versions.json push-back to protected main succeeds.
+          # App token so `gh release upload` can write to the release.
           token: ${{ steps.app-token.outputs.token }}
 
       - if: steps.release.outputs.release_created == 'true'
@@ -137,8 +148,15 @@ jobs:
           set -euo pipefail
           gh release upload "$TAG" main.js manifest.json styles.css --clobber
 
+      # `always() &&` is load-bearing. A bare `if:` implies `success() && ...`,
+      # so ANY earlier step failing skips this one — which is precisely the
+      # 1.13.0 failure mode (step 4 failed, steps 5-12 all skipped). A guard
+      # that only runs when everything upstream already succeeded cannot catch
+      # the case it exists for. The authoritative, un-skippable version of this
+      # assertion lives in release-audit.yml, which is a separate workflow on
+      # push + cron and therefore cannot be short-circuited by this job at all.
       - name: Verify release is stable
-        if: steps.release.outputs.release_created == 'true'
+        if: always() && steps.release.outputs.release_created == 'true'
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
@@ -149,10 +167,7 @@ jobs:
           echo "Verified $TAG is published as stable (prerelease=false, draft=false)"
 
           # Obsidian installs a plugin from these three assets. A release
-          # without them is published, "Latest", and completely unusable, which
-          # is exactly how 1.13.0 shipped: an earlier step failed, every step
-          # below it was skipped, and nothing noticed until a human looked.
-          # Draft/prerelease flags were both correct the whole time.
+          # without them is published, "Latest", and completely unusable.
           ASSETS=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
           for f in main.js manifest.json styles.css; do
             echo "$ASSETS" | jq -e --arg f "$f" 'index($f)' >/dev/null \
@@ -163,7 +178,6 @@ jobs:
       - name: Announce to Discord (#releases)
         if: steps.release.outputs.release_created == 'true' && env.WEBHOOK != ''
         env:
-          WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
           TAG: ${{ steps.release.outputs.tag_name }}
         run: |

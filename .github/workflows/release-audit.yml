@@ -37,12 +37,33 @@ jobs:
             COUNT=$(echo "$RES" | jq 'length')
             [ "$COUNT" = "0" ] && break
 
-            while IFS=$'\t' read -r TAG PRERELEASE DRAFT; do
+            while IFS=$'\t' read -r TAG PRERELEASE DRAFT ASSETS; do
               # Stable: x.y.z (no suffix). Must be prerelease=false.
               if [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
                 if [ "$PRERELEASE" != "false" ]; then
                   echo "::error::Stable tag ${TAG} marked prerelease=${PRERELEASE} — would mismatch manifest lookup"
                   ERRORS=$((ERRORS + 1))
+                fi
+                # Obsidian installs a plugin from exactly these three assets, so
+                # a stable release missing any of them is published, "Latest",
+                # and completely unusable. 1.13.0 shipped that way: a step early
+                # in release-please.yml failed, every step below it (including
+                # the asset upload AND that job's own verify step) was skipped,
+                # and nothing noticed until a human looked. A guard inside that
+                # job cannot catch it, because the failure is what skips the
+                # guard. This audit is a separate workflow on push + weekly cron,
+                # so it cannot be short-circuited and it re-checks on a schedule.
+                # Pre-1.0 only, same tolerance this file already grants legacy
+                # tag formats: 0.5.6 and 0.5.9 predate styles.css and would make
+                # this audit permanently red for history nobody installs.
+                if [ "${TAG%%.*}" -ge 1 ] 2>/dev/null; then
+                  for f in main.js manifest.json styles.css; do
+                    case ",$ASSETS," in
+                      *",$f,"*) ;;
+                      *) echo "::error::Stable release ${TAG} is missing required asset ${f} (has: ${ASSETS:-none})"
+                         ERRORS=$((ERRORS + 1)) ;;
+                    esac
+                  done
                 fi
               # RC: x.y.z-rc.N. Must be prerelease=true.
               elif [[ "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+-rc\.[0-9]+$ ]]; then
@@ -56,7 +77,7 @@ jobs:
               else
                 echo "::warning::Non-conforming tag ${TAG} (prerelease=${PRERELEASE}, draft=${DRAFT})"
               fi
-            done < <(echo "$RES" | jq -r '.[] | "\(.tag_name)\t\(.prerelease)\t\(.draft)"')
+            done < <(echo "$RES" | jq -r '.[] | "\(.tag_name)\t\(.prerelease)\t\(.draft)\t\([.assets[].name]|join(","))"')
 
             [ "$COUNT" -lt 100 ] && break
             PAGE=$((PAGE + 1))
