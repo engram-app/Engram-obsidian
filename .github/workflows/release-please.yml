@@ -18,6 +18,17 @@ jobs:
     # permanently false and the Discord announce has never once fired.
     env:
       WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
+      # Without this, every `gh` call in this job dies with "none of the git
+      # remotes configured for this repository point to a known GitHub host".
+      # `gh` infers the repo from `git remote -v`, and our self-hosted runners
+      # set a system-wide
+      #   url.<lan-git-cache>/engram-app/.insteadOf https://github.com/engram-app/
+      # to spare the GitHub rate limit. `git remote -v` DISPLAYS the rewritten
+      # URL, so what checkout wrote as github.com reads back as a LAN host that
+      # `gh` cannot map to a repo. GH_REPO makes resolution explicit and
+      # remote-independent. This broke the 1.13.1 release: assets never
+      # uploaded, and the release published stable, "Latest", and unusable.
+      GH_REPO: ${{ github.repository }}
     steps:
       - name: Mint App token
         id: app-token
