@@ -1,8 +1,10 @@
 // tests/crdt-editor-controller.test.ts
-import { describe, expect, it, mock } from "bun:test";
+import { describe, expect, it, mock, spyOn } from "bun:test";
 import { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
 import { EditorController } from "../src/crdt/live/editor-controller";
+import { isUnseededYText } from "../src/crdt/live/ycollab-binding";
+import { rlog } from "../src/remote-log";
 
 function fakeView() {
 	return {
@@ -422,5 +424,87 @@ describe("EditorController", () => {
 		// Exactly one dispatch: the compartment clear. NO repair changes.
 		expect(dispatches.length).toBe(1);
 		expect(JSON.stringify(dispatches[0])).not.toContain("note A content");
+	});
+
+	it("unseeded invariant is BODY-based (frontmatter-only notes are not unseeded)", () => {
+		// The single definition both reconcile sites gate on. An empty Y.Text is
+		// "unseeded" ONLY when the editor still holds a non-empty BODY — a
+		// genuinely empty note must NOT be classed unseeded, or it could never
+		// reconcile.
+		const d = new Y.Doc();
+		const empty = d.getText("empty");
+		const filled = d.getText("filled");
+		filled.insert(0, "content");
+		expect(isUnseededYText("base line", empty)).toBe(true); // the data-loss case
+		expect(isUnseededYText("", empty)).toBe(false); // genuinely empty note
+		expect(isUnseededYText("base line", filled)).toBe(false); // seeded — repair normally
+		expect(isUnseededYText("", filled)).toBe(false); // fill direction — repair normally
+
+		// BODY, not the raw buffer. The CRDT `content` Y.Text holds the body only
+		// (frontmatter lives in separate Y.Map/Y.Array), while the CM6 buffer holds
+		// the whole file. Comparing raw text would class EVERY frontmatter-only
+		// note as unseeded and strand it forever.
+		expect(isUnseededYText("---\ntitle: x\n---\n", empty)).toBe(false);
+		// Frontmatter plus a real body is still unseeded — base must be protected.
+		expect(isUnseededYText("---\ntitle: x\n---\nbase line", empty)).toBe(true);
+	});
+
+	it("drift repair on an ORPHANED Y.Text rebinds instead of truncating the editor", async () => {
+		// Engram-obsidian#256. Reaching this state proves the binding is already
+		// broken: ySync observes this SAME Y.Text, so a healthy binding cannot show
+		// an empty Y.Text beside a non-empty buffer — the controller is holding a
+		// Y.Text the manager tore down and replaced. Repairing toward it deletes
+		// base out of the buffer (Obsidian then autosaves the wipe); merely
+		// SKIPPING strands the note forever, because this.path stays set and
+		// refresh()'s bindTo short-circuits on it. It must rebind.
+		const d = new Y.Doc();
+		const t = d.getText("content");
+		t.insert(0, "# Base\nbase line.\n");
+		const warnSpy = spyOn(rlog(), "warn");
+		const calls: string[] = [];
+		const dispatches: { changes?: unknown }[] = [];
+		const c = new EditorController({
+			getYText: async () => t,
+			awareness: () => new Awareness(new Y.Doc()),
+			onBind: (p: string, id: string) => calls.push(`bind:${p}:${id}`),
+			onRelease: (p: string, id: string) => calls.push(`release:${p}:${id}`),
+			viewPath: () => "a.md",
+			driftIntervalMs: 5,
+		});
+		const v = {
+			dispatch: mock((spec: { changes?: unknown }) => {
+				dispatches.push(spec);
+			}),
+			state: { doc: { toString: () => "# Base\nbase line.\n" } },
+		} as any;
+		await c.bindTo(v, "a.md");
+		calls.length = 0;
+		dispatches.length = 0;
+		warnSpy.mockClear();
+
+		t.delete(0, t.length); // doc emptied under the live binding — now orphaned
+		await new Promise((res) => setTimeout(res, 30)); // let the drift timer fire
+
+		// NOTHING may alter the buffer's text — that is the data loss itself.
+		const changedText = dispatches.some(
+			(s) => s.changes !== undefined && !(Array.isArray(s.changes) && s.changes.length === 0),
+		);
+		expect(changedText).toBe(false);
+		// The stale binding is DROPPED (the orphan heal), not preserved forever.
+		expect(calls.some((s) => s.startsWith("release:a.md:"))).toBe(true);
+		expect(c.currentPath()).toBe(null); // rebind deferred until the doc seeds
+		// ...and the refusal is observable rather than a silent skip.
+		expect(
+			warnSpy.mock.calls.some(
+				(args) => args[0] === "crdt" && /drift repair skipped/i.test(String(args[1])),
+			),
+		).toBe(true);
+
+		// Once the doc genuinely seeds, the deferred rebind completes: live again.
+		t.insert(0, "# Base\nbase line.\n");
+		await new Promise((res) => setTimeout(res, 10));
+		expect(c.currentPath()).toBe("a.md");
+		expect(calls.some((s) => s.startsWith("bind:a.md:"))).toBe(true);
+		warnSpy.mockRestore();
 	});
 });
