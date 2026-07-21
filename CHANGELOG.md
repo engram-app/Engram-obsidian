@@ -1,6 +1,6 @@
 # Changelog
 
-## [1.13.1](https://github.com/engram-app/Engram-obsidian/compare/1.13.0...1.13.1) (2026-07-21)
+## [1.13.2](https://github.com/engram-app/Engram-obsidian/compare/1.13.0...1.13.2) (2026-07-21)
 
 
 ### Bug Fixes
