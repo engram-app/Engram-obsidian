@@ -87,17 +87,37 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual(["id-a"]); // idle doc freed after the head is durably set
 	});
 
-	test("a live-bound note is skipped (the editor's own room owns it) — no apply, no free", async () => {
+	test("a live-bound note APPLIES the fan-out update (the room is not a guaranteed delivery path)", async () => {
+		// Engram-obsidian#256/#224. This used to SKIP, delegating open notes to the
+		// per-note room — which made the room the sole delivery path for exactly the
+		// notes the user is watching. A lost or slow room broadcast left the note
+		// deaf until a REST heal (#242, the 2026-07-14 incident), and REST is being
+		// removed. Yjs updates are idempotent and commutative, so applying here is a
+		// no-op when the room already delivered and the ONLY delivery when it did
+		// not. ySync paints the editor from the Y.Doc.
 		const { e, applied, closed } = noteEngine({ live: () => true });
+		markConfirmed(e, "id-a");
+		const update = new Uint8Array([1]);
+
+		await (e as any).applyPushedNoteUpdate("id-a", update, "SRV");
+
+		expect(applied).toEqual([{ id: "id-a", update }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // converged → head recorded
+		// STILL never hibernated: the editor owns an open note's doc lifecycle.
+		expect(closed).toEqual([]);
+	});
+
+	test("a live-bound note records a non-null crdtHead after applying (write-routing)", async () => {
+		// A fan-out is authoritative proof the server holds the row, so hasServerNote
+		// must see a non-null head. The head's VALUE gates no convergence path (its
+		// only reader tests != null), so a still-gapped doc is not stranded.
+		const { e, applied } = noteEngine({ live: () => true });
 		markConfirmed(e, "id-a");
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(applied).toEqual([]);
-		// Head NOT advanced to the broadcast "SRV" — it stays at the seeded
-		// server-known baseline markConfirmed recorded (CRDT-sole oracle).
-		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
-		expect(closed).toEqual([]);
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
 	});
 
 	test("a note that becomes live-bound DURING the apply is NOT hibernated (re-checked after the await)", async () => {

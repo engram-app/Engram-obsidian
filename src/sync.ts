@@ -3443,11 +3443,44 @@ export class SyncEngine {
 		// (test_web_edit_reaches_obsidian_that_missed_room_open).
 		this.confirmNoteId(noteId);
 		if (this.isLiveBound(normalizePath(path))) {
-			// The live room owns open notes — but say so. Silent discards made the
-			// 2026-07-14 deaf-note incident invisible: every fan-out frame for the
-			// stuck note was dropped here with no trace. info-level: stored in the
-			// client_logs table (queryable per device), not shipped to Loki.
-			rlog().info("crdt", `fan-out skip (live-bound, room owns it): ${path}`);
+			// DELIVER, don't defer (#256/#224). This used to skip, handing open notes
+			// to the per-note room — which made the room the SOLE delivery path for
+			// exactly the notes the user is watching. A lost or slow room broadcast
+			// left the note deaf (#242 added the log line here after the 2026-07-14
+			// incident, then healed the symptom via catch-up). Yjs updates are
+			// idempotent and commutative, so applying here is a no-op when the room
+			// already delivered and the ONLY delivery when it did not. ySync's
+			// observer paints the editor, and Obsidian autosaves the painted buffer;
+			// nothing in THIS path writes disk (onFlushToDisk early-returns for a
+			// bound path — the editor owns the file).
+			//
+			// Deliberately NOT the cold path: no captureDiskDriftBeforeRemote (by the
+			// time isLiveBound is true, bindTo has already reconciled the buffer INTO
+			// the Y.Text and nothing here writes disk), and no hibernateIfIdle (the
+			// editor owns an open note's lifecycle; onLastViewerRelease frees it).
+			//
+			// Two edge concerns are tracked in #275, NOT guarded here: (a) applying
+			// while the sync gate is closed (first-sync direction choice) could
+			// autosave a paint before the user chooses — but an unconditional
+			// `syncBlocked` gate here silently drops normal live delivery (the gate is
+			// closed during fresh-device setup), so it needs a narrower fix; (b) a
+			// bare delta on a history-LESS doc can partially integrate. Both need
+			// their own e2e coverage; a broad guard regressed the proven delivery.
+			try {
+				await this.crdt.applyRemoteUpdate(noteId, update);
+				// A fan-out is authoritative proof the server holds this note's row, so
+				// record a non-null crdtHead for hasServerNote's write-routing. Its
+				// VALUE gates no convergence path (the only reader tests != null), so a
+				// still-gapped doc is not stranded: catch-up re-converges it, keyed on
+				// serverHash, which this path never advances.
+				this.setCrdtHead(path, head);
+			} catch (e) {
+				rlog().error(
+					"crdt",
+					`Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
+			}
 			return;
 		}
 		try {
