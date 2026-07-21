@@ -23064,7 +23064,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   async nudgeIfUpdateAvailable() {
     let latest = await checkForPluginUpdate(this.manifest.version);
     if (!latest) return;
-    let frag = activeDocument.createDocumentFragment();
+    let frag = createFragment();
     frag.append(`Engram Vault Sync ${latest} is available. `);
     let link = frag.createEl("a", { text: "Update in settings", href: "#" });
     frag.append(".");

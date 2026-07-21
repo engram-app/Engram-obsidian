@@ -43,6 +43,24 @@ export default tseslint.config(
 	{
 		files: ["src/**/*.ts"],
 		rules: {
+			// Deferred, tracked in #270. This rule is a pure syntactic presence
+			// check: it only asks whether a `getSettingDefinitions` member exists
+			// and never inspects the return value, so `return []` would satisfy
+			// both it and the community scanner while changing nothing. That is
+			// suppression wearing adoption's clothes.
+			//
+			// Real adoption is a full settings-UI rewrite, not an additive
+			// change: per obsidian.d.ts, a non-empty return means Obsidian 1.13+
+			// renders the tab itself and `display()` is NEVER called. Our tab
+			// bar, status bar, device-flow auth, network-sourced vault dropdown
+			// and waitlist form all live in `display()`. It also has a
+			// brick-the-plugin hazard (SettingPage is a runtime class; touching
+			// it at module scope throws on Obsidian < 1.13, and our
+			// minAppVersion is 1.7.2).
+			//
+			// Turning it off rather than stubbing it keeps the scanner honest:
+			// it will keep reporting the warning until #270 actually lands.
+			"obsidianmd/settings-tab/prefer-setting-definitions": "off",
 			"obsidianmd/ui/sentence-case": [
 				"error",
 				{
