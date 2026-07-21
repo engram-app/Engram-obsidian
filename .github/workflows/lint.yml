@@ -64,6 +64,20 @@ jobs:
           fi
           echo "OK - no em/en dashes in prose docs."
 
+  npm-lockfile-sync:
+    name: npm lockfile sync
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: package-lock.json matches package.json
+        # bun installs; npm's lockfile is tracked purely so Obsidian's
+        # community scanner can resolve `obsidian`'s types. If it drifts, the
+        # scanner sees an unresolvable module and the public scorecard fills
+        # with thousands of bogus no-unsafe-* findings. Offline structural
+        # check - see the header of the script for why not a regen-and-diff.
+        run: node scripts/check-npm-lockfile.mjs
+
   claude-md-staleness:
     name: CLAUDE.md staleness
     runs-on: [self-hosted, linux, x64, isolated]

@@ -23,6 +23,13 @@ pre-commit:
       run: bun biome check --write {staged_files}
       stage_fixed: true
 
+    # package.json changed but package-lock.json did not get regenerated is
+    # invisible until the Obsidian scanner fails to install and floods the
+    # public scorecard with no-unsafe-* findings. Offline, instant.
+    - name: npm-lockfile-sync
+      glob: "{package.json,package-lock.json}"
+      run: node scripts/check-npm-lockfile.mjs
+
     # Block em-dash (—) and en-dash (–) in user-facing prose docs — an AI-slop
     # tell. Use , : ; ( ) or rephrase. Mirrors the CI gate in lint.yml.
     # Dev-internal docs (docs/internals.md, docs/engram-ops.md) are exempt.

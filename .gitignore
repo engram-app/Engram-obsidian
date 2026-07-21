@@ -2,9 +2,13 @@
 main.js
 *.js.map
 
-# bun is our package manager — no npm lockfile tracked
+# bun is our package manager for install; package-lock.json is tracked ANYWAY
+# because Obsidian's community scanner installs with npm. Without it the
+# scanner never resolves the `obsidian` module, every API call becomes the TS
+# error type, and the listing scorecard fills with thousands of bogus
+# @typescript-eslint/no-unsafe-* findings. Kept in sync by the
+# `npm-lockfile-sync` job in .github/workflows/lint.yml.
 node_modules/
-package-lock.json
 
 # IDE
 .idea/
