@@ -1591,6 +1591,35 @@ export class SyncEngine {
 		this.catchupSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
 	}
 
+	/** Gap-heal decision for a live op carrying the backend's vault `seq`.
+	 *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
+	 *  commutative + idempotent, so seq never gates application; a stale seq
+	 *  on a live delta is normal (the backend's seq goes stale between
+	 *  checkpoints), not a duplicate.
+	 *  - `seq` is `undefined` or `null` (old backend / note deleted
+	 *    mid-flight): no signal, apply only.
+	 *  - `seq <= catchupSeq`: stale, apply only, cursor unchanged.
+	 *  - `seq === catchupSeq + 1`: in order, advance the cursor.
+	 *  - `seq > catchupSeq + 1`: a gap — fire the (single-flighted)
+	 *    seq-replay catch-up fire-and-forget and do NOT advance the cursor,
+	 *    so the replay starts from the true last-applied position. */
+	applyLiveOpWithSeq(
+		_noteId: string,
+		seq: number | undefined | null,
+		apply: () => void,
+	): "applied" | "advanced" | "healing" {
+		apply();
+		if (seq === undefined || seq === null || seq <= this.catchupSeq) {
+			return "applied";
+		}
+		if (seq === this.catchupSeq + 1) {
+			this.setCatchupSeq(seq);
+			return "advanced";
+		}
+		void this.catchupViaSeqReplay();
+		return "healing";
+	}
+
 	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
 	 *  (explicit picker `resetForVaultChange`, backstop
 	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
