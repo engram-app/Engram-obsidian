@@ -56,6 +56,7 @@ function engine(opts?: { crdt?: Partial<CrdtManager> }): SyncEngine {
 function noteEngine(opts: {
 	live?: (path: string) => boolean;
 	applyThrows?: boolean;
+	hasPendingGap?: () => Promise<boolean>;
 }) {
 	const applied: Array<{ id: string; update: Uint8Array }> = [];
 	const closed: string[] = [];
@@ -65,6 +66,7 @@ function noteEngine(opts: {
 			applied.push({ id, update });
 		},
 		closeDoc: (id: string) => closed.push(id),
+		...(opts.hasPendingGap ? { hasPendingGap: opts.hasPendingGap } : {}),
 	};
 	const e = engine({ crdt });
 	const map = new NoteIdMap();
@@ -87,15 +89,41 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(closed).toEqual(["id-a"]); // idle doc freed after the head is durably set
 	});
 
-	test("a live-bound note is skipped (the editor's own room owns it) — no apply, no free", async () => {
+	test("a live-bound note APPLIES the fan-out update (the room is not a guaranteed delivery path)", async () => {
+		// Engram-obsidian#256/#224. This used to SKIP, delegating open notes to the
+		// per-note room — which made the room the sole delivery path for exactly the
+		// notes the user is watching. A lost or slow room broadcast left the note
+		// deaf until a REST heal (#242, the 2026-07-14 incident), and REST is being
+		// removed. Yjs updates are idempotent and commutative, so applying here is a
+		// no-op when the room already delivered and the ONLY delivery when it did
+		// not. ySync paints the editor from the Y.Doc.
 		const { e, applied, closed } = noteEngine({ live: () => true });
+		markConfirmed(e, "id-a");
+		const update = new Uint8Array([1]);
+
+		await (e as any).applyPushedNoteUpdate("id-a", update, "SRV");
+
+		expect(applied).toEqual([{ id: "id-a", update }]);
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // converged → head recorded
+		// STILL never hibernated: the editor owns an open note's doc lifecycle.
+		expect(closed).toEqual([]);
+	});
+
+	test("a live-bound note whose delta PARKS (pending gap) does not advance the head", async () => {
+		// A history-less or gapped doc parks the delta in pendingStructs instead of
+		// integrating it, so the doc has NOT reached `head`. Recording it anyway
+		// would make coldReceive's cost gate (getCrdtHead === serverHead → skip)
+		// skip the note and the gap would never heal.
+		const { e, applied, closed } = noteEngine({
+			live: () => true,
+			hasPendingGap: async () => true,
+		});
 		markConfirmed(e, "id-a");
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(applied).toEqual([]);
-		// Head NOT advanced to the broadcast "SRV" — it stays at the seeded
-		// server-known baseline markConfirmed recorded (CRDT-sole oracle).
+		expect(applied).toEqual([{ id: "id-a", update: new Uint8Array([1]) }]);
+		// Head left at the seeded baseline so catch-up retries convergence.
 		expect((e as any).getCrdtHead("a.md")).toBe("server-head");
 		expect(closed).toEqual([]);
 	});
