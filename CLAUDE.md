@@ -114,6 +114,8 @@ diff/merge, remote logging, plan/limit state, and a set of compliance tests
 
 **Use `bun`, not `npm`.** All commands (`install`, `test`, `build`, `run`, `lint`, `audit`) must use `bun`.
 
+`package-lock.json` is tracked anyway, purely as a published artifact for the Obsidian community scanner (which installs with npm). Nothing here runs `npm ci`. Do not hand-edit it: regenerate per `scripts/check-npm-lockfile.mjs` and see `docs/context/scanner-type-resolution.md`.
+
 ## Build & Install
 
 ```bash
@@ -164,5 +166,7 @@ If you need info on the `version-bump.mjs` script (and the silent-corruption foo
 If a note's content gets copied into a DIFFERENT file on file-switch with a clean noteIdMap (the editor-binding stale-buffer race, PR #194) — the bindTo await gap where the old ySync binding captured Obsidian's setViewData whole-doc replace, the sync-detach-before-await + bindEpoch + drift view-identity-guard fix, and why detach-not-release matters in the drift guard, see `docs/context/crdt-editor-bind-race-pollution.md`
 
 If a missed CRDT delivery never heals (create-race dead local id → `crdt_channel: dropped crdt_msg → not_found` in Loki, edge-triggered announce black hole, or an ignorant push "convergently" deleting content the client never saw) — the catch-up convergence system from PRs #197 + #198 (id adoption parity, base_hash CAS 409, pull backfill, reset+enroll as the universal re-deliver primitive; per-open `verifyConvergenceOnOpen` REMOVED in the B1 rewire, superseded by socket vault-catchup on connect/reconnect via `catchupViaSocket()`), see `docs/context/sync-catchup-convergence.md`
+
+If the public plugin listing's scorecard reports a huge pile of `@typescript-eslint/no-unsafe-*` findings against plain Obsidian API lines (`super(app)`, `contentEl.empty()`). The community scanner installs with npm, so a missing `package-lock.json` left `obsidian` unresolved and every API value became TypeScript's *error* type; covers the one-command `mv node_modules/obsidian` diagnostic (0 vs 3148 findings), the scanner's own config chain (`eslint-plugin-obsidianmd` recommended + `recommendedTypeChecked`, not our `eslint.config.mts`), the scratch-dir-only lockfile generation gotcha, why npm has no drift oracle so `scripts/check-npm-lockfile.mjs` is hand-written, and the TF-managed Dependabot coupling (engram-infra#868 must merge first), see `docs/context/scanner-type-resolution.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md

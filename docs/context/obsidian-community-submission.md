@@ -88,6 +88,15 @@ The plugin's `master` branch source has rules not yet published:
 If/when v0.4+ ships, replace our `no-restricted-imports` block with `"obsidianmd/no-nodejs-modules": "error"`.
 
 ### Dashboard validator reports warnings our local lint can't reproduce
+
+> **RESOLVED 2026-07-21, see `docs/context/scanner-type-resolution.md`.** The
+> lockfile hunch below was right, the peer-dep reasoning was not. The scanner installs
+> with npm; with no tracked `package-lock.json` the `obsidian` module never resolved and
+> every API value became TypeScript's *error* type, which `no-unsafe-*` flags exactly
+> like `any`. The lockfile committed in the 2026-05 fix bundle later fell back out of
+> git; PR #262 tracks it for good and adds a drift guard. Keep the rest of this section
+> for the investigation history only.
+
 The dashboard runs `obsidianmd.configs.recommended` (which DOES include `typescript-eslint:recommendedTypeChecked`) inside a sandbox where the `obsidian` package types resolve as `any`. That trips ~600 `no-unsafe-*` warnings on code that is type-safe in our local TS service.
 
 Local cannot reproduce — tested `projectService`, legacy `parserOptions.project`, `obsidian@1.8.7`, `bun install` vs `npm install`. All produce 0 warnings locally because our TS resolves obsidian's `.d.ts` correctly.
