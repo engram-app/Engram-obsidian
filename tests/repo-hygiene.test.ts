@@ -67,10 +67,18 @@ describe("repo — .gitignore sanity (must NOT ignore release assets)", () => {
 describe("repo — CI workflows present (release process invariants)", () => {
 	test.each([
 		".github/workflows/ci.yml",
-		".github/workflows/release.yml",
 		".github/workflows/version-check.yml",
+		".github/workflows/pr-build.yml",
+		".github/workflows/release-please.yml",
+		".github/workflows/require-release-notes.yml",
 	])("`%s` exists", (path) => {
 		expect(exists(path)).toBe(true);
+	});
+
+	// release.yml was consolidated into release-please.yml (stable publish now
+	// happens there, gated on release_created). It must NOT come back.
+	test("`.github/workflows/release.yml` was removed (consolidated into release-please.yml)", () => {
+		expect(exists(".github/workflows/release.yml")).toBe(false);
 	});
 });
 

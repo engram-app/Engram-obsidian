@@ -62,7 +62,7 @@ A TypeScript sync client. It does NOT parse markdown, generate embeddings, or ta
 
 **Everything goes through a PR. No exceptions, no admin bypass, no "doc-only" shortcuts that stretch into code.**
 
-`main` is protected with `enforce_admins=true`. Required status checks (`build-and-test`, `version-check`, `backend/e2e`) must pass before merge. The release pipeline (`release.yml`) only fires on **PR merge to main** — direct pushes skip it and break the deploy.
+`main` is protected with `enforce_admins=true`. Required status checks (`build-and-test`, `version-check`, `backend/e2e`) must pass before merge. Stable releases are cut by merging the release-please PR into `main`: direct pushes skip the Release PR and break the release flow.
 
 Workflow for any change, including doc updates:
 
@@ -112,7 +112,9 @@ diff/merge, remote logging, plan/limit state, and a set of compliance tests
 
 ## Package Manager
 
-**Use `bun`, not `npm`.** The only exception is `npm version patch|minor|major` which requires npm's lifecycle hooks to run `version-bump.mjs`. All other commands (`install`, `test`, `build`, `run`, `lint`, `audit`) must use `bun`.
+**Use `bun`, not `npm`.** All commands (`install`, `test`, `build`, `run`, `lint`, `audit`) must use `bun`.
+
+`package-lock.json` is not tracked. `bun.lock` must stay portable: never regenerate it with a `registry=` set in `~/.npmrc` or bun bakes that host into every entry, which breaks outside contributors and the Obsidian community scanner. `scripts/check-lockfile-registry.mjs` (lefthook + CI) enforces it; see `docs/context/scanner-type-resolution.md`.
 
 ## Build & Install
 
@@ -125,39 +127,26 @@ bun run build
 
 Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefix) for BRAT/Obsidian compatibility.
 
+**Do NOT bump `manifest.json` in feature PRs.** Versions are auto-derived (beta/per-PR). Stable releases are cut by merging the release-please PR.
+
 ### CI Workflows
 
 | Workflow | Trigger | What it does |
 |----------|---------|--------------|
 | `ci.yml` | Push to any branch | Build, lint, test + trigger backend E2E |
-| `version-check.yml` | PR to main | Blocks merge if version not bumped or out of sync |
-| `rc-release.yml` | PR to main (each push) | Creates BRAT-compatible pre-release (`X.Y.Z-rc.N`) |
-| `release.yml` | PR merged to main | Cleans up RCs, creates final `X.Y.Z` release |
+| `version-check.yml` | PR to main | Enforces `manifest.json`/`package.json`/`versions.json` consistency, but only when `manifest.json` is deliberately bumped; otherwise a no-op pass |
+| `pr-build.yml` | PR to main (each push) | Publishes a prerelease tagged `X.Y.Z-pr.<num>.<sha>` with build assets, for BRAT frozen-version install by reviewers |
+| `release-please.yml` | Push to main | Maintains a standing "Release PR"; on merge, bumps `manifest.json`/`package.json`, cuts the version, creates the release + bare `X.Y.Z` tag, then (gated on its own `release_created` output) builds, attests, and uploads `main.js`/`manifest.json`/`styles.css` to that release, updates `versions.json`, and posts the Discord announce |
 
-### 1. Version Bump (only manual step)
+There's also a rolling **beta** channel (`main` builds published as `X.Y.Z-beta.N`, installed via BRAT's "add beta plugin") that's part of this same release-channels initiative; its workflow lands in a separate commit.
 
-```bash
-npm version patch   # or minor, major
-```
+### Cutting a release
 
-This updates `package.json`, runs `version-bump.mjs` to sync `manifest.json` + `versions.json`, and commits.
+1. **Open/merge feature PRs as usual.** Each push to a PR auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump needed.
+2. **Edit the release notes.** `release-please.yml` keeps a Release PR up to date with a generated CHANGELOG; edit that PR's description to adjust the notes.
+3. **Merge the release-please PR.** This bumps `manifest.json`/`package.json`, cuts the version, and publishes the stable GitHub release directly (build assets, `versions.json`, and the Discord announce), all from the same `release-please.yml` run. There is no separate tag-triggered workflow.
 
-### 2. Push to PR → RC Pre-releases
-
-Every push to a PR targeting main automatically:
-- Builds and tests the plugin
-- Creates an RC tag (`X.Y.Z-rc.1`, `rc.2`, ...) incrementing automatically
-- Publishes a GitHub pre-release with `main.js`, `manifest.json`, `styles.css`
-- Install via BRAT: add repo with frozen version `X.Y.Z-rc.N`
-
-### 3. Merge PR → Final Release
-
-Merging the PR to main automatically:
-- Deletes all RC tags and pre-releases for that version
-- Creates annotated tag `X.Y.Z` on the merge commit
-- Publishes final GitHub release with assets and auto-generated notes
-
-### 4. Deploy to Local Vault
+### Deploy to Local Vault
 
 ```bash
 bun run build
@@ -177,5 +166,7 @@ If you need info on the `version-bump.mjs` script (and the silent-corruption foo
 If a note's content gets copied into a DIFFERENT file on file-switch with a clean noteIdMap (the editor-binding stale-buffer race, PR #194) — the bindTo await gap where the old ySync binding captured Obsidian's setViewData whole-doc replace, the sync-detach-before-await + bindEpoch + drift view-identity-guard fix, and why detach-not-release matters in the drift guard, see `docs/context/crdt-editor-bind-race-pollution.md`
 
 If a missed CRDT delivery never heals (create-race dead local id → `crdt_channel: dropped crdt_msg → not_found` in Loki, edge-triggered announce black hole, or an ignorant push "convergently" deleting content the client never saw) — the catch-up convergence system from PRs #197 + #198 (id adoption parity, base_hash CAS 409, pull backfill, reset+enroll as the universal re-deliver primitive; per-open `verifyConvergenceOnOpen` REMOVED in the B1 rewire, superseded by socket vault-catchup on connect/reconnect via `catchupViaSocket()`), see `docs/context/sync-catchup-convergence.md`
+
+If the public plugin listing's scorecard reports a huge pile of `@typescript-eslint/no-unsafe-*` findings against plain Obsidian API lines (`super(app)`, `contentEl.empty()`), or an outside contributor cannot `bun install` at all. Root cause is `registry=http://10.0.20.214:4873` in `~/.npmrc`: bun and npm bake the configured host into every lockfile entry, so the scanner's sandbox installed nothing, `obsidian` never resolved, and every API value became TypeScript's *error* type; covers the one-command `mv node_modules/obsidian` diagnostic (0 vs 3148 findings), why the 2026-05 `package-lock.json` attempt (PR #125) produced a false negative from a poisoned artifact, the measured bun 1.3.11 behaviours (lockfile URL beats `--registry`, `bun add` rewrites every entry, no `replace-registry-host`), the scanner's own config chain (`eslint-plugin-obsidianmd` recommended + `recommendedTypeChecked`, not our `eslint.config.mts`), and the `scripts/check-lockfile-registry.mjs` guard, see `docs/context/scanner-type-resolution.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md

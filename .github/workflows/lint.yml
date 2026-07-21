@@ -64,6 +64,20 @@ jobs:
           fi
           echo "OK - no em/en dashes in prose docs."
 
+  lockfile-registry:
+    name: lockfile registry
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: No private-registry URLs in lockfiles
+        # These runners point npm and bun at the LAN Verdaccio proxy, which
+        # gets baked into every tarball URL written to a lockfile. This repo
+        # is public, so such a lockfile breaks outside contributors and any
+        # external sandbox (including Obsidian's scanner) while working fine
+        # for us. See the script header for the two-month version of this.
+        run: node scripts/check-lockfile-registry.mjs
+
   claude-md-staleness:
     name: CLAUDE.md staleness
     runs-on: [self-hosted, linux, x64, isolated]

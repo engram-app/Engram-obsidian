@@ -61,7 +61,7 @@ docs/                  Internals, ops, API audit, submission notes
 
 ## Toolchain
 
-- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm`; the only exception is `npm version patch|minor|major`, which needs npm's lifecycle hooks to run `version-bump.mjs`.
+- **Runtime/package manager:** [Bun](https://bun.sh). Use `bun`, not `npm`.
 - **Bundler:** esbuild (`esbuild.config.mjs`).
 - **Type check:** TypeScript (`tsc -noEmit`); runs as part of `bun run build`.
 - **Lint/format:** Biome (`bun run lint`, `bun run format`) plus an Obsidian-specific ESLint pass (`bun run lint:obsidian`).
@@ -125,19 +125,30 @@ Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefi
 | Workflow | Trigger | Effect |
 |----------|---------|--------|
 | `ci.yml` | Push to any branch | Build + lint + test, plus backend E2E trigger |
-| `version-check.yml` | PR to `main` | Blocks merge unless `manifest.json`, `package.json`, and `versions.json` agree |
-| `rc-release.yml` | Each push to a PR | Publishes a BRAT-installable pre-release (`X.Y.Z-rc.N`) |
-| `release.yml` | PR merged to `main` | Cleans up RCs, tags `X.Y.Z`, publishes the final release |
+| `version-check.yml` | PR to `main` | Enforces `manifest.json`/`package.json`/`versions.json` agreement, but only when `manifest.json` is deliberately bumped; otherwise passes without requiring a bump |
+| `pr-build.yml` | Each push to a PR | Publishes a prerelease tagged `X.Y.Z-pr.<num>.<sha>` with build assets, the frozen version BRAT installs for reviewing that PR |
+| `release-please.yml` | Push to `main` | Keeps a standing "Release PR" up to date with the generated CHANGELOG; on merge, cuts the version, creates the release + bare `X.Y.Z` tag, then (gated on its own `release_created` output) builds, attests, and uploads `main.js`/`manifest.json`/`styles.css` to that release, updates `versions.json`, and posts the Discord announce |
+
+A rolling **beta** channel (from `main`, tagged `X.Y.Z-beta.N`, installed via BRAT's "add beta plugin") is part of this same release-channels initiative; its workflow lands in a separate commit.
 
 ### Cutting a release
 
-1. **Bump the version (only manual step):**
-   ```bash
-   npm version patch     # or minor / major
-   ```
-   This updates `package.json`, runs `version-bump.mjs` to sync `manifest.json` + `versions.json`, and commits the change.
-2. **Open a PR.** Each push to that PR triggers `rc-release.yml` and publishes `X.Y.Z-rc.N` as a GitHub pre-release; BRAT users can pin to that frozen version for testing.
-3. **Merge.** `release.yml` removes the RC tags/pre-releases, tags `X.Y.Z` on the merge commit, and publishes the final GitHub release with `main.js`, `manifest.json`, and `styles.css` attached.
+Do **not** bump `manifest.json` by hand in feature PRs: versions are auto-derived for the per-PR and beta channels. The only manual step is editing release notes:
+
+1. **Land feature PRs as usual.** Each push auto-publishes a per-PR prerelease via `pr-build.yml` (see above); no version bump required.
+2. **Edit the release notes.** `release-please.yml` maintains a Release PR with a generated CHANGELOG; edit that PR's description to adjust the notes before cutting.
+3. **Merge the release-please PR.** This bumps `manifest.json` and `package.json`, cuts the version, and publishes the final GitHub release directly (`main.js`, `manifest.json`, and `styles.css` attached, `versions.json` updated, and the Discord announce posted), all from the same `release-please.yml` run. There is no separate tag-triggered workflow.
+
+### Testing a specific PR
+
+Contributors can test a feature PR's frozen build without waiting for merge or stable release. Each PR generates a prerelease tag (`X.Y.Z-pr.<num>.<sha>`) on every push. To install it:
+
+1. Install [BRAT](https://github.com/TfTHacker/obsidian42-brat) if you haven't already.
+2. In Obsidian, go to **Settings → BRAT** → **Add beta plugin**.
+3. Enter `engram-app/Engram-obsidian` as the repo.
+4. Select the PR's frozen version from the version list (format: `X.Y.Z-pr.<num>.<sha>`).
+
+This lets you verify the fix before it merges, and revert back to stable by reinstalling the official version.
 
 ### Branch protection
 

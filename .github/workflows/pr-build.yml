@@ -1,0 +1,86 @@
+name: PR Build (frozen)
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  pr-build:
+    runs-on: [self-hosted, linux, x64, isolated]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - run: bun install --frozen-lockfile
+      - name: Build
+        run: bun run build
+      - name: Test
+        run: bun test
+      - name: Derive per-PR version
+        id: v
+        env:
+          PR_NUM: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          STABLE=$(jq -r '.version' manifest.json)
+          SHORT=${HEAD_SHA::7}
+          TAG=$(bun run scripts/release-version.mjs pr "$STABLE" "$PR_NUM" "$SHORT")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "short=$SHORT" >> "$GITHUB_OUTPUT"
+      - name: Stamp asset manifest.json with the PR version
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          # Asset-only: the committed manifest.json is untouched; we only
+          # rewrite the built copy so an installed PR build reports its version.
+          tmp=$(mktemp); jq --arg v "$TAG" '.version=$v' manifest.json > "$tmp" && mv "$tmp" manifest.json
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+      - name: Create PR prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.v.outputs.tag }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          BRANCH_REF: ${{ github.head_ref }}
+        run: |
+          set -euo pipefail
+          # Rerun safety: the tag is deterministic (<version>-pr.<num>.<sha>),
+          # so a rerun for the same PR head sha must clean up any prior
+          # release + tag before recreating them. Tolerant of "doesn't exist yet".
+          EXISTING_ID=$(curl -sS -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$TAG" \
+            | jq -r '.id // empty')
+          if [ -n "$EXISTING_ID" ]; then
+            curl -sS -X DELETE -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github+json" \
+              "https://api.github.com/repos/${{ github.repository }}/releases/$EXISTING_ID" || true
+          fi
+          git push origin ":refs/tags/$TAG" || true
+          git tag -d "$TAG" 2>/dev/null || true
+
+          git tag "$TAG" "${{ github.event.pull_request.head.sha }}"
+          git push origin "$TAG"
+          NOTES=$(printf 'PR #%s build from `%s`.\n\nInstall via BRAT **frozen version**: `%s`' "$PR_NUM" "$BRANCH_REF" "$TAG")
+          BODY=$(jq -nc --arg tag "$TAG" --arg name "$TAG" --arg notes "$NOTES" \
+            '{tag_name:$tag, name:$name, body:$notes, prerelease:true, draft:false}')
+          REL=$(curl --fail -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" -d "$BODY")
+          UP=$(echo "$REL" | jq -r '.upload_url' | sed 's/{?name,label}//')
+          for a in main.js manifest.json styles.css; do
+            curl --fail -sS -X POST -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary "@$a" "$UP?name=$a" > /dev/null
+          done

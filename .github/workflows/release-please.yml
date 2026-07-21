@@ -1,0 +1,192 @@
+name: Release Please
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  attestations: write
+  id-token: write
+
+jobs:
+  release-please:
+    runs-on: [self-hosted, linux, x64, isolated]
+    # Job level, NOT step level: a step's own `env:` block is not in scope for
+    # that step's `if:`, so `env.WEBHOOK != ''` on the announce step below was
+    # permanently false and the Discord announce has never once fired.
+    env:
+      WEBHOOK: ${{ secrets.DISCORD_RELEASES_WEBHOOK_URL }}
+    steps:
+      - name: Mint App token
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GH_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+          # App token so the Release PR + tag satisfy protect-main / protect-tags.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Add versions.json entry to the release PR
+        # release-please bumps manifest.json in the release PR but can't add the
+        # keyed versions.json entry (version -> minAppVersion). Patch it onto the
+        # PR branch so the PR is self-consistent — the manifest-compliance tests
+        # require versions.json to contain manifest.version — and the eventual
+        # release commit is atomic (no post-merge versions.json write, no window
+        # where main's manifest is ahead of versions.json). Contents API => a
+        # signed commit with no checkout; idempotent (no-ops once the entry
+        # exists, so release-please regenerating the branch self-heals).
+        if: steps.release.outputs.pr && steps.release.outputs.release_created != 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          # Short-circuit before fromJson. Step-level `env` expressions are
+          # evaluated at template-compile time, BEFORE `if:` is considered, so a
+          # bare fromJson(outputs.pr) throws "Error reading JToken from
+          # JsonReader" on every release run (outputs.pr is empty there) and
+          # fails the step instead of skipping it. That took down the whole job
+          # on 1.13.0, skipping build/test/attest/asset-upload and publishing a
+          # release with no main.js. The `&&`/`||` guard keeps the expression
+          # valid on both paths.
+          PR_BRANCH: ${{ steps.release.outputs.pr && fromJson(steps.release.outputs.pr).headBranchName || '' }}
+        run: |
+          set -euo pipefail
+          # An empty ref makes the GitHub contents API fall back to the DEFAULT
+          # BRANCH, so a blank PR_BRANCH would read and WRITE versions.json on
+          # main instead of the release PR. The `|| ''` guard above stops
+          # fromJson throwing, but turning a loud crash into a silent
+          # wrong-target write is a worse trade on a release path.
+          [ -n "${PR_BRANCH:-}" ] || { echo "::error::PR_BRANCH is empty; refusing to touch the default branch"; exit 1; }
+          API="https://api.github.com/repos/${{ github.repository }}/contents"
+          gh_get() {
+            curl --fail -sS -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" "$1"
+          }
+          # Read the bumped version off the PR branch's manifest.json.
+          MANIFEST=$(gh_get "${API}/manifest.json?ref=${PR_BRANCH}" | jq -r '.content' | base64 -d)
+          VER=$(echo "$MANIFEST" | jq -r '.version')
+          MIN=$(echo "$MANIFEST" | jq -r '.minAppVersion')
+
+          for attempt in 1 2; do
+            RESP=$(gh_get "${API}/versions.json?ref=${PR_BRANCH}")
+            SHA=$(echo "$RESP" | jq -r '.sha')
+            CONTENT=$(echo "$RESP" | jq -r '.content' | base64 -d)
+
+            if [ "$(echo "$CONTENT" | jq --arg v "$VER" 'has($v)')" = "true" ]; then
+              echo "versions.json on ${PR_BRANCH} already has ${VER} — skipping"
+              break
+            fi
+
+            NEW_B64=$(echo "$CONTENT" | jq --arg v "$VER" --arg m "$MIN" '.[$v]=$m' | base64 -w0)
+            BODY=$(jq -nc \
+              --arg msg "chore(release): versions.json ${VER}" \
+              --arg content "$NEW_B64" \
+              --arg sha "$SHA" \
+              --arg br "$PR_BRANCH" \
+              '{message: $msg, content: $content, sha: $sha, branch: $br}')
+
+            HTTP_STATUS=$(curl -sS -o /tmp/versions-put-response.json -w '%{http_code}' -X PUT \
+              -H "Accept: application/vnd.github+json" \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "X-GitHub-Api-Version: 2022-11-28" \
+              "${API}/versions.json" -d "$BODY")
+
+            if [ "$HTTP_STATUS" = "200" ] || [ "$HTTP_STATUS" = "201" ]; then
+              echo "Added versions.json[${VER}]=${MIN} to ${PR_BRANCH}"
+              break
+            elif [ "$HTTP_STATUS" = "409" ] && [ "$attempt" = "1" ]; then
+              echo "sha conflict updating versions.json — retrying"
+              continue
+            else
+              echo "::error::Failed to update versions.json on ${PR_BRANCH} (HTTP $HTTP_STATUS): $(cat /tmp/versions-put-response.json)"
+              exit 1
+            fi
+          done
+
+      # --- everything below only runs when a release was just created ---
+
+      - uses: actions/checkout@v7
+        if: steps.release.outputs.release_created == 'true'
+        with:
+          fetch-depth: 0
+          # App token so `gh release upload` can write to the release.
+          token: ${{ steps.app-token.outputs.token }}
+
+      - if: steps.release.outputs.release_created == 'true'
+        run: bun install --frozen-lockfile
+
+      - name: Build
+        if: steps.release.outputs.release_created == 'true'
+        run: bun run build
+
+      - name: Test
+        if: steps.release.outputs.release_created == 'true'
+        run: bun test
+
+      - name: Attest build provenance
+        if: steps.release.outputs.release_created == 'true'
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: |
+            main.js
+            manifest.json
+            styles.css
+
+      - name: Upload plugin assets to the release
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" main.js manifest.json styles.css --clobber
+
+      # `always() &&` is load-bearing. A bare `if:` implies `success() && ...`,
+      # so ANY earlier step failing skips this one — which is precisely the
+      # 1.13.0 failure mode (step 4 failed, steps 5-12 all skipped). A guard
+      # that only runs when everything upstream already succeeded cannot catch
+      # the case it exists for. The authoritative, un-skippable version of this
+      # assertion lives in release-audit.yml, which is a separate workflow on
+      # push + cron and therefore cannot be short-circuited by this job at all.
+      - name: Verify release is stable
+        if: always() && steps.release.outputs.release_created == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          META=$(gh release view "$TAG" --json isDraft,isPrerelease)
+          [ "$(echo "$META" | jq -r .isPrerelease)" = "false" ] && [ "$(echo "$META" | jq -r .isDraft)" = "false" ] || { echo "::error::$TAG not published stable"; exit 1; }
+          echo "Verified $TAG is published as stable (prerelease=false, draft=false)"
+
+          # Obsidian installs a plugin from these three assets. A release
+          # without them is published, "Latest", and completely unusable.
+          ASSETS=$(gh release view "$TAG" --json assets --jq '[.assets[].name]')
+          for f in main.js manifest.json styles.css; do
+            echo "$ASSETS" | jq -e --arg f "$f" 'index($f)' >/dev/null \
+              || { echo "::error::$TAG is missing required asset $f (assets: $ASSETS)"; exit 1; }
+          done
+          echo "Verified $TAG has main.js, manifest.json and styles.css"
+
+      - name: Announce to Discord (#releases)
+        if: steps.release.outputs.release_created == 'true' && env.WEBHOOK != ''
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TAG: ${{ steps.release.outputs.tag_name }}
+        run: |
+          set -euo pipefail
+          NOTES=$(gh release view "$TAG" --repo "${{ github.repository }}" --json body -q .body || echo "")
+          CONTENT=$(printf '**Engram Vault Sync %s** released.\n\n%s' "$TAG" "$NOTES")
+          HTTP_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' -X POST -H 'Content-Type: application/json' --max-time 5 \
+            --data "$(jq -nc --arg c "$CONTENT" '{content:$c}')" "$WEBHOOK")
+          case "$HTTP_STATUS" in
+            2??) echo "Discord announce OK (HTTP $HTTP_STATUS)" ;;
+            *) echo "::warning::Discord announce failed (HTTP $HTTP_STATUS)" ;;
+          esac
