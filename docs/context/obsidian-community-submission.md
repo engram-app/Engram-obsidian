@@ -89,13 +89,16 @@ If/when v0.4+ ships, replace our `no-restricted-imports` block with `"obsidianmd
 
 ### Dashboard validator reports warnings our local lint can't reproduce
 
-> **RESOLVED 2026-07-21, see `docs/context/scanner-type-resolution.md`.** The
-> lockfile hunch below was right, the peer-dep reasoning was not. The scanner installs
-> with npm; with no tracked `package-lock.json` the `obsidian` module never resolved and
-> every API value became TypeScript's *error* type, which `no-unsafe-*` flags exactly
-> like `any`. The lockfile committed in the 2026-05 fix bundle later fell back out of
-> git; PR #262 tracks it for good and adds a drift guard. Keep the rest of this section
-> for the investigation history only.
+> **ROOT CAUSE FOUND 2026-07-21, see `docs/context/scanner-type-resolution.md`.** The
+> lockfile hunch below was in the right area, the peer-dep reasoning was not, and the
+> `package-lock.json` fix attempt was tested against a silently invalid artifact. Real
+> cause: `registry=http://10.0.20.214:4873` in `~/.npmrc` baked our LAN Verdaccio host
+> into every lockfile we committed, so the scanner's sandbox (and any outside
+> contributor) could not fetch a single package. With nothing installed the `obsidian`
+> module never resolved and every API value became TypeScript's *error* type, which
+> `no-unsafe-*` flags exactly like `any`. PR #262 makes `bun.lock` portable and adds a
+> guard; `package-lock.json` is still not tracked. Keep the rest of this section for
+> the investigation history only.
 
 The dashboard runs `obsidianmd.configs.recommended` (which DOES include `typescript-eslint:recommendedTypeChecked`) inside a sandbox where the `obsidian` package types resolve as `any`. That trips ~600 `no-unsafe-*` warnings on code that is type-safe in our local TS service.
 
