@@ -455,6 +455,28 @@ export class SyncEngine {
 		this.crdtEditorRebind = fn;
 	}
 
+	/** Fix wave 7 (#191 slice): reads the LIVE editor buffer currently shown
+	 *  for `path` (CrdtLiveViews.boundBufferText, wired by main.ts) — used by
+	 *  commitCrdtConvergence to detect a phantom binding (isLiveBound true but
+	 *  the editor's Yjs binding silently detached, so its buffer never
+	 *  repaints). Null in tests/headless — the phantom-binding check is then
+	 *  skipped (nothing to compare). */
+	private crdtBoundBufferText: ((path: string) => string | null) | null = null;
+
+	setCrdtBoundBufferText(fn: ((path: string) => string | null) | null): void {
+		this.crdtBoundBufferText = fn;
+	}
+
+	/** Fix wave 7: nudges the bound editor's save (CrdtLiveViews.requestSaveForBoundPath,
+	 *  the same debounced call wiring.ts's onBoundUpdate uses) after a phantom
+	 *  binding is rebound, so the freshly-repainted buffer actually reaches
+	 *  disk instead of waiting on the next unrelated remote update. */
+	private crdtRequestSave: ((path: string) => void) | null = null;
+
+	setCrdtRequestSave(fn: ((path: string) => void) | null): void {
+		this.crdtRequestSave = fn;
+	}
+
 	/** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
 	 *  main.ts (persisted in data.json); wired here so pushFile can mint/send
 	 *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -3832,6 +3854,30 @@ export class SyncEngine {
 			if (!matches) {
 				devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
 				return; // leave staged — the next inbound frame re-runs this check
+			}
+			// Fix wave 7 (#191 slice): the doc is content-verified converged, but a
+			// rejected STEP1 / unclean close during a rate-limited window can
+			// detach the editor's Yjs binding while isLiveBound stays true (CI run
+			// 29923077791) — onFlushToDisk then skips forever (thinks the editor
+			// owns disk) and nothing repaints the stale buffer, so the wave-6
+			// requestSave nudge just re-saves the same stale content. Detect it
+			// here: if the bound editor's actual buffer no longer matches the
+			// verified content, the binding is phantom — force a rebind through
+			// the existing bindEpoch-guarded machinery (never a raw setViewData,
+			// never spans an await between detach/rebind — see
+			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the
+			// save on the freshly-painted buffer.
+			const boundPath = this.noteIdMap?.pathForId(noteId);
+			if (boundPath && this.isLiveBound(boundPath)) {
+				const buffer = this.crdtBoundBufferText?.(boundPath) ?? null;
+				if (buffer !== null && buffer !== staged.content) {
+					rlog().warn(
+						"crdt",
+						`socket converge: phantom binding rebound for ${boundPath}`,
+					);
+					this.crdtEditorRebind?.(boundPath);
+					this.crdtRequestSave?.(boundPath);
+				}
 			}
 		}
 		this.pendingConvergence.delete(noteId);

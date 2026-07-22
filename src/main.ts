@@ -433,6 +433,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// pre-seeded with the editor's content, so no in-flight edit is lost).
 		this.syncEngine.setCrdtEditorRebind((path) => this.crdtLiveViews?.rebindPath(path));
 
+		// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
+		// check reads the bound editor's live buffer, and (on a rebind)
+		// nudges its save the same way wiring.ts's onBoundUpdate does.
+		this.syncEngine.setCrdtBoundBufferText(
+			(path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
+		);
+		this.syncEngine.setCrdtRequestSave((path) =>
+			this.crdtLiveViews?.requestSaveForBoundPath(path),
+		);
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
