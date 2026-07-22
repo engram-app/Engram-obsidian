@@ -91,8 +91,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	 *  row on a settings re-render, so guard with isConnected like renderStatus()
 	 *  does; it re-renders on next open. */
 	rerender(): void {
-		if (this.activeContainerEl?.isConnected)
-			this.renderContent(this.activeContainerEl);
+		if (this.activeContainerEl?.isConnected) this.renderContent(this.activeContainerEl);
 	}
 
 	private renderContent(containerEl: HTMLElement): void {
