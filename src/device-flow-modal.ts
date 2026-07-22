@@ -1,4 +1,5 @@
 import { type App, Modal, Notice, requestUrl } from "obsidian";
+import { withTimeout } from "./api";
 import type EngramSyncPlugin from "./main";
 
 export interface DeviceFlowResult {
@@ -73,13 +74,16 @@ export class DeviceFlowModal extends Modal {
 			client_id: this.plugin.settings.clientId,
 		};
 		if (vaultName) body.vault_name = vaultName;
-		const resp = await requestUrl({
-			url: `${apiUrl}/auth/device`,
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify(body),
-			throw: false,
-		});
+		const resp = await withTimeout(
+			requestUrl({
+				url: `${apiUrl}/auth/device`,
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(body),
+				throw: false,
+			}),
+			15_000,
+		);
 		if (resp.status < 200 || resp.status >= 300) {
 			throw new Error(`HTTP ${resp.status}`);
 		}
@@ -142,13 +146,16 @@ export class DeviceFlowModal extends Modal {
 			}
 
 			try {
-				const resp = await requestUrl({
-					url: `${apiUrl}/auth/device/token`,
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ device_code: deviceCode }),
-					throw: false,
-				});
+				const resp = await withTimeout(
+					requestUrl({
+						url: `${apiUrl}/auth/device/token`,
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ device_code: deviceCode }),
+						throw: false,
+					}),
+					15_000,
+				);
 
 				if (resp.status === 428) return;
 

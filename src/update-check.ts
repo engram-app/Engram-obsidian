@@ -1,4 +1,5 @@
 import { requestUrl } from "obsidian";
+import { withTimeout } from "./api";
 
 /** Raw manifest on the default branch — the same file Obsidian's own community
  *  updater reads to detect the latest version. No auth, works on mobile. */
@@ -23,7 +24,10 @@ export function isNewerVersion(latest: string, current: string): boolean {
  *  to disrupt plugin load. */
 export async function checkForPluginUpdate(currentVersion: string): Promise<string | null> {
 	try {
-		const resp = await requestUrl({ url: MANIFEST_URL, method: "GET", throw: false });
+		const resp = await withTimeout(
+			requestUrl({ url: MANIFEST_URL, method: "GET", throw: false }),
+			10_000,
+		);
 		if (resp.status !== 200) return null;
 		const latest = (resp.json as { version?: unknown } | undefined)?.version;
 		return typeof latest === "string" && isNewerVersion(latest, currentVersion) ? latest : null;
