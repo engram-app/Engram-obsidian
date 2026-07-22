@@ -39,7 +39,11 @@ export class RequestTimeoutError extends Error {
 	}
 }
 
-async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+/** Deadline-bound a promise. Exported for the direct `requestUrl` call sites
+ *  outside EngramApi (token refresh, device flow, waitlist, update check,
+ *  probeHealth) — anything unbounded there can wedge its caller forever;
+ *  the token-refresh case stalls EVERY request behind getToken(). */
+export async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 	let timer: number | undefined;
 	const deadline = new Promise<never>((_, reject) => {
 		timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
@@ -153,7 +157,10 @@ export class EngramApi {
 	static async probeHealth(rawUrl: string): Promise<PreflightResult> {
 		const base = EngramApi.normalizeBaseUrl(rawUrl);
 		try {
-			const resp = await requestUrl({ url: `${base}/health`, method: "GET", throw: false });
+			const resp = await withTimeout(
+				requestUrl({ url: `${base}/health`, method: "GET", throw: false }),
+				10_000,
+			);
 			let body: unknown = null;
 			try {
 				body = resp.json;
