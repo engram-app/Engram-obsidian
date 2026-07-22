@@ -907,7 +907,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(reset).toHaveBeenCalledWith("note-id-1");
 	});
 
-	test("fix wave 3 (b): equal seq is still stale — the fence is preserved (PR #280 scope, untouched)", async () => {
+	test("fix wave 3 (b): equal seq with DIFFERENT content is NOT stale — the hash-aware fence runs the re-handshake (supersedes PR #280's blunt strict-<)", async () => {
 		const { engine, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -917,18 +917,56 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			"owned.md": { hash: 1, seq: 40, version: 1, serverHash: "old-hash" },
 		});
 
+		// Equal seq (the backend shares one seq across multiple live updates —
+		// crdt_persistence.ex:180 GUARANTEE BOUNDARY) but a DIFFERENT
+		// content_hash than stored.serverHash: this row carries content this
+		// device never saw (A's concurrent edit merged at the same seq). Under
+		// the old `<=` fence it was fence-skipped and A's edit was lost; the
+		// hash-aware fence must let it fall through to the divergence leg.
 		await engine.applyChange({
 			path: "owned.md",
 			action: "upsert",
-			content: "replayed row",
-			content_hash: "new-hash",
+			content: "unseen concurrent edit",
+			content_hash: "new-hash", // != stored.serverHash "old-hash"
 			version: 2,
-			seq: 40, // equal to stored.seq — still history, must still skip
+			seq: 40, // EQUAL to stored.seq, but the content differs
+			mtime: 50,
+		} as any);
+
+		// The live-bound divergence leg fires the socket re-handshake
+		// (socketConverge → fireCrdtReHandshake → crdtEnrollment.reset). Under
+		// the OLD strict-`<=` fence this row is skipped as history and reset is
+		// NEVER called — so this assertion genuinely discriminates the fix
+		// (unlike the old serverHash-unchanged assertion, which held for both
+		// the skip AND the stage-only live-bound leg).
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+	});
+
+	test("fix wave 3 (b2): equal seq with MATCHING content IS still stale — the fix does not over-apply (genuine echo/duplicate)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, seq: 40, version: 1, serverHash: "dup-hash" },
+		});
+
+		// Equal seq AND content_hash equals stored.serverHash — we already hold
+		// exactly this content (our own push echoed back). Genuine history: the
+		// fence must still skip it, no re-handshake.
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "content we already have",
+			content_hash: "dup-hash", // == stored.serverHash — already held
+			version: 2,
+			seq: 40,
 			mtime: 50,
 		} as any);
 
 		expect(reset).not.toHaveBeenCalled();
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("dup-hash");
 	});
 
 	test("fix wave 3 (c): seq absent on the row falls back to version — the legacy skip path is preserved", async () => {

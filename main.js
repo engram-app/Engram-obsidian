@@ -20566,8 +20566,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         noteId && this.isLiveBound(normalized) && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
         noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId));
-        let stored = this.syncState.get(normalized);
-        if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && change.seq <= stored.seq : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
+        let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
+        if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
             `CRDT catch-up: stale row (seq ${(_o = change.seq) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.seq) != null ? _p : "-"} v${(_q = change.version) != null ? _q : "-"}/${(_r = stored == null ? void 0 : stored.version) != null ? _r : "-"}) \u2014 history, skip ${change.path}`
