@@ -86,9 +86,13 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	 *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
 	 *  the deprecated display() — which on 1.13+ would draw into the tab root
 	 *  instead of the render-hatch host. No-op if the tab isn't currently shown
-	 *  (activeContainerEl is cleared on hide()); it re-renders on next open. */
+	 *  (activeContainerEl is cleared on hide()) or if the container was detached
+	 *  without hide() firing — on 1.13+ Obsidian can tear down the render-hatch
+	 *  row on a settings re-render, so guard with isConnected like renderStatus()
+	 *  does; it re-renders on next open. */
 	rerender(): void {
-		if (this.activeContainerEl) this.renderContent(this.activeContainerEl);
+		if (this.activeContainerEl?.isConnected)
+			this.renderContent(this.activeContainerEl);
 	}
 
 	private renderContent(containerEl: HTMLElement): void {
