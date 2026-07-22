@@ -19170,7 +19170,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -19179,42 +19179,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
-        if (isBinary)
-          await this.api.deleteAttachment(oldPath), this.goOnline();
-        else if (oldPath.endsWith(".md")) {
-          let relocatedId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-          if (relocatedId)
-            if (this.crdtDelete && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null && _e))
-              try {
-                await this.crdtDelete(relocatedId), this.goOnline();
-              } catch (e) {
-                rlog().warn(
-                  "crdt",
-                  `rename tombstone ack failed, enqueuing durable delete for ${oldPath}: ${errMsg(e)}`
-                ), (_f = this.crdtEnqueue) == null || _f.call(this, {
-                  kind: "delete",
-                  docId: relocatedId,
-                  path: oldPath
-                });
-              }
-            else
-              (_g = this.crdtEnqueue) == null || _g.call(this, {
-                kind: "delete",
-                docId: relocatedId,
-                path: oldPath
-              });
-        } else
-          await this.api.deleteNote(oldPath), this.goOnline();
+        isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : oldPath.endsWith(".md") || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
         isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_h = this.settings.vaultId) != null ? _h : void 0
+          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_i = this.baseStore) == null || _i.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(file.path)) != null ? _k : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and

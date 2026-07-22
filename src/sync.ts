@@ -2220,47 +2220,16 @@ export class SyncEngine {
 					await this.api.deleteAttachment(oldPath);
 					this.goOnline();
 				} else if (oldPath.endsWith(".md")) {
-					// CRDT-authoritative rename = tombstone->resurrect, ORDERED. The
-					// backend has no live-note relocation: `genesis_crdt_note` replies
-					// `id_conflict` for a LIVE id at a new path (crdt_channel.ex:201), so
-					// the note moves only by tombstoning the old path first, then having
-					// the new-path `crdt_create` below hit the {:tombstone} ->
-					// `:announce_moved` resurrect (which re-paths the SAME row, so the
-					// server shows old-path gone + new-path present, matching test_10's
-					// asserts). noteIdMap.rename above moved the id onto file.path; the id
-					// (unchanged by a rename) is the tombstone target. No id means never
-					// synced, so there is nothing to tombstone.
-					//
-					// AWAIT a direct crdt_delete when the channel is live so the create
-					// sees the tombstone, never a live id_conflict, and the two ops never
-					// coalesce on the docId-keyed CrdtOpQueue (which would drop one).
-					// Offline / not-joined → durable enqueue; the reconnect re-push
-					// resurrects once the tombstone lands.
-					const relocatedId = this.noteIdMap?.get(file.path) ?? null;
-					if (relocatedId) {
-						if (this.crdtDelete && (this.crdtLive?.() ?? false)) {
-							try {
-								await this.crdtDelete(relocatedId);
-								this.goOnline();
-							} catch (e) {
-								rlog().warn(
-									"crdt",
-									`rename tombstone ack failed, enqueuing durable delete for ${oldPath}: ${errMsg(e)}`,
-								);
-								this.crdtEnqueue?.({
-									kind: "delete",
-									docId: relocatedId,
-									path: oldPath,
-								});
-							}
-						} else {
-							this.crdtEnqueue?.({
-								kind: "delete",
-								docId: relocatedId,
-								path: oldPath,
-							});
-						}
-					}
+					// Phase E2 (rename-as-move): NO tombstone. The pushFile below
+					// sends `crdt_create` for the SAME id at the new path and the
+					// backend relocates the live row in place
+					// (genesis_relocate_live -> move_note, :announce_moved fan-out);
+					// receivers move their local file via the id-keyed relocation
+					// (moveIfIdRelocated), same as a REST rename's :moved leg. The
+					// old tombstone->resurrect dance is gone with two hazards it
+					// carried: the #970 delete-wins window could eat a rename as a
+					// recreate-after-delete, and the delete+create pair could
+					// coalesce on the docId-keyed CrdtOpQueue (the test_10 class).
 				} else {
 					// Canvas / other non-md syncable text stays LWW REST (not CRDT-managed).
 					await this.api.deleteNote(oldPath);
@@ -2302,11 +2271,10 @@ export class SyncEngine {
 			// the old path — the new note's push is skipped and it never syncs).
 			// The new-path push below re-establishes sync-state under file.path.
 			this.syncState.delete(normalizePath(oldPath));
-			// The tombstone above made the note_id no longer server-live. Un-confirm
-			// it so pushFile below takes the `crdt_create` genesis branch (not the
-			// crdt_msg edit branch, which carries no path and can't move the row):
-			// against the fresh tombstone that create hits the {:tombstone} ->
-			// `:announce_moved` resurrect, re-pathing the SAME row to file.path.
+			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
+			// branch (not the crdt_msg edit branch, which carries no path and
+			// can't move the row): the create for a LIVE id at the new path IS
+			// the relocation server-side (Phase E2, genesis_relocate_live).
 			this.unconfirmNoteId(this.noteIdMap?.get(file.path) ?? null);
 		}
 
