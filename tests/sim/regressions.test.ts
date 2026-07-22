@@ -34,8 +34,8 @@
 // needs a frontmatter-bearing (structure-only, empty-body) note and a bind race
 // — a headless/server-tier scenario (P2), not this client-only model tier.
 import { expect, test } from "bun:test";
-import { assertConverged } from "./oracle";
-import { cleanup, equalSeqFence, test85MissedDeliveryLocalPush } from "./scenarios";
+import { assertConverged, findWipes } from "./oracle";
+import { cleanup, equalSeqFence, genesisWipe, test85MissedDeliveryLocalPush } from "./scenarios";
 
 // #282 — equal-seq fence skip.
 //
@@ -68,4 +68,38 @@ test("test_85 missed-delivery + local push: both edits survive, no revert", asyn
 		cleanup(r.topology);
 	}
 	expect(true).toBe(true);
+});
+
+// #288 genesis-wipe — DOCUMENTED-BOUNDARY PIN (P1 Task 7b: exercise the
+// otherwise-dead genesisWipe scenario + scheduler hold/release fault primitive).
+//
+// This scenario (scheduler.hold("net:A") to freeze A's create-ack while B
+// enrolls the empty genesis, then release) is NOT a converge-on-fix gate — it
+// pins the MODEL TIER'S DISCRIMINATION LIMIT for #288 (regressions header +
+// scenarios.ts): a PLAIN empty genesis is a truly-empty server doc in reality
+// too, so #289's manager-listener guard is UNREACHABLE via plain genesis. The
+// documented, honest outcome in this model tier is therefore:
+//   - findWipes() == []  — the write-journal #288 detector does NOT fire (A's
+//     disk keeps its content; no non-empty->empty WRITE ever happens), so the
+//     model does NOT FALSELY flag a wipe; AND
+//   - assertConverged THROWS — the scenario still DIVERGES, but via a DIFFERENT
+//     mechanism (canSendLive-gated content loss: A's authored body never seeds
+//     the server room, so server + B end empty while A's disk holds content).
+// Pinning BOTH sides keeps hold/release + genesisWipe live scaffolding and
+// nails the "the model can't discriminate #288 via plain genesis" boundary so a
+// future change that alters it trips this test. Full #288 repro is a P2 server-
+// tier concern (frontmatter-bearing empty-body note + bind race).
+test("#288 genesis-wipe: model tier does NOT flag a wipe, but does not converge (boundary)", async () => {
+	const r = await genesisWipe();
+	try {
+		// No FALSE wipe flag — the reliable write-journal detector stays clean.
+		expect(findWipes(r.topology.replicas)).toEqual([]);
+		// But the scenario diverges (content-loss, not a detected wipe): the model
+		// tier cannot discriminate #288 via a plain genesis. Pin that it throws.
+		await expect(
+			assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler),
+		).rejects.toThrow(/diverged from the server/);
+	} finally {
+		cleanup(r.topology);
+	}
 });

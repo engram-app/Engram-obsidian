@@ -73,6 +73,7 @@ async function readAllRows(
 	scheduler: Scheduler,
 	replicas: Replica[],
 	notePaths: string[],
+	readDoc: boolean,
 ): Promise<Map<string, ReplicaRow[]>> {
 	const pending: PendingRow[] = [];
 	for (const notePath of notePaths) {
@@ -85,8 +86,8 @@ async function readAllRows(
 				replicaId: r.id,
 				disk,
 				id,
-				docTextP: id ? r.crdtManager.projectedText(id) : null,
-				headP: id ? r.crdtManager.encodeStateVector(id) : null,
+				docTextP: readDoc && id ? r.crdtManager.projectedText(id) : null,
+				headP: readDoc && id ? r.crdtManager.encodeStateVector(id) : null,
 			});
 		}
 	}
@@ -138,7 +139,22 @@ export async function assertConverged(
 	replicas: Replica[],
 	server: ModelServer,
 	scheduler: Scheduler,
+	opts: {
+		/** Also require every replica's live Y.Doc projected text to equal the
+		 *  server content. Default true (the strict 3-surface check the differential
+		 *  gate depends on). The random suite (Task 8) sets this FALSE: a note
+		 *  materialized via REST catch-up lands on DISK but is never CRDT-enrolled
+		 *  until a live edit/open, so `projectedText` opens a fresh EMPTY doc — a
+		 *  benign lazy-enrollment state (disk, the user-visible surface, is correct),
+		 *  indistinguishable from #288 in a static snapshot (see readAllRows +
+		 *  regressions.test.ts's #288 boundary note). The random tier therefore
+		 *  asserts DURABLE convergence — disk + noteIdMap id + no-extra-notes +
+		 *  findWipes (the reliable write-journal #288 detector) — not the lazy
+		 *  in-memory doc. */
+		requireDocText?: boolean;
+	} = {},
 ): Promise<void> {
+	const requireDocText = opts.requireDocText ?? true;
 	await scheduler.drain();
 	// Reconnect any offline replica — connect() is a no-op if already online
 	// (src/channel.ts: `if (this.ws) return`), so this is safe to call
@@ -147,13 +163,16 @@ export async function assertConverged(
 	await scheduler.drain();
 
 	const { notes } = server.state();
-	const rowsByPath = await readAllRows(scheduler, replicas, [...notes.keys()]);
+	const rowsByPath = await readAllRows(scheduler, replicas, [...notes.keys()], requireDocText);
 	const blocks: string[] = [];
 
 	for (const [notePath, srv] of notes) {
 		const rows = rowsByPath.get(notePath) ?? [];
 		const mismatch = rows.some(
-			(row) => row.disk !== srv.content || row.docText !== srv.content || row.id !== srv.id,
+			(row) =>
+				row.disk !== srv.content ||
+				(requireDocText && row.docText !== srv.content) ||
+				row.id !== srv.id,
 		);
 		if (!mismatch) continue;
 

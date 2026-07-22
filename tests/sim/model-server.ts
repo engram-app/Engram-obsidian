@@ -148,6 +148,15 @@ export class ModelServer {
 		if (c) c.drop += 1;
 	}
 
+	/** Clear all pending drop faults on every client. The random suite calls this
+	 *  before its final quiescence assertion: a residual (unconsumed) dropNext
+	 *  would drop a catch-up delivery during convergence and manufacture a FALSE
+	 *  divergence — an active fault, not a convergence bug. Convergence is only
+	 *  asserted AFTER all faults cease. */
+	clearDrops(): void {
+		for (const c of this.clients.values()) c.drop = 0;
+	}
+
 	// -------------------------------------------------------------------------
 	// WebSocket surface
 	// -------------------------------------------------------------------------
@@ -277,6 +286,14 @@ export class ModelServer {
 			void this.genesisEmptyDoc;
 			this.mint(docId, path);
 		}
+		// NOTE (P2 rename fidelity): a rename is client-modeled as crdt_delete(old id)
+		// THEN crdt_create(new path, SAME id). The real backend hits the tombstone and
+		// :announce_moved-resurrects the SAME row at the new path, AND broadcasts a
+		// `note_changed` upsert that drives other devices' `moveIfIdRelocated`
+		// (sync.ts:4030-4046) to rename the old path locally. This CRDT-only model
+		// omits note_changed (divergence #3), so remote old-path cleanup can't happen
+		// here — rename is a P2 server-tier concern and is excluded from the Task 8
+		// random suite. See p1-task-8-report.md.
 		this.reply(clientId, joinRef, ref, topic, "ok", { doc_id: effectiveId });
 		// crdt_doc_ready is broadcast_from! — only OTHER devices see it (so an empty
 		// note can be discovered + STEP1-enrolled without a note_yjs_update fan-out).
