@@ -35,7 +35,7 @@ export class Scheduler {
 	private lanes = new Map<string, Array<() => Promise<void> | void>>();
 	readonly rand: () => number;
 	constructor(
-		seed: number,
+		readonly seed: number,
 		private clock: SimClock,
 	) {
 		this.rand = mulberry32(seed);

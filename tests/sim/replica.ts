@@ -51,6 +51,7 @@ import { EngramApi } from "../../src/api";
 import { NoteChannel } from "../../src/channel";
 import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
+import type { CrdtManager } from "../../src/crdt/manager";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { createCrdtWiring } from "../../src/crdt/wiring";
 import { SyncEngine } from "../../src/sync";
@@ -61,7 +62,7 @@ import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
 import type { Scheduler } from "./scheduler";
-import { type SimApp, type VaultEvents, makeVault } from "./vault-fs";
+import { type SimApp, type VaultEvents, type WriteJournalEntry, makeVault } from "./vault-fs";
 
 let requestUrlRedirected = false;
 
@@ -155,6 +156,10 @@ export class Replica {
 	readonly engine: SyncEngine;
 	readonly vaultDir: string;
 	readonly noteIdMap: NoteIdMap;
+	/** Oracle (Task 6) accessor: the real CrdtManager backing this replica's
+	 *  Y.Docs, for reading projected text / state vector directly off the
+	 *  CRDT (not disk) — the "doc-text" and "head" convergence surfaces. */
+	readonly crdtManager: CrdtManager;
 
 	private readonly app: SimApp;
 	private readonly channel: NoteChannel;
@@ -164,6 +169,7 @@ export class Replica {
 		engine: SyncEngine;
 		vaultDir: string;
 		noteIdMap: NoteIdMap;
+		crdtManager: CrdtManager;
 		app: SimApp;
 		channel: NoteChannel;
 	}) {
@@ -171,8 +177,15 @@ export class Replica {
 		this.engine = args.engine;
 		this.vaultDir = args.vaultDir;
 		this.noteIdMap = args.noteIdMap;
+		this.crdtManager = args.crdtManager;
 		this.app = args.app;
 		this.channel = args.channel;
+	}
+
+	/** Oracle (Task 6) accessor: the #288 wipe-detector journal — every
+	 *  create/modify/process write this replica's vault performed, in order. */
+	writeJournal(): WriteJournalEntry[] {
+		return this.app.writeJournal;
 	}
 
 	static async boot(opts: ReplicaBootOpts): Promise<Replica> {
@@ -463,7 +476,7 @@ export class Replica {
 
 		void channel.connect(); // main.ts:2013
 
-		return new Replica({ id, engine, vaultDir, noteIdMap, app, channel });
+		return new Replica({ id, engine, vaultDir, noteIdMap, crdtManager: manager, app, channel });
 	}
 
 	// ------------------------------------------------------------------------

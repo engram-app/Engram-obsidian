@@ -29,6 +29,18 @@ export interface VaultEvents {
 	onRename?(oldPath: string, newPath: string): void;
 }
 
+/** One write-journal entry: byte lengths before/after a create/modify/process
+ *  call, in call order. The oracle's #288 wipe-detector (findWipes) reads
+ *  this to catch a non-empty -> empty transition that isn't an explicit
+ *  delete (deletes go through fileManager.trashFile, which is never
+ *  journaled here — so ANY prevLen>0/newLen===0 entry in this journal is,
+ *  by construction, not a delete). */
+export interface WriteJournalEntry {
+	path: string;
+	prevLen: number;
+	newLen: number;
+}
+
 export interface SimApp {
 	vault: {
 		configDir: string;
@@ -56,6 +68,8 @@ export interface SimApp {
 		openLinkText(linktext: string, sourcePath: string): void;
 		getActiveViewOfType<T>(_type: unknown): T | null;
 	};
+	/** #288 wipe-detector journal — see WriteJournalEntry. */
+	writeJournal: WriteJournalEntry[];
 }
 
 export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
@@ -87,6 +101,16 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		index = next;
 	}
 	rebuildIndex();
+
+	const writeJournal: WriteJournalEntry[] = [];
+	/** Record a write's before/after byte length. Must be called BEFORE the
+	 *  write lands (atomicWrite overwrites the file this reads). */
+	function recordWrite(relPath: string, data: string | Buffer): void {
+		const target = abs(relPath);
+		const prevLen = fs.existsSync(target) ? fs.statSync(target).size : 0;
+		const newLen = Buffer.byteLength(data);
+		writeJournal.push({ path: relPath, prevLen, newLen });
+	}
 
 	function ensureParentDir(relPath: string): void {
 		fs.mkdirSync(path.dirname(abs(relPath)), { recursive: true });
@@ -170,6 +194,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async create(p, data) {
+			recordWrite(p, data);
 			atomicWrite(p, data);
 			rebuildIndex();
 			events.onCreate?.(p);
@@ -190,6 +215,7 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 
 		async modify(file, data) {
+			recordWrite(file.path, data);
 			atomicWrite(file.path, data);
 			rebuildIndex();
 			events.onModify?.(file.path);
@@ -204,6 +230,11 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		async process(file, fn) {
 			const current = fs.readFileSync(abs(file.path), "utf8");
 			const next = fn(current);
+			writeJournal.push({
+				path: file.path,
+				prevLen: Buffer.byteLength(current),
+				newLen: Buffer.byteLength(next),
+			});
 			atomicWrite(file.path, next);
 			rebuildIndex();
 			events.onModify?.(file.path);
@@ -244,5 +275,5 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 		},
 	};
 
-	return { vault, fileManager, workspace };
+	return { vault, fileManager, workspace, writeJournal };
 }
