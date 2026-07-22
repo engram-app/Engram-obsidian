@@ -1,5 +1,5 @@
 // tests/sim/replica.test.ts
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, describe, expect, test } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -17,6 +17,9 @@ function freshRoot(): string {
 afterEach(() => {
 	for (const d of tmpDirs.splice(0)) fs.rmSync(d, { recursive: true, force: true });
 });
+// Restore the process-globals boot() patches so later files in a full `bun test`
+// run don't inherit the frozen virtual clock / no-op setInterval.
+afterAll(() => Replica.restoreGlobals());
 
 describe("Replica — two-replica convergence (no faults)", () => {
 	test("A.createNote converges to B, the server row, and both noteIdMaps", async () => {

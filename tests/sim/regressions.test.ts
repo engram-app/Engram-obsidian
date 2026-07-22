@@ -33,9 +33,15 @@
 // findWipes empty), which #289 does not touch. Reproducing #288's guarded path
 // needs a frontmatter-bearing (structure-only, empty-body) note and a bind race
 // — a headless/server-tier scenario (P2), not this client-only model tier.
-import { expect, test } from "bun:test";
+import { afterAll, expect, test } from "bun:test";
 import { assertConverged, findWipes } from "./oracle";
+import { Replica } from "./replica";
 import { cleanup, equalSeqFence, genesisWipe, test85MissedDeliveryLocalPush } from "./scenarios";
+
+// The scenarios boot replicas (via scenarios.ts), which install the process-global
+// SimClock/WebSocket/indexedDB patches. Restore them so later files in a full
+// `bun test` run don't inherit the frozen virtual clock / no-op setInterval.
+afterAll(() => Replica.restoreGlobals());
 
 // #282 — equal-seq fence skip.
 //

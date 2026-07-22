@@ -57,7 +57,7 @@ import { createCrdtWiring } from "../../src/crdt/wiring";
 import { SyncEngine } from "../../src/sync";
 import { SyncLog } from "../../src/sync-log";
 import { DEFAULT_SETTINGS, type EngramSyncSettings } from "../../src/types";
-import { TFile, TFolder } from "../__mocks__/obsidian";
+import { TFile, TFolder, requestUrl as baseRequestUrl } from "../__mocks__/obsidian";
 import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
@@ -88,7 +88,25 @@ interface SocketReg {
 }
 const socketRegistry = new Map<string, SocketReg>();
 let wsInstalled = false;
-const installedClocks = new WeakSet<SimClock>();
+let installedClocks = new WeakSet<SimClock>();
+
+// The REAL originals of every process-global boot() patches, snapshotted ONCE
+// on the first install (before any patch runs). restoreGlobals() puts these
+// back so that in a full `bun test` run, files sorted AFTER tests/sim/ see clean
+// globals instead of a frozen virtual clock / no-op setInterval. Captured once
+// (guarded) so a second boot — which sees already-patched globals — never
+// overwrites the saved reals with a patched value.
+interface CapturedGlobals {
+	setTimeout: typeof globalThis.setTimeout;
+	clearTimeout: typeof globalThis.clearTimeout;
+	setInterval: typeof globalThis.setInterval;
+	clearInterval: typeof globalThis.clearInterval;
+	dateNow: typeof Date.now;
+	setImmediate: unknown;
+	webSocket: unknown;
+	indexedDB: unknown;
+}
+let capturedGlobals: CapturedGlobals | null = null;
 
 class SimWebSocket {
 	static readonly CONNECTING = 0;
@@ -188,8 +206,54 @@ export class Replica {
 		return this.app.writeJournal;
 	}
 
+	/**
+	 * Restore every process-global boot() patched (SimClock timers + Date.now,
+	 * setInterval no-op, setImmediate route, WebSocket, indexedDB, requestUrl
+	 * mock) back to the reals snapshotted on the first boot, and clear the
+	 * install state so a later boot re-installs cleanly. Call from an
+	 * `afterAll()` in every sim test file so files sorted after tests/sim/ in a
+	 * full `bun test` run see clean globals. Idempotent: safe to call when
+	 * nothing is installed (no-op) and safe for multiple files to each restore.
+	 */
+	static restoreGlobals(): void {
+		if (!capturedGlobals) return;
+		const g = globalThis as unknown as Record<string, unknown>;
+		globalThis.setTimeout = capturedGlobals.setTimeout;
+		globalThis.clearTimeout = capturedGlobals.clearTimeout;
+		globalThis.setInterval = capturedGlobals.setInterval;
+		globalThis.clearInterval = capturedGlobals.clearInterval;
+		Date.now = capturedGlobals.dateNow;
+		g.setImmediate = capturedGlobals.setImmediate;
+		g.WebSocket = capturedGlobals.webSocket;
+		g.indexedDB = capturedGlobals.indexedDB;
+		// Revert the preload requestUrl mock to its default implementation.
+		(
+			mockedRequestUrl as unknown as { mockImplementation: (fn: unknown) => void }
+		).mockImplementation(baseRequestUrl);
+		capturedGlobals = null;
+		installedClocks = new WeakSet<SimClock>();
+		wsInstalled = false;
+		requestUrlRedirected = false;
+	}
+
 	static async boot(opts: ReplicaBootOpts): Promise<Replica> {
 		const { id, server, scheduler, clock, rootDir } = opts;
+
+		// Snapshot the REAL globals ONCE, before any patch below runs, so
+		// restoreGlobals() can undo the leak after the sim tests finish.
+		const g = globalThis as unknown as Record<string, unknown>;
+		if (!capturedGlobals) {
+			capturedGlobals = {
+				setTimeout: globalThis.setTimeout,
+				clearTimeout: globalThis.clearTimeout,
+				setInterval: globalThis.setInterval,
+				clearInterval: globalThis.clearInterval,
+				dateNow: Date.now,
+				setImmediate: g.setImmediate,
+				webSocket: g.WebSocket,
+				indexedDB: g.indexedDB,
+			};
+		}
 
 		// Install the SimClock timers BEFORE booting so every engine/channel timer
 		// is virtual (the deliverable's requirement). Idempotent per clock.
