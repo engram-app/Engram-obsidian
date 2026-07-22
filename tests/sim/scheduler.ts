@@ -2,6 +2,29 @@
 import type { SimClock } from "./clock";
 import { mulberry32 } from "./prng";
 
+/** Number of microtask ticks to yield between scheduler actions. A bare
+ *  `await Promise.resolve()` yields only ONE tick, so a multi-`await` DETACHED
+ *  chain the engine fire-and-forgets (`void pushFile(...)`,
+ *  `void discoverAnnouncedNote(...)`) whose tail is pure-microtask escapes
+ *  drain() and completes on the real loop AFTER quiescence is declared — the
+ *  exact failure that let a note's CRDT seed land after the convergence
+ *  assertions. Looping the yield flushes those chains to their next REAL async
+ *  boundary — which in the sim is ALWAYS a scheduler lane or a virtual timer
+ *  this scheduler owns (REST rides a lane; IndexedDB rides globalThis.setImmediate
+ *  which Replica.boot patches onto the virtual clock) — so no engine async ever
+ *  needs the real event loop. Crucially this stays in the MICROTASK phase: a real
+ *  macrotask boundary (setImmediate/setTimeout) would pump the real timer queue
+ *  and fire recurring timers LEAKED by earlier un-disposed test objects
+ *  (EditorController drift checks, channel health probes) straight onto this
+ *  clock — an unkillable livelock. Generous bound; realistic engine chains nest
+ *  only a handful of awaits between virtual boundaries. */
+const MICROTASK_FLUSH_ROUNDS = 200;
+
+/** Drain the microtask queue (bounded) WITHOUT yielding a real macrotask. */
+async function flushMicrotasks(): Promise<void> {
+	for (let i = 0; i < MICROTASK_FLUSH_ROUNDS; i++) await Promise.resolve();
+}
+
 /** Owns ALL sim nondeterminism. An action is either delivering one queued
  * lane item (a network message, an fs event, an op application) or firing one
  * virtual timer. step() picks randomly among enabled actions using the seeded
@@ -37,7 +60,7 @@ export class Scheduler {
 		const i = Math.floor(this.rand() * nActions);
 		if (i < nonEmpty.length) await nonEmpty[i][1].shift()!();
 		else this.clock.fireNext();
-		await Promise.resolve(); // settle one microtask tick
+		await flushMicrotasks(); // settle ALL microtasks (incl. detached chains)
 		return true;
 	}
 	async drain(maxSteps = 100_000): Promise<void> {
@@ -46,14 +69,20 @@ export class Scheduler {
 			const q = [...this.lanes.values()].find((v) => v.length > 0);
 			if (q) {
 				await q.shift()!();
-				await Promise.resolve();
+				await flushMicrotasks();
 				continue;
 			}
 			if (this.clock.pendingCount() > 0) {
 				this.clock.fireNext();
-				await Promise.resolve();
+				await flushMicrotasks();
 				continue;
 			}
+			// Lanes AND virtual timers are empty. Detached async chains may have
+			// re-armed either while their pure-microtask segments ran; a final
+			// microtask flush surfaces that work before declaring quiescence.
+			await flushMicrotasks();
+			if ([...this.lanes.values()].some((v) => v.length > 0) || this.clock.pendingCount() > 0)
+				continue;
 			return;
 		}
 		throw new Error(
