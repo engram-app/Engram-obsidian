@@ -5016,17 +5016,27 @@ export class SyncEngine {
 				// a row converged earlier) also mismatches, and treating that as
 				// "we are behind" backfills a checkpoint-lagged projection over
 				// newer live content (the ModifyTest 40B/23B revert ping-pong; 1805
-				// backfills in one suite run). A row at or below the path's
+				// backfills in one suite run). A row STRICTLY below the path's
 				// high-water seq (or recorded version) is history: skip the whole
 				// diverged block — nothing is recorded, so a genuinely newer row
 				// still converges on a later pass.
+				//
+				// VENDORED FIX HUNK (#280 / d74bbe6, PENDING MERGE — see
+				// tests/sim/regressions.test.ts): STRICT `<`, never `<=` (main run
+				// 29881173619, test_85). An EQUAL-seq row can carry the server-side
+				// MERGE of THIS device's own push with an edit it never received —
+				// the device's per-path high-water came from its OWN push echo
+				// (update_v1's self-inclusive fan-out), so `<=` fenced the very row
+				// it needed and the missed edit was lost until the next write. Only
+				// the seq/version FLIP is vendored here; the PR's gap-heal-throttle
+				// refactor and its unrelated OAuth churn (auth.ts/main.ts) are not.
 				const staleRow =
 					(stored?.seq !== undefined &&
 						change.seq !== undefined &&
-						change.seq <= stored.seq) ||
+						change.seq < stored.seq) ||
 					(stored?.version !== undefined &&
 						change.version !== undefined &&
-						change.version <= stored.version);
+						change.version < stored.version);
 				if (staleRow) {
 					rlog().info(
 						"pull",
