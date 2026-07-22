@@ -1,5 +1,6 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
+import { rlog } from "../remote-log";
 import { diffIntoYText, seedOnce } from "./bridge";
 import { parseFrontmatter, projectNote, splitFrontmatter } from "./frontmatter-codec";
 
@@ -121,6 +122,11 @@ interface Entry {
 	 *  readSyncMessage — both land on the same doc listener). Lets
 	 *  applyLocalEdit detect that a disk snapshot predates a remote merge. */
 	remoteSeq: number;
+	/** True once the body Y.Text has EVER been observed non-empty (any update,
+	 *  either direction, or IDB hydration). Gates the remote-merge flush of an
+	 *  empty body (#288): empty + never-had-content is an unseeded genesis, not
+	 *  a delete-all — a genuine remote delete-all requires content first. */
+	hadContent: boolean;
 }
 
 export class CrdtManager {
@@ -775,7 +781,7 @@ export class CrdtManager {
 		const text = doc.getText(CONTENT_KEY);
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
 		// Created BEFORE the listeners below so they can tick entry.remoteSeq.
-		const entry: Entry = { doc, persistence, text, ready, remoteSeq: 0 };
+		const entry: Entry = { doc, persistence, text, ready, remoteSeq: 0, hadContent: false };
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
@@ -785,6 +791,7 @@ export class CrdtManager {
 
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {
+			if (text.length > 0) entry.hadContent = true; // also covers IDB-replay updates
 			if (origin === REMOTE_ORIGIN) return;
 			if (this.opts.canSendLive && !this.opts.canSendLive(id)) return; // HOLD: not create-acked
 			this.opts.onUpdate(id, update, origin);
@@ -794,11 +801,27 @@ export class CrdtManager {
 		// Reconstruct the full file (frontmatter fence + body) from the Y.Map/Y.Array
 		// and body Y.Text so disk always gets a complete, valid markdown file.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
+			if (text.length > 0) entry.hadContent = true;
 			if (origin !== REMOTE_ORIGIN) return;
 			entry.remoteSeq += 1;
 			const { order, values } = frontmatterOf(doc);
 			const raws = rawFrontmatterOf(doc);
 			const body = text.toJSON();
+			// Guard A (#288, e2e test_39): an unseeded genesis (structure ops only,
+			// body never held content) must NOT flush empty over the creator's
+			// just-written file — the wipe echo-skips on the empty hash and locks
+			// in on both devices. Invariant (crdt-editor-bind-race-pollution.md,
+			// #257 bind-path analog): empty + never-seeded is NEVER a legitimate
+			// empty; a genuine remote delete-all had content first (hadContent
+			// true) and still flushes below. Genuinely empty notes materialize via
+			// sync.ts materializeEmptyDiscovered → flushFromCrdt, not this listener.
+			if (body.length === 0 && !entry.hadContent) {
+				rlog().warn(
+					"crdt",
+					`remote-merge flush SKIPPED for ${noteId}: empty body on never-seeded doc (#288 genesis guard)`,
+				);
+				return;
+			}
 			// Record the flush promise (do NOT fire-and-forget): applyRemoteUpdate
 			// awaits it so a write failure rejects the apply and the caller leaves
 			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
@@ -822,6 +845,9 @@ export class CrdtManager {
 
 		this.docs.set(id, entry);
 		await ready;
+		// IDB hydration replayed stored updates above; a rehydrated non-empty body
+		// counts as "has held content" (#288) even if no listener observed it.
+		if (text.length > 0) entry.hadContent = true;
 		return entry;
 	}
 

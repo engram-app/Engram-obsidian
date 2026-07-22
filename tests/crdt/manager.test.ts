@@ -777,3 +777,125 @@ test("BUG 1: closeDoc during an in-flight applyLocalEdit does not destroy the do
 	expect(captured.length).toBeGreaterThan(capturedBefore); // update was emitted
 	await mgr.destroy();
 });
+
+// ---------------------------------------------------------------------------
+// #288 Guard A: an unseeded-genesis remote update (structure ops only, empty
+// body Y.Text) must NOT flush empty content over the creator's just-written
+// file. Invariant (crdt-editor-bind-race-pollution.md / #257 bind-path
+// analog): doc empty + never-seeded is NEVER a legitimate empty — a genuine
+// remote delete-all requires the doc to have held content first (hadContent),
+// and only then does an empty flush go through. Genuinely empty notes are
+// unaffected: the discovery path materializes them via
+// sync.ts materializeEmptyDiscovered → flushFromCrdt directly with the
+// /changes payload, NOT via the manager's remote-merge listener.
+// ---------------------------------------------------------------------------
+
+/** A remote update carrying real ops but an empty body Y.Text (set+delete on
+ *  the frontmatter map — mirrors a genesis doc whose structure exists but
+ *  whose body was never seeded). */
+function structureOnlyUpdate(): Uint8Array {
+	const server = new Y.Doc();
+	server.getMap("frontmatter").set("x", "y");
+	server.getMap("frontmatter").delete("x");
+	return Y.encodeStateAsUpdate(server);
+}
+
+test("#288: structure-only remote genesis does NOT flush empty over disk", async () => {
+	let flushes = 0;
+	const mgr = new CrdtManager({
+		dbPrefix: "genesis-guard",
+		onUpdate: () => {},
+		onFlushToDisk: async () => {
+			flushes++;
+		},
+	});
+	const logger = rlog();
+	const warnSpy = spyOn(logger, "warn");
+
+	await mgr.applyRemoteUpdate("note-id-1", structureOnlyUpdate());
+	expect(flushes).toBe(0);
+	// The skip is observable in e2e artifacts (greppable rlog line).
+	expect(warnSpy.mock.calls.some(([cat, msg]) => cat === "crdt" && msg.includes("#288"))).toBe(
+		true,
+	);
+	warnSpy.mockRestore();
+	await mgr.destroy();
+});
+
+test("#288: remote update ADDING body content flushes it (hadContent flips)", async () => {
+	const flushed: Record<string, string> = {};
+	const mgr = new CrdtManager({
+		dbPrefix: "genesis-guard-2",
+		onUpdate: () => {},
+		onFlushToDisk: async (id, content) => {
+			flushed[id] = content;
+		},
+	});
+	await mgr.applyRemoteUpdate("note-id-2", structureOnlyUpdate());
+	expect(flushed["note-id-2"]).toBeUndefined();
+
+	const server = new Y.Doc();
+	Y.applyUpdate(server, await mgr.encodeStateAsUpdate("note-id-2"));
+	server.getText("content").insert(0, "real body");
+	await mgr.applyRemoteUpdate(
+		"note-id-2",
+		Y.encodeStateAsUpdate(server, await mgr.encodeStateVector("note-id-2")),
+	);
+	expect(flushed["note-id-2"]).toBe("real body");
+	await mgr.destroy();
+});
+
+test("#288: remote delete-ALL still flushes empty (legit delete, hadContent true)", async () => {
+	const flushed: Record<string, string> = {};
+	const mgr = new CrdtManager({
+		dbPrefix: "genesis-guard-3",
+		onUpdate: () => {},
+		onFlushToDisk: async (id, content) => {
+			flushed[id] = content;
+		},
+	});
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "to be deleted");
+	await mgr.applyRemoteUpdate("note-id-3", Y.encodeStateAsUpdate(server));
+	expect(flushed["note-id-3"]).toBe("to be deleted");
+
+	server.getText("content").delete(0, server.getText("content").length);
+	await mgr.applyRemoteUpdate(
+		"note-id-3",
+		Y.encodeStateAsUpdate(server, await mgr.encodeStateVector("note-id-3")),
+	);
+	expect(flushed["note-id-3"]).toBe("");
+	await mgr.destroy();
+});
+
+test("#288: hadContent survives a manager restart via IDB hydration (delete-all after reload flushes)", async () => {
+	const prefix = "genesis-guard-4";
+	const mgrA = new CrdtManager({
+		dbPrefix: prefix,
+		onUpdate: () => {},
+		onFlushToDisk: async () => {},
+	});
+	const server = new Y.Doc();
+	server.getText("content").insert(0, "persisted body");
+	await mgrA.applyRemoteUpdate("note-id-4", Y.encodeStateAsUpdate(server));
+	await mgrA.destroy();
+
+	// Fresh manager, same IDB store: hydration must set hadContent so a
+	// remote delete-all (empty body) is treated as a legit delete, not a
+	// never-seeded genesis.
+	const flushed: Record<string, string> = {};
+	const mgrB = new CrdtManager({
+		dbPrefix: prefix,
+		onUpdate: () => {},
+		onFlushToDisk: async (id, content) => {
+			flushed[id] = content;
+		},
+	});
+	server.getText("content").delete(0, server.getText("content").length);
+	await mgrB.applyRemoteUpdate(
+		"note-id-4",
+		Y.encodeStateAsUpdate(server, await mgrB.encodeStateVector("note-id-4")),
+	);
+	expect(flushed["note-id-4"]).toBe("");
+	await mgrB.destroy();
+});
