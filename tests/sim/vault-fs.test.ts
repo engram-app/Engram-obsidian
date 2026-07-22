@@ -83,6 +83,34 @@ describe("makeVault", () => {
 		expect(events).toEqual(["delete:Notes/a.md"]);
 	});
 
+	test("onDelete fires while the entity is still resolvable by path (real Obsidian semantics)", async () => {
+		const resolved: { path: string; type: "file" | "folder" | "null" }[] = [];
+		const app = makeVault(rootDir, {
+			onDelete: (p) => {
+				const entity = app.vault.getAbstractFileByPath(p);
+				resolved.push({
+					path: p,
+					type:
+						entity instanceof TFile
+							? "file"
+							: entity instanceof TFolder
+								? "folder"
+								: "null",
+				});
+			},
+		});
+		await app.vault.create("Notes/a.md", "hi");
+		await app.vault.createFolder("Notes/sub");
+
+		await app.fileManager.trashFile(app.vault.getFileByPath("Notes/a.md")!);
+		await app.fileManager.trashFile(app.vault.getAbstractFileByPath("Notes/sub") as TFolder);
+
+		expect(resolved).toEqual([
+			{ path: "Notes/a.md", type: "file" },
+			{ path: "Notes/sub", type: "folder" },
+		]);
+	});
+
 	test("fires onCreate, onModify, onRename at the right times", async () => {
 		const events: string[] = [];
 		const vaultEvents: VaultEvents = {

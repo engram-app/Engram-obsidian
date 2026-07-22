@@ -226,9 +226,12 @@ export function makeVault(rootDir: string, events: VaultEvents = {}): SimApp {
 	const fileManager: SimApp["fileManager"] = {
 		async trashFile(file) {
 			const p = file.path;
+			// Fire before removal: real Obsidian's delete listener still resolves
+			// the entity (type + path) at event time, and callers rely on that
+			// for TFile/TFolder disambiguation (see VaultEvents docstring above).
+			events.onDelete?.(p);
 			fs.rmSync(abs(p), { recursive: true, force: true });
 			rebuildIndex();
-			events.onDelete?.(p);
 		},
 	};
 
