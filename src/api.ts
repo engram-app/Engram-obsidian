@@ -592,9 +592,13 @@ export class EngramApi {
 
 	/** Fetch sync manifest for reconciliation.
 	 *  Returns null if the server doesn't support this endpoint (404). */
-	async getManifest(): Promise<ManifestResponse | null> {
+	async getManifest(sinceSeq?: number): Promise<ManifestResponse | null> {
+		const qs =
+			typeof sinceSeq === "number" && Number.isFinite(sinceSeq) && sinceSeq >= 0
+				? `?since_seq=${sinceSeq}`
+				: "";
 		try {
-			const resp = await this.request("GET", "/sync/manifest");
+			const resp = await this.request("GET", `/sync/manifest${qs}`);
 			return resp.json as ManifestResponse;
 		} catch (e) {
 			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 404) {

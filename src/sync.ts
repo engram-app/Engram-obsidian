@@ -1590,6 +1590,7 @@ export class SyncEngine {
 		private saveData: (data: {
 			lastSync?: string;
 			catchupSeq?: number;
+			manifestSeq?: number;
 			// Signals the engine mutated the shared noteIdMap and it should be
 			// persisted. main.ts's savePluginData writes the map instance directly
 			// (same object), so the callback need not read this — it just triggers
@@ -1670,6 +1671,24 @@ export class SyncEngine {
 
 	setCatchupSeq(seq: number): void {
 		this.catchupSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
+	}
+
+	/** The vault change_seq watermark of the last FULLY-processed manifest pass
+	 *  (Phase E1 #1065). Sent as `?since_seq=` so an unchanged vault
+	 *  short-circuits the manifest fetch + the manifest-driven catch-up steps.
+	 *  Persisted under `manifestSeq`; wiped with the per-vault state. */
+	private manifestSeq = 0;
+
+	/** Cursor value of the last validator rewind — bounds the validator to ONE
+	 *  re-serve per distinct discrepancy per session (see validateFromManifest). */
+	private lastValidatorRewind = -1;
+
+	getManifestSeq(): number {
+		return this.manifestSeq;
+	}
+
+	setManifestSeq(seq: number): void {
+		this.manifestSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
 	}
 
 	/** Gap-heal decision for a live op carrying the backend's vault `seq`.
@@ -1768,6 +1787,11 @@ export class SyncEngine {
 		// seq feed — reset to 0 so the next catch-up replays the new vault from
 		// genesis (else a stale high seq would suppress it entirely).
 		this.catchupSeq = 0;
+		// Same cross-vault hazard for the manifest watermark (E1 #1065): a
+		// stale since_seq could integer-collide with the NEW vault's change_seq
+		// and wrongly short-circuit the first reconcile after a swap.
+		this.manifestSeq = 0;
+		this.lastValidatorRewind = -1;
 		// The note-id map and confirmed set are per-vault identity state.
 		// Carrying them across vaults keys CRDT frames/rooms by another
 		// vault's note ids — the cross-vault flavor of the 2026-07-07
@@ -3442,8 +3466,21 @@ export class SyncEngine {
 	 *  and 3. */
 	async catchUp(): Promise<number> {
 		try {
-			const manifest = await this.api.getManifest();
+			const manifest = await this.api.getManifest(
+				this.manifestSeq > 0 ? this.manifestSeq : undefined,
+			);
+			if (manifest?.unchanged) {
+				// E1 (#1065): the vault's change_seq still equals our last fully
+				// processed watermark — no server write happened, so the
+				// manifest-driven steps (reconcile, validator, live-bound heal,
+				// folder sync — every server mutation bumps change_seq) have
+				// nothing to see. The replay still runs: its cursor is an
+				// independent watermark and stays authoritative.
+				const { applied } = await this.catchupViaSeqReplay();
+				return applied;
+			}
 			await this.reconcileFromManifest(manifest);
+			this.validateFromManifest(manifest);
 			const { applied } = await this.catchupViaSeqReplay();
 			await this.healDivergedLiveBoundNotes(manifest);
 			try {
@@ -3454,6 +3491,13 @@ export class SyncEngine {
 					`Explicit-folder sync failed (non-fatal): ${errMsg(e)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
+			}
+			// Record the watermark only after the whole manifest-driven pass
+			// completed — a thrown step must not let the next poll short-circuit
+			// past work this pass never finished.
+			if (typeof manifest?.change_seq === "number") {
+				this.setManifestSeq(manifest.change_seq);
+				await this.saveData({ manifestSeq: this.manifestSeq });
 			}
 			return applied;
 		} catch (e) {
@@ -4978,12 +5022,60 @@ export class SyncEngine {
 	 *  server's ops. `commitCrdtConvergence` commits the stage once a real
 	 *  STEP2/update frame actually applies. Best-effort; never throws into
 	 *  catchUp. */
+	/** Phase E1 (#1065): whole-vault seq integer diff. Flags a manifest note row
+	 *  whose seq the replay has ALREADY consumed (row.seq <= catchupSeq) but
+	 *  that this path never recorded — a silent apply-loss (the test_10
+	 *  "received=yes materialized=no" class) — and rewinds the cursor so the
+	 *  next replay re-serves it. Rows beyond the cursor need nothing: the
+	 *  imminent replay fetches them anyway. A syncState entry without `seq` is
+	 *  NOT flagged (the entry's existence proves a materialize happened; only
+	 *  replay writes record seq). Returns the behind-row count.
+	 *  ponytail: one rewind per distinct discrepancy per session
+	 *  (lastValidatorRewind) — a re-served row whose apply still refuses to
+	 *  record stays behind forever and must not rewind-loop every poll. */
+	private validateFromManifest(manifest: ManifestResponse | null): number {
+		if (!manifest?.notes?.length) return 0;
+		const cursor = this.getCatchupSeq();
+		let minBehind = Number.POSITIVE_INFINITY;
+		let behind = 0;
+		for (const entry of manifest.notes) {
+			const seq = entry.seq;
+			if (typeof seq !== "number" || !Number.isFinite(seq) || seq > cursor) continue;
+			const stored = this.syncState.get(normalizePath(entry.path));
+			const recorded = stored ? (stored.seq ?? Number.POSITIVE_INFINITY) : -1;
+			if (seq > recorded) {
+				behind++;
+				if (seq < minBehind) minBehind = seq;
+			}
+		}
+		if (behind === 0) return 0;
+		const target = minBehind - 1;
+		if (target === this.lastValidatorRewind) {
+			rlog().warn(
+				"pull",
+				`manifest validator: ${behind} row(s) still behind after a re-serve — not rewinding again (cursor=${cursor})`,
+			);
+			return behind;
+		}
+		this.lastValidatorRewind = target;
+		rlog().warn(
+			"pull",
+			`manifest validator: ${behind} consumed-but-unrecorded row(s) — rewinding cursor ${cursor} → ${target} to re-serve`,
+		);
+		this.setCatchupSeq(target);
+		return behind;
+	}
+
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<void> {
 		if (!manifest || !this.crdt) return;
 		for (const entry of manifest.notes) {
 			const path = normalizePath(entry.path);
 			if (!this.isLiveBound(path)) continue;
 			const stored = this.syncState.get(path);
+			// E1 (#1065): head equality is op-level proof the doc already holds
+			// the server state — terminates the STEP1-refire ceiling for open
+			// notes whose serverHash never recorded (unverified heals).
+			if (entry.crdt_head && stored?.crdtHead === entry.crdt_head) continue;
 			// Already converged (serverHash matches the server's current hash) → skip.
 			if (entry.content_hash && stored?.serverHash === entry.content_hash) continue;
 

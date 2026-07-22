@@ -663,4 +663,179 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 
 		expect(converge).not.toHaveBeenCalled();
 	});
+
+	test("E1: skips when the manifest crdt_head equals the recorded crdtHead — op-level converged, no STEP1 refire", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		// serverHash is stale (a fan-out recorded crdtHead but not serverHash),
+		// yet the head matches — the doc provably holds the server state.
+		engine.importSyncState({
+			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
+		});
+		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+			() => {},
+		);
+
+		await (engine as any).healDivergedLiveBoundNotes({
+			...manifestOf([
+				{ id: "id-a", path: "Notes/a.md", content_hash: "H2", crdt_head: "HEAD-X" } as any,
+			]),
+		});
+
+		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("E1: fires STEP1 when the manifest crdt_head DIFFERS from the recorded crdtHead", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		engine.importSyncState({
+			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
+		});
+		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+			() => {},
+		);
+
+		await (engine as any).healDivergedLiveBoundNotes({
+			...manifestOf([
+				{ id: "id-a", path: "Notes/a.md", content_hash: "H2", crdt_head: "HEAD-Y" } as any,
+			]),
+		});
+
+		expect(converge).toHaveBeenCalledTimes(1);
+	});
+});
+
+// Phase E1 (#1065): the whole-vault seq-diff validator. A manifest row whose
+// seq the replay has ALREADY consumed (row.seq <= cursor) but this path never
+// recorded is a silent apply-loss (the test_10 "received=yes materialized=no"
+// class) — rewind the cursor so the next replay re-serves it. Rows with
+// seq > cursor need nothing: the imminent replay fetches them anyway.
+describe("validateFromManifest (Phase E1 seq integer diff)", () => {
+	function manifest(notes: Array<Record<string, unknown>>) {
+		return {
+			notes,
+			attachments: [],
+			total_notes: notes.length,
+			total_attachments: 0,
+			change_seq: 100,
+		} as any;
+	}
+
+	test("consumed-but-unrecorded row (no syncState entry) rewinds the cursor to seq-1", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const behind = (engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect(behind).toBe(1);
+		expect(engine.getCatchupSeq()).toBe(13);
+	});
+
+	test("consumed row newer than the path's recorded seq rewinds", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		engine.importSyncState({ "Notes/a.md": { hash: 1, seq: 10 } });
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect(engine.getCatchupSeq()).toBe(13);
+	});
+
+	test("row beyond the cursor does NOT rewind — the next replay fetches it anyway", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 25 }]),
+		);
+		expect(engine.getCatchupSeq()).toBe(20);
+	});
+
+	test("legacy syncState entry without seq is NOT flagged (entry exists = it materialized)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		engine.importSyncState({ "Notes/a.md": { hash: 1 } });
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect(engine.getCatchupSeq()).toBe(20);
+	});
+
+	test("row without seq (old backend) is skipped — never NaN-rewinds", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H" }]),
+		);
+		expect(engine.getCatchupSeq()).toBe(20);
+	});
+
+	test("the SAME discrepancy does not rewind twice (bounded retry, no rewind loop)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const m = manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]);
+		(engine as any).validateFromManifest(m);
+		expect(engine.getCatchupSeq()).toBe(13);
+		// replay re-consumed up to 20, apply still failed, same row still behind
+		engine.setCatchupSeq(20);
+		(engine as any).validateFromManifest(m);
+		expect(engine.getCatchupSeq()).toBe(20);
+	});
+});
+
+describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
+	function stubCatchUpInternals(engine: SyncEngine) {
+		const reconcile = spyOn(engine as any, "reconcileFromManifest").mockResolvedValue(
+			undefined,
+		);
+		const heal = spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(
+			undefined,
+		);
+		const validate = spyOn(engine as any, "validateFromManifest").mockReturnValue(0);
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
+		});
+		const folders = spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
+		return { reconcile, heal, validate, replay, folders };
+	}
+
+	test("unchanged response skips the manifest-driven steps but still replays", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).manifestSeq = 42;
+		const { reconcile, heal, validate, replay } = stubCatchUpInternals(engine);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			unchanged: true,
+			change_seq: 42,
+		});
+
+		await engine.catchUp();
+
+		expect((mockApi.getManifest as ReturnType<typeof mock>).mock.calls.at(-1)).toEqual([42]);
+		expect(reconcile).not.toHaveBeenCalled();
+		expect(heal).not.toHaveBeenCalled();
+		expect(validate).not.toHaveBeenCalled();
+		expect(replay).toHaveBeenCalledTimes(1);
+	});
+
+	test("a full manifest pass runs all steps and records change_seq as the new watermark", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const { reconcile, heal, validate, replay } = stubCatchUpInternals(engine);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			notes: [],
+			attachments: [],
+			total_notes: 0,
+			total_attachments: 0,
+			change_seq: 7,
+		});
+
+		await engine.catchUp();
+
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(validate).toHaveBeenCalledTimes(1);
+		expect(heal).toHaveBeenCalledTimes(1);
+		expect(replay).toHaveBeenCalledTimes(1);
+		expect((engine as any).manifestSeq).toBe(7);
+	});
 });

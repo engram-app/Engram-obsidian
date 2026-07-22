@@ -391,6 +391,25 @@ describe("EngramApi", () => {
 			mockRequestUrl.mockRejectedValueOnce({ status: 500 });
 			await expect(api.getManifest()).rejects.toEqual({ status: 500 });
 		});
+
+		test("passes since_seq and surfaces the unchanged short-circuit (Phase E1)", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { unchanged: true, change_seq: 42 },
+			} as any);
+			const res = await api.getManifest(42);
+			const req = mockRequestUrl.mock.calls.at(-1)?.[0] as { url: string };
+			expect(req.url).toContain("/sync/manifest?since_seq=42");
+			expect(res?.unchanged).toBe(true);
+			expect(res?.change_seq).toBe(42);
+		});
+
+		test("omits since_seq when not a non-negative finite number", async () => {
+			mockRequestUrl.mockResolvedValueOnce({ status: 200, json: { notes: [] } } as any);
+			await api.getManifest(Number.NaN);
+			const req = mockRequestUrl.mock.calls.at(-1)?.[0] as { url: string };
+			expect(req.url).not.toContain("since_seq");
+		});
 	});
 
 	describe("search", () => {

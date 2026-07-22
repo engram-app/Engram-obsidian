@@ -104,6 +104,9 @@ interface PluginData {
 	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
 	crdtOpQueue?: CrdtOp[];
 	catchupSeq?: number;
+	/** Manifest change_seq watermark of the last fully-processed catch-up pass
+	 *  (Phase E1 #1065) — sent as ?since_seq= to short-circuit an unchanged vault. */
+	manifestSeq?: number;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -396,6 +399,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
 			}
+			if (data.manifestSeq !== undefined) {
+				this.syncEngine.setManifestSeq(data.manifestSeq);
+			}
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
@@ -546,6 +552,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.catchupSeq !== undefined) {
 			this.syncEngine.setCatchupSeq(saved.catchupSeq);
+		}
+		if (saved?.manifestSeq !== undefined) {
+			this.syncEngine.setManifestSeq(saved.manifestSeq);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -1294,6 +1303,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// reason (like deviceId) or the next saveData() wipes it; 0 = replay
 			// from genesis.
 			catchupSeq: this.syncEngine.getCatchupSeq(),
+			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
+			// wholesale-save reason.
+			manifestSeq: this.syncEngine.getManifestSeq(),
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.

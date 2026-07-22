@@ -438,6 +438,13 @@ export interface ManifestEntry {
 	path: string;
 	content_hash: string;
 	version?: number;
+	/** Vault-global change seq of the row's last write (Phase E1 #1065) — the
+	 *  integer-diff validation hook. Optional: a pre-E1 backend omits it. */
+	seq?: number;
+	/** CRDT head fingerprint (notes only, Phase E1) — equality with the
+	 *  locally-recorded crdtHead proves a live-bound doc converged without
+	 *  content transfer. Optional: pre-E1 backend / attachment rows omit it. */
+	crdt_head?: string;
 }
 
 /** Per-file sync metadata tracked by the plugin. */
@@ -581,6 +588,9 @@ export interface ManifestResponse {
 	/** Cursor-pull bootstrap watermark (backend PR B1) — the change seq the
 	 *  manifest reflects, used to seed the cursor for the first delta pull. */
 	change_seq?: number;
+	/** Phase E1 (#1065): true when `?since_seq=` matched the server watermark —
+	 *  nothing changed, and the notes/attachments body is OMITTED. */
+	unchanged?: boolean;
 }
 
 /** Response from POST /api/vaults/register */
