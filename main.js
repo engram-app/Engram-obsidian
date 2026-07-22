@@ -19760,6 +19760,26 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
   }
+  /** Shared Yjs-delta converge core for both catch-up legs (live-bound and
+   *  cold/backfill): pull the delta since our real state vector over REST
+   *  and apply it into the Y.Doc. Yjs merge is monotonic — applying a delta
+   *  can only add causality, never revert — so this is safe to run even
+   *  while a live edit from another device is mid-flight on this note,
+   *  unlike writing a content snapshot. Returns the head reached on success,
+   *  or null when the doc is still gapped (retry next poll) or the REST call
+   *  failed (isolated here, logged, never throws). */
+  async restConvergeCore(path, noteId) {
+    if (!this.crdt) return null;
+    try {
+      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
+      return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().warn(
+        "crdt",
+        `REST converge: pending gap remains for ${path} \u2014 retrying next poll`
+      ), null) : head;
+    } catch (e) {
+      return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), null;
+    }
+  }
   /** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
    *  since our real state vector over REST and apply it to the live Y.Doc —
    *  the editor binding paints it, no disk write. Returns true only when the
@@ -19767,15 +19787,31 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  caller records convergence for delivered data ONLY. Best-effort:
    *  isolates its own failure, never throws. */
   async restConvergeLiveBound(path, noteId) {
-    if (!this.crdt) return !1;
+    let head = await this.restConvergeCore(path, noteId);
+    return head === null ? !1 : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
+  }
+  /** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
+   *  same Yjs-delta core as restConvergeLiveBound, but there is no editor
+   *  binding to paint the doc, so the converged doc's projected text is
+   *  flushed to disk instead. Replaces the old content-snapshot
+   *  `flushFromCrdt(path, content)` backfill, which reverted a fresher live
+   *  merge when D2's behind-detector fires a catch-up replay DURING active
+   *  editing on this note from another device — the feed's content snapshot
+   *  is checkpoint-lagged and carries no causality, so applying it late can
+   *  stomp a merge that landed since (see
+   *  docs/context/d2-seq-replay-stale-snapshot-stomp.md). The Yjs delta path
+   *  cannot: it can only add causality to the doc. Returns the flushed text
+   *  on success (so the caller can hash exactly what landed on disk), or
+   *  null on failure/pending-gap — mirrors restConvergeLiveBound's retry
+   *  contract (never record convergence for data that hasn't arrived). */
+  async restConvergeAndFlush(path, noteId) {
+    let head = await this.restConvergeCore(path, noteId);
+    if (head === null || !this.crdt) return null;
     try {
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-      return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().warn(
-        "crdt",
-        `REST converge: pending gap remains for ${path} \u2014 retrying next poll`
-      ), !1) : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
+      let text2 = await this.crdt.projectedText(noteId);
+      return await this.flushFromCrdt(path, text2), this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: catch-up ${path} flushed to disk at head=${head}`), text2;
     } catch (e) {
-      return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), !1;
+      return rlog().warn("crdt", `REST converge (catch-up flush) failed for ${path}: ${errMsg(e)}`), null;
     }
   }
   /** Cheap mid-session divergence heal for the just-opened note (rework #6 —
@@ -20301,7 +20337,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -20396,17 +20432,35 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               });
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
-            localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
-              "pull",
-              `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
-            ), crdtConflictFallthrough = !0) : (rlog().warn(
-              "pull",
-              `CRDT catch-up: pull backfilling diverged note ${change.path}`
-            ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash
-            }));
+            if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content)
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
+              ), crdtConflictFallthrough = !0;
+            else if (noteId) {
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: pull backfilling diverged note via Yjs converge ${change.path}`
+              );
+              let flushed = await this.restConvergeAndFlush(normalized, noteId);
+              flushed !== null ? this.syncState.set(normalized, {
+                ...(_q = this.syncState.get(normalized)) != null ? _q : {},
+                hash: fnv1a(flushed),
+                version: change.version,
+                serverHash: change.content_hash
+              }) : rlog().warn(
+                "pull",
+                `CRDT catch-up: Yjs converge failed or gapped, retrying next poll ${change.path}`
+              );
+            } else
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
+              ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+                hash: fnv1a(content),
+                version: change.version,
+                serverHash: change.content_hash
+              });
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
@@ -20433,14 +20487,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_q = this.baseStore) == null ? void 0 : _q.get(normalized);
+        let pullBase = (_r = this.baseStore) == null ? void 0 : _r.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_r = this.baseStore) == null || _r.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_s = this.baseStore) == null || _s.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20491,7 +20545,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_s = this.baseStore) == null || _s.set(
+            }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20513,7 +20567,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(
+            }), change.version != null && ((_u = this.baseStore) == null || _u.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20536,12 +20590,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_w = this.baseStore) == null || _w.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20560,7 +20614,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_w = this.baseStore) == null || _w.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
