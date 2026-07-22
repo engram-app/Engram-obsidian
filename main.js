@@ -13486,9 +13486,10 @@ var EngramApi = class _EngramApi {
   }
   /** Fetch sync manifest for reconciliation.
    *  Returns null if the server doesn't support this endpoint (404). */
-  async getManifest() {
+  async getManifest(sinceSeq) {
+    let qs = typeof sinceSeq == "number" && Number.isFinite(sinceSeq) && sinceSeq >= 0 ? `?since_seq=${sinceSeq}` : "";
     try {
-      return (await this.request("GET", "/sync/manifest")).json;
+      return (await this.request("GET", `/sync/manifest${qs}`)).json;
     } catch (e) {
       if (typeof e == "object" && e !== null && e.status === 404)
         return null;
@@ -17936,6 +17937,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  short-circuits. Null in tests/headless — the adopt transfer branch is
      *  then skipped (no live editor to preserve) and the disk-seed path runs. */
     this.crdtEditorRebind = null;
+    /** Fix wave 7 (#191 slice): reads the LIVE editor buffer currently shown
+     *  for `path` (CrdtLiveViews.boundBufferText, wired by main.ts) — used by
+     *  commitCrdtConvergence to detect a phantom binding (isLiveBound true but
+     *  the editor's Yjs binding silently detached, so its buffer never
+     *  repaints). Null in tests/headless — the phantom-binding check is then
+     *  skipped (nothing to compare). */
+    this.crdtBoundBufferText = null;
+    /** Fix wave 7: nudges the bound editor's save (CrdtLiveViews.requestSaveForBoundPath,
+     *  the same debounced call wiring.ts's onBoundUpdate uses) after a phantom
+     *  binding is rebound, so the freshly-repainted buffer actually reaches
+     *  disk instead of waiting on the next unrelated remote update. */
+    this.crdtRequestSave = null;
     /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
      *  main.ts (persisted in data.json); wired here so pushFile can mint/send
      *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -18014,20 +18027,46 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  fresh content_hash overwrites any prior stage (new episode); nothing
      *  else prunes it — `commitCrdtConvergence` re-resolves the current path
      *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
-     *  never write syncState at a dead path. */
+     *  never write syncState at a dead path.
+     *
+     *  Fix wave 5: `content` is the staged row's own plaintext, so
+     *  `commitCrdtConvergence` can CONTENT-VERIFY the commit instead of
+     *  trusting that the next `onSynced` fire is FOR this row — an unrelated
+     *  inbound frame (a different concurrent edit on the same doc) could
+     *  otherwise commit the stage a millisecond after it was staged, before
+     *  the staged row's own ops ever arrived (CI run 29920053637: committed
+     *  1ms after the re-handshake fired, fence-blinding every later row —
+     *  deaf until teardown). The diverged live-bound leg has the row's
+     *  `content` in scope and stages it; `healDivergedLiveBoundNotes` (the
+     *  manifest heal) has no plaintext — only a keyed HMAC hash it cannot
+     *  compute client-side — so it stages `content: null`, which keeps the
+     *  pre-wave-5 best-effort behavior (commit on the next non-empty frame,
+     *  unverified). */
     this.pendingConvergence = /* @__PURE__ */ new Map();
     /** Fix wave 1: per-note_id cooldown for `socketConvergeLiveBound`'s STEP1
      *  re-handshake — bounds how often a live-bound note can re-fire reset+
      *  enroll (open, catch-up, and manifest heal can all independently detect
      *  the same divergence in quick succession; unconditional firing drains
      *  the handshake budget, the #193 starvation class). Value = last-fired
-     *  `Date.now()`. `healCooldownMs` is a public instance field so tests can
-     *  shrink it. */
+     *  `Date.now()`, set ONLY when a handshake actually fires — never on a
+     *  suppressed attempt. `healCooldownMs` is a public instance field so
+     *  tests can shrink it. */
     this.crdtHealCooldown = /* @__PURE__ */ new Map();
-    /** See `crdtHealCooldown`. 30s: long enough that open+catch-up+heal racing
-     *  on the same note collapse to one handshake, short enough that a
-     *  genuinely-still-diverged note keeps retrying within a session. */
-    this.healCooldownMs = 3e4;
+    /** Fix wave 2 (CI-found defect: `test_deaf_note_survives_handshake_rate_
+     *  limit_and_heals_on_restore`): a poke suppressed by the cooldown must
+     *  NOT be silently dropped — a deaf note's one recovery poke landing
+     *  inside the window would otherwise never retry, stranding it until the
+     *  next unrelated edit or the 5-min manifest pass. Mirrors
+     *  `scheduleSeqHeal`'s trailing-edge throttle: a suppressed poke arms ONE
+     *  trailing timer per note_id for the remaining window; further pokes for
+     *  the same note while a trailing timer is armed coalesce into it (no
+     *  second timer). Cleared in `destroy()`. */
+    this.crdtHealTrailingTimers = /* @__PURE__ */ new Map();
+    /** See `crdtHealCooldown`. 15s (fix wave 2, was 30s): long enough that
+     *  open+catch-up+heal racing on the same note collapse to one handshake,
+     *  short enough that a genuinely-still-diverged note keeps retrying
+     *  within a session. */
+    this.healCooldownMs = 15e3;
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -18122,6 +18161,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  from here so only ops written while we were away are replayed. 0 = replay
      *  from genesis (first-ever connect / after a state wipe). */
     this.catchupSeq = 0;
+    /** The vault change_seq watermark of the last FULLY-processed manifest pass
+     *  (Phase E1 #1065). Sent as `?since_seq=` so an unchanged vault
+     *  short-circuits the manifest fetch + the manifest-driven catch-up steps.
+     *  Persisted under `manifestSeq`; wiped with the per-vault state. */
+    this.manifestSeq = 0;
+    /** Cursor value of the last validator rewind — bounds the validator to ONE
+     *  re-serve per distinct discrepancy per session (see validateFromManifest).
+     *  null = no rewind yet (a numeric sentinel would collide with the
+     *  legitimate `minBehind - 1` target domain, which includes -1 and 0). */
+    this.lastValidatorRewind = null;
+    /** A pending validator rewind, consumed atomically by the next
+     *  `runSeqReplayOnce` (`catchupViaSeqReplay` is the SOLE cursor writer —
+     *  a direct `setCatchupSeq` here would race an in-flight replay's per-page
+     *  cursor persist and be silently clobbered). */
+    this.seqRewindFloor = null;
     /** When true, vault delete events are suppressed (used during local wipe). */
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
@@ -18227,6 +18281,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtEditorRebind(fn) {
     this.crdtEditorRebind = fn;
+  }
+  setCrdtBoundBufferText(fn) {
+    this.crdtBoundBufferText = fn;
+  }
+  setCrdtRequestSave(fn) {
+    this.crdtRequestSave = fn;
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
@@ -18837,6 +18897,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCatchupSeq(seq3) {
     this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
   }
+  getManifestSeq() {
+    return this.manifestSeq;
+  }
+  setManifestSeq(seq3) {
+    this.manifestSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
+  }
   /** Gap-heal decision for a live op carrying the backend's vault `seq`.
    *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
    *  commutative + idempotent, so seq never gates application; a stale seq
@@ -18902,7 +18968,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19691,8 +19757,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return null;
   }
   /** The single catch-up path (socket-only, no REST fallback — a wedged socket
-   *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
-   *  replay can't cover, run around it:
+   *  recovers on reconnect, Todd's call). Five responsibilities a bare op-log
+   *  replay can't cover, run around it — the four below plus
+   *  `validateFromManifest` (E1 #1065), the whole-vault seq integer-diff that
+   *  re-serves consumed-but-unrecorded rows between steps 1 and 2:
    *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
    *      seed LOCAL empty-folder markers to the server.
    *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
@@ -19708,14 +19776,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *      and propagate remote folder deletes.
    *  Returns the applied-op count (for the progress recap / poll notice). Never
    *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
-   *  never has to guard it. The manifest is fetched once and shared by steps 1
+   *  never has to guard it. The manifest is fetched once and shared by the
+   *  validator plus steps 1
    *  and 3. */
   async catchUp() {
     try {
-      let manifest = await this.api.getManifest();
+      let manifest = await this.api.getManifest(
+        this.manifestSeq > 0 ? this.manifestSeq : void 0
+      );
+      if (manifest != null && manifest.unchanged) {
+        await this.seedEmptyFolders();
+        let { applied: applied2 } = await this.catchupViaSeqReplay();
+        return applied2;
+      }
       await this.reconcileFromManifest(manifest);
-      let { applied } = await this.catchupViaSeqReplay();
-      await this.healDivergedLiveBoundNotes(manifest);
+      let behind = this.validateFromManifest(manifest), { applied } = await this.catchupViaSeqReplay(), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -19725,7 +19800,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return applied;
+      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), applied;
     } catch (e) {
       return rlog().error(
         "pull",
@@ -19737,7 +19812,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt) return 0;
-    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0, applied = 0;
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+    this.seqRewindFloor !== null && !fromZero && (cursor = Math.min(cursor, this.seqRewindFloor)), this.seqRewindFloor = null;
+    let applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
       try {
@@ -19877,37 +19954,101 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
    *  independently detecting the same divergence collapses to one handshake
    *  instead of draining the handshake budget (#193 starvation class).
-   *  Never throws. */
+   *
+   *  Fix wave 2: a poke suppressed by the cooldown COALESCES into one
+   *  trailing fire at window end (`crdtHealTrailingTimers`) instead of being
+   *  dropped — mirrors `scheduleSeqHeal`'s trailing-edge throttle. Dropping
+   *  it silently stranded a deaf note whose single recovery poke landed
+   *  inside the window (CI: `test_deaf_note_survives_handshake_rate_limit_
+   *  and_heals_on_restore`). Never throws. */
   socketConvergeLiveBound(path, noteId) {
-    let last2 = this.crdtHealCooldown.get(noteId);
-    if (last2 !== void 0 && Date.now() - last2 < this.healCooldownMs) {
-      devLog().log("crdt", `socket converge: cooldown skip for ${path}`);
+    if (!this.crdtEnrollment) return;
+    let last2 = this.crdtHealCooldown.get(noteId), now = Date.now();
+    if (last2 === void 0 || now - last2 >= this.healCooldownMs) {
+      this.fireCrdtReHandshake(path, noteId);
       return;
     }
-    this.crdtEnrollment && (this.crdtHealCooldown.set(noteId, Date.now()), this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`));
+    if (this.crdtHealTrailingTimers.has(noteId)) {
+      devLog().log("crdt", `socket converge: cooldown skip for ${path} (already coalesced)`);
+      return;
+    }
+    devLog().log("crdt", `socket converge: cooldown skip for ${path} \u2014 arming trailing fire`);
+    let remaining = this.healCooldownMs - (now - last2), timer = window.setTimeout(() => {
+      this.crdtHealTrailingTimers.delete(noteId), this.fireCrdtReHandshake(path, noteId);
+    }, remaining);
+    this.crdtHealTrailingTimers.set(noteId, timer);
+  }
+  /** The actual STEP1 fire, shared by the immediate and trailing-coalesced
+   *  paths in `socketConvergeLiveBound`. Records the cooldown timestamp —
+   *  ONLY called on a real fire, never on a suppressed attempt. */
+  fireCrdtReHandshake(path, noteId) {
+    var _a, _b;
+    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
   }
   /** Commit a staged live-bound convergence (see `pendingConvergence`) — the
    *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
    *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
    *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
-   *  doc's text non-empty — real ops landed, not a guess. Idempotent and
-   *  cheap when nothing is staged (steady-state live traffic fires this on
-   *  every frame). Re-resolves the CURRENT path via `noteIdMap` rather than
-   *  trusting the path captured at stage time, so a rename (path moved) or
-   *  delete (id unmapped) between staging and commit can't write syncState
-   *  at a stale/dead path — no separate teardown hook needed. Never throws
-   *  into the CRDT manager's synchronous callback. */
+   *  doc's text non-empty — real ops landed, not a guess.
+   *
+   *  Fix wave 5: "an inbound frame landed" is necessary but NOT sufficient
+   *  proof the STAGED row's ops are the ones that landed — `onSynced` fires
+   *  on every non-empty frame, including an unrelated concurrent edit on
+   *  the same doc, which could commit a stage a millisecond after staging,
+   *  before the staged row's own ops ever arrived (CI run 29920053637).
+   *  When the stage carries plaintext (`content !== null`), commit ONLY if
+   *  the doc's projection now strictly equals it — the ops that produced a
+   *  match came from the server room round-trip, so post-handshake
+   *  text-equality IS sound proof here (unlike the deleted verify-first
+   *  skip, which compared BEFORE any handshake ever fired). On a mismatch
+   *  (or a `projectedText` throw — treated as mismatch, never commit on
+   *  error) the stage is left in place; the next inbound frame re-runs this
+   *  check, so the real edit's arrival commits it. A `content: null` stage
+   *  (manifest heal — hash-only, keyed HMAC, uncomputable client-side)
+   *  keeps the pre-wave-5 best-effort behavior: commit unverified on the
+   *  next non-empty frame.
+   *
+   *  Idempotent and cheap when nothing is staged (steady-state live traffic
+   *  fires this on every frame). Re-resolves the CURRENT path via
+   *  `noteIdMap` rather than trusting the path captured at stage time, so a
+   *  rename (path moved) or delete (id unmapped) between staging and commit
+   *  can't write syncState at a stale/dead path — no separate teardown hook
+   *  needed. Never throws into the CRDT manager's synchronous callback. */
   async commitCrdtConvergence(noteId) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     let staged = this.pendingConvergence.get(noteId);
     if (!staged) return;
+    if (staged.content !== null) {
+      let matches = !1;
+      if (this.crdt)
+        try {
+          matches = await this.crdt.projectedText(noteId) === staged.content;
+        } catch (e) {
+          devLog().log(
+            "crdt",
+            `socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`
+          );
+        }
+      if (!matches) {
+        devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
+        return;
+      }
+      let boundPath = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+      if (boundPath && this.isLiveBound(boundPath)) {
+        let buffer = (_c = (_b = this.crdtBoundBufferText) == null ? void 0 : _b.call(this, boundPath)) != null ? _c : null;
+        buffer !== null && buffer !== staged.content && (rlog().warn(
+          "crdt",
+          `socket converge: phantom binding rebound for ${boundPath}`
+        ), (_d = this.crdtEditorRebind) == null || _d.call(this, boundPath), (_e = this.crdtRequestSave) == null || _e.call(this, boundPath));
+      }
+    }
     this.pendingConvergence.delete(noteId), this.crdtRehandshakeAttempts.delete(noteId);
-    let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+    let path = (_f = this.noteIdMap) == null ? void 0 : _f.pathForId(noteId);
     if (path)
       try {
-        let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_b = stored == null ? void 0 : stored.hash) != null ? _b : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+        let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
         this.syncState.set(path, {
-          ...(_c = this.syncState.get(path)) != null ? _c : {},
+          ...(_h = this.syncState.get(path)) != null ? _h : {},
           hash: localHash,
           serverHash: staged.serverHash,
           version: staged.version,
@@ -20460,28 +20601,66 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  server's ops. `commitCrdtConvergence` commits the stage once a real
    *  STEP2/update frame actually applies. Best-effort; never throws into
    *  catchUp. */
+  /** Phase E1 (#1065): whole-vault seq integer diff. Flags a manifest note row
+   *  whose seq the replay has ALREADY consumed (row.seq <= catchupSeq) but
+   *  that this path never recorded — a silent apply-loss (the test_10
+   *  "received=yes materialized=no" class) — and rewinds the cursor so the
+   *  next replay re-serves it. Rows beyond the cursor need nothing: the
+   *  imminent replay fetches them anyway. A syncState entry without `seq` is
+   *  NOT flagged (the entry's existence proves a materialize happened;
+   *  replay writes and seq-carrying live ops both record seq — an entry
+   *  without one predates the field). Returns the behind-row count.
+   *  ponytail: one rewind per distinct discrepancy per session
+   *  (lastValidatorRewind) — a re-served row whose apply still refuses to
+   *  record stays behind forever and must not rewind-loop every poll. */
+  validateFromManifest(manifest) {
+    var _a, _b;
+    if (!((_a = manifest == null ? void 0 : manifest.notes) != null && _a.length)) return 0;
+    let cursor = this.getCatchupSeq(), minBehind = Number.POSITIVE_INFINITY, behind = 0;
+    for (let entry of manifest.notes) {
+      let seq3 = entry.seq;
+      if (typeof seq3 != "number" || !Number.isFinite(seq3) || seq3 > cursor) continue;
+      let stored = this.syncState.get((0, import_obsidian21.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
+      seq3 > recorded && (behind++, seq3 < minBehind && (minBehind = seq3));
+    }
+    if (behind === 0) return 0;
+    let target = minBehind - 1;
+    return target === this.lastValidatorRewind ? (rlog().warn(
+      "pull",
+      `manifest validator: ${behind} row(s) still behind after a re-serve \u2014 not rewinding again (cursor=${cursor})`
+    ), behind) : (this.lastValidatorRewind = target, rlog().warn(
+      "pull",
+      `manifest validator: ${behind} consumed-but-unrecorded row(s) \u2014 rewinding cursor ${cursor} \u2192 ${target} to re-serve`
+    ), this.seqRewindFloor = Math.max(0, target), behind);
+  }
   async healDivergedLiveBoundNotes(manifest) {
     var _a, _b, _c;
-    if (!(!manifest || !this.crdt))
-      for (let entry of manifest.notes) {
-        let path = (0, import_obsidian21.normalizePath)(entry.path);
-        if (!this.isLiveBound(path)) continue;
-        let stored = this.syncState.get(path);
-        if (entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
-        let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
-        if (noteId)
-          try {
-            entry.content_hash && this.pendingConvergence.set(noteId, { path, serverHash: entry.content_hash }), this.socketConvergeLiveBound(path, noteId);
-          } catch (e) {
-            rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
-          }
-      }
+    if (!manifest || !this.crdt) return 0;
+    let poked = 0;
+    for (let entry of manifest.notes) {
+      let path = (0, import_obsidian21.normalizePath)(entry.path);
+      if (!this.isLiveBound(path)) continue;
+      let stored = this.syncState.get(path);
+      if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
+      let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
+      if (noteId)
+        try {
+          entry.content_hash && this.pendingConvergence.set(noteId, {
+            path,
+            serverHash: entry.content_hash,
+            content: null
+          }), this.socketConvergeLiveBound(path, noteId), poked++;
+        } catch (e) {
+          rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+        }
+    }
+    return poked;
   }
   /** Apply a single remote change to the vault, with conflict detection.
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -20538,8 +20717,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
-    if (!forceOverwrite && change.version !== void 0) {
-      let known = (_j = this.syncState.get(normalized)) == null ? void 0 : _j.version;
+    let crdtOwnsBody = !!(this.crdt && normalized.endsWith(".md")), noteId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) != null ? _k : null;
+    if (!forceOverwrite && !(crdtOwnsBody && noteId) && change.version !== void 0) {
+      let known = (_l = this.syncState.get(normalized)) == null ? void 0 : _l.version;
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
         return rlog().info(
           "pull",
@@ -20547,14 +20727,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         ), !1;
     }
     let crdtConflictFallthrough = !1;
-    if (this.crdt && normalized.endsWith(".md")) {
-      let noteId = (_l = (_k = this.noteIdMap) == null ? void 0 : _k.get(normalized)) != null ? _l : null;
+    if (crdtOwnsBody) {
       if (!this.app.vault.getFileByPath(normalized))
         noteId && this.isLiveBound(normalized) && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
         noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId));
         let stored = this.syncState.get(normalized);
-        if ((stored == null ? void 0 : stored.seq) !== void 0 && change.seq !== void 0 && change.seq <= stored.seq || (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
+        if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && change.seq <= stored.seq : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
             `CRDT catch-up: stale row (seq ${(_o = change.seq) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.seq) != null ? _p : "-"} v${(_q = change.version) != null ? _q : "-"}/${(_r = stored == null ? void 0 : stored.version) != null ? _r : "-"}) \u2014 history, skip ${change.path}`
@@ -20565,9 +20744,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             rlog().warn(
               "pull",
               `CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`
-            ), this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts }), noteId && (this.pendingConvergence.set(noteId, {
+            ), this.crdtRehandshakeAttempts.set(key, {
+              hash: change.content_hash,
+              attempts
+            }), noteId && (this.pendingConvergence.set(noteId, {
               path: normalized,
               serverHash: change.content_hash,
+              content,
               version: change.version,
               seq: change.seq
             }), this.socketConvergeLiveBound(normalized, noteId));
@@ -20732,13 +20915,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
           hash: localHash,
           version: change.version,
-          serverHash: change.content_hash
-        }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+          serverHash: change.content_hash,
+          // E1 (#1065): record the row's seq so the manifest validator can
+          // integer-diff this path (a legacy change without one keeps the
+          // prior value rather than erasing it).
+          seq: typeof change.seq == "number" ? change.seq : (_x = this.syncState.get(normalized)) == null ? void 0 : _x.seq
+        }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
-        serverHash: change.content_hash
-      }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info(
+        serverHash: change.content_hash,
+        // E1 (#1065): seq recorded for the manifest validator's integer diff.
+        seq: typeof change.seq == "number" ? change.seq : (_z = this.syncState.get(normalized)) == null ? void 0 : _z.seq
+      }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20756,8 +20945,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncState.set(normalized, {
       hash: fnv1a(content),
       version: change.version,
-      serverHash: change.content_hash
-    }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+      serverHash: change.content_hash,
+      // E1 (#1065): seq recorded for the manifest validator's integer diff.
+      seq: typeof change.seq == "number" ? change.seq : void 0
+    }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -21721,7 +21912,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.remotelyDeleted.clear();
     for (let timer of this.recentlyDeleted.values())
       window.clearTimeout(timer);
-    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
+    for (let timer of this.crdtHealTrailingTimers.values())
+      window.clearTimeout(timer);
+    this.crdtHealTrailingTimers.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
@@ -22619,7 +22813,7 @@ var CrdtReadingView = class {
 };
 
 // src/crdt/live/live-views.ts
-var ViewerRefcount = class {
+var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   constructor(onLastRelease) {
     this.viewers = /* @__PURE__ */ new Map();
     this.onLastRelease = onLastRelease;
@@ -22648,6 +22842,8 @@ var ViewerRefcount = class {
     this.localAwareness = new Awareness(this.awarenessDoc);
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
+    /** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
+    this.saveNudgeTimers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
       this.onLastViewerRelease(path).catch((e) => {
         var _a, _b;
@@ -22663,6 +22859,51 @@ var ViewerRefcount = class {
   }
   isBound(path) {
     return this.refcount.isBound(path);
+  }
+  /** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
+   *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
+   *  skips the disk write for a bound path (the editor owns the file) — but
+   *  headless/unfocused Obsidian (CI) doesn't promptly flush a
+   *  programmatically-updated buffer on its own, so a converged CRDT doc can
+   *  sit unsaved on disk for tens of seconds. `requestSave()` is Obsidian's
+   *  own API for this (it flushes through Obsidian's pipeline, so it cannot
+   *  fight the binding — it IS the binding-authoritative save).
+   *
+   *  Debounced per path (trailing, `SAVE_NUDGE_DEBOUNCE_MS`) so a burst of
+   *  deltas from one remote edit collapses to one save call. No-op when
+   *  `path` has no active viewer — nothing to nudge, and no burst to
+   *  coalesce (also means a note that closes mid-debounce simply never
+   *  fires, which is correct: the last-viewer-release flush below already
+   *  covers that case via `onLastViewerRelease`). Never throws. */
+  requestSaveForBoundPath(path) {
+    if (!this.isBound(path)) return;
+    let existing = this.saveNudgeTimers.get(path);
+    existing !== void 0 && window.clearTimeout(existing);
+    let timer = window.setTimeout(() => {
+      this.saveNudgeTimers.delete(path), this.doRequestSave(path);
+    }, SAVE_NUDGE_DEBOUNCE_MS);
+    this.saveNudgeTimers.set(path, timer);
+  }
+  /** Fix wave 7 (#191 slice): read the live buffer of the editor currently
+   *  showing `path`, for commitCrdtConvergence's phantom-binding check.
+   *  Returns null when nothing shows the path (nothing to compare). */
+  boundBufferText(path) {
+    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path)
+        return view.getViewData();
+    }
+    return null;
+  }
+  doRequestSave(path) {
+    try {
+      for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+        let view = leaf.view;
+        view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
+      }
+    } catch (e) {
+      devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
+    }
   }
   /** The last viewer of `path` left: persist the current Y.Text to disk, then
    *  free the doc so the resident set stays bounded by open notes (closeDoc was
@@ -22734,7 +22975,10 @@ var ViewerRefcount = class {
   destroy() {
     for (let [cm, ctrl] of this.controllers)
       ctrl.release(cm);
-    this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
+    this.controllers.clear();
+    for (let timer of this.saveNudgeTimers.values())
+      window.clearTimeout(timer);
+    this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
     for (let path of this.refcount.boundPaths()) {
       let noteId = this.deps.resolveId(path);
       this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
@@ -22939,12 +23183,17 @@ function createCrdtWiring(deps) {
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
     canSendLive: deps.canSendLive,
     onFlushToDisk: async (noteId, content) => {
+      var _a2;
       let path = noteIdMap.pathForId(noteId);
       if (!path) {
         healUnknownNoteId(noteId, content);
         return;
       }
-      if (!deps.isBound(path) && await syncEngine.flushFromCrdt(path, content) === !1)
+      if (deps.isBound(path)) {
+        (_a2 = deps.onBoundUpdate) == null || _a2.call(deps, path);
+        return;
+      }
+      if (await syncEngine.flushFromCrdt(path, content) === !1)
         throw new Error(`flushFromCrdt reported a write failure for ${path}`);
     },
     // Adopt-first seed gate: never re-encode content the server already holds.
@@ -23411,7 +23660,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
@@ -23421,7 +23670,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     }), this.syncEngine.setCrdtEditorRebind((path) => {
       var _a2;
       return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.rebindPath(path);
-    });
+    }), this.syncEngine.setCrdtBoundBufferText(
+      (path) => {
+        var _a2, _b2;
+        return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.boundBufferText(path)) != null ? _b2 : null;
+      }
+    ), this.syncEngine.setCrdtRequestSave(
+      (path) => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
+      }
+    );
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
@@ -23478,7 +23737,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }
     );
     let saved = await this.loadPluginData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (saved == null ? void 0 : saved.manifestSeq) !== void 0 && this.syncEngine.setManifestSeq(saved.manifestSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -23845,6 +24104,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // reason (like deviceId) or the next saveData() wipes it; 0 = replay
       // from genesis.
       catchupSeq: this.syncEngine.getCatchupSeq(),
+      // Manifest since_seq watermark (E1 #1065) — re-listed for the same
+      // wholesale-save reason.
+      manifestSeq: this.syncEngine.getManifestSeq(),
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
@@ -24087,6 +24349,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           isBound: (path) => {
             var _a2, _b2;
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
+          },
+          // Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
+          // flush a programmatically-updated bound editor to disk — nudge
+          // Obsidian's own save pipeline after a remote merge paints in.
+          onBoundUpdate: (path) => {
+            var _a2;
+            return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
           },
           // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
           // a brand-new note's crdt_create must land before any crdt_msg, or the
