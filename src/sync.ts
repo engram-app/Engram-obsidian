@@ -3609,29 +3609,43 @@ export class SyncEngine {
 
 	/** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
 	 *  same Yjs-delta core as restConvergeLiveBound, but there is no editor
-	 *  binding to paint the doc, so the converged doc's projected text is
-	 *  flushed to disk instead. Replaces the old content-snapshot
+	 *  binding to paint the doc. Replaces the old content-snapshot
 	 *  `flushFromCrdt(path, content)` backfill, which reverted a fresher live
 	 *  merge when D2's behind-detector fires a catch-up replay DURING active
 	 *  editing on this note from another device — the feed's content snapshot
 	 *  is checkpoint-lagged and carries no causality, so applying it late can
 	 *  stomp a merge that landed since (see
 	 *  docs/context/d2-seq-replay-stale-snapshot-stomp.md). The Yjs delta path
-	 *  cannot: it can only add causality to the doc. Returns the flushed text
-	 *  on success (so the caller can hash exactly what landed on disk), or
-	 *  null on failure/pending-gap — mirrors restConvergeLiveBound's retry
-	 *  contract (never record convergence for data that hasn't arrived). */
+	 *  cannot: it can only add causality to the doc.
+	 *
+	 *  Disk itself is NOT written here: `restConvergeCore`'s `applyRemoteUpdate`
+	 *  already flushed it. The manager's remote-merge listener (manager.ts)
+	 *  captures the projection synchronously the instant the update integrates
+	 *  and writes it via `onFlushToDisk` (wiring.ts -> `flushFromCrdt`), which
+	 *  `applyRemoteUpdate` awaits before returning — so by the time this
+	 *  function resumes, disk already holds the converged content. A second,
+	 *  separate read-then-write here would race a concurrent live delta
+	 *  landing between the read and the write: that delta's own newer
+	 *  auto-flush could land first, and this tail's stale captured text would
+	 *  then clobber it (the exact revert family this PR fixes elsewhere).
+	 *  `projectedText` is read once, purely so the caller can hash what
+	 *  actually landed for syncState bookkeeping — never to write disk again.
+	 *  Returns that text on success, or null on failure/pending-gap — mirrors
+	 *  restConvergeLiveBound's retry contract (never record convergence for
+	 *  data that hasn't arrived). */
 	private async restConvergeAndFlush(path: string, noteId: string): Promise<string | null> {
 		const head = await this.restConvergeCore(path, noteId);
 		if (head === null || !this.crdt) return null;
 		try {
 			const text = await this.crdt.projectedText(noteId);
-			await this.flushFromCrdt(path, text);
 			this.setCrdtHead(path, head);
-			rlog().info("crdt", `REST converge: catch-up ${path} flushed to disk at head=${head}`);
+			rlog().info("crdt", `REST converge: catch-up ${path} converged to head=${head}`);
 			return text;
 		} catch (e) {
-			rlog().warn("crdt", `REST converge (catch-up flush) failed for ${path}: ${errMsg(e)}`);
+			rlog().warn(
+				"crdt",
+				`REST converge (catch-up hash read) failed for ${path}: ${errMsg(e)}`,
+			);
 			return null;
 		}
 	}
