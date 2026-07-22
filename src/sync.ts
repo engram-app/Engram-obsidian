@@ -3756,8 +3756,7 @@ export class SyncEngine {
 			const boundFile = this.app.vault.getFileByPath(path);
 			const stored = this.syncState.get(path);
 			const localHash =
-				stored?.hash ??
-				(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+				stored?.hash ?? (boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
 			this.syncState.set(path, {
 				...(this.syncState.get(path) ?? {}),
 				hash: localHash,
@@ -5137,7 +5136,10 @@ export class SyncEngine {
 							"pull",
 							`CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`,
 						);
-						this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+						this.crdtRehandshakeAttempts.set(key, {
+							hash: change.content_hash,
+							attempts,
+						});
 						if (noteId) {
 							// A fresh content_hash overwrites any prior stage — a new
 							// episode, never a stale commit of superseded server content.
