@@ -5732,7 +5732,10 @@ export class SyncEngine {
 					// E1 (#1065): record the row's seq so the manifest validator can
 					// integer-diff this path (a legacy change without one keeps the
 					// prior value rather than erasing it).
-					seq: typeof change.seq === "number" ? change.seq : this.syncState.get(normalized)?.seq,
+					seq:
+						typeof change.seq === "number"
+							? change.seq
+							: this.syncState.get(normalized)?.seq,
 				});
 				if (change.version != null) {
 					this.baseStore?.set(normalized, content, change.version);
@@ -5749,7 +5752,10 @@ export class SyncEngine {
 				version: change.version,
 				serverHash: change.content_hash,
 				// E1 (#1065): seq recorded for the manifest validator's integer diff.
-				seq: typeof change.seq === "number" ? change.seq : this.syncState.get(normalized)?.seq,
+				seq:
+					typeof change.seq === "number"
+						? change.seq
+						: this.syncState.get(normalized)?.seq,
 			});
 			if (change.version != null) {
 				this.baseStore?.set(normalized, content, change.version);
