@@ -149,9 +149,11 @@ describe("SyncEngine applySyncChange dispatch", () => {
 		expect(arg.content).toBe("hi");
 		expect(arg.version).toBe(3);
 		expect(arg.deleted).toBe(false);
-		// The feed-only fields must be stripped from the mapped NoteChange.
+		// `seq` now rides through — it feeds applyChange's per-path stale-row
+		// fence (the catch-up revert fix). The other feed-only fields stay
+		// stripped from the mapped NoteChange.
+		expect(arg.seq).toBe(7);
 		expect((arg as any).type).toBeUndefined();
-		expect((arg as any).seq).toBeUndefined();
 		expect((arg as any).id).toBeUndefined();
 	});
 

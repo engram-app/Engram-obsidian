@@ -154,6 +154,10 @@ export interface NoteChange {
 	updated_at: string;
 	deleted: boolean;
 	version?: number;
+	/** Vault-global change seq of the source row (present on replayed/enumerated
+	 *  feed rows via applyOp; absent on shapes that predate the seq feed). Feeds
+	 *  the per-path stale-row fence in applyChange. */
+	seq?: number;
 }
 
 /** Response from GET /notes/changes */
@@ -449,6 +453,12 @@ export interface FileSyncState {
 	 *  path via cold-receive. Separate namespace from serverHash (which is the
 	 *  /changes content_hash). Absent = never cold-synced. */
 	crdtHead?: string;
+	/** Per-path high-water mark of the vault-global change `seq` observed for
+	 *  this path (live fan-out ops and replayed rows). Used ONLY to reject
+	 *  OLDER rows for the same path in catch-up (a replayed/enumerated row at
+	 *  or below this mark is history, not divergence — backfilling it reverts
+	 *  newer live-applied content). Never advances the global replay cursor. */
+	seq?: number;
 }
 
 /** A single entry in the sync log ring buffer. */

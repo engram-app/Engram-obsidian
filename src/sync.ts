@@ -1634,6 +1634,19 @@ export class SyncEngine {
 		apply: () => void,
 	): "applied" | "healing" {
 		apply();
+		if (Number.isInteger(seq)) {
+			// Advance the PER-PATH high-water mark (types.ts FileSyncState.seq):
+			// a live op we just applied proves the path is current through this
+			// seq, so a later replayed/enumerated ROW at or below it is history
+			// and must not backfill (the checkpoint-lag revert, CI 29877041947).
+			// Per-path observation only — the global replay cursor is untouched
+			// (see the behind-detector rationale above).
+			const path = this.noteIdMap?.pathForId(noteId);
+			const st = path ? this.syncState.get(path) : undefined;
+			if (path && st && (st.seq === undefined || (seq as number) > st.seq)) {
+				this.syncState.set(path, { ...st, seq: seq as number });
+			}
+		}
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
 			return "applied";
 		}
@@ -4606,6 +4619,7 @@ export class SyncEngine {
 			updated_at: op.updated_at,
 			deleted: op.kind === "delete",
 			version: op.version,
+			seq: op.seq,
 		};
 		const applied = await this.applyChange(nc);
 		// Retire the id now that applyChange has consumed the mapping (see the
@@ -4940,7 +4954,29 @@ export class SyncEngine {
 				// backfills via REST (flushFromCrdt), a live-bound one re-handshakes.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
-				if (change.content_hash && stored?.serverHash !== change.content_hash) {
+				// Directional fence (CI 29877041947): hash INEQUALITY is
+				// direction-blind — a replayed/enumerated row older than what this
+				// device already applied (live op recorded in FileSyncState.seq, or
+				// a row converged earlier) also mismatches, and treating that as
+				// "we are behind" backfills a checkpoint-lagged projection over
+				// newer live content (the ModifyTest 40B/23B revert ping-pong; 1805
+				// backfills in one suite run). A row at or below the path's
+				// high-water seq (or recorded version) is history: skip the whole
+				// diverged block — nothing is recorded, so a genuinely newer row
+				// still converges on a later pass.
+				const staleRow =
+					(stored?.seq !== undefined &&
+						change.seq !== undefined &&
+						change.seq <= stored.seq) ||
+					(stored?.version !== undefined &&
+						change.version !== undefined &&
+						change.version <= stored.version);
+				if (staleRow) {
+					rlog().info(
+						"pull",
+						`CRDT catch-up: stale row (seq ${change.seq ?? "-"}/${stored?.seq ?? "-"} v${change.version ?? "-"}/${stored?.version ?? "-"}) — history, skip ${change.path}`,
+					);
+				} else if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
 						// An open, bound editor is the sole CRDT writer for the note —
 						// writing disk under it would fight the binding. Two recovery
@@ -4991,6 +5027,7 @@ export class SyncEngine {
 								hash: localHash,
 								serverHash: change.content_hash,
 								version: change.version,
+								seq: change.seq,
 							});
 						} else {
 							// Keep serverHash UNrecorded so the next poll retries — never
@@ -5018,27 +5055,7 @@ export class SyncEngine {
 							stored?.hash !== undefined &&
 							fnv1a(localNow) !== stored.hash &&
 							localNow !== content;
-						// Monotonic fence (CI 29877041947): a catch-up page can carry a
-						// row whose CHECKPOINT lags content this device already applied
-						// live — the backfill then reverts newer disk content to the
-						// stale projection, live delivery re-applies it, and the next
-						// replay reverts again (the ModifyTest 40B/23B oscillation).
-						// A row not NEWER than the version we last converged proves the
-						// server row hasn't moved since — nothing to backfill. Checkpoints
-						// CAS on notes.version (#902/#907), so newer content always means
-						// a newer version; the fence can't strand a real change. Nothing
-						// is recorded here, so a genuinely newer row still converges on
-						// the next pass.
-						const staleRow =
-							stored?.version !== undefined &&
-							change.version !== undefined &&
-							change.version <= stored.version;
-						if (staleRow) {
-							rlog().info(
-								"pull",
-								`CRDT catch-up: row v${change.version} <= applied v${stored.version} — stale checkpoint, skip backfill ${change.path}`,
-							);
-						} else if (localDiverged) {
+						if (localDiverged) {
 							rlog().warn(
 								"pull",
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
@@ -5054,6 +5071,7 @@ export class SyncEngine {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
+								seq: change.seq,
 							});
 						}
 					}
