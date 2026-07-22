@@ -37,4 +37,37 @@ describe("SimClock", () => {
 		expect(clock.fireNext()).toBe(false);
 		expect(ran).toBe(false);
 	});
+
+	test("install() patches Date.now to virtual time and uninstall restores it", () => {
+		const realNowBefore = Date.now();
+		const clock = new SimClock();
+		const uninstall = clock.install(globalThis.window ?? globalThis);
+
+		expect(Date.now()).toBe(clock.now());
+		expect(Date.now()).toBe(0);
+
+		clock.setTimeout(() => {}, 1000);
+		clock.fireNext();
+		expect(Date.now()).toBe(clock.now());
+		expect(Date.now()).toBe(1000);
+
+		uninstall();
+		expect(Date.now()).toBeGreaterThanOrEqual(realNowBefore);
+	});
+
+	test("advanceTo(t) fires only timers due by t, in deadline order, and stops there", () => {
+		const clock = new SimClock();
+		const fired: number[] = [];
+		clock.setTimeout(() => fired.push(10), 10);
+		clock.setTimeout(() => fired.push(20), 20);
+		clock.setTimeout(() => fired.push(50), 50);
+
+		clock.advanceTo(25);
+		expect(fired).toEqual([10, 20]);
+		expect(clock.now()).toBe(25);
+
+		clock.advanceTo(50);
+		expect(fired).toEqual([10, 20, 50]);
+		expect(clock.now()).toBe(50);
+	});
 });
