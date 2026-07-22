@@ -714,6 +714,85 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
+	test("fix wave 4 (a): CI scenario end-to-end — mapped CRDT note, version-equal seq-ahead row reaches the diverged leg WITHOUT forceOverwrite", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, seq: 40, version: 1, serverHash: "old-hash" },
+		});
+
+		// "owned.md" is mapped to "note-id-1" by crdtEngine()'s harness. The
+		// anti-stale guard (src/sync.ts ~5074) now skips only when CRDT owns
+		// the body AND a noteId resolves — this row satisfies both, so it
+		// reaches the CRDT block's own seq-first staleRow fence directly. No
+		// forceOverwrite lever needed (unlike wave 3's tests, written before
+		// this fix, which had to dodge the guard to reach the same fence).
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "unseen edit",
+			content_hash: "new-hash",
+			version: 1, // checkpoint-lagged, equal to stored
+			seq: 41,
+			mtime: 50,
+		} as any);
+
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+	});
+
+	test("fix wave 4 (b): a non-CRDT note's version-equality is still guarded (legacy path preserved)", async () => {
+		const engine = createEngine(); // no setCrdtManager — this.crdt stays null
+		const localFile = new TFile("plain.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		engine.importSyncState({
+			"plain.md": { hash: fnv1a("body"), version: 1, serverHash: "h1" },
+		});
+
+		const applied = await engine.applyChange({
+			path: "plain.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "h2",
+			version: 1, // equal — crdtOwnsBody is false, the guard still applies
+			mtime: 50,
+		} as any);
+
+		expect(applied).toBe(false);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("fix wave 4 (c2): a CRDT-managed row with NO resolvable noteId is still guarded (the no-noteId raw-write branch found in the safety check stays protected)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("unmapped.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck(() => false); // cold — would otherwise reach the
+		// no-noteId sub-branch (src/sync.ts ~5262-5277) that does a raw
+		// content-snapshot write with no Yjs convergence.
+		engine.importSyncState({
+			"unmapped.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		// "unmapped.md" was never map.set() in crdtEngine()'s harness, so
+		// noteId resolves to null — crdtOwnsBody && noteId is false and the
+		// version guard still applies.
+		const applied = await engine.applyChange({
+			path: "unmapped.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "new-hash",
+			version: 1, // equal — no resolvable id, guard applies
+			mtime: 50,
+		} as any);
+
+		expect(applied).toBe(false);
+		expect(reset).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
 	test("fix wave 1 (f): a fresh content_hash overwrites the staged entry — commit lands the LATEST, not the first", async () => {
 		const { engine } = crdtEngine();
 		const localFile = new TFile("owned.md");

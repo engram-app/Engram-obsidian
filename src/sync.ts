@@ -5041,6 +5041,15 @@ export class SyncEngine {
 			throw new Error(`applyChange: missing content for ${change.path}`);
 		}
 
+		// C1's own predicates, hoisted above the anti-stale guard so both share
+		// ONE computation (fix wave 4 — never resolve noteId twice, a drift
+		// hazard). See C1 below for why noteId can be null (legacy
+		// /notes/changes path, or a note discovered without ever learning an
+		// id — src/sync.ts's discovery branch a few lines down never calls
+		// noteIdMap.set).
+		const crdtOwnsBody = !!(this.crdt && normalized.endsWith(".md"));
+		const noteId = this.noteIdMap?.get(normalized) ?? null;
+
 		// Anti-stale guard (review 2026-07-15, data-loss race): a push landing
 		// DURING a pull — the bounded post-pull drain, or a debounced edit —
 		// bumps syncState past entries this pull fetched BEFORE that push.
@@ -5050,7 +5059,19 @@ export class SyncEngine {
 		// synced carries nothing new. Gated on the file existing locally so a
 		// stale syncState row (crash, manual delete) can never mask a real
 		// re-materialization; forceOverwrite (explicit keep-remote) bypasses.
-		if (!forceOverwrite && change.version !== undefined) {
+		//
+		// LEGACY / no-id-only (fix wave 4, D3 gate forensics CI run
+		// 29917773065): this guard's `known >= change.version` has no seq
+		// awareness, so it could mask a checkpoint-lagged-but-genuinely-newer
+		// CRDT row (`applyChange skip (stale v1 <= synced v1)` — the row the
+		// CRDT block's own seq-first staleRow fence, wave 3, would correctly
+		// have judged NOT stale). Skipped here ONLY when CRDT owns the body
+		// AND we have a resolved noteId — those rows are judged by that
+		// seq-first fence instead. A CRDT row with NO resolvable noteId still
+		// falls through to the no-noteId sub-branch below (~5262), which does
+		// a raw content-snapshot write with no Yjs convergence — that sub-case
+		// keeps this version guard as its only stale protection.
+		if (!forceOverwrite && !(crdtOwnsBody && noteId) && change.version !== undefined) {
 			const known = this.syncState.get(normalized)?.version;
 			if (
 				known !== undefined &&
@@ -5075,13 +5096,13 @@ export class SyncEngine {
 		// the block falls through to the legacy conflict flow below instead of
 		// silently backfilling over the local edit.
 		let crdtConflictFallthrough = false;
-		if (this.crdt && normalized.endsWith(".md")) {
-			// Enroll by note_id (Task 6). This is populated for the merged-feed
-			// caller (applySyncChange learns `id` right before calling applyChange)
-			// but may be unknown for the legacy /notes/changes path (no `id` field
-			// on NoteChange) — skip enrolling gracefully in that case; the body is
-			// still materialized below directly from the pulled content.
-			const noteId = this.noteIdMap?.get(normalized) ?? null;
+		if (crdtOwnsBody) {
+			// noteId resolved above (shared with the anti-stale guard). This is
+			// populated for the merged-feed caller (applySyncChange learns `id`
+			// right before calling applyChange) but may be unknown for the
+			// legacy /notes/changes path (no `id` field on NoteChange) — skip
+			// enrolling gracefully in that case; the body is still materialized
+			// below directly from the pulled content.
 			// Discovery: a CRDT-managed note we don't have on disk yet. Enroll it
 			// (sync-step-1) so the body arrives over the CRDT handshake — the server
 			// seeds the room from notes.content when it has no CRDT state. We never
