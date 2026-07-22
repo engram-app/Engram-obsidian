@@ -15,11 +15,13 @@
 // per-path high-water never advanced from its own push, so the equal-seq `<=`
 // fence never decided the outcome and the bug was invisible to the model.
 //
-// GREEN PRECONDITION (honest-green): this suite is green ONLY because the sim
-// branch carries the VENDORED #280 seq-fence hunk (src/sync.ts `change.seq <
-// stored.seq`, prerequisite commit). Overlay the PRE-fix `<=` and #282/test_85
-// go RED (bug reproduced) — that overlay IS the differential proof, not a
-// regression. Do not "fix" a red here by loosening the oracle; restore the fix.
+// GREEN PRECONDITION (honest-green): this suite is green ONLY because src/sync.ts
+// carries the MERGED #296 content-hash-aware equal-seq fence (an equal-seq row is
+// stale only when its content_hash matches stored.serverHash; a differing hash
+// falls through and converges). Overlay the PRE-fix plain `<=` (pre-#296 main,
+// `git checkout 5cd7adf -- src/sync.ts`) and #282/test_85 go RED (bug reproduced)
+// — that overlay IS the differential proof, not a regression. Do not "fix" a red
+// here by loosening the oracle; restore the fence.
 //
 // NOT COVERED — #288 genesis wipe (model-tier fidelity limit, Task 7b third
 // gap): a PLAIN-content genesis is a truly-EMPTY server doc in reality too
@@ -46,12 +48,14 @@ afterAll(() => Replica.restoreGlobals());
 // #282 — equal-seq fence skip.
 //
 // DIFFERENTIAL PROOF (source overlay):
-//   base  `git checkout 74d6c6c -- src/sync.ts` (`change.seq <= stored.seq`):
-//         B is STUCK missing A's edit — B disk ends "...and by B\n", the
-//         server-merged second A-edit fenced out as "history". DIVERGES.
-//   fix   `git checkout d74bbe6 -- src/sync.ts` (strict `<`, #280): B applies
-//         the equal-seq catch-up row and CONVERGES to the server merge.
-// The branch carries the vendored `<` hunk, so this asserts the converged side.
+//   base  `git checkout 5cd7adf -- src/sync.ts` (pre-#296 plain `change.seq <=
+//         stored.seq`): B is STUCK missing A's edit — B disk ends "...and by
+//         B\n", the server-merged second A-edit fenced out as "history".
+//         DIVERGES.
+//   fix   `git checkout fd1095a -- src/sync.ts` (#296 hash-aware: an equal-seq
+//         row whose content_hash differs from stored.serverHash is NOT stale):
+//         B applies the equal-seq catch-up row and CONVERGES to the server merge.
+// src/sync.ts carries the merged #296 fence, so this asserts the converged side.
 test("#282 equal-seq fence: B's own-push echo must not fence the sole carrier", async () => {
 	const r = await equalSeqFence();
 	try {
@@ -63,9 +67,9 @@ test("#282 equal-seq fence: B's own-push echo must not fence the sole carrier", 
 });
 
 // test_85 — missed delivery + local push, no deletion. Shares #282's transport,
-// so on the PRE-fix `<=` base B is ALSO stuck (missing "from-A"); flips to the
-// three-way merge under the vendored `<` fix. A second, independently-scripted
-// witness for the same fence class (concurrent edits both survive, no revert).
+// so on the PRE-fix plain `<=` base B is ALSO stuck (missing "from-A"); flips to
+// the three-way merge under the #296 hash-aware fence. A second, independently-
+// scripted witness for the same fence class (concurrent edits survive, no revert).
 test("test_85 missed-delivery + local push: both edits survive, no revert", async () => {
 	const r = await test85MissedDeliveryLocalPush();
 	try {

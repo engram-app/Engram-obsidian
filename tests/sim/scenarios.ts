@@ -112,9 +112,10 @@ export async function genesisWipe(seed = 288): Promise<GenesisWipeResult> {
 // own push). On reconnect, catch-up delivers the row whose seq EQUALS B's
 // high-water but whose content carries the server-side merge B never saw.
 //
-// Correct behaviour (#280 strict `<` fence): the equal-seq row is applied and B
-// converges. Pre-#280 (`<=`): the equal-seq row is fenced as "history" and B is
-// stuck missing A's edit.
+// Correct behaviour (#296 hash-aware fence): the equal-seq row carries a
+// content_hash differing from B's stored serverHash, so it is NOT stale — B
+// applies it and converges. Pre-#296 (plain `<=`): the equal-seq row is fenced
+// as "history" regardless of content and B is stuck missing A's edit.
 // ---------------------------------------------------------------------------
 
 export interface EqualSeqResult {

@@ -4,12 +4,19 @@ import { MarkdownView as MdView, normalizePath } from "obsidian";
 import { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
 import * as YDoc from "yjs";
+import { devLog } from "../../dev-log";
+import { errMsg } from "../../error-util";
 import type { CrdtEnrollment } from "../enrollment";
 import type { CrdtManager } from "../manager";
 import { EditorController } from "./editor-controller";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
+
+/** Fix wave 6: trailing debounce window for `requestSaveForBoundPath` — a
+ *  burst of remote deltas into the same bound doc collapses to one
+ *  `requestSave()` call. */
+const SAVE_NUDGE_DEBOUNCE_MS = 300;
 
 /** Per-path viewer refcount. A "viewer" is any live binding (editor pane or
  *  reading-view) currently holding a note open. While a path has at least one
@@ -85,6 +92,8 @@ export class CrdtLiveViews {
 	private readonly localAwareness = new Awareness(this.awarenessDoc);
 	/** One EditorController per live CodeMirror EditorView. */
 	private readonly controllers = new Map<EditorView, EditorController>();
+	/** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
+	private readonly saveNudgeTimers = new Map<string, number>();
 
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
@@ -105,6 +114,58 @@ export class CrdtLiveViews {
 
 	isBound(path: string): boolean {
 		return this.refcount.isBound(path);
+	}
+
+	/** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
+	 *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
+	 *  skips the disk write for a bound path (the editor owns the file) — but
+	 *  headless/unfocused Obsidian (CI) doesn't promptly flush a
+	 *  programmatically-updated buffer on its own, so a converged CRDT doc can
+	 *  sit unsaved on disk for tens of seconds. `requestSave()` is Obsidian's
+	 *  own API for this (it flushes through Obsidian's pipeline, so it cannot
+	 *  fight the binding — it IS the binding-authoritative save).
+	 *
+	 *  Debounced per path (trailing, `SAVE_NUDGE_DEBOUNCE_MS`) so a burst of
+	 *  deltas from one remote edit collapses to one save call. No-op when
+	 *  `path` has no active viewer — nothing to nudge, and no burst to
+	 *  coalesce (also means a note that closes mid-debounce simply never
+	 *  fires, which is correct: the last-viewer-release flush below already
+	 *  covers that case via `onLastViewerRelease`). Never throws. */
+	requestSaveForBoundPath(path: string): void {
+		if (!this.isBound(path)) return;
+		const existing = this.saveNudgeTimers.get(path);
+		if (existing !== undefined) window.clearTimeout(existing);
+		const timer = window.setTimeout(() => {
+			this.saveNudgeTimers.delete(path);
+			this.doRequestSave(path);
+		}, SAVE_NUDGE_DEBOUNCE_MS);
+		this.saveNudgeTimers.set(path, timer);
+	}
+
+	/** Fix wave 7 (#191 slice): read the live buffer of the editor currently
+	 *  showing `path`, for commitCrdtConvergence's phantom-binding check.
+	 *  Returns null when nothing shows the path (nothing to compare). */
+	boundBufferText(path: string): string | null {
+		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+			const view = leaf.view;
+			if (!(view instanceof MdView)) continue;
+			if (getMarkdownFilePath(view) !== path) continue;
+			return view.getViewData();
+		}
+		return null;
+	}
+
+	private doRequestSave(path: string): void {
+		try {
+			for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+				const view = leaf.view;
+				if (!(view instanceof MdView)) continue;
+				if (getMarkdownFilePath(view) !== path) continue;
+				view.requestSave();
+			}
+		} catch (e) {
+			devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
+		}
 	}
 
 	/** The last viewer of `path` left: persist the current Y.Text to disk, then
@@ -211,6 +272,12 @@ export class CrdtLiveViews {
 			ctrl.release(cm);
 		}
 		this.controllers.clear();
+		// Fix wave 6: cancel any pending save-nudge timers — nothing to save
+		// into once the plugin is tearing down.
+		for (const timer of this.saveNudgeTimers.values()) {
+			window.clearTimeout(timer);
+		}
+		this.saveNudgeTimers.clear();
 		// Detach all frontmatter + reading-view hooks.
 		this.frontmatter.detachAll();
 		this.reading.detachAll();

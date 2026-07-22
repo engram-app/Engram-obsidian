@@ -1,4 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
+import { MarkdownView as MdView } from "obsidian";
 import { CrdtLiveViews, ViewerRefcount } from "../src/crdt/live/live-views";
 
 describe("ViewerRefcount", () => {
@@ -158,5 +159,74 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		rc.release("a.md", "v1");
 		await new Promise((r) => setTimeout(r, 0)); // let the fire-and-forget chain settle
 		expect(releaseErrors.map((e) => e.path)).toEqual(["a.md"]);
+	});
+});
+
+// Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly flush a
+// programmatically-updated bound editor buffer to disk, even though the CRDT
+// doc itself converges correctly (wave 5) — a remote merge can sit unsaved
+// for ~30s. requestSaveForBoundPath is the nudge: the caller (onFlushToDisk's
+// isBound skip, via main.ts's onBoundUpdate) requests Obsidian's own save
+// pipeline for the bound view, debounced so a burst of deltas coalesces.
+describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
+	const DEBOUNCE_WAIT_MS = 350; // > the 300ms production debounce window
+
+	function makeView(path: string): {
+		view: InstanceType<typeof MdView>;
+		requestSave: ReturnType<typeof mock>;
+	} {
+		const view = new MdView();
+		(view as unknown as { file: { path: string } }).file = { path };
+		const requestSave = mock();
+		(view as unknown as { requestSave: () => void }).requestSave = requestSave;
+		return { view, requestSave };
+	}
+
+	function makeLiveViewsWithViews(views: Array<InstanceType<typeof MdView>>) {
+		const app = { workspace: { getLeavesOfType: mock(() => views.map((view) => ({ view }))) } };
+		const manager = { getText: async (id: string) => `text-of-${id}`, closeDoc: () => {} };
+		const lv = new CrdtLiveViews({
+			app: app as never,
+			manager: manager as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => `id:${p}`,
+			flushToDisk: async () => {},
+		});
+		return lv;
+	}
+
+	it("(a) a remote merge into a bound path calls requestSave once, after the debounce", async () => {
+		const { view, requestSave } = makeView("a.md");
+		const lv = makeLiveViewsWithViews([view]);
+		(lv as unknown as { refcount: ViewerRefcount }).refcount.bind("a.md", "v1");
+
+		lv.requestSaveForBoundPath("a.md");
+		expect(requestSave).not.toHaveBeenCalled(); // debounced, not immediate
+
+		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+		expect(requestSave).toHaveBeenCalledTimes(1);
+	});
+
+	it("(b) three rapid merges into the same bound path coalesce to ONE requestSave call", async () => {
+		const { view, requestSave } = makeView("a.md");
+		const lv = makeLiveViewsWithViews([view]);
+		(lv as unknown as { refcount: ViewerRefcount }).refcount.bind("a.md", "v1");
+
+		lv.requestSaveForBoundPath("a.md");
+		lv.requestSaveForBoundPath("a.md");
+		lv.requestSaveForBoundPath("a.md");
+
+		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+		expect(requestSave).toHaveBeenCalledTimes(1);
+	});
+
+	it("(c) an unbound path never calls requestSave", async () => {
+		const { view, requestSave } = makeView("a.md");
+		const lv = makeLiveViewsWithViews([view]);
+		// NOT bound — refcount.bind is never called for "a.md".
+
+		lv.requestSaveForBoundPath("a.md");
+		await new Promise((r) => setTimeout(r, DEBOUNCE_WAIT_MS));
+		expect(requestSave).not.toHaveBeenCalled();
 	});
 });

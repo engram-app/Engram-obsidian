@@ -19,6 +19,7 @@ type WiringSyncEngine = Pick<
 	| "applyPushedNoteUpdate"
 	| "discoverAnnouncedNote"
 	| "applyLiveOpWithSeq"
+	| "commitCrdtConvergence"
 >;
 
 export interface CrdtWiringDeps {
@@ -33,6 +34,16 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
+	/** Fix wave 6: called whenever a remote-merge flush is skipped BECAUSE
+	 *  `path` is bound (i.e. right where the editor binding painted the
+	 *  update instead of a disk write). Headless/unfocused Obsidian (CI)
+	 *  doesn't promptly flush a programmatically-updated editor buffer to
+	 *  disk on its own — this is the nudge: the caller (main.ts, which HAS
+	 *  Obsidian API access — this file deliberately doesn't) requests
+	 *  Obsidian's own save pipeline for the bound view, debounced. Optional;
+	 *  omitted in tests that don't exercise it. Never throws (the caller's
+	 *  contract, not enforced here). */
+	onBoundUpdate?: (path: string) => void;
 	/** True once `noteId`'s crdt_create has been server-acked (its DB row
 	 *  exists) — CrdtManagerOptions.canSendLive. A brand-new note's live edits
 	 *  land in the Y.Doc immediately (never lost) but must NOT stream a
@@ -228,7 +239,13 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				healUnknownNoteId(noteId, content);
 				return;
 			}
-			if (deps.isBound(path)) return; // live editor owns disk
+			if (deps.isBound(path)) {
+				// The editor owns disk — but a remote update just painted into it,
+				// and headless/unfocused Obsidian may not save that buffer for a
+				// long time on its own (fix wave 6). Nudge it.
+				deps.onBoundUpdate?.(path);
+				return;
+			}
 			// Propagate a disk-write failure so applyRemoteUpdate rejects and the
 			// caller leaves crdtHead unadvanced (#235). flushFromCrdt returns false
 			// ONLY on an actual write failure; a skip (gate closed / idempotent) and
@@ -249,6 +266,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
 			);
 		},
+		// Fix wave 1: op-level convergence proof. Fires on every non-empty
+		// inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
+		// is staged for this note_id), so fire-and-forget is safe here.
+		onSynced: (noteId) => void syncEngine.commitCrdtConvergence(noteId),
 	});
 
 	const channel = new CrdtChannel({
@@ -294,17 +315,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// note (no dedicated CRDT room) without ever STEP1-enrolling it. The sync
 	// engine itself guards confirmed/live-bound state and isolates failures.
 	// Wrapped in applyLiveOpWithSeq (Phase D2 gap-heal, Task 3): the apply
-	// ALWAYS runs (every branch), seq only decides whether the catchupSeq
-	// cursor advances or a gap-heal replay additionally fires.
+	// ALWAYS runs (every branch); the per-path seq is stamped ONLY when the
+	// apply reports the op actually landed ("applied"), so a pended/deferred
+	// op can never fence-mask the replay row that carries its content.
 	const onNoteYjsUpdate = (
 		noteId: string,
 		b64: string,
 		head: string,
 		seq?: number | null,
 	): void => {
-		syncEngine.applyLiveOpWithSeq(noteId, seq, () => {
-			void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
-		});
+		void syncEngine.applyLiveOpWithSeq(noteId, seq, () =>
+			syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head),
+		);
 	};
 
 	// Discovery: when another device opens a room (server announces
