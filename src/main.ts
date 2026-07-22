@@ -15,7 +15,7 @@ import {
 	normalizePath,
 	requestUrl,
 } from "obsidian";
-import { EngramApi, withTimeout } from "./api";
+import { EngramApi } from "./api";
 import {
 	ApiKeyAuth,
 	type AuthProvider,
@@ -1352,21 +1352,20 @@ export default class EngramSyncPlugin extends Plugin {
 			const refreshFn: RefreshFn = async (token) => {
 				const base = this.settings.apiUrl.replace(/\/+$/, "");
 				const apiUrl = base.endsWith("/api") ? base : `${base}/api`;
-				// Bounded: getToken() serializes EVERY api call behind this refresh,
-				// so a wedged half-open refresh silences the whole plugin (no HTTP
-				// at all — the test_57 300s fullSync stall signature). A timeout
-				// rejects with no `status`, which OAuthAuth already classifies as
-				// transient (keep token, retry later).
-				const resp = await withTimeout(
-					requestUrl({
-						url: `${apiUrl}/auth/token/refresh`,
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({ refresh_token: token }),
-						throw: false,
-					}),
-					15_000,
-				);
+				// Deliberately UNbounded here: OAuthAuth.doRefresh owns the deadline
+				// (REFRESH_DEADLINE_MS) and needs THIS raw promise to stay alive
+				// past it — a deadline-abandoned refresh may still have rotated the
+				// token server-side, and doRefresh adopts that late success / reuses
+				// the pending request instead of replaying the consumed token
+				// (review MAJOR-1: an inner wrapper here would permanently reject
+				// the promise and force a re-link on every slow rotation).
+				const resp = await requestUrl({
+					url: `${apiUrl}/auth/token/refresh`,
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ refresh_token: token }),
+					throw: false,
+				});
 				if (resp.status < 200 || resp.status >= 300) {
 					// Carry the HTTP status so OAuthAuth can distinguish a definitive
 					// rejection (revoked/expired token → 4xx, clear + re-link) from a

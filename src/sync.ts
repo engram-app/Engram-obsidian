@@ -1655,11 +1655,23 @@ export class SyncEngine {
 		return "healing";
 	}
 
+	/** Re-reads the live map at WRITE time and never lowers the per-path
+	 *  high-water: applyChange reads `stored` before its awaits, and a live op
+	 *  (applyLiveOpWithSeq) can bump the map during them — a bare
+	 *  `seq: change.seq` would clobber that bump back down and re-open the
+	 *  fenced revert window (review MAJOR-2). */
+	private pathSeqHighWater(normalized: string, rowSeq: number | undefined): number | undefined {
+		const hw = Math.max(rowSeq ?? 0, this.syncState.get(normalized)?.seq ?? 0);
+		return hw > 0 ? hw : undefined;
+	}
+
 	/** Trailing-edge throttle for heal-triggered seq replays: the first
 	 *  trigger fires immediately; triggers inside the cooldown coalesce into
 	 *  ONE trailing replay at window end (never dropped — a dropped trailing
-	 *  run could strand a real miss until the next op). */
+	 *  run could strand a real miss until the next op). Guarded against a late
+	 *  channel callback re-arming the timer after destroy() (review MINOR-5). */
 	private scheduleSeqHeal(): void {
+		if (this.engineDestroyed) return;
 		const now = Date.now();
 		const since = now - this.seqHealLastAt;
 		if (since >= SyncEngine.SEQ_HEAL_COOLDOWN_MS) {
@@ -1701,6 +1713,14 @@ export class SyncEngine {
 		// id in the new vault. Living here (not just resetForVaultChange) keeps
 		// BOTH vault-change paths in lockstep, per this method's contract.
 		this.lastRelocationTs.clear();
+		// The heal throttle is per-vault too (review MINOR-3): a trailing
+		// replay armed under the OLD vault must not fire into the new one, and
+		// a stale cooldown stamp must not delay the new vault's first heal.
+		if (this.seqHealTimer !== null) {
+			window.clearTimeout(this.seqHealTimer);
+			this.seqHealTimer = null;
+		}
+		this.seqHealLastAt = 0;
 		await this.saveData({ lastSync: "" });
 	}
 
@@ -3262,6 +3282,7 @@ export class SyncEngine {
 	private seqReplayAgain = false;
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
+	private engineDestroyed = false;
 	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
@@ -4981,6 +5002,9 @@ export class SyncEngine {
 					(stored?.seq !== undefined &&
 						change.seq !== undefined &&
 						change.seq < stored.seq) ||
+					// Strict here as well; the equal-version decision is owned by the
+					// earlier anti-stale guard (`known >= change.version` skip above),
+					// which short-circuits before this block for on-disk files.
 					(stored?.version !== undefined &&
 						change.version !== undefined &&
 						change.version < stored.version);
@@ -5040,7 +5064,7 @@ export class SyncEngine {
 								hash: localHash,
 								serverHash: change.content_hash,
 								version: change.version,
-								seq: change.seq,
+								seq: this.pathSeqHighWater(normalized, change.seq),
 							});
 						} else {
 							// Keep serverHash UNrecorded so the next poll retries — never
@@ -5080,11 +5104,14 @@ export class SyncEngine {
 								`CRDT catch-up: pull backfilling diverged note ${change.path}`,
 							);
 							await this.flushFromCrdt(normalized, content);
+							// Spread the current entry (preserves crdtHead, mirrors the
+							// converged branch above) and never lower the seq high-water.
 							this.syncState.set(normalized, {
+								...(this.syncState.get(normalized) ?? {}),
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
-								seq: change.seq,
+								seq: this.pathSeqHighWater(normalized, change.seq),
 							});
 						}
 					}
@@ -7033,6 +7060,7 @@ export class SyncEngine {
 
 	/** Cancel all pending debounce, cooldown, and health check timers. */
 	destroy(): void {
+		this.engineDestroyed = true;
 		for (const timer of this.debounceTimers.values()) {
 			window.clearTimeout(timer);
 		}

@@ -448,3 +448,69 @@ describe("OAuthAuth self-heal on definitive rejection", () => {
 		expect(auth.getRefreshToken()).toBe("engram_rt_live");
 	});
 });
+
+describe("OAuthAuth late-rotation adoption (deadline-abandoned refresh)", () => {
+	// review MAJOR-1: a deadline-abandoned refresh may still have rotated the
+	// token server-side. The old token is then consumed; replaying it later
+	// 401s definitively and force-re-links a healthy install. doRefresh must
+	// (a) adopt a late success and (b) reuse the pending request on retry
+	// instead of replaying the sent token.
+	const DEADLINE = (OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS;
+
+	it("adopts a rotation that resolves after the deadline", async () => {
+		(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = 20;
+		try {
+			let resolveLate: (v: {
+				access_token: string;
+				refresh_token: string;
+				expires_in: number;
+			}) => void = () => {};
+			const refreshFn = mock(
+				() =>
+					new Promise<{ access_token: string; refresh_token: string; expires_in: number }>(
+						(res) => {
+							resolveLate = res;
+						},
+					),
+			);
+			const rotated = mock(async () => {});
+			const auth = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", refreshFn, rotated);
+
+			await expect(auth.getToken()).rejects.toThrow(/timed out/);
+			// The server committed the rotation; the response arrives late.
+			resolveLate({ access_token: "jwt_late", refresh_token: "engram_rt_late", expires_in: 3600 });
+			await new Promise((r) => setTimeout(r, 5));
+
+			expect(auth.getRefreshToken()).toBe("engram_rt_late");
+			expect(rotated).toHaveBeenCalledTimes(1);
+			// The adopted access token serves the next getToken without a new refresh.
+			refreshFn.mockClear();
+			expect(await auth.getToken()).toBe("jwt_late");
+			expect(refreshFn).not.toHaveBeenCalled();
+		} finally {
+			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = DEADLINE;
+		}
+	});
+
+	it("retry reuses the pending request instead of replaying the sent token", async () => {
+		(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = 20;
+		try {
+			const refreshFn = mock(
+				() =>
+					new Promise<{ access_token: string; refresh_token: string; expires_in: number }>(
+						() => {},
+					),
+			);
+			const auth = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", refreshFn);
+
+			await expect(auth.getToken()).rejects.toThrow(/timed out/);
+			await expect(auth.getToken()).rejects.toThrow(/timed out/);
+
+			// One network attempt total: the second getToken reused the pending raw.
+			expect(refreshFn).toHaveBeenCalledTimes(1);
+			expect(auth.getRefreshToken()).toBe("engram_rt_old");
+		} finally {
+			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = DEADLINE;
+		}
+	});
+});

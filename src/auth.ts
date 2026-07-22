@@ -1,3 +1,4 @@
+import { RequestTimeoutError, withTimeout } from "./api";
 import { rlog } from "./remote-log";
 /**
  * Auth providers for Engram plugin — abstracts API key vs OAuth token management.
@@ -101,6 +102,21 @@ export class OAuthAuth implements AuthProvider {
 	private onTokenRotated?: (tokens: PersistedTokens) => void | Promise<void>;
 	private authenticated = true;
 	private inflightRefresh: Promise<string> | null = null;
+	/** A deadline-abandoned refresh whose underlying request is still pending.
+	 *  Under REFRESH-TOKEN ROTATION an abandoned-but-server-committed refresh
+	 *  consumes the old token: replaying it "transiently" later guarantees a
+	 *  definitive 401 → forced re-link (review MAJOR-1). While this is set,
+	 *  doRefresh REUSES the pending request instead of replaying the token,
+	 *  and a late success is adopted as a normal rotation. */
+	private lateRefresh: {
+		token: string;
+		raw: ReturnType<RefreshFn>;
+	} | null = null;
+
+	/** Deadline for one refresh round-trip. Static + mutable like
+	 *  EXPIRY_BUFFER_MS so tests can shrink it. Lives HERE (not in the host's
+	 *  refreshFn) so the abandoned promise stays reachable for late adoption. */
+	private static REFRESH_DEADLINE_MS = 15_000;
 	// Invoked once when the refresh token is DEFINITIVELY rejected by the server
 	// (revoked / rotated-away / expired → 400/401/403/404), as opposed to a
 	// transient error (network / 5xx / 429). The host clears persisted auth and
@@ -154,6 +170,14 @@ export class OAuthAuth implements AuthProvider {
 		}
 	}
 
+	/** Adopt a successful rotation into memory (in-time or late). */
+	private adoptRotation(result: Awaited<ReturnType<RefreshFn>>): void {
+		this.accessToken = result.access_token;
+		this.refreshToken = result.refresh_token;
+		this.expiresAt = Date.now() + result.expires_in * 1000;
+		this.authenticated = true;
+	}
+
 	private async doRefresh(): Promise<string> {
 		// A cleared token (after a definitive rejection) can never succeed — fail
 		// fast instead of replaying an empty/dead token against the server.
@@ -161,12 +185,16 @@ export class OAuthAuth implements AuthProvider {
 			this.authenticated = false;
 			throw new Error("Not authenticated: refresh token cleared");
 		}
+		const sentToken = this.refreshToken;
+		// Reuse a deadline-abandoned request for the SAME token instead of
+		// replaying it: the server may have already committed that rotation,
+		// and a replay of a consumed token 401s definitively (forced re-link).
+		const raw =
+			this.lateRefresh?.token === sentToken ? this.lateRefresh.raw : this.refreshFn(sentToken);
 		try {
-			const result = await this.refreshFn(this.refreshToken);
-			this.accessToken = result.access_token;
-			this.refreshToken = result.refresh_token;
-			this.expiresAt = Date.now() + result.expires_in * 1000;
-			this.authenticated = true;
+			const result = await withTimeout(raw, OAuthAuth.REFRESH_DEADLINE_MS);
+			this.lateRefresh = null;
+			this.adoptRotation(result);
 			// Await persistence so callers can't act on the new access token
 			// before the rotated refresh token reaches disk.
 			await this.onTokenRotated?.({
@@ -178,8 +206,33 @@ export class OAuthAuth implements AuthProvider {
 				"auth",
 				`OAuth refresh ok — accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`,
 			);
-			return this.accessToken;
+			return result.access_token;
 		} catch (err) {
+			if (err instanceof RequestTimeoutError) {
+				// Deadline lost the race but the request is only ABANDONED, not
+				// cancelled. Keep it reachable: retries reuse it (above), and a
+				// late success is adopted iff no newer rotation superseded it.
+				this.lateRefresh = { token: sentToken, raw };
+				raw.then(
+					async (late) => {
+						if (this.refreshToken !== sentToken) return; // superseded
+						this.lateRefresh = null;
+						this.adoptRotation(late);
+						await this.onTokenRotated?.({
+							refreshToken: late.refresh_token,
+							accessToken: late.access_token,
+							expiresAt: this.expiresAt,
+						});
+						rlog().info(
+							"auth",
+							`OAuth refresh adopted LATE rotation (response arrived after the ${OAuthAuth.REFRESH_DEADLINE_MS}ms deadline)`,
+						);
+					},
+					() => {
+						if (this.lateRefresh?.raw === raw) this.lateRefresh = null;
+					},
+				);
+			}
 			this.authenticated = false;
 			this.accessToken = null;
 			this.expiresAt = 0;
