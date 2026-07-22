@@ -190,7 +190,9 @@ export class OAuthAuth implements AuthProvider {
 		// replaying it: the server may have already committed that rotation,
 		// and a replay of a consumed token 401s definitively (forced re-link).
 		const raw =
-			this.lateRefresh?.token === sentToken ? this.lateRefresh.raw : this.refreshFn(sentToken);
+			this.lateRefresh?.token === sentToken
+				? this.lateRefresh.raw
+				: this.refreshFn(sentToken);
 		try {
 			const result = await withTimeout(raw, OAuthAuth.REFRESH_DEADLINE_MS);
 			this.lateRefresh = null;

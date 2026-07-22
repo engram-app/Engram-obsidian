@@ -467,18 +467,30 @@ describe("OAuthAuth late-rotation adoption (deadline-abandoned refresh)", () => 
 			}) => void = () => {};
 			const refreshFn = mock(
 				() =>
-					new Promise<{ access_token: string; refresh_token: string; expires_in: number }>(
-						(res) => {
-							resolveLate = res;
-						},
-					),
+					new Promise<{
+						access_token: string;
+						refresh_token: string;
+						expires_in: number;
+					}>((res) => {
+						resolveLate = res;
+					}),
 			);
 			const rotated = mock(async () => {});
-			const auth = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", refreshFn, rotated);
+			const auth = new OAuthAuth(
+				"engram_rt_old",
+				"vault-1",
+				"u@test.com",
+				refreshFn,
+				rotated,
+			);
 
 			await expect(auth.getToken()).rejects.toThrow(/timed out/);
 			// The server committed the rotation; the response arrives late.
-			resolveLate({ access_token: "jwt_late", refresh_token: "engram_rt_late", expires_in: 3600 });
+			resolveLate({
+				access_token: "jwt_late",
+				refresh_token: "engram_rt_late",
+				expires_in: 3600,
+			});
 			await new Promise((r) => setTimeout(r, 5));
 
 			expect(auth.getRefreshToken()).toBe("engram_rt_late");
@@ -488,7 +500,8 @@ describe("OAuthAuth late-rotation adoption (deadline-abandoned refresh)", () => 
 			expect(await auth.getToken()).toBe("jwt_late");
 			expect(refreshFn).not.toHaveBeenCalled();
 		} finally {
-			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = DEADLINE;
+			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS =
+				DEADLINE;
 		}
 	});
 
@@ -497,9 +510,11 @@ describe("OAuthAuth late-rotation adoption (deadline-abandoned refresh)", () => 
 		try {
 			const refreshFn = mock(
 				() =>
-					new Promise<{ access_token: string; refresh_token: string; expires_in: number }>(
-						() => {},
-					),
+					new Promise<{
+						access_token: string;
+						refresh_token: string;
+						expires_in: number;
+					}>(() => {}),
 			);
 			const auth = new OAuthAuth("engram_rt_old", "vault-1", "u@test.com", refreshFn);
 
@@ -510,7 +525,8 @@ describe("OAuthAuth late-rotation adoption (deadline-abandoned refresh)", () => 
 			expect(refreshFn).toHaveBeenCalledTimes(1);
 			expect(auth.getRefreshToken()).toBe("engram_rt_old");
 		} finally {
-			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS = DEADLINE;
+			(OAuthAuth as unknown as { REFRESH_DEADLINE_MS: number }).REFRESH_DEADLINE_MS =
+				DEADLINE;
 		}
 	});
 });
