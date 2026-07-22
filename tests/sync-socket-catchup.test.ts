@@ -579,7 +579,7 @@ describe("applyOp", () => {
 // unifying fullSync's pull cursor and the socket replay's catchupSeq onto ONE
 // watermark removed a live-bound note's second delivery chance. catchUp now
 // re-detects a diverged live-bound note from the manifest and re-converges it
-// via the socket-native socketConvergeLiveBound primitive (single-path D3),
+// via the socket-native socketConverge primitive (single-path D3),
 // independent of the seq cursor.
 describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)", () => {
 	function manifestOf(notes: Array<{ id: string; path: string; content_hash: string }>) {
@@ -596,7 +596,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(
 			() => {},
 		);
 
@@ -638,7 +638,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => true);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H2" } });
-		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(
 			() => {},
 		);
 
@@ -653,7 +653,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => false);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(
 			() => {},
 		);
 
@@ -672,7 +672,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		engine.importSyncState({
 			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
 		});
-		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(
 			() => {},
 		);
 
@@ -691,7 +691,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		engine.importSyncState({
 			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
 		});
-		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(
 			() => {},
 		);
 

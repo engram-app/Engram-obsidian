@@ -10,7 +10,7 @@
  * file-open (main.ts) is now a pure local bind with no convergence check.
  *
  * Single-path D3 (socket-native converge, fix wave 1): healNoteOnOpen no
- * longer pulls a REST delta. It fires `socketConvergeLiveBound`, which always
+ * longer pulls a REST delta. It fires `socketConverge`, which always
  * re-fires STEP1 (reset+enroll) on a diverged note — no text-verify skip
  * (text equality doesn't prove the doc holds the server's ops); the room
  * sv-exchange delivers whatever this doc is missing over the socket and
