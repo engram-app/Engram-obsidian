@@ -157,13 +157,8 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		};
 	}
 
-	test("diverged hashes: catch-up converges via the Yjs delta (not the feed snapshot) and serverHash converges", async () => {
-		const { engine, enroll, applyRemoteUpdate, projectedText } = crdtEngine();
-		// The doc converges to exactly what the feed said in this quiescent
-		// (no concurrent live edit) case — the Yjs delta path and the old
-		// snapshot path agree on the outcome here; the D2 regression test below
-		// is where they diverge.
-		projectedText.mockResolvedValue("authoritative body the announce never delivered");
+	test("diverged hashes (cold): stages + fires the socket re-handshake — records only on STEP2 commit (Phase E3)", async () => {
+		const { engine, enroll, reset, applyRemoteUpdate, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -179,24 +174,27 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			content: "authoritative body the announce never delivered",
 			content_hash: "new-hash",
 			version: 2,
+			seq: 7,
 			mtime: 50,
 		} as any);
 
-		// Converges through the Y.Doc: the REST delta is pulled and applied...
-		expect(applyRemoteUpdate).toHaveBeenCalledWith("note-id-1", expect.any(Uint8Array));
-		// ...and the disk write reflects the converged doc's projected text, not
-		// a direct write of the feed's content field.
-		expect(mockApp.vault.modify).toHaveBeenCalledWith(
-			localFile,
-			"authoritative body the announce never delivered",
-		);
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		// A cold (not live-bound) note is NOT enrolled on catch-up: its body
-		// already materialized via the room-free REST pull, and future updates
-		// arrive over the vault-channel fanout — enrolling every pulled note on
-		// connect is the enrollment storm P2 removes. (Live-bound notes still
-		// enroll — see the "diverged + live-bound" test below.)
-		expect(enroll).not.toHaveBeenCalled();
+		// Same stage-then-fire pattern as the live-bound leg: the REST delta
+		// pull is DELETED — the missing ops arrive via the room re-handshake
+		// (STEP2), whose remote-merge listener flushes disk.
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		// Nothing recorded until a real inbound frame proves convergence.
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+
+		// STEP2: the doc now projects the staged row's text — commit records it.
+		projectedText.mockResolvedValue("authoritative body the announce never delivered");
+		await engine.commitCrdtConvergence("note-id-1");
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("new-hash");
+		expect(state?.version).toBe(2);
+		expect(state?.seq).toBe(7);
 	});
 
 	test("D2 regression: a fresher live-merged Y.Doc survives a stale/checkpoint-lagged feed snapshot", async () => {
@@ -209,7 +207,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// straight to disk and reverted FROM_A.
 		const fresherMerged = "base FROM_A FROM_B";
 		const staleSnapshot = "base FROM_B";
-		const { engine, applyRemoteUpdate, projectedText } = crdtEngine();
+		const { engine, projectedText } = crdtEngine();
 		projectedText.mockResolvedValue(fresherMerged);
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -231,15 +229,16 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// The Yjs converge core ran (proves the fix's code path executed, not
-		// the old direct-snapshot write, which never calls applyRemoteUpdate).
-		expect(applyRemoteUpdate).toHaveBeenCalledWith("note-id-1", expect.any(Uint8Array));
-		// The disk must never be overwritten with the stale snapshot — FROM_A
-		// must survive. (flushFromCrdt's own idempotency guard means disk,
-		// already holding the fresher content, isn't rewritten at all here —
-		// the assertion that matters is that the stale snapshot never lands.)
+		// The stale snapshot can never land: the socket path writes disk only
+		// from the Y.Doc's projection (via the remote-merge listener), never
+		// from the feed's content field.
 		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, staleSnapshot);
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+		// And the content-verified commit DEFERS: the doc projects the fresher
+		// merge, not the checkpoint-lagged row, so this row never records —
+		// a later row carrying the true merged state commits instead
+		// (fix wave 1 (f): a fresh stage overwrites the old one).
+		await engine.commitCrdtConvergence("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
 	test("no note_id (legacy /notes/changes path): falls back to the content-snapshot backfill unchanged", async () => {
@@ -274,15 +273,50 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["legacy.md"]?.serverHash).toBe("new-hash");
 	});
 
-	test("unbound catch-up: REST converge FAILURE never fakes convergence — serverHash stays unrecorded so every poll retries", async () => {
-		// Equivalent of the live-bound "REST catch-up FAILURE" test below, for
-		// the NOT-live-bound (`else if (noteId)`) leg — restConvergeAndFlush's
-		// retry contract must hold the same way: a failed REST pull never
-		// records convergence for data that never arrived.
-		const { engine, applyRemoteUpdate } = crdtEngine();
-		((mockApi as any).getUpdates as ReturnType<typeof mock>).mockRejectedValue(
-			new Error("HTTP 500"),
-		);
+	test("NO recorded CAS base + disk already holds the row bytes: quiet record, NO re-handshake (storm class)", async () => {
+		// Post-wipe re-adoption / account swap: every row's per-user HMAC hash
+		// reads diverged, but disk content is identical. Firing a re-handshake
+		// per such row re-created the connect storm (hundreds of enrolls →
+		// server rate limit → real heals starved; CI run 29942250643). With no
+		// serverHash ever recorded there is no convergence history to mask —
+		// record the bookkeeping quietly.
+		const { engine, enroll, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("identical body");
+		// Baseline hash exists (file tracked) but NO serverHash was ever recorded.
+		engine.importSyncState({ "owned.md": { hash: fnv1a("identical body") } });
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "identical body",
+			content_hash: "row-hash",
+			version: 4,
+			seq: 11,
+			mtime: 50,
+		} as any);
+
+		expect(enroll).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("row-hash");
+		// seq deliberately NOT stamped: if this row was a checkpoint-lagged
+		// projection, the E1 validator re-serves it next pass and the
+		// identical/diverged branches consume it properly.
+		expect(state?.seq).toBeUndefined();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("cold diverged leg issues ZERO REST calls — no getUpdates, no fetch (Phase E3 purge regression)", async () => {
+		// The REST delta pull (restConvergeAndFlush/restConvergeCore) is
+		// DELETED: a cold diverged note stages + fires the socket re-handshake
+		// and nothing else. A failure to deliver simply leaves the stage
+		// uncommitted — the retry contract moved from "failed REST pull records
+		// nothing" to "unhealed stage records nothing" (commit is
+		// content-verified; the next replay re-pokes).
+		const { engine, enroll, applyRemoteUpdate } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -301,38 +335,56 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// restConvergeCore's getUpdates() throws before ever reaching
-		// applyRemoteUpdate — nothing was applied, nothing was flushed.
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
+		expect((mockApi.getNote as any).mock.calls.length).toBe(0);
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("unbound catch-up: a delta that leaves a pending gap does NOT record convergence", async () => {
-		// Equivalent of the live-bound "pending gap" test below, for the
-		// NOT-live-bound leg.
-		const { engine, hasPendingGap } = crdtEngine();
-		hasPendingGap.mockResolvedValue(true);
+	test("a row carrying EXACTLY the last-synced baseline (echo / checkpoint-lagged): NO conflict, NO record — socket converge (test_82 class)", async () => {
+		// Two indistinguishable shapes: our own create/edit row echoing back
+		// while the next local edit is in flight, OR a checkpoint-lagged row
+		// whose content projection trails fresh tail ops (test_34 class). The
+		// content is not evidence of a remote change: conflicting on it
+		// stalled the real push behind a 20s auto-resolve (round 2, CI
+		// 29944157587); silently recording it consumed a lagged row and left
+		// the device deaf on stale bytes (round 4, CI 29945930489). The only
+		// correct move is the room re-handshake — Yjs deltas are right in
+		// both cases.
+		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Disk moved AHEAD of the baseline (pending local edit)…
+		mockApp.vault.cachedRead.mockResolvedValue("baseline body PLUS local edit");
 		engine.importSyncState({
-			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
+			"owned.md": { hash: fnv1a("baseline body"), version: 1, serverHash: "old-hash" },
 		});
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
 
+		// …and the row carries exactly the baseline content.
 		await engine.applyChange({
 			path: "owned.md",
 			action: "upsert",
-			content: "authoritative body the announce never delivered",
+			content: "baseline body",
 			content_hash: "new-hash",
 			version: 2,
+			seq: 9,
 			mtime: 50,
 		} as any);
 
-		// The delta was applied (Yjs merge always integrates what it received)
-		// but the doc is still gapped, so restConvergeCore returns null and
-		// restConvergeAndFlush must not record convergence.
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		expect(onConflict).not.toHaveBeenCalled();
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect(mockApp.vault.modify).not.toHaveBeenCalled(); // disk untouched
+		// NOTHING recorded until op-level proof (best-effort content:null
+		// stage — commits on the next inbound frame).
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("old-hash");
+		expect(state?.seq).toBeUndefined();
 	});
 
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
@@ -367,8 +419,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("local edited to EXACTLY the remote content: no conflict — converges quietly", async () => {
-		const { engine } = crdtEngine({ conflictResolution: "modal" });
+	test("local edited to EXACTLY the remote content: no conflict — stage-then-fire, commit records on proof", async () => {
+		// Identical text is NOT op-level proof (two independently-typed identical
+		// bodies are a disjoint lineage — the #234 doubling / #282 fence class),
+		// so even this case routes through the socket re-handshake; the
+		// content-verified commit lands the bookkeeping once real ops arrive.
+		const { engine, enroll, projectedText } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -389,6 +445,11 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		} as any);
 
 		expect(onConflict).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Nothing recorded until the frame proves it.
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		projectedText.mockResolvedValue("same on both");
+		await engine.commitCrdtConvergence("note-id-1");
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 

@@ -12,7 +12,7 @@
  *
  * The WS event carries the REST-level content_hash + version: record them.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -219,18 +219,17 @@ describe("C1 branch enrolls a CRDT room ONLY for a live-bound note", () => {
 	});
 });
 
-describe("C1 branch materializes a first-delivery idle note room-free", () => {
+describe("C1 branch routes a first-delivery idle note to the op-log (Phase E3)", () => {
 	// A never-seen IDLE note materialized only via the CRDT room needs its doc
 	// SYNCED to write (materializeRelocated bails otherwise), and an idle note is
-	// deliberately NOT enrolled (fan-out isolation), so it would appear only via
-	// the slower pull backstop — and an EMPTY note (no CRDT update to flush) never
-	// materializes at all (e2e test_27). The broadcast is hash-only, so fetch the
-	// body once and write it room-free; CRDT owns subsequent live edits.
+	// deliberately NOT enrolled (fan-out isolation). The broadcast is hash-only
+	// and getNote-for-sync is deleted (Phase E3): the event routes to the op-log
+	// seq-replay, whose rows carry the real content.
 	function fakeEnrollment() {
 		return { enroll: mock((_id: string) => {}), reset: mock((_id: string) => {}) };
 	}
 
-	test("idle upsert for a note with no local file fetches the body and creates the file", async () => {
+	test("idle hash-only upsert with no local file routes to the seq-replay — never fetches", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
@@ -239,9 +238,11 @@ describe("C1 branch materializes a first-delivery idle note room-free", () => {
 		engine.setNoteIdMap(new NoteIdMap());
 		engine.setCrdtEnrollment(fakeEnrollment() as any);
 		engine.setLiveBoundCheck(() => false);
-		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
-			path: "new.md",
-			content: "",
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
 		});
 
 		await engine.handleStreamEvent({
@@ -252,9 +253,9 @@ describe("C1 branch materializes a first-delivery idle note room-free", () => {
 			version: 1,
 		} as any);
 
-		// Empty first delivery still materializes now — not deferred to the pull.
-		expect(mockApi.getNote).toHaveBeenCalledWith("new.md");
-		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(replay).toHaveBeenCalled();
 	});
 
 	test("an idle note ALREADY on disk is not re-fetched (the backstop path owns it)", async () => {

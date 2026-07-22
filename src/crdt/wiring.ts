@@ -315,17 +315,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// note (no dedicated CRDT room) without ever STEP1-enrolling it. The sync
 	// engine itself guards confirmed/live-bound state and isolates failures.
 	// Wrapped in applyLiveOpWithSeq (Phase D2 gap-heal, Task 3): the apply
-	// ALWAYS runs (every branch), seq only decides whether the catchupSeq
-	// cursor advances or a gap-heal replay additionally fires.
+	// ALWAYS runs (every branch); the per-path seq is stamped ONLY when the
+	// apply reports the op actually landed ("applied"), so a pended/deferred
+	// op can never fence-mask the replay row that carries its content.
 	const onNoteYjsUpdate = (
 		noteId: string,
 		b64: string,
 		head: string,
 		seq?: number | null,
 	): void => {
-		syncEngine.applyLiveOpWithSeq(noteId, seq, () => {
-			void syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
-		});
+		void syncEngine.applyLiveOpWithSeq(noteId, seq, () =>
+			syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head),
+		);
 	};
 
 	// Discovery: when another device opens a room (server announces
