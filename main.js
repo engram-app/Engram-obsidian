@@ -20586,13 +20586,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), this.socketConverge(normalized, noteId));
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
-            if (stored !== void 0 && stored.hash !== void 0 && content !== void 0 && fnv1a(content) === stored.hash)
-              return this.syncState.set(normalized, {
-                ...stored,
+            if (noteId && stored !== void 0 && stored.hash !== void 0 && content !== void 0 && fnv1a(content) === stored.hash && // The wipe-class quiet-record below takes precedence: no
+            // CAS base ever recorded AND disk already equals the row
+            // bytes — a re-handshake per such row is the storm.
+            !(stored.serverHash === void 0 && localNow === content))
+              return rlog().info(
+                "pull",
+                `CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`
+              ), this.pendingConvergence.set(noteId, {
+                path: normalized,
                 serverHash: change.content_hash,
+                content: null,
                 version: change.version,
                 seq: change.seq
-              }), !1;
+              }), this.socketConverge(normalized, noteId), !1;
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
               "pull",
               `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
@@ -20600,8 +20607,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               ...(_s = this.syncState.get(normalized)) != null ? _s : {},
               hash: fnv1a(content),
               version: change.version,
-              serverHash: change.content_hash,
-              seq: change.seq
+              serverHash: change.content_hash
             }) : noteId ? (rlog().warn(
               "pull",
               `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`

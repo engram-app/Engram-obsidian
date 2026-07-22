@@ -5285,28 +5285,44 @@ export class SyncEngine {
 						const localNow = localFile
 							? await this.app.vault.cachedRead(localFile)
 							: null;
-						// PURE LOCAL-AHEAD, not a conflict: the row's content hashes
-						// to exactly the last-synced BASELINE — the server never
-						// moved beyond what this device already synced; only LOCAL
-						// moved (a pending push). This is our OWN create/edit row
-						// echoing back through the op-log while the next edit is in
-						// flight (e2e test_82: the spurious self-conflict's 20s
-						// auto-resolve delayed the real push past the assert
-						// window). Record the CAS base quietly (we provably hold
-						// that content — it IS the baseline) and consume the row;
-						// the pending local push proceeds normally.
+						// Row content == the last-synced BASELINE while its hash
+						// diverges: the content is NOT evidence of a remote change.
+						// Two indistinguishable cases share this shape — (a) our OWN
+						// create/edit row echoing back while the next local edit is
+						// in flight, and (b) a checkpoint-LAGGED row whose content
+						// projection trails fresh tail ops the hash already reflects
+						// (the test_34 meta-projection class; e2e test_82 round 4:
+						// B's resumed replay consumed exactly such a row and went
+						// deaf on the stale bytes). NEVER conflict on it (round 2's
+						// spurious self-conflict + 20s auto-resolve stalled the real
+						// push), NEVER record it (round 4's silent consume) —
+						// converge via the room: Yjs deltas are correct in both
+						// cases (a no-op round-trip for the pure echo). content:
+						// null — the doc may rightly converge NEWER than this row,
+						// so the commit is the best-effort next-frame kind.
 						if (
+							noteId &&
 							stored !== undefined &&
 							stored.hash !== undefined &&
 							content !== undefined &&
-							fnv1a(content) === stored.hash
+							fnv1a(content) === stored.hash &&
+							// The wipe-class quiet-record below takes precedence: no
+							// CAS base ever recorded AND disk already equals the row
+							// bytes — a re-handshake per such row is the storm.
+							!(stored.serverHash === undefined && localNow === content)
 						) {
-							this.syncState.set(normalized, {
-								...stored,
+							rlog().info(
+								"pull",
+								`CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`,
+							);
+							this.pendingConvergence.set(noteId, {
+								path: normalized,
 								serverHash: change.content_hash,
+								content: null,
 								version: change.version,
 								seq: change.seq,
 							});
+							this.socketConverge(normalized, noteId);
 							return false;
 						}
 						const localDiverged =
@@ -5337,12 +5353,17 @@ export class SyncEngine {
 							// mass divergence (an account swap re-keys every row's
 							// per-user HMAC hash → hundreds of enrolls → server rate
 							// limit → real heals starved; CI run 29942250643).
+							// Deliberately NO seq stamp: if this row was itself a
+							// checkpoint-lagged projection (fresh hash, stale bytes
+							// that happen to match disk), the E1 validator's
+							// consumed-but-unrecorded net re-serves it next pass —
+							// by then the projection caught up and the identical/
+							// diverged branches consume it properly.
 							this.syncState.set(normalized, {
 								...(this.syncState.get(normalized) ?? {}),
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
-								seq: change.seq,
 							});
 						} else if (noteId) {
 							// CRDT-enrolled cold note: SAME stage-then-fire pattern as

@@ -302,7 +302,10 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(reset).not.toHaveBeenCalled();
 		const state = engine.exportSyncState()["owned.md"];
 		expect(state?.serverHash).toBe("row-hash");
-		expect(state?.seq).toBe(11);
+		// seq deliberately NOT stamped: if this row was a checkpoint-lagged
+		// projection, the E1 validator re-serves it next pass and the
+		// identical/diverged branches consume it properly.
+		expect(state?.seq).toBeUndefined();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 	});
 
@@ -340,14 +343,17 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("a row carrying EXACTLY the last-synced baseline while local edited ahead: NO conflict, CAS base recorded quietly (test_82 class)", async () => {
-		// A's own create/edit row echoes back through the op-log while the NEXT
-		// local edit is in flight. The row content hashes to the stored
-		// baseline — the server never moved beyond what this device synced, so
-		// this is a pending local push, not a conflict. The spurious
-		// self-conflict's auto-resolve delay (20s) previously stalled the real
-		// push past e2e test_82's assert window (CI run 29944157587).
-		const { engine, enroll } = crdtEngine({ conflictResolution: "modal" });
+	test("a row carrying EXACTLY the last-synced baseline (echo / checkpoint-lagged): NO conflict, NO record — socket converge (test_82 class)", async () => {
+		// Two indistinguishable shapes: our own create/edit row echoing back
+		// while the next local edit is in flight, OR a checkpoint-lagged row
+		// whose content projection trails fresh tail ops (test_34 class). The
+		// content is not evidence of a remote change: conflicting on it
+		// stalled the real push behind a 20s auto-resolve (round 2, CI
+		// 29944157587); silently recording it consumed a lagged row and left
+		// the device deaf on stale bytes (round 4, CI 29945930489). The only
+		// correct move is the room re-handshake — Yjs deltas are right in
+		// both cases.
+		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -359,7 +365,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		const onConflict = mock().mockResolvedValue({ choice: "skip" });
 		engine.onConflict = onConflict;
 
-		// …and the row carries exactly the baseline content (our own echo).
+		// …and the row carries exactly the baseline content.
 		await engine.applyChange({
 			path: "owned.md",
 			action: "upsert",
@@ -371,12 +377,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		} as any);
 
 		expect(onConflict).not.toHaveBeenCalled();
-		expect(enroll).not.toHaveBeenCalled();
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
 		expect(mockApp.vault.modify).not.toHaveBeenCalled(); // disk untouched
+		// NOTHING recorded until op-level proof (best-effort content:null
+		// stage — commits on the next inbound frame).
 		const state = engine.exportSyncState()["owned.md"];
-		expect(state?.serverHash).toBe("new-hash"); // CAS base recorded
-		expect(state?.seq).toBe(9); // row consumed
-		expect(state?.hash).toBe(fnv1a("baseline body")); // baseline hash preserved
+		expect(state?.serverHash).toBe("old-hash");
+		expect(state?.seq).toBeUndefined();
 	});
 
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
