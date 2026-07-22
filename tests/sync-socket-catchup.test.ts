@@ -612,7 +612,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
 	});
 
-	test("fix wave 1 (e): stages the manifest's content_hash and commits it once a real STEP2/update lands", async () => {
+	test("fix wave 1 (e) / fix wave 5 (3): stages the manifest's content_hash (content:null — hash-only, uncomputable client-side) and commits UNVERIFIED on the next real STEP2/update, preserving the pre-wave-5 best-effort manifest-heal behavior", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
@@ -625,7 +625,10 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
 
 		// Simulates CrdtManager's onSynced firing after a real inbound frame
-		// applies non-empty.
+		// applies non-empty. content:null means commitCrdtConvergence has no
+		// plaintext to content-verify against — it commits unverified, exactly
+		// like before fix wave 5 (the manifest heal's recording stays
+		// best-effort).
 		await engine.commitCrdtConvergence("id-a");
 
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");

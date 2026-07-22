@@ -423,7 +423,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("fix wave 1 (b): STEP2 commit records the staged serverHash/version/seq and clears bookkeeping", async () => {
-		const { engine } = crdtEngine();
+		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -445,8 +445,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// Nothing recorded yet — the diverged leg only staged it.
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 
-		// Simulates CrdtManager firing onSynced after a real inbound frame
-		// applies non-empty (see manager.ts markSynced / wiring.ts onSynced).
+		// Fix wave 5: the commit is content-verified — the doc must actually
+		// project the staged row's text before commitCrdtConvergence records
+		// anything. Simulates CrdtManager firing onSynced after the real
+		// inbound frame (the staged row's own ops) applies non-empty (see
+		// manager.ts markSynced / wiring.ts onSynced).
+		projectedText.mockResolvedValue("diverged body");
 		await engine.commitCrdtConvergence("note-id-1");
 
 		const state = engine.exportSyncState()["owned.md"];
@@ -470,6 +474,69 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		});
 
 		await expect(engine.commitCrdtConvergence("never-staged-id")).resolves.toBeUndefined();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("fix wave 5 defect 2 (2): a mismatched projectedText defers the commit — stage retained; a later match commits it", async () => {
+		const { engine, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "the real edit",
+			content_hash: "new-hash",
+			version: 2,
+			seq: 10,
+			mtime: 50,
+		} as any);
+
+		// An UNRELATED inbound frame fires onSynced before the staged row's own
+		// ops land (CI run 29920053637: committed 1ms after the re-handshake
+		// fired) — the doc doesn't project the staged text yet.
+		projectedText.mockResolvedValue("some other concurrent doc state");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		// Deferred — nothing recorded, the stage is retained.
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+
+		// The staged row's own ops arrive — the doc now projects the staged
+		// text. The next onSynced fire (this commit call) records it.
+		projectedText.mockResolvedValue("the real edit");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+	});
+
+	test("fix wave 5 defect 2 (4): projectedText throwing at commit time defers — never commits on error", async () => {
+		const { engine, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "the real edit",
+			content_hash: "new-hash",
+			version: 2,
+			seq: 10,
+			mtime: 50,
+		} as any);
+
+		projectedText.mockRejectedValue(new Error("IDB dead"));
+		await expect(engine.commitCrdtConvergence("note-id-1")).resolves.toBeUndefined();
+
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
@@ -714,6 +781,36 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
+	test("fix wave 5 defect 1: a seq-bearing row with NO stored.seq is NOT stale, even at equal version (CI run 29920053637: `stale row (seq 33/- v1/1)`)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		// stored carries NO seq (this device never recorded one for this path
+		// yet) but DOES carry version:1 — the wave-3 fence's old condition
+		// ("both sides carry seq") fell back to version equality here and
+		// wrongly judged the row stale. With no stored.seq there is nothing to
+		// be behind of, so a seq-bearing row must never fall back to version.
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "the real edit",
+			content_hash: "new-hash",
+			version: 1, // equal to stored — would mask under the version fallback
+			seq: 33,
+			mtime: 50,
+		} as any);
+
+		// The row carries seq, so it's judged by seq alone (no stored.seq to
+		// compare against) — NOT stale, the diverged leg must run.
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+	});
+
 	test("fix wave 4 (a): CI scenario end-to-end — mapped CRDT note, version-equal seq-ahead row reaches the diverged leg WITHOUT forceOverwrite", async () => {
 		const { engine, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
@@ -794,7 +891,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("fix wave 1 (f): a fresh content_hash overwrites the staged entry — commit lands the LATEST, not the first", async () => {
-		const { engine } = crdtEngine();
+		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -815,6 +912,9 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// behind it.
 		await engine.applyChange({ ...c1, content_hash: "h2", version: 3 });
 
+		// Fix wave 5: content-verify against the LATEST staged content ("a" —
+		// unchanged by the second applyChange call above).
+		projectedText.mockResolvedValue("a");
 		await engine.commitCrdtConvergence("note-id-1");
 
 		// h1 must never land — only the latest staged value commits.
@@ -847,7 +947,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("STEP2 commit with no prior baseline records the REAL local hash, not a poisoning 0", async () => {
-		const { engine } = crdtEngine();
+		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -864,6 +964,8 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			version: 2,
 			mtime: 1,
 		} as any);
+		// Fix wave 5: content-verify against the staged row's own text ("x").
+		projectedText.mockResolvedValue("x");
 		await engine.commitCrdtConvergence("note-id-1");
 
 		// A 0 sentinel here would later read as `fnv1a(local) !== 0` = local
@@ -874,7 +976,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("no spurious conflict: a VIEWED-then-cold note with the real hash recorded does NOT hit the conflict flow (#2 outcome)", async () => {
-		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, projectedText } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -896,6 +998,8 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 1,
 		} as any;
 		await engine.applyChange(c1);
+		// Fix wave 5: content-verify against the staged row's own text ("x").
+		projectedText.mockResolvedValue("x");
 		await engine.commitCrdtConvergence("note-id-1");
 		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(fnv1a("viewed content"));
 

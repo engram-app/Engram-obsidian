@@ -673,10 +673,24 @@ export class SyncEngine {
 	 *  fresh content_hash overwrites any prior stage (new episode); nothing
 	 *  else prunes it — `commitCrdtConvergence` re-resolves the current path
 	 *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
-	 *  never write syncState at a dead path. */
+	 *  never write syncState at a dead path.
+	 *
+	 *  Fix wave 5: `content` is the staged row's own plaintext, so
+	 *  `commitCrdtConvergence` can CONTENT-VERIFY the commit instead of
+	 *  trusting that the next `onSynced` fire is FOR this row — an unrelated
+	 *  inbound frame (a different concurrent edit on the same doc) could
+	 *  otherwise commit the stage a millisecond after it was staged, before
+	 *  the staged row's own ops ever arrived (CI run 29920053637: committed
+	 *  1ms after the re-handshake fired, fence-blinding every later row —
+	 *  deaf until teardown). The diverged live-bound leg has the row's
+	 *  `content` in scope and stages it; `healDivergedLiveBoundNotes` (the
+	 *  manifest heal) has no plaintext — only a keyed HMAC hash it cannot
+	 *  compute client-side — so it stages `content: null`, which keeps the
+	 *  pre-wave-5 best-effort behavior (commit on the next non-empty frame,
+	 *  unverified). */
 	private pendingConvergence: Map<
 		string,
-		{ path: string; serverHash: string; version?: number; seq?: number }
+		{ path: string; serverHash: string; content: string | null; version?: number; seq?: number }
 	> = new Map();
 
 	/** Fix wave 1: per-note_id cooldown for `socketConvergeLiveBound`'s STEP1
@@ -3775,16 +3789,51 @@ export class SyncEngine {
 	 *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
 	 *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
 	 *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
-	 *  doc's text non-empty — real ops landed, not a guess. Idempotent and
-	 *  cheap when nothing is staged (steady-state live traffic fires this on
-	 *  every frame). Re-resolves the CURRENT path via `noteIdMap` rather than
-	 *  trusting the path captured at stage time, so a rename (path moved) or
-	 *  delete (id unmapped) between staging and commit can't write syncState
-	 *  at a stale/dead path — no separate teardown hook needed. Never throws
-	 *  into the CRDT manager's synchronous callback. */
+	 *  doc's text non-empty — real ops landed, not a guess.
+	 *
+	 *  Fix wave 5: "an inbound frame landed" is necessary but NOT sufficient
+	 *  proof the STAGED row's ops are the ones that landed — `onSynced` fires
+	 *  on every non-empty frame, including an unrelated concurrent edit on
+	 *  the same doc, which could commit a stage a millisecond after staging,
+	 *  before the staged row's own ops ever arrived (CI run 29920053637).
+	 *  When the stage carries plaintext (`content !== null`), commit ONLY if
+	 *  the doc's projection now strictly equals it — the ops that produced a
+	 *  match came from the server room round-trip, so post-handshake
+	 *  text-equality IS sound proof here (unlike the deleted verify-first
+	 *  skip, which compared BEFORE any handshake ever fired). On a mismatch
+	 *  (or a `projectedText` throw — treated as mismatch, never commit on
+	 *  error) the stage is left in place; the next inbound frame re-runs this
+	 *  check, so the real edit's arrival commits it. A `content: null` stage
+	 *  (manifest heal — hash-only, keyed HMAC, uncomputable client-side)
+	 *  keeps the pre-wave-5 best-effort behavior: commit unverified on the
+	 *  next non-empty frame.
+	 *
+	 *  Idempotent and cheap when nothing is staged (steady-state live traffic
+	 *  fires this on every frame). Re-resolves the CURRENT path via
+	 *  `noteIdMap` rather than trusting the path captured at stage time, so a
+	 *  rename (path moved) or delete (id unmapped) between staging and commit
+	 *  can't write syncState at a stale/dead path — no separate teardown hook
+	 *  needed. Never throws into the CRDT manager's synchronous callback. */
 	async commitCrdtConvergence(noteId: string): Promise<void> {
 		const staged = this.pendingConvergence.get(noteId);
 		if (!staged) return;
+		if (staged.content !== null) {
+			let matches = false;
+			if (this.crdt) {
+				try {
+					matches = (await this.crdt.projectedText(noteId)) === staged.content;
+				} catch (e) {
+					devLog().log(
+						"crdt",
+						`socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
+					);
+				}
+			}
+			if (!matches) {
+				devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
+				return; // leave staged — the next inbound frame re-runs this check
+			}
+		}
 		this.pendingConvergence.delete(noteId);
 		this.crdtRehandshakeAttempts.delete(noteId);
 		const path = this.noteIdMap?.pathForId(noteId);
@@ -4897,7 +4946,15 @@ export class SyncEngine {
 
 			try {
 				if (entry.content_hash) {
-					this.pendingConvergence.set(noteId, { path, serverHash: entry.content_hash });
+					// content: null — the manifest carries a hash only (keyed HMAC,
+					// uncomputable client-side), so this stage cannot be
+					// content-verified; commitCrdtConvergence keeps the pre-wave-5
+					// best-effort behavior for it (commit on the next non-empty frame).
+					this.pendingConvergence.set(noteId, {
+						path,
+						serverHash: entry.content_hash,
+						content: null,
+					});
 				}
 				this.socketConvergeLiveBound(path, noteId);
 			} catch (e) {
@@ -5160,22 +5217,25 @@ export class SyncEngine {
 				// nothing is recorded, so a genuinely newer row still converges on
 				// a later pass.
 				//
-				// seq is AUTHORITATIVE when both sides carry it (2026-07-22 D3 gate
-				// forensics, CI run 29917773065; issue #282's family): seq is the
-				// vault op-log position and strictly increases per materialized
-				// change, so it alone decides. version is only the FALLBACK when
-				// seq is unavailable on either side — version is checkpoint-lagged
-				// for CRDT notes (advances on checkpoint/materialization, not every
-				// live delta — see restConvergeCore's docstring), so an
-				// EQUAL-version row can legitimately carry content this device
-				// never saw. The old OR-of-both-checks let a stale-by-version-alone
-				// verdict mask a genuinely newer seq, fence-skipping the real edit
-				// (the deaf-note e2e gate flake: 2x "stale row" skips, the note
-				// converged only at teardown). The equal-SEQ case is unchanged
-				// (still <=, still history) — PR #280's scope, not touched here.
+				// seq is AUTHORITATIVE whenever the ROW carries it (2026-07-22 D3
+				// gate forensics, CI run 29917773065 then 29920053637; issue #282's
+				// family): seq is the vault op-log position and strictly increases
+				// per materialized change, so a seq-bearing row is judged by seq
+				// ALONE — never falls back to version, even when this path has no
+				// recorded stored.seq yet. With no stored.seq there is nothing to be
+				// behind of, so the row is NOT stale (fixes CI run 29920053637: a
+				// seq-bearing row was skipped as `stale row (seq 33/- v1/1)` because
+				// stored.seq was undefined and the OLD condition — "both sides carry
+				// seq" — fell back to version equality). version is the fallback
+				// ONLY for a seq-LESS row (legacy /notes/changes shape) — version is
+				// checkpoint-lagged for CRDT notes (advances on checkpoint/
+				// materialization, not every live delta — see restConvergeCore's
+				// docstring), so an EQUAL-version row can legitimately carry content
+				// this device never saw. The equal-SEQ case is unchanged (still <=,
+				// still history) — PR #280's scope, not touched here.
 				const staleRow =
-					stored?.seq !== undefined && change.seq !== undefined
-						? change.seq <= stored.seq
+					change.seq !== undefined
+						? stored?.seq !== undefined && change.seq <= stored.seq
 						: stored?.version !== undefined &&
 							change.version !== undefined &&
 							change.version <= stored.version;
@@ -5214,9 +5274,13 @@ export class SyncEngine {
 						if (noteId) {
 							// A fresh content_hash overwrites any prior stage — a new
 							// episode, never a stale commit of superseded server content.
+							// content: the row's own plaintext (fix wave 5) — lets
+							// commitCrdtConvergence content-verify the commit instead of
+							// trusting that the next onSynced fire is FOR this row.
 							this.pendingConvergence.set(noteId, {
 								path: normalized,
 								serverHash: change.content_hash,
+								content,
 								version: change.version,
 								seq: change.seq,
 							});
