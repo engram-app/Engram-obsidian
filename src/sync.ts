@@ -1650,8 +1650,12 @@ export class SyncEngine {
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
 			return "applied";
 		}
-		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
-		this.scheduleSeqHeal();
+		// Detection is NOT logged per-op: the cursor only advances via replay,
+		// so under active editing every fresh-seq op detects "behind" — 1200+
+		// rlog POSTs per CI run, pure load on the delivery path being timed.
+		// The FIRE sites in scheduleSeqHeal log (with this op's note id), which
+		// is what the e2e log-oracle asserts.
+		this.scheduleSeqHeal(noteId, seq as number);
 		return "healing";
 	}
 
@@ -1670,12 +1674,13 @@ export class SyncEngine {
 	 *  ONE trailing replay at window end (never dropped — a dropped trailing
 	 *  run could strand a real miss until the next op). Guarded against a late
 	 *  channel callback re-arming the timer after destroy() (review MINOR-5). */
-	private scheduleSeqHeal(): void {
+	private scheduleSeqHeal(noteId: string, seq: number): void {
 		if (this.engineDestroyed) return;
 		const now = Date.now();
 		const since = now - this.seqHealLastAt;
 		if (since >= SyncEngine.SEQ_HEAL_COOLDOWN_MS) {
 			this.seqHealLastAt = now;
+			rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
 			void this.catchupViaSeqReplay();
 			return;
 		}
@@ -1683,7 +1688,10 @@ export class SyncEngine {
 		this.seqHealTimer = window.setTimeout(() => {
 			this.seqHealTimer = null;
 			this.seqHealLastAt = Date.now();
-			rlog().info("crdt", "gap-heal replay (trailing, throttled)");
+			rlog().info(
+				"crdt",
+				`gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq} (trailing)`,
+			);
 			void this.catchupViaSeqReplay();
 		}, SyncEngine.SEQ_HEAL_COOLDOWN_MS - since);
 	}
@@ -3283,7 +3291,14 @@ export class SyncEngine {
 	private seqHealLastAt = 0;
 	private seqHealTimer: number | null = null;
 	private engineDestroyed = false;
-	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
+	/** 20s, raised from 4s (post-merge CI evidence): the cursor only advances
+	 *  via replay, so under ACTIVE editing every fresh-seq op is a "behind"
+	 *  detection and the window bounds replay rate — at 4s the replays' REST
+	 *  paging measurably loaded the delivery path the e2e suite times (main
+	 *  stayed ~50-67% red post-merge). A true missed broadcast still heals
+	 *  within one window; before gap-heal existed it waited for the next
+	 *  checkpoint/reconnect or forever. */
+	private static readonly SEQ_HEAL_COOLDOWN_MS = 20_000;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
 	 *  re-run) plus the sets of server note-ids and attachment paths seen
