@@ -339,8 +339,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("local edited to EXACTLY the remote content: no conflict — converges quietly", async () => {
-		const { engine } = crdtEngine({ conflictResolution: "modal" });
+	test("local edited to EXACTLY the remote content: no conflict — stage-then-fire, commit records on proof", async () => {
+		// Identical text is NOT op-level proof (two independently-typed identical
+		// bodies are a disjoint lineage — the #234 doubling / #282 fence class),
+		// so even this case routes through the socket re-handshake; the
+		// content-verified commit lands the bookkeeping once real ops arrive.
+		const { engine, enroll, projectedText } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -361,6 +365,11 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		} as any);
 
 		expect(onConflict).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		// Nothing recorded until the frame proves it.
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		projectedText.mockResolvedValue("same on both");
+		await engine.commitCrdtConvergence("note-id-1");
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 

@@ -329,7 +329,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		expect(e.queue.size).toBe(1);
 	});
 
-	test("channel back up: the flush fires the re-handshake (reset+enroll) and dequeues — the durable Y.Doc carries the ops", async () => {
+	test("channel back up: the flush fires the re-handshake, and the entry settles only when an inbound frame proves the round-trip", async () => {
 		const api = {
 			pushNote: async () => {
 				throw new Error("must not legacy-push a crdt entry when ops are available");
@@ -355,10 +355,17 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 
 		// The sv-exchange is bidirectional: the server answers the client STEP1
 		// with [STEP2, server-STEP1], and the client's reply to the server's
-		// STEP1 carries the pending local ops. One re-handshake = delivery.
+		// STEP1 carries the pending local ops.
 		expect(reset).toHaveBeenCalledWith("id-1");
 		expect(enroll).toHaveBeenCalledWith("id-1");
-		expect(flushed).toBe(1);
+		// Firing is NOT proof: the entry survives until an inbound frame for
+		// the note arrives (a nudge lost to a socket drop re-fires next flush).
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1);
+
+		// An inbound frame fires commitCrdtConvergence — the round-trip is
+		// proven and the entry settles out of the durable queue.
+		await e.commitCrdtConvergence("id-1");
 		expect(e.queue.size).toBe(0);
 	});
 
@@ -519,7 +526,7 @@ describe("CRDT notes never whole-doc push (channel down → durable queue)", () 
 // ---------------------------------------------------------------------------
 
 describe("runFlushQueue: durable crdt queue entry delivery over the socket", () => {
-	test("live channel: fires reset+enroll per entry and dequeues (real CrdtManager holds the ops durably)", async () => {
+	test("live channel: fires reset+enroll, keeps the entry until proof, and the durable doc carries the ops (real CrdtManager)", async () => {
 		const api = {
 			pushNote: async () => {
 				throw new Error("must not legacy-push a crdt entry when ops are available");
@@ -549,14 +556,17 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 			timestamp: 1,
 			vaultId: "v",
 		});
-		const flushed = await e.flushQueue();
+		await e.flushQueue();
 
-		expect(flushed).toBe(1);
-		expect(e.queue.size).toBe(0);
 		expect(reset).toHaveBeenCalledWith("id-1");
 		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(e.queue.size).toBe(1); // not settled until an inbound frame proves it
 		// The seeded content survives in the durable doc for the handshake to ship.
 		expect(await realCrdt.getText("id-1")).toContain("seeded body");
+
+		// Inbound frame → settle.
+		await e.commitCrdtConvergence("id-1");
+		expect(e.queue.size).toBe(0);
 
 		await realCrdt.destroy();
 	});

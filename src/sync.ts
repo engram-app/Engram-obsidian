@@ -369,12 +369,14 @@ export class SyncEngine {
 	 *  data) and is adopted without wiping. */
 	private syncStateVaultId: string | null = null;
 
-	/** This user's server content_hash for EMPTY content, learned from the
-	 *  first fetch that proves a hash maps to "" (the hash is a per-user HMAC —
-	 *  underivable client-side but deterministic). Lets the ingress guard trust
-	 *  inline-empty bodies carrying this exact hash instead of re-fetching
-	 *  every genuinely empty note. Session-scoped; a stale value after a DEK
-	 *  rotation or account swap stops matching and falls back to the GET. */
+	/** This user's server content_hash for EMPTY content, learned from an
+	 *  authoritative op-log ROW that carries "" beside its hash (the hash is a
+	 *  per-user HMAC — underivable client-side but deterministic; the old
+	 *  learn-by-fetch died with the Phase E3 REST purge). Lets the ingress
+	 *  guard trust inline-empty bodies carrying this exact hash. Session-
+	 *  scoped; a stale value after a DEK rotation or account swap stops
+	 *  matching, and the distrusted event routes to the op-log catch-up —
+	 *  the failure direction is a replay round-trip, never a 0-byte write. */
 	private emptyContentHash: string | null = null;
 
 	/** Optional base content store for 3-way merge (Step 2+). */
@@ -684,7 +686,8 @@ export class SyncEngine {
 	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
 
 	/** Fix wave 1 (single-path D3 review): staged convergence for a diverged
-	 *  LIVE-BOUND note, keyed by note_id. `socketConverge` no longer
+	 *  note, keyed by note_id — staged by the LIVE-BOUND leg and, since Phase
+	 *  E3, the cold catch-up leg too. `socketConverge` no longer
 	 *  verifies-and-records by text equality — text equality does not prove
 	 *  the doc holds the server's actual Yjs ops (two independently-typed
 	 *  identical bodies are a disjoint lineage; recording on that basis is the
@@ -741,6 +744,16 @@ export class SyncEngine {
 	 *  short enough that a genuinely-still-diverged note keeps retrying
 	 *  within a session. */
 	healCooldownMs = 15_000;
+
+	/** Durable-queue entries whose delivery re-handshake has been FIRED but
+	 *  not yet proven (Phase E3 review): the entry stays in the durable queue
+	 *  until an inbound frame for its note arrives (`commitCrdtConvergence`
+	 *  fires on every frame), which proves the room round-tripped on the live
+	 *  socket — the client's STEP2 reply to the server's STEP1 carried the
+	 *  pending local ops on that same round-trip. A nudge lost to a socket
+	 *  drop leaves the entry queued; the next flush re-fires (cooldown-
+	 *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
+	private pendingQueueDeliveries: Map<string, { path: string; vaultId?: string }> = new Map();
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
 	 *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
@@ -3679,8 +3692,9 @@ export class SyncEngine {
 		rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
 	}
 
-	/** Commit a staged live-bound convergence (see `pendingConvergence`) — the
-	 *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
+	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
+	 *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
+	 *  place those legs' `serverHash`/`version`/`seq` get written. Wired
 	 *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
 	 *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
 	 *  doc's text non-empty — real ops landed, not a guess.
@@ -3709,6 +3723,24 @@ export class SyncEngine {
 	 *  can't write syncState at a stale/dead path — no separate teardown hook
 	 *  needed. Never throws into the CRDT manager's synchronous callback. */
 	async commitCrdtConvergence(noteId: string): Promise<void> {
+		// Settle a fired durable-queue delivery FIRST (independent of any
+		// staged convergence): an inbound frame for this note proves the room
+		// round-tripped, so the queued local ops went out on that same live
+		// socket — the nudge's job is done and the entry can leave the queue.
+		const queued = this.pendingQueueDeliveries.get(noteId);
+		if (queued) {
+			this.pendingQueueDeliveries.delete(noteId);
+			try {
+				await this.queue.dequeue(queued.path, queued.vaultId);
+				this.issues.clear(queued.path);
+				rlog().info("queue", `CRDT delivery settled via socket round-trip: ${queued.path}`);
+			} catch (e) {
+				rlog().warn(
+					"queue",
+					`CRDT delivery settle failed for ${queued.path}: ${errMsg(e)}`,
+				);
+			}
+		}
 		const staged = this.pendingConvergence.get(noteId);
 		if (!staged) return;
 		if (staged.content !== null) {
@@ -4036,22 +4068,22 @@ export class SyncEngine {
 		// as "" while content_hash carries the REAL body hash. Taking "" as
 		// authoritative materializes a 0-byte file whose CAS seed (hash("") +
 		// real serverHash) then reads "converged" to every backstop, so the empty
-		// file sticks forever. Strip the inline body here so EVERY consumer below
-		// (CRDT first-delivery and the legacy inline-apply) falls through to its
-		// fetch branch and writes verified bytes. A genuinely empty note costs
-		// one GET — once, per session: content_hash is a per-user HMAC we cannot
-		// derive, but it IS deterministic, so after one fetch proves a hash maps
-		// to "" (emptyContentHash), inline "" beside that exact hash is
-		// trustworthy and skips the roundtrip. A stale learned value (DEK
-		// rotation, account swap) simply stops matching and falls back to the
-		// GET — the failure direction is a wasted fetch, never a 0-byte write.
+		// file sticks forever. Strip the inline body here: the CRDT consumer
+		// below then routes to the op-log seq-replay (rows carry the real,
+		// verified bytes — Phase E3 deleted its fetch), and the legacy consumer
+		// falls through to its getNote fetch. A genuinely empty note converges
+		// via its replay row, which also TEACHES the empty hash (see
+		// emptyContentHash / applyChange): later inline "" beside that exact
+		// hash is trustworthy without a round-trip. A stale learned value (DEK
+		// rotation, account swap) simply stops matching — the failure direction
+		// is an extra replay/fetch, never a 0-byte write.
 		if (
 			event.event_type === "upsert" &&
 			event.content === "" &&
 			event.content_hash &&
 			event.content_hash !== this.emptyContentHash
 		) {
-			rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`);
+			rlog().info("ws", `Inline-empty body distrusted, routing to catch-up: ${event.path}`);
 			event.content = undefined;
 		}
 
@@ -5233,20 +5265,6 @@ export class SyncEngine {
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
 							);
 							crdtConflictFallthrough = true;
-						} else if (noteId && localNow !== null && localNow === content) {
-							// Quietly converged: disk already holds the row's exact
-							// text (e.g. the same edit landed on both sides), so no
-							// round-trip is needed — record the bookkeeping directly.
-							// No disk write happens here, and declaring this
-							// content_hash as seen is sound because we provably hold
-							// that content.
-							this.syncState.set(normalized, {
-								...(this.syncState.get(normalized) ?? {}),
-								hash: fnv1a(content),
-								version: change.version,
-								serverHash: change.content_hash,
-								seq: change.seq,
-							});
 						} else if (noteId) {
 							// CRDT-enrolled cold note: SAME stage-then-fire pattern as
 							// the live-bound leg above (Phase E3 — the REST delta pull
@@ -6829,10 +6847,9 @@ export class SyncEngine {
 	}
 
 	/** Record a terminal (non-retryable) flush failure in the Sync Center and
-	 *  dequeue the entry so it doesn't retry forever. Shared verbatim by both
-	 *  runFlushQueue terminal paths (the crdt /updates branch and the legacy
-	 *  note/attachment catch) so a change to how terminal failures surface can't
-	 *  drift between them. */
+	 *  dequeue the entry so it doesn't retry forever. Reached only from the legacy
+	 *  note/attachment catch since Phase E3 — the crdt drain branch makes no
+	 *  fallible HTTP call anymore (it settles via the socket round-trip). */
 	private async recordTerminalIssue(
 		entry: QueueEntry,
 		classified: ReturnType<typeof categorizeError>,
@@ -6859,7 +6876,8 @@ export class SyncEngine {
 	}
 
 	/** Decide the fate of a queue entry whose flush just failed, and act on it.
-	 *  Both runFlushQueue failure paths route here so they can't drift. Terminal
+	 *  runFlushQueue's legacy note/attachment catch routes here (the crdt drain
+	 *  branch stopped making HTTP calls in Phase E3). Terminal
 	 *  errors (413, auth, plan-limit) park immediately; transient errors (network,
 	 *  5xx) bump a PERSISTED attempt count and park only once they exhaust
 	 *  RETRY_CAP — previously both paths hardcoded attempts=1, so a persistently-
@@ -7076,18 +7094,22 @@ export class SyncEngine {
 					// LIVE, one re-handshake ships it — the server answers the
 					// client STEP1 with [STEP2, server-STEP1], and the client's
 					// reply to the server's STEP1 carries the pending local ops.
-					// With the channel DOWN there is no delivery path at all: leave
-					// the entry queued (not a failure, no retry-count bump) until a
-					// later flush finds the channel up.
+					// The entry is NOT dequeued here: firing is not proof (the
+					// STEP1 can be lost to a socket drop and enroll() surfaces no
+					// failure). It settles in `commitCrdtConvergence` when an
+					// inbound frame for the note proves the room round-tripped —
+					// see `pendingQueueDeliveries`. With the channel DOWN there is
+					// no delivery path at all: leave the entry queued (not a
+					// failure, no retry-count bump) until a later flush finds the
+					// channel up.
 					if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
-						if (!(this.crdtLive?.() ?? false)) continue;
-						this.socketConverge(normalizePath(entry.path), entry.noteId);
-						await this.queue.dequeue(
-							entry.path,
-							entry.vaultId ?? this.settings.vaultId ?? undefined,
-						);
-						this.issues.clear(entry.path);
-						flushed++;
+						if (this.crdtLive?.() ?? false) {
+							this.pendingQueueDeliveries.set(entry.noteId, {
+								path: entry.path,
+								vaultId: entry.vaultId ?? this.settings.vaultId ?? undefined,
+							});
+							this.socketConverge(normalizePath(entry.path), entry.noteId);
+						}
 						continue;
 					}
 
@@ -7264,6 +7286,7 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.crdtHealTrailingTimers.clear();
+		this.pendingQueueDeliveries.clear();
 		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();

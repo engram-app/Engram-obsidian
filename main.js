@@ -17862,12 +17862,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
      *  data) and is adopted without wiping. */
     this.syncStateVaultId = null;
-    /** This user's server content_hash for EMPTY content, learned from the
-     *  first fetch that proves a hash maps to "" (the hash is a per-user HMAC —
-     *  underivable client-side but deterministic). Lets the ingress guard trust
-     *  inline-empty bodies carrying this exact hash instead of re-fetching
-     *  every genuinely empty note. Session-scoped; a stale value after a DEK
-     *  rotation or account swap stops matching and falls back to the GET. */
+    /** This user's server content_hash for EMPTY content, learned from an
+     *  authoritative op-log ROW that carries "" beside its hash (the hash is a
+     *  per-user HMAC — underivable client-side but deterministic; the old
+     *  learn-by-fetch died with the Phase E3 REST purge). Lets the ingress
+     *  guard trust inline-empty bodies carrying this exact hash. Session-
+     *  scoped; a stale value after a DEK rotation or account swap stops
+     *  matching, and the distrusted event routes to the op-log catch-up —
+     *  the failure direction is a replay round-trip, never a 0-byte write. */
     this.emptyContentHash = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
@@ -17998,7 +18000,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  `commitCrdtConvergence`; this map never gates a retry. */
     this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
     /** Fix wave 1 (single-path D3 review): staged convergence for a diverged
-     *  LIVE-BOUND note, keyed by note_id. `socketConverge` no longer
+     *  note, keyed by note_id — staged by the LIVE-BOUND leg and, since Phase
+     *  E3, the cold catch-up leg too. `socketConverge` no longer
      *  verifies-and-records by text equality — text equality does not prove
      *  the doc holds the server's actual Yjs ops (two independently-typed
      *  identical bodies are a disjoint lineage; recording on that basis is the
@@ -18049,6 +18052,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  short enough that a genuinely-still-diverged note keeps retrying
      *  within a session. */
     this.healCooldownMs = 15e3;
+    /** Durable-queue entries whose delivery re-handshake has been FIRED but
+     *  not yet proven (Phase E3 review): the entry stays in the durable queue
+     *  until an inbound frame for its note arrives (`commitCrdtConvergence`
+     *  fires on every frame), which proves the room round-tripped on the live
+     *  socket — the client's STEP2 reply to the server's STEP1 carried the
+     *  pending local ops on that same round-trip. A nudge lost to a socket
+     *  drop leaves the entry queued; the next flush re-fires (cooldown-
+     *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
+    this.pendingQueueDeliveries = /* @__PURE__ */ new Map();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -19844,8 +19856,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
   }
-  /** Commit a staged live-bound convergence (see `pendingConvergence`) — the
-   *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
+  /** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
+   *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
+   *  place those legs' `serverHash`/`version`/`seq` get written. Wired
    *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
    *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
    *  doc's text non-empty — real ops landed, not a guess.
@@ -19875,6 +19888,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  needed. Never throws into the CRDT manager's synchronous callback. */
   async commitCrdtConvergence(noteId) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
+    let queued = this.pendingQueueDeliveries.get(noteId);
+    if (queued) {
+      this.pendingQueueDeliveries.delete(noteId);
+      try {
+        await this.queue.dequeue(queued.path, queued.vaultId), this.issues.clear(queued.path), rlog().info("queue", `CRDT delivery settled via socket round-trip: ${queued.path}`);
+      } catch (e) {
+        rlog().warn(
+          "queue",
+          `CRDT delivery settle failed for ${queued.path}: ${errMsg(e)}`
+        );
+      }
+    }
     let staged = this.pendingConvergence.get(noteId);
     if (!staged) return;
     if (staged.content !== null) {
@@ -20088,7 +20113,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, routing to catch-up: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
@@ -20464,7 +20489,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
@@ -20564,13 +20589,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
               "pull",
               `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
-            ), crdtConflictFallthrough = !0) : noteId && localNow !== null && localNow === content ? this.syncState.set(normalized, {
-              ...(_s = this.syncState.get(normalized)) != null ? _s : {},
-              hash: fnv1a(content),
-              version: change.version,
-              serverHash: change.content_hash,
-              seq: change.seq
-            }) : noteId ? (rlog().warn(
+            ), crdtConflictFallthrough = !0) : noteId ? (rlog().warn(
               "pull",
               `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
             ), this.pendingConvergence.set(noteId, {
@@ -20614,14 +20633,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_t2 = this.baseStore) == null ? void 0 : _t2.get(normalized);
+        let pullBase = (_s = this.baseStore) == null ? void 0 : _s.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20672,7 +20691,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_v = this.baseStore) == null || _v.set(
+            }), change.version != null && ((_u = this.baseStore) == null || _u.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20694,7 +20713,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
+            }), change.version != null && ((_v = this.baseStore) == null || _v.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20720,15 +20739,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           // E1 (#1065): record the row's seq so the manifest validator can
           // integer-diff this path (a legacy change without one keeps the
           // prior value rather than erasing it).
-          seq: typeof change.seq == "number" ? change.seq : (_x = this.syncState.get(normalized)) == null ? void 0 : _x.seq
-        }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+          seq: typeof change.seq == "number" ? change.seq : (_w = this.syncState.get(normalized)) == null ? void 0 : _w.seq
+        }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): seq recorded for the manifest validator's integer diff.
-        seq: typeof change.seq == "number" ? change.seq : (_z = this.syncState.get(normalized)) == null ? void 0 : _z.seq
-      }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
+        seq: typeof change.seq == "number" ? change.seq : (_y = this.syncState.get(normalized)) == null ? void 0 : _y.seq
+      }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20749,7 +20768,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -21448,10 +21467,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.queue.enqueue(entry), this.emitStatus();
   }
   /** Record a terminal (non-retryable) flush failure in the Sync Center and
-   *  dequeue the entry so it doesn't retry forever. Shared verbatim by both
-   *  runFlushQueue terminal paths (the crdt /updates branch and the legacy
-   *  note/attachment catch) so a change to how terminal failures surface can't
-   *  drift between them. */
+   *  dequeue the entry so it doesn't retry forever. Reached only from the legacy
+   *  note/attachment catch since Phase E3 — the crdt drain branch makes no
+   *  fallible HTTP call anymore (it settles via the socket round-trip). */
   async recordTerminalIssue(entry, classified) {
     var _a, _b, _c, _d;
     let now = Date.now();
@@ -21468,7 +21486,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_b = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(entry.path, (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0);
   }
   /** Decide the fate of a queue entry whose flush just failed, and act on it.
-   *  Both runFlushQueue failure paths route here so they can't drift. Terminal
+   *  runFlushQueue's legacy note/attachment catch routes here (the crdt drain
+   *  branch stopped making HTTP calls in Phase E3). Terminal
    *  errors (413, auth, plan-limit) park immediately; transient errors (network,
    *  5xx) bump a PERSISTED attempt count and park only once they exhaust
    *  RETRY_CAP — previously both paths hardcoded attempts=1, so a persistently-
@@ -21611,11 +21630,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.api.pushAttachment(entry.path, base64, mimeType, mtime);
         } else {
           if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
-            if (!((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d)) continue;
-            this.socketConverge((0, import_obsidian21.normalizePath)(entry.path), entry.noteId), await this.queue.dequeue(
-              entry.path,
-              (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
-            ), this.issues.clear(entry.path), flushed++;
+            (_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d && (this.pendingQueueDeliveries.set(entry.noteId, {
+              path: entry.path,
+              vaultId: (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
+            }), this.socketConverge((0, import_obsidian21.normalizePath)(entry.path), entry.noteId));
             continue;
           }
           if (entry.crdt && !this.crdtOpsAvailable()) {
@@ -21706,7 +21724,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
     for (let timer of this.crdtHealTrailingTimers.values())
       window.clearTimeout(timer);
-    this.crdtHealTrailingTimers.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.crdtHealTrailingTimers.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
