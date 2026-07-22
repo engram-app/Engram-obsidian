@@ -4211,17 +4211,14 @@ export class SyncEngine {
 	}
 
 	/** Resolve a stream event's authoritative body: the broadcast's inline
-	 *  content when present, else ONE getNote fetch (hash-only broadcasts / empty
-	 *  or meta-projected notes carry no body). A learned empty-hash retires the
-	 *  fetch for later inline-"" upserts carrying the same hash (see the ingress
-	 *  guard). Shared by the CRDT first-delivery path and the legacy fallback so
-	 *  the fetch + empty-hash learn lives in exactly one place. (getNote-for-sync
-	 *  removal is Phase E.) */
-	private async resolveEventBody(event: NoteStreamEvent): Promise<string | undefined> {
-		if (event.content !== undefined) return event.content;
-		const body = (await this.api.getNote(event.path)).content;
-		if (body === "" && event.content_hash) this.emptyContentHash = event.content_hash;
-		return body;
+	 *  content, or undefined. NEVER fetches (Phase E3 — getNote-for-sync is
+	 *  deleted): a hash-only / meta-projected event's caller routes to the
+	 *  op-log catch-up, whose rows carry the REAL content — the single
+	 *  delivery path. An inline empty body still teaches the empty-hash so
+	 *  the ingress guard retires later inline-"" upserts by hash. */
+	private resolveEventBody(event: NoteStreamEvent): string | undefined {
+		if (event.content === "" && event.content_hash) this.emptyContentHash = event.content_hash;
+		return event.content;
 	}
 
 	/** Reshape a live stream event + resolved body into the single `SyncOp` shape
@@ -4585,7 +4582,7 @@ export class SyncEngine {
 							!this.isLiveBound(np) &&
 							!this.app.vault.getAbstractFileByPath(np)
 						) {
-							const body = await this.resolveEventBody(event);
+							const body = this.resolveEventBody(event);
 							if (body !== undefined)
 								await this.applyOp(this.eventToOp(event, body, noteId));
 						}
@@ -5452,40 +5449,42 @@ export class SyncEngine {
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
 							);
 							crdtConflictFallthrough = true;
+						} else if (noteId && localNow !== null && localNow === content) {
+							// Quietly converged: disk already holds the row's exact
+							// text (e.g. the same edit landed on both sides), so no
+							// round-trip is needed — record the bookkeeping directly.
+							// No disk write happens here, and declaring this
+							// content_hash as seen is sound because we provably hold
+							// that content.
+							this.syncState.set(normalized, {
+								...(this.syncState.get(normalized) ?? {}),
+								hash: fnv1a(content),
+								version: change.version,
+								serverHash: change.content_hash,
+								seq: change.seq,
+							});
 						} else if (noteId) {
-							// CRDT-enrolled note: converge via Yjs deltas through the
-							// Y.Doc, never by writing the feed's content SNAPSHOT — the
-							// snapshot is checkpoint-lagged and can revert a live merge
-							// that landed since this entry was produced (the seq gap-heal
-							// behind-detector can fire this replay concurrently with
-							// active editing on this note from another device). Yjs
-							// merge is monotonic, so this cannot revert anything even
-							// when it races another device's live edit.
+							// CRDT-enrolled cold note: SAME stage-then-fire pattern as
+							// the live-bound leg above (Phase E3 — the REST delta pull
+							// is deleted). The room re-handshake's STEP2 delivers the
+							// missing Yjs ops, the manager's remote-merge listener
+							// flushes disk, and commitCrdtConvergence records this
+							// stage only once the doc verifiably projects the row.
+							// Never write the feed's content SNAPSHOT — it is
+							// checkpoint-lagged and can revert a fresher live merge
+							// (the D2 stomp class); Yjs merge is monotonic.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: pull backfilling diverged note via Yjs converge ${change.path}`,
+								`CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`,
 							);
-							const flushed = await this.restConvergeAndFlush(normalized, noteId);
-							if (flushed !== null) {
-								// Spread the existing entry: restConvergeAndFlush just
-								// recorded crdtHead into it, and a bare replacement would
-								// wipe that head, defeating coldReceive's cost gate.
-								this.syncState.set(normalized, {
-									...(this.syncState.get(normalized) ?? {}),
-									hash: fnv1a(flushed),
-									version: change.version,
-									serverHash: change.content_hash,
-									seq: change.seq,
-								});
-							} else {
-								// Never record convergence for data that hasn't arrived —
-								// mirrors the live-bound leg's retry bookkeeping above; the
-								// next poll/replay retries the delta pull.
-								rlog().warn(
-									"pull",
-									`CRDT catch-up: Yjs converge failed or gapped, retrying next poll ${change.path}`,
-								);
-							}
+							this.pendingConvergence.set(noteId, {
+								path: normalized,
+								serverHash: change.content_hash,
+								content,
+								version: change.version,
+								seq: change.seq,
+							});
+							this.socketConvergeLiveBound(normalized, noteId);
 						} else {
 							// No note_id (legacy GET /notes/changes path — no id to pull
 							// a CRDT delta for): fall back to the content-snapshot
