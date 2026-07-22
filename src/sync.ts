@@ -5245,11 +5245,36 @@ export class SyncEngine {
 				// checkpoint-lagged for CRDT notes (advances on checkpoint/
 				// materialization, not every live delta — see the socket converge's
 				// docstring), so an EQUAL-version row can legitimately carry content
-				// this device never saw. The equal-SEQ case is unchanged (still <=,
-				// still history) — PR #280's scope, not touched here.
+				// this device never saw.
+				//
+				// The equal-SEQ case is now HASH-AWARE (2026-07-22, supersedes the
+				// fence half of PR #280). The backend does NOT advance seq per live
+				// update — MULTIPLE live CRDT updates SHARE ONE seq (backend
+				// crdt_persistence.ex:180 "GUARANTEE BOUNDARY: this seq does not
+				// advance per live update … the plugin's behind-detector cannot see
+				// a loss WITHIN a shared seq"). So an equal-seq row can legitimately
+				// carry NEW content this device never saw (B's own push echoed at
+				// seq N, then a server merge of A's concurrent edit lands at the
+				// SAME seq N with different content). A blunt `<=` drops it and loses
+				// A's edit forever. A row is "stale/history" only if we ALREADY hold
+				// its exact content: a strictly-LOWER seq is genuinely behind (stale
+				// regardless of content), but an EQUAL-seq row is stale ONLY when its
+				// content_hash is absent OR matches stored.serverHash. A differing
+				// equal-seq hash falls through to the divergence/re-handshake leg
+				// below.
+				//
+				// The version-fallback branch (seq-LESS legacy /notes/changes rows)
+				// has the SAME `<=`-drops-unseen-content shape and is a candidate for
+				// the same hash-aware fix — deliberately OUT OF SCOPE here (this
+				// targets the proven shared-seq CRDT bug, not the legacy seq-less
+				// path). Left as `<=`.
+				const contentMatches =
+					!change.content_hash || stored?.serverHash === change.content_hash;
 				const staleRow =
 					change.seq !== undefined
-						? stored?.seq !== undefined && change.seq <= stored.seq
+						? stored?.seq !== undefined &&
+							(change.seq < stored.seq ||
+								(change.seq === stored.seq && contentMatches))
 						: stored?.version !== undefined &&
 							change.version !== undefined &&
 							change.version <= stored.version;
