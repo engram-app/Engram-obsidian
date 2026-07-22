@@ -5135,16 +5135,29 @@ export class SyncEngine {
 				// "we are behind" backfills a checkpoint-lagged projection over
 				// newer live content (the ModifyTest 40B/23B revert ping-pong; 1805
 				// backfills in one suite run). A row at or below the path's
-				// high-water seq (or recorded version) is history: skip the whole
-				// diverged block — nothing is recorded, so a genuinely newer row
-				// still converges on a later pass.
+				// high-water seq is history: skip the whole diverged block —
+				// nothing is recorded, so a genuinely newer row still converges on
+				// a later pass.
+				//
+				// seq is AUTHORITATIVE when both sides carry it (2026-07-22 D3 gate
+				// forensics, CI run 29917773065; issue #282's family): seq is the
+				// vault op-log position and strictly increases per materialized
+				// change, so it alone decides. version is only the FALLBACK when
+				// seq is unavailable on either side — version is checkpoint-lagged
+				// for CRDT notes (advances on checkpoint/materialization, not every
+				// live delta — see restConvergeCore's docstring), so an
+				// EQUAL-version row can legitimately carry content this device
+				// never saw. The old OR-of-both-checks let a stale-by-version-alone
+				// verdict mask a genuinely newer seq, fence-skipping the real edit
+				// (the deaf-note e2e gate flake: 2x "stale row" skips, the note
+				// converged only at teardown). The equal-SEQ case is unchanged
+				// (still <=, still history) — PR #280's scope, not touched here.
 				const staleRow =
-					(stored?.seq !== undefined &&
-						change.seq !== undefined &&
-						change.seq <= stored.seq) ||
-					(stored?.version !== undefined &&
-						change.version !== undefined &&
-						change.version <= stored.version);
+					stored?.seq !== undefined && change.seq !== undefined
+						? change.seq <= stored.seq
+						: stored?.version !== undefined &&
+							change.version !== undefined &&
+							change.version <= stored.version;
 				if (staleRow) {
 					rlog().info(
 						"pull",

@@ -619,6 +619,101 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(reset).toHaveBeenCalledTimes(1);
 	});
 
+	test("fix wave 3 (a): seq decides the staleRow fence — a newer seq with equal version RUNS the diverged leg (D3 gate forensics, issue #282)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, seq: 40, version: 1, serverHash: "old-hash" },
+		});
+
+		// forceOverwrite=true: isolates the CRDT-specific staleRow fence under
+		// test from the separate, out-of-scope, non-CRDT "anti-stale guard"
+		// (applyChange skip "stale vN <= synced vN", src/sync.ts:5053) — that
+		// guard runs BEFORE the CRDT block and independently short-circuits on
+		// change.version <= stored.version alone (no seq awareness at all), so
+		// this exact equal-version row would otherwise never reach the fence
+		// being fixed here. That guard is its own, separate concern (a
+		// mid-pull-push race guard, not CRDT-specific) — not touched by this
+		// task's scope.
+		await engine.applyChange(
+			{
+				path: "owned.md",
+				action: "upsert",
+				content: "unseen edit",
+				content_hash: "new-hash",
+				// Checkpoint-lagged version equal to stored — under the old
+				// OR-of-both-checks fence this alone masked the row as stale even
+				// though the seq below proves it's genuinely newer (the CI gate
+				// flake: "stale row" skip x2, the note converged only at teardown).
+				version: 1,
+				seq: 41,
+				mtime: 50,
+			} as any,
+			true,
+		);
+
+		// seq alone proves this row is newer — the diverged leg must run, not
+		// be fence-skipped as history.
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+	});
+
+	test("fix wave 3 (b): equal seq is still stale — the fence is preserved (PR #280 scope, untouched)", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, seq: 40, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "replayed row",
+			content_hash: "new-hash",
+			version: 2,
+			seq: 40, // equal to stored.seq — still history, must still skip
+			mtime: 50,
+		} as any);
+
+		expect(reset).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("fix wave 3 (c): seq absent on the row falls back to version — the legacy skip path is preserved", async () => {
+		const { engine, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" }, // no seq recorded
+		});
+
+		// forceOverwrite=true: same isolation as fix wave 3 (a) — an equal
+		// version here would ALSO trip the separate, out-of-scope anti-stale
+		// guard at src/sync.ts:5053 before ever reaching the CRDT fence's
+		// version-fallback branch this test targets.
+		await engine.applyChange(
+			{
+				path: "owned.md",
+				action: "upsert",
+				content: "legacy row, no seq field",
+				content_hash: "new-hash",
+				version: 1, // equal, no seq on either side — version fallback applies
+				mtime: 50,
+			} as any,
+			true,
+		);
+
+		expect(reset).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
 	test("fix wave 1 (f): a fresh content_hash overwrites the staged entry — commit lands the LATEST, not the first", async () => {
 		const { engine } = crdtEngine();
 		const localFile = new TFile("owned.md");
