@@ -372,13 +372,34 @@ export class ModelServer {
 		const b64 = toB64(update);
 		const head = this.head(n);
 		const seq = n.seq;
-		// note_yjs_update fans out over the per-vault SYNC topic (channel.ts:
-		// "regardless of CRDT-room enrollment"). Excludes the originator.
-		this.broadcastOthers(
-			fromClient,
-			(t) => [null, null, t, "note_yjs_update", { note_id: n.id, b64, head, seq }],
-			"sync",
-		);
+		// note_yjs_update fans out over the per-vault SYNC topic. FIDELITY (T1,
+		// #282 seq-echo): the real backend's `update_v1/4` broadcasts to the
+		// vault topic `sync:{user}:{vault}` INCLUDING the originator — a Phoenix
+		// PubSub topic broadcast reaches every socket the user has on the vault,
+		// the pushing device among them ("Self-echo is harmless: the client
+		// applies with REMOTE_ORIGIN ... Yjs re-apply is a no-op",
+		// crdt_persistence.ex:159-200 + comment 166-168). That self-echo carries
+		// the post-push `seq`, and the client's `applyLiveOpWithSeq` advances the
+		// PER-PATH high-water from ANY seq-bearing live op it applies
+		// (sync.ts:1631-1648) — so a device's own push advances its own
+		// FileSyncState.seq to the server's post-push seq. WITHOUT this echo the
+		// pusher's high-water only ever moved on OTHER devices' rows, so a
+		// later catch-up row (seq > the pusher's lagging high-water) always
+		// applied and the equal-seq `<=` fence never decided the outcome — the
+		// #282 gap the P1-Task-7 differential could not discriminate. Delivering
+		// to ALL joined sync-topic clients (originator included) mirrors the real
+		// broadcast; `__rest__` is not a real client, so a REST fan-out is
+		// unchanged (still reaches everyone).
+		for (const [id, c] of this.clients) {
+			if (!c.syncTopic) continue;
+			this.deliver(id, [
+				null,
+				null,
+				c.syncTopic,
+				"note_yjs_update",
+				{ note_id: n.id, b64, head, seq },
+			]);
+		}
 	}
 
 	/** Deliver a frame (built per-recipient from its own topic) to every client

@@ -278,8 +278,14 @@ test("WS crdt_msg UPDATE (seed) → OTHER client gets note_yjs_update with raw u
 	const bd = new Y.Doc();
 	Y.applyUpdate(bd, fromB64(p.b64));
 	expect(bd.getText("content").toString()).toBe("hello");
-	// originator does not get its own fan-out echo
-	expect(framesOf(a.recv, NOTE_YJS_UPDATE).length).toBe(0);
+	// Originator DOES get its own fan-out echo (#282 seq-echo fidelity): the real
+	// backend's update_v1/4 broadcasts note_yjs_update to the vault topic
+	// INCLUDING the pusher ("Self-echo is harmless", crdt_persistence.ex:166-168),
+	// which is what advances the pusher's per-path high-water via
+	// applyLiveOpWithSeq. The echo carries the same note_id + seq.
+	const selfEcho = framesOf(a.recv, NOTE_YJS_UPDATE)[0];
+	expect(selfEcho).toBeDefined();
+	expect((selfEcho?.[4] as { note_id: string }).note_id).toBe("n1");
 });
 
 test("WS crdt_catchup_since → {changes, has_more, next_seq} with SyncNoteChange rows", async () => {

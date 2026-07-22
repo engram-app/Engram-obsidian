@@ -33,12 +33,28 @@ async function flushMicrotasks(): Promise<void> {
  * (microtasks settle between steps) so interleavings are step-atomic. */
 export class Scheduler {
 	private lanes = new Map<string, Array<() => Promise<void> | void>>();
+	/** Lanes the scheduler must NOT deliver while held. Items still ENQUEUE
+	 *  (they pile up in order) but neither step() nor drain() pops them until
+	 *  release(). This is the sim's only fault-injection primitive for FORCED
+	 *  ORDERING: e.g. #288 needs B's genesis-enroll to complete while A's create
+	 *  reply (which releases A's held content push) is stuck in flight. A held
+	 *  lane does not count toward quiescence — drain() returns with it non-empty.
+	 *  (Timers are not lanes, so holding never freezes virtual time.) */
+	private held = new Set<string>();
 	readonly rand: () => number;
 	constructor(
 		readonly seed: number,
 		private clock: SimClock,
 	) {
 		this.rand = mulberry32(seed);
+	}
+	/** Freeze delivery of a lane (see `held`). Idempotent. */
+	hold(lane: string): void {
+		this.held.add(lane);
+	}
+	/** Resume delivery of a previously held lane. Idempotent. Caller drains. */
+	release(lane: string): void {
+		this.held.delete(lane);
 	}
 	pick<T>(arr: T[]): T {
 		return arr[Math.floor(this.rand() * arr.length)];
@@ -54,7 +70,9 @@ export class Scheduler {
 		return Object.fromEntries([...this.lanes.entries()].map(([k, v]) => [k, v.length]));
 	}
 	async step(): Promise<boolean> {
-		const nonEmpty = [...this.lanes.entries()].filter(([, q]) => q.length > 0);
+		const nonEmpty = [...this.lanes.entries()].filter(
+			([k, q]) => q.length > 0 && !this.held.has(k),
+		);
 		const nActions = nonEmpty.length + (this.clock.pendingCount() > 0 ? 1 : 0);
 		if (nActions === 0) return false;
 		const i = Math.floor(this.rand() * nActions);
@@ -65,8 +83,10 @@ export class Scheduler {
 	}
 	async drain(maxSteps = 100_000): Promise<void> {
 		let steps = 0;
+		const deliverable = () =>
+			[...this.lanes.entries()].find(([k, v]) => v.length > 0 && !this.held.has(k))?.[1];
 		while (steps++ < maxSteps) {
-			const q = [...this.lanes.values()].find((v) => v.length > 0);
+			const q = deliverable();
 			if (q) {
 				await q.shift()!();
 				await flushMicrotasks();
@@ -77,12 +97,13 @@ export class Scheduler {
 				await flushMicrotasks();
 				continue;
 			}
-			// Lanes AND virtual timers are empty. Detached async chains may have
-			// re-armed either while their pure-microtask segments ran; a final
-			// microtask flush surfaces that work before declaring quiescence.
+			// Deliverable lanes AND virtual timers are empty. Detached async chains
+			// may have re-armed either while their pure-microtask segments ran; a
+			// final microtask flush surfaces that work before declaring quiescence.
+			// Held lanes are intentionally excluded — drain() returns with them
+			// still pending (that IS the forced-ordering fault).
 			await flushMicrotasks();
-			if ([...this.lanes.values()].some((v) => v.length > 0) || this.clock.pendingCount() > 0)
-				continue;
+			if (deliverable() || this.clock.pendingCount() > 0) continue;
 			return;
 		}
 		throw new Error(
