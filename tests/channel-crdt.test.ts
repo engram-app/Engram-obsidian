@@ -271,10 +271,36 @@ describe("NoteChannel inbound crdt_msg", () => {
 		channel.disconnect();
 	});
 
-	test("routes inbound note_yjs_update to onNoteYjsUpdate callback", async () => {
+	test("routes inbound note_yjs_update to onNoteYjsUpdate callback, carrying seq", async () => {
 		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
-		const received: { noteId: string; b64: string; head: string }[] = [];
-		channel.onNoteYjsUpdate = (noteId, b64, head) => received.push({ noteId, b64, head });
+		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
+			received.push({ noteId, b64, head, seq });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV", seq: 42 },
+		]);
+
+		expect(received).toEqual([{ noteId: "id-a", b64: "dGVzdA==", head: "SRV", seq: 42 }]);
+
+		channel.disconnect();
+	});
+
+	// Task 1 (backend) attaches "seq" to the note_yjs_update broadcast, but an
+	// old backend (or a pre-Task-1 release) sends the frame with no "seq" key
+	// at all — back-compat must thread through undefined, not crash or coerce
+	// to 0 (0 is a valid gap-heal cursor value, not "absent").
+	test("note_yjs_update without a seq field passes seq=undefined (old-backend back-compat)", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
+			received.push({ noteId, b64, head, seq });
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -286,7 +312,58 @@ describe("NoteChannel inbound crdt_msg", () => {
 			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV" },
 		]);
 
-		expect(received).toEqual([{ noteId: "id-a", b64: "dGVzdA==", head: "SRV" }]);
+		expect(received).toEqual([
+			{ noteId: "id-a", b64: "dGVzdA==", head: "SRV", seq: undefined },
+		]);
+
+		channel.disconnect();
+	});
+
+	// The compile-time `as number | null | undefined` cast can't stop a
+	// malformed/foreign frame from carrying a non-integer at runtime — the
+	// frame boundary must guard it, not just trust the cast (final review).
+	test("note_yjs_update with a non-integer seq (string) is normalized to undefined", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
+			received.push({ noteId, b64, head, seq });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV", seq: "42" },
+		]);
+
+		expect(received).toEqual([
+			{ noteId: "id-a", b64: "dGVzdA==", head: "SRV", seq: undefined },
+		]);
+
+		channel.disconnect();
+	});
+
+	test("note_yjs_update with a non-integer seq (float) is normalized to undefined", async () => {
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
+		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
+			received.push({ noteId, b64, head, seq });
+		await channel.connect();
+		simulateOpen(lastWsInstance);
+
+		simulateMessage(lastWsInstance, [
+			null,
+			null,
+			"sync:u1:v1",
+			"note_yjs_update",
+			{ note_id: "id-a", b64: "dGVzdA==", head: "SRV", seq: 8.5 },
+		]);
+
+		expect(received).toEqual([
+			{ noteId: "id-a", b64: "dGVzdA==", head: "SRV", seq: undefined },
+		]);
 
 		channel.disconnect();
 	});

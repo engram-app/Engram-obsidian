@@ -8033,6 +8033,8 @@ var Alias = class extends NodeBase {
    * instance of the `source` anchor before this node.
    */
   resolve(doc2, ctx) {
+    if ((ctx == null ? void 0 : ctx.maxAliasCount) === 0)
+      throw new ReferenceError("Alias resolution is disabled");
     let nodes;
     ctx != null && ctx.aliasResolveCache ? nodes = ctx.aliasResolveCache : (nodes = [], visit(doc2, {
       Node: (_key, node) => {
@@ -8758,17 +8760,18 @@ var MERGE_KEY = "<<", merge = {
   stringify: () => MERGE_KEY
 }, isMergeKey = (ctx, key) => (merge.identify(key) || isScalar(key) && (!key.type || key.type === Scalar.PLAIN) && merge.identify(key.value)) && (ctx == null ? void 0 : ctx.doc.schema.tags.some((tag) => tag.tag === merge.tag && tag.default));
 function addMergeToJSMap(ctx, map3, value) {
-  if (value = ctx && isAlias(value) ? value.resolve(ctx.doc) : value, isSeq(value))
-    for (let it of value.items)
+  let source = resolveAliasValue(ctx, value);
+  if (isSeq(source))
+    for (let it of source.items)
       mergeValue(ctx, map3, it);
-  else if (Array.isArray(value))
-    for (let it of value)
+  else if (Array.isArray(source))
+    for (let it of source)
       mergeValue(ctx, map3, it);
   else
-    mergeValue(ctx, map3, value);
+    mergeValue(ctx, map3, source);
 }
 function mergeValue(ctx, map3, value) {
-  let source = ctx && isAlias(value) ? value.resolve(ctx.doc) : value;
+  let source = resolveAliasValue(ctx, value);
   if (!isMap(source))
     throw new Error("Merge sources must be maps or map aliases");
   let srcMap = source.toJSON(null, ctx, Map);
@@ -8780,6 +8783,9 @@ function mergeValue(ctx, map3, value) {
       configurable: !0
     });
   return map3;
+}
+function resolveAliasValue(ctx, value) {
+  return ctx && isAlias(value) ? value.resolve(ctx.doc, ctx) : value;
 }
 
 // node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
@@ -9191,7 +9197,7 @@ function stringifyNumber({ format, minFractionDigits, tag, value }) {
   if (!isFinite(num))
     return isNaN(num) ? ".nan" : num < 0 ? "-.inf" : ".inf";
   let n = Object.is(value, -0) ? "-0" : JSON.stringify(value);
-  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^\d/.test(n)) {
+  if (!format && minFractionDigits && (!tag || tag === "tag:yaml.org,2002:float") && /^-?\d/.test(n) && !n.includes("e")) {
     let i = n.indexOf(".");
     i < 0 && (i = n.length, n += ".");
     let d = minFractionDigits - (n.length - i - 1);
@@ -10689,7 +10695,7 @@ function doubleQuotedValue(source, onError) {
           for (next = source[++i + 1]; next === " " || next === "	"; )
             next = source[++i + 1];
         else if (next === "x" || next === "u" || next === "U") {
-          let length2 = { x: 2, u: 4, U: 8 }[next];
+          let length2 = next === "x" ? 2 : next === "u" ? 4 : 8;
           res += parseCharCode(source, i + 1, length2, onError), i += length2;
         } else {
           let raw = source.substr(i - 1, 2);
@@ -10753,11 +10759,12 @@ var escapeCodes = {
 };
 function parseCharCode(source, offset, length2, onError) {
   let cc = source.substr(offset, length2), code = cc.length === length2 && /^[0-9a-fA-F]+$/.test(cc) ? parseInt(cc, 16) : NaN;
-  if (isNaN(code)) {
+  try {
+    return String.fromCodePoint(code);
+  } catch (e) {
     let raw = source.substr(offset - 2, length2 + 2);
     return onError(offset - 2, "BAD_DQ_ESCAPE", `Invalid escape sequence ${raw}`), raw;
   }
-  return String.fromCodePoint(code);
 }
 
 // node_modules/yaml/browser/dist/compose/compose-scalar.js
@@ -10957,7 +10964,14 @@ ${cb}` : comment;
 ${cb}` : comment;
       }
     }
-    afterDoc ? (Array.prototype.push.apply(doc2.errors, this.errors), Array.prototype.push.apply(doc2.warnings, this.warnings)) : (doc2.errors = this.errors, doc2.warnings = this.warnings), this.prelude = [], this.errors = [], this.warnings = [];
+    if (afterDoc) {
+      for (let i = 0; i < this.errors.length; ++i)
+        doc2.errors.push(this.errors[i]);
+      for (let i = 0; i < this.warnings.length; ++i)
+        doc2.warnings.push(this.warnings[i]);
+    } else
+      doc2.errors = this.errors, doc2.warnings = this.warnings;
+    this.prelude = [], this.errors = [], this.warnings = [];
   }
   /**
    * Current stream status information.
@@ -11310,7 +11324,7 @@ var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("012345678
       return this.setNext("block-start");
     if ((ch0 === "-" || ch0 === "?" || ch0 === ":") && isEmpty2(ch1)) {
       let n = (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0));
-      return this.indentNext = this.indentValue + 1, this.indentValue += n, yield* this.parseBlockStart();
+      return this.indentNext = this.indentValue + 1, this.indentValue += n, "block-start";
     }
     return "doc";
   }
@@ -11529,22 +11543,30 @@ var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("012345678
     return s ? (yield s, this.pos += s.length, s.length) : (allowEmpty && (yield ""), 0);
   }
   *pushIndicators() {
-    switch (this.charAt(0)) {
-      case "!":
-        return (yield* this.pushTag()) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
-      case "&":
-        return (yield* this.pushUntil(isNotAnchorChar)) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
-      case "-":
-      // this is an error
-      case "?":
-      // this is an error outside flow collections
-      case ":": {
-        let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
-        if (isEmpty2(ch1) || inFlow && flowIndicatorChars.has(ch1))
-          return inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, (yield* this.pushCount(1)) + (yield* this.pushSpaces(!0)) + (yield* this.pushIndicators());
+    let n = 0;
+    loop: for (; ; ) {
+      switch (this.charAt(0)) {
+        case "!":
+          n += yield* this.pushTag(), n += yield* this.pushSpaces(!0);
+          continue loop;
+        case "&":
+          n += yield* this.pushUntil(isNotAnchorChar), n += yield* this.pushSpaces(!0);
+          continue loop;
+        case "-":
+        // this is an error
+        case "?":
+        // this is an error outside flow collections
+        case ":": {
+          let inFlow = this.flowLevel > 0, ch1 = this.charAt(1);
+          if (isEmpty2(ch1) || inFlow && flowIndicatorChars.has(ch1)) {
+            inFlow ? this.flowKey && (this.flowKey = !1) : this.indentNext = this.indentValue + 1, n += yield* this.pushCount(1), n += yield* this.pushSpaces(!0);
+            continue loop;
+          }
+        }
       }
+      break loop;
     }
-    return 0;
+    return n;
   }
   *pushTag() {
     if (this.charAt(1) === "<") {
@@ -11670,10 +11692,17 @@ function getFirstKeyStartProps(prev) {
     ;
   return prev.splice(i, prev.length);
 }
+function arrayPushArray(target, source) {
+  if (source.length < 1e5)
+    Array.prototype.push.apply(target, source);
+  else
+    for (let i = 0; i < source.length; ++i)
+      target.push(source[i]);
+}
 function fixFlowSeqItems(fc) {
   if (fc.start.type === "flow-seq-start")
     for (let it of fc.items)
-      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? Array.prototype.push.apply(it.value.end, it.sep) : it.value.end = it.sep : Array.prototype.push.apply(it.start, it.sep), delete it.sep);
+      it.sep && !it.value && !includesToken(it.start, "explicit-key-ind") && !includesToken(it.sep, "map-value-ind") && (it.key && (it.value = it.key), delete it.key, isFlowToken(it.value) ? it.value.end ? arrayPushArray(it.value.end, it.sep) : it.value.end = it.sep : arrayPushArray(it.start, it.sep), delete it.sep);
 }
 var Parser = class {
   /**
@@ -11943,7 +11972,7 @@ var Parser = class {
           if (this.atIndentedComment(it.start, map3.indent)) {
             let prev = map3.items[map3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), map3.items.pop();
+              arrayPushArray(end, it.start), end.push(this.sourceToken), map3.items.pop();
               return;
             }
           }
@@ -12075,7 +12104,7 @@ var Parser = class {
           if (this.atIndentedComment(it.start, seq3.indent)) {
             let prev = seq3.items[seq3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              Array.prototype.push.apply(end, it.start), end.push(this.sourceToken), seq3.items.pop();
+              arrayPushArray(end, it.start), end.push(this.sourceToken), seq3.items.pop();
               return;
             }
           }
@@ -13778,7 +13807,9 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
      *  (backend fan-out). `b64` is the raw v1 update, still base64-encoded — the
      *  CRDT layer decodes it. `head` is the server's post-apply head marker.
      *  Lets an IDLE note (no dedicated CRDT room) converge without ever
-     *  STEP1-enrolling. */
+     *  STEP1-enrolling. `seq` is the backend's vault op-log position (Phase D2
+     *  gap-heal, Task 1) — undefined/null on an old backend or a note deleted
+     *  mid-flight. */
     this.onNoteYjsUpdate = null;
     // ---------------------------------------------------------------------------
     // Private
@@ -14125,8 +14156,8 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
       return;
     }
     if (event === "note_yjs_update" && payload) {
-      let noteId = payload.note_id, b64 = payload.b64, head = payload.head;
-      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head));
+      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq3 = Number.isInteger(rawSeq) ? rawSeq : void 0;
+      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq3));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
@@ -18761,6 +18792,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCatchupSeq(seq3) {
     this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
   }
+  /** Gap-heal decision for a live op carrying the backend's vault `seq`.
+   *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
+   *  commutative + idempotent, so seq never gates application; a stale seq
+   *  on a live delta is normal (the backend's seq goes stale between
+   *  checkpoints), not a duplicate.
+   *
+   *  This is a pure BEHIND-DETECTOR: a live op never advances or persists
+   *  the `catchupSeq` cursor, full stop. The prior "seq === cursor + 1 ->
+   *  advance" branch was removed (final review) because advancing off live
+   *  observation is unsound in three distinct ways: (1) a per-message
+   *  silent-skip apply (e.g. an illegal-filename op) consumes a feed entry
+   *  without the client ever seeing it, so a later "+1" looks in-order while
+   *  actually skipping the entry that would have carried a rename/delete;
+   *  (2) `seq` is shared/aliased across write kinds (note/attachment/folder),
+   *  so watching only note live-ops can walk straight past a missed rename
+   *  that consumed an intervening seq; (3) the live stream is unordered
+   *  across a multi-node, multi-note vault, so "+1" arithmetic over it fires
+   *  false gaps continuously rather than detecting real ones. `seq` here is
+   *  used ONLY to detect "we are behind"; `catchupViaSeqReplay` is the sole
+   *  writer of the cursor (it persists per page, see its call site), and it
+   *  is the only thing that can safely consume renames/deletes/creates in
+   *  order.
+   *  - `seq` fails `Number.isInteger` (undefined, null, string, NaN, a
+   *    float): not a valid signal, apply only, cursor unchanged.
+   *  - `seq <= catchupSeq`: stale (normal for a live delta between
+   *    checkpoints), apply only, cursor unchanged.
+   *  - `seq > catchupSeq`: we are behind — apply, fire the (single-flighted)
+   *    seq-replay catch-up fire-and-forget, and do NOT touch the cursor; the
+   *    replay reads the persisted cursor itself and advances/persists it. */
+  applyLiveOpWithSeq(noteId, seq3, apply) {
+    return apply(), !Number.isInteger(seq3) || seq3 <= this.catchupSeq ? "applied" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq3} cursor=${this.catchupSeq}`), this.catchupViaSeqReplay(), "healing");
+  }
   /** Wipe ALL per-vault sync + identity state. Both vault-change paths
    *  (explicit picker `resetForVaultChange`, backstop
    *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
@@ -19620,7 +19683,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
       }
       if (enumerateOnly || (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() })), !resp.has_more) break;
-      typeof resp.next_seq == "number" && (cursor = resp.next_seq);
+      typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
     }
     return applied;
   }
@@ -22726,8 +22789,10 @@ function createCrdtWiring(deps) {
     }
   }), onCrdtMessage = (docId, b64) => {
     channel.handleFrame(docId, b64);
-  }, onNoteYjsUpdate = (noteId, b64, head) => {
-    syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+  }, onNoteYjsUpdate = (noteId, b64, head, seq3) => {
+    syncEngine.applyLiveOpWithSeq(noteId, seq3, () => {
+      syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
+    });
   }, onCrdtDocReady = (docId, announcedPath) => {
     if (syncEngine.isSyncBlocked()) return;
     syncEngine.ensureNoteIdMapped(docId), announcedPath !== void 0 && syncEngine.discoverAnnouncedNote(docId, announcedPath);

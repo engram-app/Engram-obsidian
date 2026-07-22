@@ -1591,6 +1591,91 @@ export class SyncEngine {
 		this.catchupSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
 	}
 
+	/** Gap-heal decision for a live op carrying the backend's vault `seq`.
+	 *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
+	 *  commutative + idempotent, so seq never gates application; a stale seq
+	 *  on a live delta is normal (the backend's seq goes stale between
+	 *  checkpoints), not a duplicate.
+	 *
+	 *  This is a pure BEHIND-DETECTOR: a live op never advances or persists
+	 *  the `catchupSeq` cursor, full stop. The prior "seq === cursor + 1 ->
+	 *  advance" branch was removed (final review) because advancing off live
+	 *  observation is unsound in three distinct ways: (1) a per-message
+	 *  silent-skip apply (e.g. an illegal-filename op) consumes a feed entry
+	 *  without the client ever seeing it, so a later "+1" looks in-order while
+	 *  actually skipping the entry that would have carried a rename/delete;
+	 *  (2) `seq` is shared/aliased across write kinds (note/attachment/folder),
+	 *  so watching only note live-ops can walk straight past a missed rename
+	 *  that consumed an intervening seq; (3) the live stream is unordered
+	 *  across a multi-node, multi-note vault, so "+1" arithmetic over it fires
+	 *  false gaps continuously rather than detecting real ones. `seq` here is
+	 *  used ONLY to detect "we are behind"; `catchupViaSeqReplay` is the sole
+	 *  writer of the cursor (it persists per page, see its call site), and it
+	 *  is the only thing that can safely consume renames/deletes/creates in
+	 *  order.
+	 *  - `seq` fails `Number.isInteger` (undefined, null, string, NaN, a
+	 *    float): not a valid signal, apply only, cursor unchanged.
+	 *  - `seq <= catchupSeq`: stale (normal for a live delta between
+	 *    checkpoints), apply only, cursor unchanged.
+	 *  - `seq > catchupSeq`: we are behind — apply, schedule the (throttled,
+	 *    single-flighted) seq-replay catch-up, and do NOT touch the cursor;
+	 *    the replay reads the persisted cursor itself and advances/persists it.
+	 *
+	 *  THROTTLED, not per-op (CI run 29877041947): checkpoint/REST-origin
+	 *  fan-outs carry a FRESH seq (the "stale between checkpoints" assumption
+	 *  only holds for socket deltas), and the cursor only advances via replay,
+	 *  so in steady-state editing every delivered op looks "from the future" —
+	 *  firing a replay round-trip per op raced the live path suite-wide. The
+	 *  trailing throttle keeps the heal guarantee (a true miss replays within
+	 *  SEQ_HEAL_COOLDOWN_MS) while bounding replay rate to one per window. */
+	applyLiveOpWithSeq(
+		noteId: string,
+		seq: number | undefined | null,
+		apply: () => void,
+	): "applied" | "healing" {
+		apply();
+		if (Number.isInteger(seq)) {
+			// Advance the PER-PATH high-water mark (types.ts FileSyncState.seq):
+			// a live op we just applied proves the path is current through this
+			// seq, so a later replayed/enumerated ROW at or below it is history
+			// and must not backfill (the checkpoint-lag revert, CI 29877041947).
+			// Per-path observation only — the global replay cursor is untouched
+			// (see the behind-detector rationale above).
+			const path = this.noteIdMap?.pathForId(noteId);
+			const st = path ? this.syncState.get(path) : undefined;
+			if (path && st && (st.seq === undefined || (seq as number) > st.seq)) {
+				this.syncState.set(path, { ...st, seq: seq as number });
+			}
+		}
+		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
+			return "applied";
+		}
+		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
+		this.scheduleSeqHeal();
+		return "healing";
+	}
+
+	/** Trailing-edge throttle for heal-triggered seq replays: the first
+	 *  trigger fires immediately; triggers inside the cooldown coalesce into
+	 *  ONE trailing replay at window end (never dropped — a dropped trailing
+	 *  run could strand a real miss until the next op). */
+	private scheduleSeqHeal(): void {
+		const now = Date.now();
+		const since = now - this.seqHealLastAt;
+		if (since >= SyncEngine.SEQ_HEAL_COOLDOWN_MS) {
+			this.seqHealLastAt = now;
+			void this.catchupViaSeqReplay();
+			return;
+		}
+		if (this.seqHealTimer !== null) return;
+		this.seqHealTimer = window.setTimeout(() => {
+			this.seqHealTimer = null;
+			this.seqHealLastAt = Date.now();
+			rlog().info("crdt", "gap-heal replay (trailing, throttled)");
+			void this.catchupViaSeqReplay();
+		}, SyncEngine.SEQ_HEAL_COOLDOWN_MS - since);
+	}
+
 	/** Wipe ALL per-vault sync + identity state. Both vault-change paths
 	 *  (explicit picker `resetForVaultChange`, backstop
 	 *  `invalidateIfVaultChanged`) call this — keeping them in lockstep is the
@@ -3175,6 +3260,9 @@ export class SyncEngine {
 	 *  committed during the replay is never missed. */
 	private seqReplayRunning = false;
 	private seqReplayAgain = false;
+	private seqHealLastAt = 0;
+	private seqHealTimer: number | null = null;
+	private static readonly SEQ_HEAL_COOLDOWN_MS = 4_000;
 
 	/** Returns the number of ops applied across this replay (incl. any coalesced
 	 *  re-run) plus the sets of server note-ids and attachment paths seen
@@ -3360,7 +3448,19 @@ export class SyncEngine {
 				await this.saveData({ catchupSeq: this.getCatchupSeq() });
 			}
 			if (!resp.has_more) break;
-			if (typeof resp.next_seq === "number") cursor = resp.next_seq;
+			// Guard against a `next_seq` that doesn't move forward (a backend quirk
+			// or malformed page) regressing the cursor mid-replay — `cursor` must
+			// stay monotonic across every page of THIS call so the per-page
+			// persisted write above can never move backwards. This intentionally
+			// does NOT compare against `this.getCatchupSeq()`: the cross-vault
+			// mismatch case above starts `cursor` at 0 on purpose to overwrite a
+			// stale higher cursor left by a different vault, and that reset must
+			// still be allowed to persist a lower value than what's currently
+			// stored (setCatchupSeq itself is intentionally left un-guarded so
+			// resets keep working; see final-review fix notes).
+			if (typeof resp.next_seq === "number" && resp.next_seq > cursor) {
+				cursor = resp.next_seq;
+			}
 		}
 		return applied;
 	}
@@ -4519,6 +4619,7 @@ export class SyncEngine {
 			updated_at: op.updated_at,
 			deleted: op.kind === "delete",
 			version: op.version,
+			seq: op.seq,
 		};
 		const applied = await this.applyChange(nc);
 		// Retire the id now that applyChange has consumed the mapping (see the
@@ -4853,7 +4954,29 @@ export class SyncEngine {
 				// backfills via REST (flushFromCrdt), a live-bound one re-handshakes.
 				if (noteId && this.isLiveBound(normalized)) this.crdtEnrollment?.enroll(noteId);
 				const stored = this.syncState.get(normalized);
-				if (change.content_hash && stored?.serverHash !== change.content_hash) {
+				// Directional fence (CI 29877041947): hash INEQUALITY is
+				// direction-blind — a replayed/enumerated row older than what this
+				// device already applied (live op recorded in FileSyncState.seq, or
+				// a row converged earlier) also mismatches, and treating that as
+				// "we are behind" backfills a checkpoint-lagged projection over
+				// newer live content (the ModifyTest 40B/23B revert ping-pong; 1805
+				// backfills in one suite run). A row at or below the path's
+				// high-water seq (or recorded version) is history: skip the whole
+				// diverged block — nothing is recorded, so a genuinely newer row
+				// still converges on a later pass.
+				const staleRow =
+					(stored?.seq !== undefined &&
+						change.seq !== undefined &&
+						change.seq <= stored.seq) ||
+					(stored?.version !== undefined &&
+						change.version !== undefined &&
+						change.version <= stored.version);
+				if (staleRow) {
+					rlog().info(
+						"pull",
+						`CRDT catch-up: stale row (seq ${change.seq ?? "-"}/${stored?.seq ?? "-"} v${change.version ?? "-"}/${stored?.version ?? "-"}) — history, skip ${change.path}`,
+					);
+				} else if (change.content_hash && stored?.serverHash !== change.content_hash) {
 					if (this.isLiveBound(normalized)) {
 						// An open, bound editor is the sole CRDT writer for the note —
 						// writing disk under it would fight the binding. Two recovery
@@ -4904,6 +5027,7 @@ export class SyncEngine {
 								hash: localHash,
 								serverHash: change.content_hash,
 								version: change.version,
+								seq: change.seq,
 							});
 						} else {
 							// Keep serverHash UNrecorded so the next poll retries — never
@@ -4947,6 +5071,7 @@ export class SyncEngine {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
+								seq: change.seq,
 							});
 						}
 					}
@@ -6916,6 +7041,10 @@ export class SyncEngine {
 		}
 		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
+		if (this.seqHealTimer !== null) {
+			window.clearTimeout(this.seqHealTimer);
+			this.seqHealTimer = null;
+		}
 		if (this.postPullDrainTimer !== null) {
 			window.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
