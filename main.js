@@ -13235,7 +13235,10 @@ var EngramApi = class _EngramApi {
   static async probeHealth(rawUrl) {
     let base = _EngramApi.normalizeBaseUrl(rawUrl);
     try {
-      let resp = await (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }), body = null;
+      let resp = await withTimeout(
+        (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }),
+        1e4
+      ), body = null;
       try {
         body = resp.json;
       } catch (e) {
@@ -15389,7 +15392,8 @@ var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_o
 var import_obsidian20 = require("obsidian");
 
 // src/device-flow-modal.ts
-var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends import_obsidian10.Modal {
+var import_obsidian10 = require("obsidian");
+var DeviceFlowModal = class extends import_obsidian10.Modal {
   constructor(app, plugin) {
     super(app);
     this.resolve = () => {
@@ -15425,13 +15429,16 @@ var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends imp
       client_id: this.plugin.settings.clientId
     };
     vaultName && (body.vault_name = vaultName);
-    let resp = await (0, import_obsidian10.requestUrl)({
-      url: `${apiUrl}/auth/device`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      throw: !1
-    });
+    let resp = await withTimeout(
+      (0, import_obsidian10.requestUrl)({
+        url: `${apiUrl}/auth/device`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        throw: !1
+      }),
+      15e3
+    );
     if (resp.status < 200 || resp.status >= 300)
       throw new Error(`HTTP ${resp.status}`);
     return resp.json;
@@ -15459,13 +15466,16 @@ var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends imp
           return;
         }
         try {
-          let resp = await (0, import_obsidian10.requestUrl)({
-            url: `${apiUrl}/auth/device/token`,
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ device_code: deviceCode }),
-            throw: !1
-          });
+          let resp = await withTimeout(
+            (0, import_obsidian10.requestUrl)({
+              url: `${apiUrl}/auth/device/token`,
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ device_code: deviceCode }),
+              throw: !1
+            }),
+            15e3
+          );
           if (resp.status === 428) return;
           if (resp.status >= 200 && resp.status < 300) {
             this.pollInterval && window.clearInterval(this.pollInterval);
@@ -16861,15 +16871,19 @@ var import_obsidian16 = require("obsidian");
 var import_obsidian15 = require("obsidian");
 
 // src/waitlist.ts
-var import_obsidian14 = require("obsidian"), WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
+var import_obsidian14 = require("obsidian");
+var WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
 async function submitWaitlistEmail(email) {
-  let resp = await (0, import_obsidian14.requestUrl)({
-    url: WAITLIST_ENDPOINT,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, source: "obsidian-plugin" }),
-    throw: !1
-  });
+  let resp = await withTimeout(
+    (0, import_obsidian14.requestUrl)({
+      url: WAITLIST_ENDPOINT,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, source: "obsidian-plugin" }),
+      throw: !1
+    }),
+    15e3
+  );
   if (resp.status < 200 || resp.status >= 300)
     throw new Error(`waitlist signup failed: ${resp.status}`);
 }
@@ -17383,15 +17397,64 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.statusContainerEl = null;
+    /** Container the UI was last drawn into. Differs by path: this.containerEl
+     *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
+     *  it so redisplay/device-flow re-renders land in the right place. */
+    this.activeContainerEl = null;
     this.plugin = plugin, this.activeTab = pickInitialTab(plugin.settings);
   }
   /** Pre-select a tab before the next display() call. */
   setInitialTab(tabId) {
     this.activeTab = tabId;
   }
+  /**
+   * Registers this tab with Obsidian's 1.13+ declarative settings API so it
+   * shows up in the global settings search. We do NOT decompose our settings
+   * into declarative `control` objects: this tab is a rich custom UI (tab bar,
+   * live status dot, progress bar, device-flow) with no 1:1 declarative form.
+   * Instead we expose a single `render` item that draws the existing UI, which
+   * is enough to satisfy the API and index the tab by name.
+   *
+   * On 1.13+ a non-empty return here renders INSTEAD of display(); on <1.13
+   * (minAppVersion is 1.7.2) this method doesn't exist on the base class and
+   * display() is the fallback. Both paths call renderContent(), so there's
+   * one source of truth.
+   *
+   * ponytail: one search entry (indexed by name), not per-setting search.
+   * Upgrade path = decompose each setting into a `control` definition — large,
+   * and would drop the custom tab UX on 1.13+. Not worth it to satisfy a
+   * search-indexing nudge.
+   *
+   * Return type is a local shim for Obsidian 1.13's `SettingDefinitionItem`:
+   * we hold the obsidian typings at 1.8.7 (minAppVersion is 1.7.2), so the
+   * real type isn't available. This covers exactly the `render` item we emit;
+   * swap for `SettingDefinitionItem[]` if the obsidian typings floor is ever
+   * raised to >=1.13.
+   */
+  getSettingDefinitions() {
+    return [
+      {
+        name: "Engram Sync",
+        desc: "Cloud and self-hosted sync, connection, and advanced settings.",
+        render: (setting) => {
+          setting.settingEl.addClass("engram-settings-host"), this.renderContent(setting.settingEl.createDiv());
+        }
+      }
+    ];
+  }
   display() {
-    let { containerEl } = this;
-    containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
+    this.renderContent(this.containerEl);
+  }
+  /** Re-render into whatever container we last drew into. Public so external
+   *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
+   *  the deprecated display() — which on 1.13+ would draw into the tab root
+   *  instead of the render-hatch host. No-op if the tab isn't currently shown
+   *  (activeContainerEl is cleared on hide()); it re-renders on next open. */
+  rerender() {
+    this.activeContainerEl && this.renderContent(this.activeContainerEl);
+  }
+  renderContent(containerEl) {
+    this.activeContainerEl = containerEl, containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
     let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
       text: "Syncing...",
       cls: "engram-progress-label"
@@ -17434,7 +17497,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
       containerEl: contentEl,
       app: this.app,
       plugin: this.plugin,
-      redisplay: () => this.display(),
+      redisplay: () => this.rerender(),
       startDeviceFlow: () => this.startDeviceFlow(),
       openProgressModal: () => this.openProgressModal(),
       switchToTab: (id2) => activateTab(id2)
@@ -17462,7 +17525,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
       result.refresh_token,
       result.vault_id,
       result.user_email
-    ), this.display());
+    ), this.rerender());
   }
   /** Render (or re-render) the connection status row in place. Idempotent —
    *  empties the container first so it can be wired to live status events. */
@@ -17482,7 +17545,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     }
   }
   hide() {
-    this.plugin.onStatusBarChange = null, this.statusContainerEl = null;
+    this.plugin.onStatusBarChange = null, this.statusContainerEl = null, this.activeContainerEl = null;
   }
 };
 
@@ -21645,7 +21708,8 @@ _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3
 var SyncEngine = _SyncEngine;
 
 // src/update-check.ts
-var import_obsidian22 = require("obsidian"), MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
+var import_obsidian22 = require("obsidian");
+var MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
 function isNewerVersion(latest, current) {
   var _a, _b;
   let a = latest.split(".").map((n) => Number.parseInt(n, 10) || 0), b = current.split(".").map((n) => Number.parseInt(n, 10) || 0);
@@ -21658,7 +21722,10 @@ function isNewerVersion(latest, current) {
 async function checkForPluginUpdate(currentVersion) {
   var _a;
   try {
-    let resp = await (0, import_obsidian22.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 });
+    let resp = await withTimeout(
+      (0, import_obsidian22.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 }),
+      1e4
+    );
     if (resp.status !== 200) return null;
     let latest = (_a = resp.json) == null ? void 0 : _a.version;
     return typeof latest == "string" && isNewerVersion(latest, currentVersion) ? latest : null;
@@ -23801,13 +23868,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian26.requestUrl)({
-          url: `${apiUrl}/auth/token/refresh`,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: token }),
-          throw: !1
-        });
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await withTimeout(
+          (0, import_obsidian26.requestUrl)({
+            url: `${apiUrl}/auth/token/refresh`,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: token }),
+            throw: !1
+          }),
+          15e3
+        );
         if (resp.status < 200 || resp.status >= 300) {
           let e = new Error(`Refresh failed: ${resp.status}`);
           throw e.status = resp.status, e;
@@ -24181,7 +24251,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2, _b2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.display(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
