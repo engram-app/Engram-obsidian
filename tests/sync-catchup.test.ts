@@ -72,6 +72,13 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
+/** Real-timer wait, mirroring tests/sync-postpull-defer.test.ts's `flush` —
+ *  used with a shrunk `engine.healCooldownMs` to observe the trailing-fire
+ *  coalesce (fix wave 2) without mocking timers. */
+function flush(ms: number): Promise<void> {
+	return new Promise((r) => setTimeout(r, ms));
+}
+
 function createEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}): SyncEngine {
 	const engine = new SyncEngine(
 		mockApp,
@@ -485,8 +492,130 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		await engine.applyChange(c1);
 		await engine.applyChange(c1);
 
-		// Within the cooldown window (default 30s): only the first row actually
+		// Within the cooldown window (default 15s): only the first row actually
 		// fires STEP1 — the second is a cheap no-op, not a second handshake.
+		expect(reset).toHaveBeenCalledTimes(1);
+	});
+
+	test("fix wave 2 (a): a suppressed poke arms a trailing fire — reset+enroll fires exactly once more after the window", async () => {
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 30;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "h0" } });
+
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1); // immediate fire
+		expect(reset).toHaveBeenCalledTimes(1);
+
+		await engine.applyChange(c1); // suppressed — must NOT drop; arms a trailing fire
+		expect(reset).toHaveBeenCalledTimes(1);
+
+		await flush(60); // past the window
+		expect(reset).toHaveBeenCalledTimes(2);
+
+		engine.destroy();
+	});
+
+	test("fix wave 2 (b): three suppressed pokes for the same note coalesce into ONE trailing fire", async () => {
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 30;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "h0" } });
+
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1); // immediate fire
+		await engine.applyChange(c1); // suppressed — arms the trailing timer
+		await engine.applyChange(c1); // suppressed — already coalesced, no 2nd timer
+		await engine.applyChange(c1); // suppressed — already coalesced, no 3rd timer
+		expect(reset).toHaveBeenCalledTimes(1);
+
+		await flush(60);
+		// Exactly one trailing fire for all three coalesced pokes, not three.
+		expect(reset).toHaveBeenCalledTimes(2);
+
+		engine.destroy();
+	});
+
+	test("fix wave 2 (c): the trailing fire records a NEW cooldown timestamp (not stale from the suppressed poke)", async () => {
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 30;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "h0" } });
+
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1); // immediate fire #1, cooldown starts at t0
+		await engine.applyChange(c1); // suppressed — arms a trailing timer that
+		// fires at t0+healCooldownMs regardless of when this poke landed.
+		// Wait just past that (not a second full window) so the follow-up poke
+		// below still lands inside the trailing fire's OWN fresh window.
+		await flush(40);
+		expect(reset).toHaveBeenCalledTimes(2);
+
+		// A poke immediately after the trailing fire must be suppressed — if the
+		// trailing fire had NOT refreshed the cooldown timestamp (stayed at the
+		// original suppressed-attempt time, or unset), this would wrongly fire
+		// immediately as a 3rd handshake.
+		await engine.applyChange(c1);
+		expect(reset).toHaveBeenCalledTimes(2);
+
+		engine.destroy();
+	});
+
+	test("fix wave 2 (d): destroy() clears a pending trailing timer — it never fires after teardown", async () => {
+		const { engine, reset } = crdtEngine();
+		engine.healCooldownMs = 30;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "h0" } });
+
+		const c1 = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(c1); // immediate fire
+		await engine.applyChange(c1); // suppressed — arms the trailing timer
+		expect(reset).toHaveBeenCalledTimes(1);
+
+		engine.destroy();
+		await flush(60); // past what would have been the trailing-fire window
+
+		// Torn down: the armed trailing timer must never fire.
 		expect(reset).toHaveBeenCalledTimes(1);
 	});
 

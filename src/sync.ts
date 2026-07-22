@@ -684,14 +684,27 @@ export class SyncEngine {
 	 *  enroll (open, catch-up, and manifest heal can all independently detect
 	 *  the same divergence in quick succession; unconditional firing drains
 	 *  the handshake budget, the #193 starvation class). Value = last-fired
-	 *  `Date.now()`. `healCooldownMs` is a public instance field so tests can
-	 *  shrink it. */
+	 *  `Date.now()`, set ONLY when a handshake actually fires — never on a
+	 *  suppressed attempt. `healCooldownMs` is a public instance field so
+	 *  tests can shrink it. */
 	private crdtHealCooldown: Map<string, number> = new Map();
 
-	/** See `crdtHealCooldown`. 30s: long enough that open+catch-up+heal racing
-	 *  on the same note collapse to one handshake, short enough that a
-	 *  genuinely-still-diverged note keeps retrying within a session. */
-	healCooldownMs = 30_000;
+	/** Fix wave 2 (CI-found defect: `test_deaf_note_survives_handshake_rate_
+	 *  limit_and_heals_on_restore`): a poke suppressed by the cooldown must
+	 *  NOT be silently dropped — a deaf note's one recovery poke landing
+	 *  inside the window would otherwise never retry, stranding it until the
+	 *  next unrelated edit or the 5-min manifest pass. Mirrors
+	 *  `scheduleSeqHeal`'s trailing-edge throttle: a suppressed poke arms ONE
+	 *  trailing timer per note_id for the remaining window; further pokes for
+	 *  the same note while a trailing timer is armed coalesce into it (no
+	 *  second timer). Cleared in `destroy()`. */
+	private crdtHealTrailingTimers: Map<string, number> = new Map();
+
+	/** See `crdtHealCooldown`. 15s (fix wave 2, was 30s): long enough that
+	 *  open+catch-up+heal racing on the same note collapse to one handshake,
+	 *  short enough that a genuinely-still-diverged note keeps retrying
+	 *  within a session. */
+	healCooldownMs = 15_000;
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
 	 *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
@@ -3720,17 +3733,41 @@ export class SyncEngine {
 	 *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
 	 *  independently detecting the same divergence collapses to one handshake
 	 *  instead of draining the handshake budget (#193 starvation class).
-	 *  Never throws. */
+	 *
+	 *  Fix wave 2: a poke suppressed by the cooldown COALESCES into one
+	 *  trailing fire at window end (`crdtHealTrailingTimers`) instead of being
+	 *  dropped — mirrors `scheduleSeqHeal`'s trailing-edge throttle. Dropping
+	 *  it silently stranded a deaf note whose single recovery poke landed
+	 *  inside the window (CI: `test_deaf_note_survives_handshake_rate_limit_
+	 *  and_heals_on_restore`). Never throws. */
 	private socketConvergeLiveBound(path: string, noteId: string): void {
+		if (!this.crdtEnrollment) return;
 		const last = this.crdtHealCooldown.get(noteId);
-		if (last !== undefined && Date.now() - last < this.healCooldownMs) {
-			devLog().log("crdt", `socket converge: cooldown skip for ${path}`);
+		const now = Date.now();
+		if (last === undefined || now - last >= this.healCooldownMs) {
+			this.fireCrdtReHandshake(path, noteId);
 			return;
 		}
-		if (!this.crdtEnrollment) return;
+		if (this.crdtHealTrailingTimers.has(noteId)) {
+			devLog().log("crdt", `socket converge: cooldown skip for ${path} (already coalesced)`);
+			return;
+		}
+		devLog().log("crdt", `socket converge: cooldown skip for ${path} — arming trailing fire`);
+		const remaining = this.healCooldownMs - (now - last);
+		const timer = window.setTimeout(() => {
+			this.crdtHealTrailingTimers.delete(noteId);
+			this.fireCrdtReHandshake(path, noteId);
+		}, remaining);
+		this.crdtHealTrailingTimers.set(noteId, timer);
+	}
+
+	/** The actual STEP1 fire, shared by the immediate and trailing-coalesced
+	 *  paths in `socketConvergeLiveBound`. Records the cooldown timestamp —
+	 *  ONLY called on a real fire, never on a suppressed attempt. */
+	private fireCrdtReHandshake(path: string, noteId: string): void {
 		this.crdtHealCooldown.set(noteId, Date.now());
-		this.crdtEnrollment.reset(noteId);
-		this.crdtEnrollment.enroll(noteId);
+		this.crdtEnrollment?.reset(noteId);
+		this.crdtEnrollment?.enroll(noteId);
 		rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
 	}
 
@@ -7200,6 +7237,10 @@ export class SyncEngine {
 			window.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
+		for (const timer of this.crdtHealTrailingTimers.values()) {
+			window.clearTimeout(timer);
+		}
+		this.crdtHealTrailingTimers.clear();
 		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();
