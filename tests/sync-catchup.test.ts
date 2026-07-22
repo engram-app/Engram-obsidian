@@ -106,26 +106,57 @@ beforeEach(() => {
 describe("pull un-masking — CRDT-owned local note must catch up from /changes", () => {
 	function crdtEngine(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
 		const engine = createEngine(overrides);
-		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
+		const map = new NoteIdMap();
+		map.set("owned.md", "note-id-1");
+		engine.setNoteIdMap(map);
 		const encodeStateVector = mock().mockResolvedValue(new Uint8Array([0]));
 		const hasPendingGap = mock().mockResolvedValue(false);
+		// Default: the doc projects empty; tests that exercise the cold catch-up
+		// converge (restConvergeAndFlush) override this to the doc's real content.
+		const projectedText = mock().mockResolvedValue("");
+		// Simulates the real CrdtManager's remote-merge listener (manager.ts):
+		// applying an update flushes the projected content to disk via
+		// engine.flushFromCrdt, UNLESS the note is live-bound (the editor owns
+		// disk then — wiring.ts's onFlushToDisk skips the write in that case).
+		// restConvergeAndFlush no longer performs its own disk write — it
+		// relies on this auto-flush having already happened inside
+		// applyRemoteUpdate — so the mock must simulate it for these tests to
+		// still observe a disk write.
+		const applyRemoteUpdate = mock().mockImplementation(async (noteId: string) => {
+			const path = map.pathForId(noteId);
+			if (path && !(engine as any).isLiveBound(path)) {
+				await engine.flushFromCrdt(path, await projectedText());
+			}
+		});
 		engine.setCrdtManager({
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			applyRemoteUpdate,
 			encodeStateVector,
 			hasPendingGap,
+			projectedText,
 		} as any);
-		const map = new NoteIdMap();
-		map.set("owned.md", "note-id-1");
-		engine.setNoteIdMap(map);
 		const enroll = mock();
 		const reset = mock();
 		engine.setCrdtEnrollment({ enroll, reset });
-		return { engine, enroll, reset, map, applyRemoteUpdate, encodeStateVector, hasPendingGap };
+		return {
+			engine,
+			enroll,
+			reset,
+			map,
+			applyRemoteUpdate,
+			encodeStateVector,
+			hasPendingGap,
+			projectedText,
+		};
 	}
 
-	test("diverged hashes: the pulled body is written to disk and serverHash converges", async () => {
-		const { engine, enroll } = crdtEngine();
+	test("diverged hashes: catch-up converges via the Yjs delta (not the feed snapshot) and serverHash converges", async () => {
+		const { engine, enroll, applyRemoteUpdate, projectedText } = crdtEngine();
+		// The doc converges to exactly what the feed said in this quiescent
+		// (no concurrent live edit) case — the Yjs delta path and the old
+		// snapshot path agree on the outcome here; the D2 regression test below
+		// is where they diverge.
+		projectedText.mockResolvedValue("authoritative body the announce never delivered");
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -144,8 +175,10 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// The body materializes (the pull is the safety net for a missed
-		// announce) and the stored serverHash converges so dedupe recognizes it.
+		// Converges through the Y.Doc: the REST delta is pulled and applied...
+		expect(applyRemoteUpdate).toHaveBeenCalledWith("note-id-1", expect.any(Uint8Array));
+		// ...and the disk write reflects the converged doc's projected text, not
+		// a direct write of the feed's content field.
 		expect(mockApp.vault.modify).toHaveBeenCalledWith(
 			localFile,
 			"authoritative body the announce never delivered",
@@ -157,6 +190,142 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// connect is the enrollment storm P2 removes. (Live-bound notes still
 		// enroll — see the "diverged + live-bound" test below.)
 		expect(enroll).not.toHaveBeenCalled();
+	});
+
+	test("D2 regression: a fresher live-merged Y.Doc survives a stale/checkpoint-lagged feed snapshot", async () => {
+		// The feed entry carries a checkpoint-lagged snapshot ("base FROM_B")
+		// that is OLDER than what the local Y.Doc has already merged in
+		// ("base FROM_A FROM_B", e.g. via a concurrent live edit from another
+		// device). Yjs merge is monotonic — applying the stale delta cannot
+		// move the doc backward — so the doc still projects FROM_A after
+		// converging. Pre-fix, the backfill wrote the feed's raw `content`
+		// straight to disk and reverted FROM_A.
+		const fresherMerged = "base FROM_A FROM_B";
+		const staleSnapshot = "base FROM_B";
+		const { engine, applyRemoteUpdate, projectedText } = crdtEngine();
+		projectedText.mockResolvedValue(fresherMerged);
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Disk is "clean": its recorded hash already matches the fresher
+		// merged content (the live path already materialized it here), so
+		// this is the missed-announce/catch-up leg, not the conflict leg.
+		mockApp.vault.cachedRead.mockResolvedValue(fresherMerged);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a(fresherMerged), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: staleSnapshot,
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// The Yjs converge core ran (proves the fix's code path executed, not
+		// the old direct-snapshot write, which never calls applyRemoteUpdate).
+		expect(applyRemoteUpdate).toHaveBeenCalledWith("note-id-1", expect.any(Uint8Array));
+		// The disk must never be overwritten with the stale snapshot — FROM_A
+		// must survive. (flushFromCrdt's own idempotency guard means disk,
+		// already holding the fresher content, isn't rewritten at all here —
+		// the assertion that matters is that the stale snapshot never lands.)
+		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, staleSnapshot);
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
+	});
+
+	test("no note_id (legacy /notes/changes path): falls back to the content-snapshot backfill unchanged", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({
+			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
+			applyRemoteUpdate: mock().mockResolvedValue(undefined),
+			encodeStateVector: mock().mockResolvedValue(new Uint8Array([0])),
+			hasPendingGap: mock().mockResolvedValue(false),
+			projectedText: mock().mockResolvedValue(""),
+		} as any);
+		// No NoteIdMap entry for this path — noteId resolves to null, same as
+		// the legacy GET /notes/changes feed that never carries an `id`.
+		const localFile = new TFile("legacy.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("body");
+		engine.importSyncState({
+			"legacy.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "legacy.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(mockApp.vault.modify).toHaveBeenCalledWith(localFile, "server body");
+		expect(engine.exportSyncState()["legacy.md"]?.serverHash).toBe("new-hash");
+	});
+
+	test("unbound catch-up: REST converge FAILURE never fakes convergence — serverHash stays unrecorded so every poll retries", async () => {
+		// Equivalent of the live-bound "REST catch-up FAILURE" test below, for
+		// the NOT-live-bound (`else if (noteId)`) leg — restConvergeAndFlush's
+		// retry contract must hold the same way: a failed REST pull never
+		// records convergence for data that never arrived.
+		const { engine, applyRemoteUpdate } = crdtEngine();
+		((mockApi as any).getUpdates as ReturnType<typeof mock>).mockRejectedValue(
+			new Error("HTTP 500"),
+		);
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Local is clean (matches the last-synced hash) so this takes the
+		// catch-up converge branch, not the local+remote-diverged conflict flow.
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "authoritative body the announce never delivered",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// restConvergeCore's getUpdates() throws before ever reaching
+		// applyRemoteUpdate — nothing was applied, nothing was flushed.
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("unbound catch-up: a delta that leaves a pending gap does NOT record convergence", async () => {
+		// Equivalent of the live-bound "pending gap" test below, for the
+		// NOT-live-bound leg.
+		const { engine, hasPendingGap } = crdtEngine();
+		hasPendingGap.mockResolvedValue(true);
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("body"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "authoritative body the announce never delivered",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// The delta was applied (Yjs merge always integrates what it received)
+		// but the doc is still gapped, so restConvergeCore returns null and
+		// restConvergeAndFlush must not record convergence.
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {

@@ -3679,14 +3679,16 @@ export class SyncEngine {
 		}
 	}
 
-	/** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
-	 *  since our real state vector over REST and apply it to the live Y.Doc —
-	 *  the editor binding paints it, no disk write. Returns true only when the
-	 *  doc verifiably reached server state (applied, no pending gap), so the
-	 *  caller records convergence for delivered data ONLY. Best-effort:
-	 *  isolates its own failure, never throws. */
-	private async restConvergeLiveBound(path: string, noteId: string): Promise<boolean> {
-		if (!this.crdt) return false;
+	/** Shared Yjs-delta converge core for both catch-up legs (live-bound and
+	 *  cold/backfill): pull the delta since our real state vector over REST
+	 *  and apply it into the Y.Doc. Yjs merge is monotonic — applying a delta
+	 *  can only add causality, never revert — so this is safe to run even
+	 *  while a live edit from another device is mid-flight on this note,
+	 *  unlike writing a content snapshot. Returns the head reached on success,
+	 *  or null when the doc is still gapped (retry next poll) or the REST call
+	 *  failed (isolated here, logged, never throws). */
+	private async restConvergeCore(path: string, noteId: string): Promise<string | null> {
+		if (!this.crdt) return null;
 		try {
 			const since = toB64(await this.crdt.encodeStateVector(noteId));
 			const { update, head } = await this.api.getUpdates(noteId, since);
@@ -3699,14 +3701,68 @@ export class SyncEngine {
 					"crdt",
 					`REST converge: pending gap remains for ${path} — retrying next poll`,
 				);
-				return false;
+				return null;
 			}
-			this.setCrdtHead(path, head);
-			rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`);
-			return true;
+			return head;
 		} catch (e) {
 			rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`);
-			return false;
+			return null;
+		}
+	}
+
+	/** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
+	 *  since our real state vector over REST and apply it to the live Y.Doc —
+	 *  the editor binding paints it, no disk write. Returns true only when the
+	 *  doc verifiably reached server state (applied, no pending gap), so the
+	 *  caller records convergence for delivered data ONLY. Best-effort:
+	 *  isolates its own failure, never throws. */
+	private async restConvergeLiveBound(path: string, noteId: string): Promise<boolean> {
+		const head = await this.restConvergeCore(path, noteId);
+		if (head === null) return false;
+		this.setCrdtHead(path, head);
+		rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`);
+		return true;
+	}
+
+	/** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
+	 *  same Yjs-delta core as restConvergeLiveBound, but there is no editor
+	 *  binding to paint the doc. Replaces the old content-snapshot
+	 *  `flushFromCrdt(path, content)` backfill, which reverted a fresher live
+	 *  merge when the seq gap-heal's behind-detector fires a catch-up replay
+	 *  DURING active editing on this note from another device — the feed's
+	 *  content snapshot is checkpoint-lagged and carries no causality, so
+	 *  applying it late can stomp a merge that landed since. The Yjs delta
+	 *  path cannot: it can only add causality to the doc.
+	 *
+	 *  Disk itself is NOT written here: `restConvergeCore`'s `applyRemoteUpdate`
+	 *  already flushed it. The manager's remote-merge listener (manager.ts)
+	 *  captures the projection synchronously the instant the update integrates
+	 *  and writes it via `onFlushToDisk` (wiring.ts -> `flushFromCrdt`), which
+	 *  `applyRemoteUpdate` awaits before returning — so by the time this
+	 *  function resumes, disk already holds the converged content. A second,
+	 *  separate read-then-write here would race a concurrent live delta
+	 *  landing between the read and the write: that delta's own newer
+	 *  auto-flush could land first, and this tail's stale captured text would
+	 *  then clobber it (the exact revert family this fixes elsewhere).
+	 *  `projectedText` is read once, purely so the caller can hash what
+	 *  actually landed for syncState bookkeeping — never to write disk again.
+	 *  Returns that text on success, or null on failure/pending-gap — mirrors
+	 *  restConvergeLiveBound's retry contract (never record convergence for
+	 *  data that hasn't arrived). */
+	private async restConvergeAndFlush(path: string, noteId: string): Promise<string | null> {
+		const head = await this.restConvergeCore(path, noteId);
+		if (head === null || !this.crdt) return null;
+		try {
+			const text = await this.crdt.projectedText(noteId);
+			this.setCrdtHead(path, head);
+			rlog().info("crdt", `REST converge: catch-up ${path} converged to head=${head}`);
+			return text;
+		} catch (e) {
+			rlog().warn(
+				"crdt",
+				`REST converge (catch-up hash read) failed for ${path}: ${errMsg(e)}`,
+			);
+			return null;
 		}
 	}
 
@@ -5116,10 +5172,47 @@ export class SyncEngine {
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
 							);
 							crdtConflictFallthrough = true;
-						} else {
+						} else if (noteId) {
+							// CRDT-enrolled note: converge via Yjs deltas through the
+							// Y.Doc, never by writing the feed's content SNAPSHOT — the
+							// snapshot is checkpoint-lagged and can revert a live merge
+							// that landed since this entry was produced (the seq gap-heal
+							// behind-detector can fire this replay concurrently with
+							// active editing on this note from another device). Yjs
+							// merge is monotonic, so this cannot revert anything even
+							// when it races another device's live edit.
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: pull backfilling diverged note ${change.path}`,
+								`CRDT catch-up: pull backfilling diverged note via Yjs converge ${change.path}`,
+							);
+							const flushed = await this.restConvergeAndFlush(normalized, noteId);
+							if (flushed !== null) {
+								// Spread the existing entry: restConvergeAndFlush just
+								// recorded crdtHead into it, and a bare replacement would
+								// wipe that head, defeating coldReceive's cost gate.
+								this.syncState.set(normalized, {
+									...(this.syncState.get(normalized) ?? {}),
+									hash: fnv1a(flushed),
+									version: change.version,
+									serverHash: change.content_hash,
+									seq: change.seq,
+								});
+							} else {
+								// Never record convergence for data that hasn't arrived —
+								// mirrors the live-bound leg's retry bookkeeping above; the
+								// next poll/replay retries the delta pull.
+								rlog().warn(
+									"pull",
+									`CRDT catch-up: Yjs converge failed or gapped, retrying next poll ${change.path}`,
+								);
+							}
+						} else {
+							// No note_id (legacy GET /notes/changes path — no id to pull
+							// a CRDT delta for): fall back to the content-snapshot
+							// backfill, unchanged from before.
+							rlog().warn(
+								"pull",
+								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
 							);
 							await this.flushFromCrdt(normalized, content);
 							// Spread the current entry (preserves crdtHead, mirrors the
