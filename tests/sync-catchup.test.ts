@@ -273,6 +273,39 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["legacy.md"]?.serverHash).toBe("new-hash");
 	});
 
+	test("NO recorded CAS base + disk already holds the row bytes: quiet record, NO re-handshake (storm class)", async () => {
+		// Post-wipe re-adoption / account swap: every row's per-user HMAC hash
+		// reads diverged, but disk content is identical. Firing a re-handshake
+		// per such row re-created the connect storm (hundreds of enrolls →
+		// server rate limit → real heals starved; CI run 29942250643). With no
+		// serverHash ever recorded there is no convergence history to mask —
+		// record the bookkeeping quietly.
+		const { engine, enroll, reset } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("identical body");
+		// Baseline hash exists (file tracked) but NO serverHash was ever recorded.
+		engine.importSyncState({ "owned.md": { hash: fnv1a("identical body") } });
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "identical body",
+			content_hash: "row-hash",
+			version: 4,
+			seq: 11,
+			mtime: 50,
+		} as any);
+
+		expect(enroll).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("row-hash");
+		expect(state?.seq).toBe(11);
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
 	test("cold diverged leg issues ZERO REST calls — no getUpdates, no fetch (Phase E3 purge regression)", async () => {
 		// The REST delta pull (restConvergeAndFlush/restConvergeCore) is
 		// DELETED: a cold diverged note stages + fires the socket re-handshake

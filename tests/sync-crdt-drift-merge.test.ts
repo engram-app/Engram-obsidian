@@ -193,49 +193,58 @@ function normalizePathLike(p: string): string {
 	return p;
 }
 
-describe("#234 (Phase E3): history-less note re-handshakes over the socket, never doubles/loses", () => {
-	test("(i) history-less + NO drift → enroll refire, no REST, crdtHead unadvanced until STEP2 lands", async () => {
-		const { e, mgr, disk, enroll, reset } = await historyLessScenario({
+describe("#234 (Phase E3 storm-safe): history-less note applies the delta directly — no seed, no room", () => {
+	test("(i) NO drift + full-lineage first delta → integrates gap-free, history-full, disk converged, NO enroll", async () => {
+		const { e, mgr, disk, enroll, serverFullUpdate } = await historyLessScenario({
 			dbPrefix: "hl-nodrift",
 			disk: "BASE", // in sync with baseline
 			baselineHash: fnv1a("BASE"),
 			serverFull: "BASE REMOTE",
 		});
 
-		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1, 2, 3]), "SRV");
+		// A note created while this device is online fans out its FIRST delta =
+		// the entire lineage since genesis — it integrates into the empty doc
+		// with no causal gap.
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
 
-		// STEP2 of the re-handshake delivers full state — no synchronous fetch,
-		// no disk change here.
-		expect(reset).toHaveBeenCalledWith("id-a");
-		expect(enroll).toHaveBeenCalledWith("id-a");
-		expect(disk.get("a.md")).toBe("BASE");
-		// Head unadvanced — never stamped over a doc that has not adopted
-		// server state (the cost gate keeps retrying).
-		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
+		expect(await mgr.getText("id-a")).toBe("BASE REMOTE"); // complete, not doubled
+		expect(disk.get("a.md")).toBe("BASE REMOTE"); // flushed complete
+		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1); // NOT doubled
+		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // history-full, head recorded
+		expect(enroll).not.toHaveBeenCalled(); // room-free — no connect-storm contribution
 		await mgr.destroy();
 	});
 
-	test("(ii) STEP2 arrival after the refire converges doc + disk with no doubling", async () => {
-		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
-			dbPrefix: "hl-step2",
-			disk: "BASE", // no drift
+	test("(ii) INCREMENTAL delta (note predates this device) → pends, defers with NO re-handshake", async () => {
+		const { e, mgr, disk, enroll } = await historyLessScenario({
+			dbPrefix: "hl-incr",
+			disk: "BASE",
 			baselineHash: fnv1a("BASE"),
 			serverFull: "BASE REMOTE",
 		});
 
-		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
-		// Simulate the enroll's STEP2 frame: full server state integrates into
-		// the (still empty) doc — the manager's remote-merge listener flushes.
-		await mgr.applyRemoteUpdate("id-a", serverFullUpdate);
+		// An incremental delta built on server state this empty doc has never
+		// seen: encode the server's "REMOTE" edit AGAINST a non-empty base the
+		// local doc lacks — Yjs pends it.
+		const base = new Y.Doc();
+		base.getText("content").insert(0, "BASE");
+		const baseSv = Y.encodeStateVector(base);
+		base.getText("content").insert(4, " REMOTE");
+		const incremental = Y.encodeStateAsUpdate(base, baseSv);
 
-		expect(await mgr.getText("id-a")).toBe("BASE REMOTE"); // complete
-		expect(disk.get("a.md")).toBe("BASE REMOTE"); // flushed complete
-		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1); // NOT doubled
+		const result = await (e as any).applyPushedNoteUpdate("id-a", incremental, "SRV");
+
+		expect(result).toBe("deferred");
+		// No room refire (the reconnect-scale storm class, CI 29942250643) —
+		// disk convergence is owned by the op-log rows; the doc hydrates at open.
+		expect(enroll).not.toHaveBeenCalled();
+		expect(disk.get("a.md")).toBe("BASE"); // untouched
+		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // unadvanced
 		await mgr.destroy();
 	});
 
-	test("(iii) history-less + drift (LCA or not) → keep-both copy BEFORE the refire, nothing lost", async () => {
-		const { e, mgr, disk, enroll } = await historyLessScenario({
+	test("(iii) drift + full-lineage delta → keep-both copy BEFORE the apply, server content lands, nothing lost", async () => {
+		const { e, mgr, disk, enroll, serverFullUpdate } = await historyLessScenario({
 			dbPrefix: "hl-drift",
 			disk: "BASE local", // un-pushed local edit
 			baselineHash: fnv1a("BASE"),
@@ -243,29 +252,25 @@ describe("#234 (Phase E3): history-less note re-handshakes over the socket, neve
 			// no baseStoreContent → no LCA
 		});
 
-		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+		await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
 
-		// Local version preserved as a conflict copy — STEP2's later flush may
-		// freely overwrite the original.
+		// Local version preserved as a conflict copy; the integrate's flush
+		// then freely converges the original to server content.
 		const conflictKey = [...disk.keys()].find((k) => k.includes("(conflict"));
 		expect(conflictKey).toBeDefined();
 		expect(disk.get(conflictKey as string)).toBe("BASE local");
-		// Original untouched until STEP2 delivers server state.
-		expect(disk.get("a.md")).toBe("BASE local");
-		expect(enroll).toHaveBeenCalledWith("id-a");
-		// The original's baseline advanced to the drift content so the pending
-		// drift can never be seeded as a fresh lineage (the #234 doubling door)
-		// nor re-pushed — it lives on in the copy.
+		expect(disk.get("a.md")).toBe("BASE REMOTE");
+		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1); // NOT doubled
+		expect(enroll).not.toHaveBeenCalled();
 		const state = (e as any).syncState as Map<string, { hash: number }>;
-		expect(state.get("a.md")?.hash).toBe(fnv1a("BASE local"));
 		expect(state.get(conflictKey as string)?.hash).toBe(fnv1a("BASE local"));
 		await mgr.destroy();
 	});
 });
 
 describe("I1: keep-both preserves the local edit even if the copy write fails", () => {
-	test("conflict-copy write THROWS → local edit NOT lost: abort with NO refire, crdtHead unadvanced, disk intact", async () => {
-		const { e, mgr, disk, enroll } = await historyLessScenario({
+	test("conflict-copy write THROWS → local edit NOT lost: abort BEFORE the apply, crdtHead unadvanced, disk intact", async () => {
+		const { e, mgr, disk, serverFullUpdate } = await historyLessScenario({
 			dbPrefix: "hl-copyfail",
 			disk: "BASE local", // un-pushed local edit — the sole live copy
 			baselineHash: fnv1a("BASE"),
@@ -273,13 +278,13 @@ describe("I1: keep-both preserves the local edit even if the copy write fails", 
 			createThrows: true, // conflict-copy write fails for real
 		});
 
-		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
+		const result = await (e as any).applyPushedNoteUpdate("id-a", serverFullUpdate, "SRV");
 
-		// Aborted BEFORE firing the re-handshake: a STEP2 flush would overwrite
-		// the sole copy of the edit. The original still holds it; the caller
+		// Aborted BEFORE applying: the integrate's flush would overwrite the
+		// sole copy of the edit. The original still holds it; the caller
 		// retries next fan-out/poll.
+		expect(result).toBe("deferred");
 		expect(disk.get("a.md")).toBe("BASE local");
-		expect(enroll).not.toHaveBeenCalled();
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
 		await mgr.destroy();
 	});

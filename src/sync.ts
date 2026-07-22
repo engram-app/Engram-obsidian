@@ -1245,31 +1245,42 @@ export class SyncEngine {
 		}
 	}
 
-	/** Adopt a not-live-bound CRDT note whose local Y.Doc has NO history yet
-	 *  (#234). A feed-synced note (content delivered via the cursor feed, its
+	/** Converge a not-live-bound CRDT note whose local Y.Doc has NO history yet
+	 *  (#234). A feed-synced note (content delivered via the op-log rows, its
 	 *  IndexedDB store never populated) has an empty Y.Doc. Two coupled failures
 	 *  arise if we treat it like a history-full note:
 	 *   - DOUBLING: `captureDiskDriftBeforeRemote` → `applyLocalEdit(disk)` seeds
 	 *     the whole disk as a FRESH lineage; the subsequent server-lineage merge
 	 *     unions two independent insertions of the baseline → baseline doubles.
-	 *   - INCOMPLETENESS: the fanned-out/cold delta is one INCREMENTAL update; a
-	 *     delta applied to an empty doc has no causal base, so its ops buffer and
-	 *     the note never reconstructs.
-	 *  Both are avoided by adopting FULL server state, so the doc becomes
-	 *  history-full on the server's own lineage. Phase E3: full state arrives
-	 *  via the enroll re-handshake's STEP2 (the empty doc's state vector makes
-	 *  the server send everything) — no REST fetch. Any un-pushed disk drift
-	 *  is preserved to a keep-both conflict copy BEFORE the refire, because
-	 *  STEP2's flush overwrites the original asynchronously and there is no
-	 *  post-adopt hook to 3-way-merge against the arrived server text.
-	 *  crdtHead is never advanced here (STEP2 hasn't landed); the cost gate
-	 *  retries until the doc actually adopts. Best-effort: isolates its own
-	 *  failure, never throws. */
-	private async adoptHistoryLessNote(path: string, noteId: string): Promise<void> {
-		if (!this.crdt) return;
+	 *   - INCOMPLETENESS: an INCREMENTAL delta applied to an empty doc has no
+	 *     causal base, so its ops pend and the note never reconstructs.
+	 *  Phase E3 (storm-safe rework): NEVER seed, NEVER open a room. Apply the
+	 *  fanned-out delta directly to the empty doc:
+	 *   - A note created while this device is online arrives as its FIRST
+	 *     delta = the entire lineage since genesis — it integrates gap-free
+	 *     and the doc is history-full on the server's own lineage, room-free.
+	 *   - An incremental delta for a note that predates this device PENDS —
+	 *     return "deferred" with NO re-handshake: disk convergence is owned by
+	 *     the op-log rows (the caller's seq is not stamped, so the row is not
+	 *     fence-masked), and the doc hydrates at open/bind time via the room.
+	 *     A per-note room refire here re-created the connect storm at
+	 *     reconnect scale (hundreds of enrolls → server rate limit → the one
+	 *     note that genuinely needed a handshake starved; CI run 29942250643).
+	 *  Any un-pushed disk drift is preserved to a keep-both conflict copy
+	 *  BEFORE the apply (a gap-free integrate flushes server content over
+	 *  disk via the manager's remote-merge listener); copy failure aborts
+	 *  without applying so the sole live copy of the edit survives.
+	 *  Best-effort: isolates its own failure, never throws. */
+	private async adoptHistoryLessNote(
+		path: string,
+		noteId: string,
+		update: Uint8Array,
+		head: string,
+	): Promise<"applied" | "deferred"> {
+		if (!this.crdt) return "deferred";
 		const normalized = normalizePath(path);
 
-		// 1. Capture disk + the drift flag BEFORE the adopt-flush overwrites disk
+		// 1. Capture disk + the drift flag BEFORE the apply-flush overwrites disk
 		//    and its recorded baseline (needsColdReconcile compares to syncState).
 		const file = this.app.vault.getAbstractFileByPath(normalized);
 		let disk: string | null = null;
@@ -1277,7 +1288,7 @@ export class SyncEngine {
 			try {
 				disk = await this.app.vault.cachedRead(file);
 			} catch {
-				disk = null; // unreadable — proceed with a plain adopt, no drift merge
+				disk = null; // unreadable — proceed with a plain apply, no drift copy
 			}
 		}
 		const hasDrift =
@@ -1285,16 +1296,15 @@ export class SyncEngine {
 			!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
 			this.needsColdReconcile(normalized, disk);
 
-		// 2. Keep-both: STEP2's flush will overwrite the original's disk with
-		//    server content asynchronously, after which `disk` survives ONLY in
-		//    memory. Preserve ANY drift (LCA or not — there is no server text to
-		//    3-way-merge against until STEP2 lands) to its conflict copy FIRST;
-		//    if that write fails for real, ABORT without refiring so the
-		//    original disk keeps the local edit and the caller retries next
-		//    fan-out/poll (crdtHead unadvanced). The original's baseline then
-		//    advances to the drift content so the pending drift can never be
-		//    seeded as a fresh lineage (the #234 doubling door) nor re-pushed —
-		//    it lives on in the copy.
+		// 2. Keep-both: a gap-free integrate flushes server content over the
+		//    original's disk, after which `disk` survives ONLY in memory.
+		//    Preserve ANY drift (there is no server text to 3-way-merge against
+		//    until the ops land) to its conflict copy FIRST; if that write
+		//    fails for real, ABORT without applying so the original disk keeps
+		//    the local edit and the caller retries next fan-out/poll. The
+		//    original's baseline then advances to the drift content so the
+		//    pending drift can never be seeded as a fresh lineage (the #234
+		//    doubling door) nor re-pushed — it lives on in the copy.
 		if (hasDrift && disk !== null) {
 			try {
 				const copy = await this.writeDriftConflictCopy(normalized, disk);
@@ -1305,18 +1315,28 @@ export class SyncEngine {
 			} catch (e) {
 				rlog().error(
 					"conflict",
-					`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting refire to retain the local edit for retry`,
+					`history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`,
 				);
-				return;
+				return "deferred";
 			}
 			this.recordCrdtBaseline(normalized, disk);
 		}
 
-		// 3. Fire the enroll re-handshake: the empty doc's STEP1 state vector
-		//    makes the server send FULL state in STEP2; the manager's
-		//    remote-merge listener flushes it to disk (materializing the file
-		//    if absent — covers the empty-note first-discovery, e2e test_27).
-		this.socketConverge(normalized, noteId);
+		// 3. Apply the delta to the empty doc. Gap-free (a full-lineage first
+		//    delta) → history-full on the server lineage, record the head.
+		//    Pended (incremental, predates this device) → deferred: no room,
+		//    no head, no seq stamp — the op-log rows own disk convergence and
+		//    the doc hydrates at open.
+		await this.crdt.applyRemoteUpdate(noteId, update);
+		const gapped =
+			typeof this.crdt.hasPendingGap === "function" &&
+			(await this.crdt.hasPendingGap(noteId));
+		if (gapped) {
+			devLog().log("crdt", `history-less delta pends for ${normalized} — rows own disk`);
+			return "deferred";
+		}
+		this.setCrdtHead(normalized, head);
+		return "applied";
 	}
 
 	/** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
@@ -1619,17 +1639,21 @@ export class SyncEngine {
 	 *  firing a replay round-trip per op raced the live path suite-wide. The
 	 *  trailing throttle keeps the heal guarantee (a true miss replays within
 	 *  SEQ_HEAL_COOLDOWN_MS) while bounding replay rate to one per window. */
-	applyLiveOpWithSeq(
+	async applyLiveOpWithSeq(
 		noteId: string,
 		seq: number | undefined | null,
-		apply: () => void,
-	): "applied" | "healing" {
-		apply();
-		if (Number.isInteger(seq)) {
+		apply: () => Promise<"applied" | "deferred">,
+	): Promise<"applied" | "healing" | "deferred"> {
+		const landed = await apply();
+		if (landed === "applied" && Number.isInteger(seq)) {
 			// Advance the PER-PATH high-water mark (types.ts FileSyncState.seq):
-			// a live op we just applied proves the path is current through this
-			// seq, so a later replayed/enumerated ROW at or below it is history
-			// and must not backfill (the checkpoint-lag revert, CI 29877041947).
+			// a live op that ACTUALLY applied proves the path is current through
+			// this seq, so a later replayed/enumerated ROW at or below it is
+			// history and must not backfill (the checkpoint-lag revert, CI
+			// 29877041947). ONLY on op-level proof (`"applied"`): a pended /
+			// history-less-deferred op that stamped anyway fence-masked the very
+			// replay row carrying the content this device is missing — B stayed
+			// on stale content forever (e2e test_85, CI run 29942250643).
 			// Per-path observation only — the global replay cursor is untouched
 			// (see the behind-detector rationale above).
 			const path = this.noteIdMap?.pathForId(noteId);
@@ -1639,7 +1663,7 @@ export class SyncEngine {
 			}
 		}
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
-			return "applied";
+			return landed === "applied" ? "applied" : "deferred";
 		}
 		rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
 		this.scheduleSeqHeal();
@@ -3526,8 +3550,12 @@ export class SyncEngine {
 	 *  to a path (first-discovery is pull()'s job, same as coldReceive). Frees
 	 *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
 	 *  coldReceive. Best-effort: isolates its own failure, never throws. */
-	async applyPushedNoteUpdate(noteId: string, update: Uint8Array, head: string): Promise<void> {
-		if (!this.crdt) return;
+	async applyPushedNoteUpdate(
+		noteId: string,
+		update: Uint8Array,
+		head: string,
+	): Promise<"applied" | "deferred"> {
+		if (!this.crdt) return "deferred";
 		// A fan-out for a note THIS device just deleted must not resurrect it —
 		// the tombstone (backend #970 delete-wins window) wins regardless of
 		// whether a racing catch-up has re-learned the id's mapping. Checked
@@ -3535,10 +3563,10 @@ export class SyncEngine {
 		// deleted id either.
 		if (this.recentlyDeleted.has(noteId)) {
 			rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
-			return;
+			return "deferred";
 		}
 		const path = this.noteIdMap?.pathForId(noteId) ?? null;
-		if (!path) return; // not locally known — first-discovery is pull()'s job
+		if (!path) return "deferred"; // not locally known — first-discovery is pull()'s job
 		// A fan-out for a mapped note is the server pushing that note's bytes —
 		// authoritative proof it has a row. So confirm it here rather than dropping
 		// it. Without this, a reconnect (clearConfirmedNoteIds un-confirms every
@@ -3578,14 +3606,15 @@ export class SyncEngine {
 				// still-gapped doc is not stranded: catch-up re-converges it, keyed on
 				// serverHash, which this path never advances.
 				this.setCrdtHead(path, head);
+				return "applied";
 			} catch (e) {
 				rlog().error(
 					"crdt",
 					`Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
 					e instanceof Error ? e.stack : undefined,
 				);
+				return "deferred";
 			}
-			return;
 		}
 		try {
 			// A history-LESS doc (feed-synced, never in IDB) must NOT seed disk drift
@@ -3611,29 +3640,31 @@ export class SyncEngine {
 				// fire the room re-handshake (cooldown-gated); STEP2's sv-exchange
 				// delivers the missing ops over the socket. crdtHead stays
 				// unadvanced so the cost gate keeps retrying until a head is
-				// actually reached.
+				// actually reached. Deferred: the op did NOT land, so the caller
+				// must not stamp its seq (the fence would mask the replay row that
+				// carries the content this device is missing — the test_85 class).
 				const hadGap =
 					typeof this.crdt.hasPendingGap === "function" &&
 					(await this.crdt.hasPendingGap(noteId));
 				if (hadGap) {
 					rlog().warn("crdt", `gap heal: socket re-handshake for ${path}`);
 					this.socketConverge(path, noteId);
-				} else {
-					this.setCrdtHead(path, head); // crdtHead persists under the vault path
+					return "deferred";
 				}
+				this.setCrdtHead(path, head); // crdtHead persists under the vault path
 			} else {
-				// Head deliberately unadvanced (STEP2 hasn't landed) and no
-				// hibernate — the refired handshake needs the doc open.
-				await this.adoptHistoryLessNote(path, noteId);
-				return;
+				const adopted = await this.adoptHistoryLessNote(path, noteId, update, head);
+				if (adopted !== "applied") return "deferred";
 			}
 			this.hibernateIfIdle(path, noteId);
+			return "applied";
 		} catch (e) {
 			// Isolated: log, leave crdtHead unadvanced — the next coldReceive poll
 			// (or a subsequent push) will retry convergence. Not freed: a failed
 			// apply is left for retry, not hibernated.
 			devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed — ${errMsg(e)}`);
 			rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+			return "deferred";
 		}
 	}
 
@@ -5265,6 +5296,30 @@ export class SyncEngine {
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
 							);
 							crdtConflictFallthrough = true;
+						} else if (
+							noteId &&
+							stored?.serverHash === undefined &&
+							localNow !== null &&
+							localNow === content
+						) {
+							// No CAS base was EVER recorded for this path (post-wipe
+							// re-adoption / a first-fan-out vs C1-seed race) and disk
+							// already holds the row's exact bytes: record the
+							// bookkeeping quietly, no round-trip. NOT the reviewed-out
+							// text-equality fast path: with no recorded convergence
+							// history there is no seq fence to mask and no doc lineage
+							// this recording could contradict — while firing a
+							// re-handshake per such row re-created the connect storm on
+							// mass divergence (an account swap re-keys every row's
+							// per-user HMAC hash → hundreds of enrolls → server rate
+							// limit → real heals starved; CI run 29942250643).
+							this.syncState.set(normalized, {
+								...(this.syncState.get(normalized) ?? {}),
+								hash: fnv1a(content),
+								version: change.version,
+								serverHash: change.content_hash,
+								seq: change.seq,
+							});
 						} else if (noteId) {
 							// CRDT-enrolled cold note: SAME stage-then-fire pattern as
 							// the live-bound leg above (Phase E3 — the REST delta pull

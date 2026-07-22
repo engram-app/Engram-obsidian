@@ -171,7 +171,7 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 
 		await expect(
 			(e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV"),
-		).resolves.toBeUndefined();
+		).resolves.toBe("deferred");
 
 		expect(applied).toEqual([]);
 		// Unadvanced past the seeded server-known baseline — the failed apply
