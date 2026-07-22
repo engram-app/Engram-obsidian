@@ -18167,8 +18167,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  Persisted under `manifestSeq`; wiped with the per-vault state. */
     this.manifestSeq = 0;
     /** Cursor value of the last validator rewind — bounds the validator to ONE
-     *  re-serve per distinct discrepancy per session (see validateFromManifest). */
-    this.lastValidatorRewind = -1;
+     *  re-serve per distinct discrepancy per session (see validateFromManifest).
+     *  null = no rewind yet (a numeric sentinel would collide with the
+     *  legitimate `minBehind - 1` target domain, which includes -1 and 0). */
+    this.lastValidatorRewind = null;
+    /** A pending validator rewind, consumed atomically by the next
+     *  `runSeqReplayOnce` (`catchupViaSeqReplay` is the SOLE cursor writer —
+     *  a direct `setCatchupSeq` here would race an in-flight replay's per-page
+     *  cursor persist and be silently clobbered). */
+    this.seqRewindFloor = null;
     /** When true, vault delete events are suppressed (used during local wipe). */
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
@@ -18961,7 +18968,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.manifestSeq = 0, this.lastValidatorRewind = -1, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19750,8 +19757,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return null;
   }
   /** The single catch-up path (socket-only, no REST fallback — a wedged socket
-   *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
-   *  replay can't cover, run around it:
+   *  recovers on reconnect, Todd's call). Five responsibilities a bare op-log
+   *  replay can't cover, run around it — the four below plus
+   *  `validateFromManifest` (E1 #1065), the whole-vault seq integer-diff that
+   *  re-serves consumed-but-unrecorded rows between steps 1 and 2:
    *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
    *      seed LOCAL empty-folder markers to the server.
    *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
@@ -19767,7 +19776,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *      and propagate remote folder deletes.
    *  Returns the applied-op count (for the progress recap / poll notice). Never
    *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
-   *  never has to guard it. The manifest is fetched once and shared by steps 1
+   *  never has to guard it. The manifest is fetched once and shared by the
+   *  validator plus steps 1
    *  and 3. */
   async catchUp() {
     try {
@@ -19775,12 +19785,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.manifestSeq > 0 ? this.manifestSeq : void 0
       );
       if (manifest != null && manifest.unchanged) {
+        await this.seedEmptyFolders();
         let { applied: applied2 } = await this.catchupViaSeqReplay();
         return applied2;
       }
-      await this.reconcileFromManifest(manifest), this.validateFromManifest(manifest);
-      let { applied } = await this.catchupViaSeqReplay();
-      await this.healDivergedLiveBoundNotes(manifest);
+      await this.reconcileFromManifest(manifest);
+      let behind = this.validateFromManifest(manifest), { applied } = await this.catchupViaSeqReplay(), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -19790,7 +19800,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), applied;
+      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), applied;
     } catch (e) {
       return rlog().error(
         "pull",
@@ -19802,7 +19812,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt) return 0;
-    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0, applied = 0;
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+    this.seqRewindFloor !== null && !fromZero && (cursor = Math.min(cursor, this.seqRewindFloor)), this.seqRewindFloor = null;
+    let applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
       try {
@@ -20595,8 +20607,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  "received=yes materialized=no" class) — and rewinds the cursor so the
    *  next replay re-serves it. Rows beyond the cursor need nothing: the
    *  imminent replay fetches them anyway. A syncState entry without `seq` is
-   *  NOT flagged (the entry's existence proves a materialize happened; only
-   *  replay writes record seq). Returns the behind-row count.
+   *  NOT flagged (the entry's existence proves a materialize happened;
+   *  replay writes and seq-carrying live ops both record seq — an entry
+   *  without one predates the field). Returns the behind-row count.
    *  ponytail: one rewind per distinct discrepancy per session
    *  (lastValidatorRewind) — a re-served row whose apply still refuses to
    *  record stays behind forever and must not rewind-loop every poll. */
@@ -20618,34 +20631,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     ), behind) : (this.lastValidatorRewind = target, rlog().warn(
       "pull",
       `manifest validator: ${behind} consumed-but-unrecorded row(s) \u2014 rewinding cursor ${cursor} \u2192 ${target} to re-serve`
-    ), this.setCatchupSeq(target), behind);
+    ), this.seqRewindFloor = Math.max(0, target), behind);
   }
   async healDivergedLiveBoundNotes(manifest) {
     var _a, _b, _c;
-    if (!(!manifest || !this.crdt))
-      for (let entry of manifest.notes) {
-        let path = (0, import_obsidian21.normalizePath)(entry.path);
-        if (!this.isLiveBound(path)) continue;
-        let stored = this.syncState.get(path);
-        if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
-        let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
-        if (noteId)
-          try {
-            entry.content_hash && this.pendingConvergence.set(noteId, {
-              path,
-              serverHash: entry.content_hash,
-              content: null
-            }), this.socketConvergeLiveBound(path, noteId);
-          } catch (e) {
-            rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
-          }
-      }
+    if (!manifest || !this.crdt) return 0;
+    let poked = 0;
+    for (let entry of manifest.notes) {
+      let path = (0, import_obsidian21.normalizePath)(entry.path);
+      if (!this.isLiveBound(path)) continue;
+      let stored = this.syncState.get(path);
+      if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
+      let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
+      if (noteId)
+        try {
+          entry.content_hash && this.pendingConvergence.set(noteId, {
+            path,
+            serverHash: entry.content_hash,
+            content: null
+          }), this.socketConvergeLiveBound(path, noteId), poked++;
+        } catch (e) {
+          rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+        }
+    }
+    return poked;
   }
   /** Apply a single remote change to the vault, with conflict detection.
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -20900,13 +20915,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
           hash: localHash,
           version: change.version,
-          serverHash: change.content_hash
-        }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+          serverHash: change.content_hash,
+          // E1 (#1065): record the row's seq so the manifest validator can
+          // integer-diff this path (a legacy change without one keeps the
+          // prior value rather than erasing it).
+          seq: typeof change.seq == "number" ? change.seq : (_x = this.syncState.get(normalized)) == null ? void 0 : _x.seq
+        }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
-        serverHash: change.content_hash
-      }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info(
+        serverHash: change.content_hash,
+        // E1 (#1065): seq recorded for the manifest validator's integer diff.
+        seq: typeof change.seq == "number" ? change.seq : (_z = this.syncState.get(normalized)) == null ? void 0 : _z.seq
+      }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20924,8 +20945,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncState.set(normalized, {
       hash: fnv1a(content),
       version: change.version,
-      serverHash: change.content_hash
-    }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+      serverHash: change.content_hash,
+      // E1 (#1065): seq recorded for the manifest validator's integer diff.
+      seq: typeof change.seq == "number" ? change.seq : void 0
+    }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.

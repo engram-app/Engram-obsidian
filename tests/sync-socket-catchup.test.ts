@@ -721,24 +721,41 @@ describe("validateFromManifest (Phase E1 seq integer diff)", () => {
 		} as any;
 	}
 
-	test("consumed-but-unrecorded row (no syncState entry) rewinds the cursor to seq-1", () => {
+	test("consumed-but-unrecorded row (no syncState entry) floors the next replay at seq-1", () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setCatchupSeq(20);
 		const behind = (engine as any).validateFromManifest(
 			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
 		);
 		expect(behind).toBe(1);
-		expect(engine.getCatchupSeq()).toBe(13);
+		// The validator never writes the cursor directly (an in-flight replay's
+		// per-page persist would clobber it) — it hands a floor to the sole
+		// cursor writer, runSeqReplayOnce.
+		expect((engine as any).seqRewindFloor).toBe(13);
+		expect(engine.getCatchupSeq()).toBe(20);
 	});
 
-	test("consumed row newer than the path's recorded seq rewinds", () => {
+	test("the next replay consumes the floor: crdt_catchup_since is called from the rewound cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const catchupSince = mock(async () => ({ changes: [], has_more: false, next_seq: null }));
+		engine.setCrdtCatchupSince(catchupSince as any);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		await engine.catchupViaSeqReplay();
+		expect(catchupSince.mock.calls[0]?.[0]).toBe(13);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+
+	test("consumed row newer than the path's recorded seq floors the replay", () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setCatchupSeq(20);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, seq: 10 } });
 		(engine as any).validateFromManifest(
 			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
 		);
-		expect(engine.getCatchupSeq()).toBe(13);
+		expect((engine as any).seqRewindFloor).toBe(13);
 	});
 
 	test("row beyond the cursor does NOT rewind — the next replay fetches it anyway", () => {
@@ -747,7 +764,7 @@ describe("validateFromManifest (Phase E1 seq integer diff)", () => {
 		(engine as any).validateFromManifest(
 			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 25 }]),
 		);
-		expect(engine.getCatchupSeq()).toBe(20);
+		expect((engine as any).seqRewindFloor).toBeNull();
 	});
 
 	test("legacy syncState entry without seq is NOT flagged (entry exists = it materialized)", () => {
@@ -757,7 +774,7 @@ describe("validateFromManifest (Phase E1 seq integer diff)", () => {
 		(engine as any).validateFromManifest(
 			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
 		);
-		expect(engine.getCatchupSeq()).toBe(20);
+		expect((engine as any).seqRewindFloor).toBeNull();
 	});
 
 	test("row without seq (old backend) is skipped — never NaN-rewinds", () => {
@@ -766,7 +783,7 @@ describe("validateFromManifest (Phase E1 seq integer diff)", () => {
 		(engine as any).validateFromManifest(
 			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H" }]),
 		);
-		expect(engine.getCatchupSeq()).toBe(20);
+		expect((engine as any).seqRewindFloor).toBeNull();
 	});
 
 	test("the SAME discrepancy does not rewind twice (bounded retry, no rewind loop)", () => {
@@ -774,11 +791,11 @@ describe("validateFromManifest (Phase E1 seq integer diff)", () => {
 		engine.setCatchupSeq(20);
 		const m = manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]);
 		(engine as any).validateFromManifest(m);
-		expect(engine.getCatchupSeq()).toBe(13);
-		// replay re-consumed up to 20, apply still failed, same row still behind
-		engine.setCatchupSeq(20);
+		expect((engine as any).seqRewindFloor).toBe(13);
+		// replay consumed the floor, apply still failed, same row still behind
+		(engine as any).seqRewindFloor = null;
 		(engine as any).validateFromManifest(m);
-		expect(engine.getCatchupSeq()).toBe(20);
+		expect((engine as any).seqRewindFloor).toBeNull();
 	});
 });
 
@@ -787,9 +804,7 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 		const reconcile = spyOn(engine as any, "reconcileFromManifest").mockResolvedValue(
 			undefined,
 		);
-		const heal = spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(
-			undefined,
-		);
+		const heal = spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(0);
 		const validate = spyOn(engine as any, "validateFromManifest").mockReturnValue(0);
 		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
 			applied: 0,
@@ -801,10 +816,14 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 		return { reconcile, heal, validate, replay, folders };
 	}
 
-	test("unchanged response skips the manifest-driven steps but still replays", async () => {
+	test("unchanged response skips the server→local manifest steps but still replays AND still seeds local empty folders", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		(engine as any).manifestSeq = 42;
 		const { reconcile, heal, validate, replay } = stubCatchUpInternals(engine);
+		// seedEmptyFolders is LOCAL→SERVER (retry backstop for a failed folder
+		// push) — the server watermark says nothing about local state, so the
+		// unchanged fast path must NOT skip it (review finding, agent #3).
+		const seed = spyOn(engine as any, "seedEmptyFolders").mockResolvedValue(undefined);
 		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
 			unchanged: true,
 			change_seq: 42,
@@ -816,7 +835,22 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 		expect(reconcile).not.toHaveBeenCalled();
 		expect(heal).not.toHaveBeenCalled();
 		expect(validate).not.toHaveBeenCalled();
+		expect(seed).toHaveBeenCalledTimes(1);
 		expect(replay).toHaveBeenCalledTimes(1);
+	});
+
+	test("a seq-0 behind row floors at genesis (sentinel does not mask target -1)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(5);
+		(engine as any).validateFromManifest({
+			notes: [{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 0 }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			change_seq: 5,
+		} as any);
+		// target = -1, clamped to 0 — replay from genesis.
+		expect((engine as any).seqRewindFloor).toBe(0);
 	});
 
 	test("a full manifest pass runs all steps and records change_seq as the new watermark", async () => {
@@ -837,5 +871,25 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 		expect(heal).toHaveBeenCalledTimes(1);
 		expect(replay).toHaveBeenCalledTimes(1);
 		expect((engine as any).manifestSeq).toBe(7);
+	});
+
+	test("an UNCLEAN pass (heal poked / validator behind) does NOT record the watermark — the retry net stays live", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const { heal, validate } = stubCatchUpInternals(engine);
+		heal.mockResolvedValue(1); // one diverged live-bound note was poked
+		validate.mockReturnValue(0);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			notes: [],
+			attachments: [],
+			total_notes: 0,
+			total_attachments: 0,
+			change_seq: 7,
+		});
+
+		await engine.catchUp();
+
+		// Fire-and-forget heal hasn't proven convergence — recording now would
+		// let every later poll short-circuit and never re-check an idle vault.
+		expect((engine as any).manifestSeq).toBe(0);
 	});
 });

@@ -388,7 +388,7 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-			// Merge whichever of {lastSync, catchupSeq} the engine handed us into
+			// Merge whichever of {lastSync, catchupSeq, manifestSeq} the engine handed us into
 			// the in-memory engine state, then persist the WHOLE PluginData via
 			// savePluginData (saveData overwrites data.json wholesale). Each field
 			// the payload omits falls through to the engine's current value, so a
