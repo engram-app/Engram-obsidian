@@ -24093,6 +24093,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     } catch (e) {
       rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
     }
+    this.syncEngine.flushQueue();
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
   connectChannel(attempt = 0, epoch = this.channelEpoch) {

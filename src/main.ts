@@ -1676,6 +1676,15 @@ export default class EngramSyncPlugin extends Plugin {
 		} catch (e) {
 			rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
 		}
+		// Drain the durable queue now that the crdt topic is LIVE (Phase E3):
+		// the socket is the ONLY delivery path for queued crdt edits, and the
+		// drain deliberately skips them while the topic is down — without this
+		// kick, an edit captured during the pre-join window (e.g. held behind
+		// its create-ack) waits for the next periodic flush (~20s+), which
+		// stalled e2e test_82's push past the assert window (CI 29945060029).
+		// The old REST /updates fallback delivered regardless of topic state,
+		// masking the missing kick.
+		void this.syncEngine.flushQueue();
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
