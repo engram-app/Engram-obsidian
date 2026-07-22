@@ -34,6 +34,16 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
+	/** Fix wave 6: called whenever a remote-merge flush is skipped BECAUSE
+	 *  `path` is bound (i.e. right where the editor binding painted the
+	 *  update instead of a disk write). Headless/unfocused Obsidian (CI)
+	 *  doesn't promptly flush a programmatically-updated editor buffer to
+	 *  disk on its own — this is the nudge: the caller (main.ts, which HAS
+	 *  Obsidian API access — this file deliberately doesn't) requests
+	 *  Obsidian's own save pipeline for the bound view, debounced. Optional;
+	 *  omitted in tests that don't exercise it. Never throws (the caller's
+	 *  contract, not enforced here). */
+	onBoundUpdate?: (path: string) => void;
 	/** True once `noteId`'s crdt_create has been server-acked (its DB row
 	 *  exists) — CrdtManagerOptions.canSendLive. A brand-new note's live edits
 	 *  land in the Y.Doc immediately (never lost) but must NOT stream a
@@ -229,7 +239,13 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				healUnknownNoteId(noteId, content);
 				return;
 			}
-			if (deps.isBound(path)) return; // live editor owns disk
+			if (deps.isBound(path)) {
+				// The editor owns disk — but a remote update just painted into it,
+				// and headless/unfocused Obsidian may not save that buffer for a
+				// long time on its own (fix wave 6). Nudge it.
+				deps.onBoundUpdate?.(path);
+				return;
+			}
 			// Propagate a disk-write failure so applyRemoteUpdate rejects and the
 			// caller leaves crdtHead unadvanced (#235). flushFromCrdt returns false
 			// ONLY on an actual write failure; a skip (gate closed / idempotent) and
