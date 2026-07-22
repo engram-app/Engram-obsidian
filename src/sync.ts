@@ -657,10 +657,41 @@ export class SyncEngine {
 	/** Per-note re-handshake attempt tracking for the live-bound catch-up path,
 	 *  keyed by note_id. `hash` is the server content_hash being retried; a new
 	 *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
-	 *  number): convergence comes from the socket-native verify-first primitive
-	 *  (`socketConvergeLiveBound`), and an unverified pass retries at the poll
-	 *  cadence — no give-up, no storm. */
+	 *  number, and cleared on commit) — convergence recording lives entirely in
+	 *  `commitCrdtConvergence`; this map never gates a retry. */
 	private crdtRehandshakeAttempts: Map<string, { hash: string; attempts: number }> = new Map();
+
+	/** Fix wave 1 (single-path D3 review): staged convergence for a diverged
+	 *  LIVE-BOUND note, keyed by note_id. `socketConvergeLiveBound` no longer
+	 *  verifies-and-records by text equality — text equality does not prove
+	 *  the doc holds the server's actual Yjs ops (two independently-typed
+	 *  identical bodies are a disjoint lineage; recording on that basis is the
+	 *  duplication class this replaces). Instead a diverged pull entry STAGES
+	 *  what it would record here, and `commitCrdtConvergence` (wired from
+	 *  CrdtManager's onSynced, fired only when a real inbound frame leaves the
+	 *  doc non-empty) commits it — actual op-level proof, not a text guess. A
+	 *  fresh content_hash overwrites any prior stage (new episode); nothing
+	 *  else prunes it — `commitCrdtConvergence` re-resolves the current path
+	 *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
+	 *  never write syncState at a dead path. */
+	private pendingConvergence: Map<
+		string,
+		{ path: string; serverHash: string; version?: number; seq?: number }
+	> = new Map();
+
+	/** Fix wave 1: per-note_id cooldown for `socketConvergeLiveBound`'s STEP1
+	 *  re-handshake — bounds how often a live-bound note can re-fire reset+
+	 *  enroll (open, catch-up, and manifest heal can all independently detect
+	 *  the same divergence in quick succession; unconditional firing drains
+	 *  the handshake budget, the #193 starvation class). Value = last-fired
+	 *  `Date.now()`. `healCooldownMs` is a public instance field so tests can
+	 *  shrink it. */
+	private crdtHealCooldown: Map<string, number> = new Map();
+
+	/** See `crdtHealCooldown`. 30s: long enough that open+catch-up+heal racing
+	 *  on the same note collapse to one handshake, short enough that a
+	 *  genuinely-still-diverged note keeps retrying within a session. */
+	healCooldownMs = 30_000;
 
 	/** Public: true once this SESSION observed this note's create-ack. Was
 	 *  formerly wired as `CrdtManagerOptions.canSendLive` in main.ts, but that
@@ -3672,47 +3703,72 @@ export class SyncEngine {
 		}
 	}
 
-	/** Socket-native converge for a diverged LIVE-BOUND note (single-path D3;
-	 *  replaces the deleted REST restConvergeLiveBound backstop). Verify-first:
-	 *  when the caller holds the row's content snapshot and the doc already
-	 *  projects exactly that text, the note is converged — record and stop, no
-	 *  wire traffic. Otherwise reset+enroll re-fires STEP1 and the room
-	 *  sv-exchange delivers whatever this doc is missing over the SOCKET
-	 *  (recreating the server room if it died — the 2026-07-14 deaf class).
-	 *  Returns true ONLY on verified convergence; an unverified heal is
-	 *  fire-and-forget and stays unrecorded so the caller's next replay or
-	 *  catch-up pass retries. Never throws.
-	 *  ponytail: without a snapshot (manifest heal, open heal) this never
-	 *  verifies, so a once-diverged open note re-fires one STEP1 per catch-up
-	 *  until a replay row verifies it or the note closes; add crdt_head to the
-	 *  manifest and skip on head-equality if that churn ever matters. */
-	private async socketConvergeLiveBound(
-		path: string,
-		noteId: string,
-		expected?: string,
-	): Promise<boolean> {
-		if (expected !== undefined && this.crdt) {
-			try {
-				if ((await this.crdt.projectedText(noteId)) === expected) {
-					rlog().info(
-						"crdt",
-						`socket converge: verified ${path} matches the row snapshot`,
-					);
-					return true;
-				}
-			} catch (e) {
-				rlog().warn(
-					"crdt",
-					`socket converge: projectedText failed for ${path}: ${errMsg(e)}`,
-				);
-			}
+	/** Socket-native re-handshake for a diverged LIVE-BOUND note (single-path
+	 *  D3, fix wave 1). Supersedes the original verify-by-text design: text
+	 *  equality between the doc's projection and a row snapshot does NOT prove
+	 *  the doc holds the server's actual Yjs ops — two independently-typed
+	 *  identical bodies are a disjoint lineage, and recording convergence on
+	 *  that basis let the doubling class through. Also, that design recorded
+	 *  on a match WITHOUT re-registering the room subscription, so a doc that
+	 *  happened to already match a DEAD room's row stayed silently deaf.
+	 *
+	 *  Always fires STEP1 (`reset`+`enroll`) on a diverged row — restores
+	 *  main's re-registration semantics unconditionally, no text compare.
+	 *  Convergence is recorded separately and ONLY on op-level proof: see
+	 *  `commitCrdtConvergence`, fired from CrdtManager's `onSynced` when a
+	 *  real inbound frame actually applies non-empty. Cooldown-gated per
+	 *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
+	 *  independently detecting the same divergence collapses to one handshake
+	 *  instead of draining the handshake budget (#193 starvation class).
+	 *  Never throws. */
+	private socketConvergeLiveBound(path: string, noteId: string): void {
+		const last = this.crdtHealCooldown.get(noteId);
+		if (last !== undefined && Date.now() - last < this.healCooldownMs) {
+			devLog().log("crdt", `socket converge: cooldown skip for ${path}`);
+			return;
 		}
-		if (this.crdtEnrollment) {
-			this.crdtEnrollment.reset(noteId);
-			this.crdtEnrollment.enroll(noteId);
-			rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+		if (!this.crdtEnrollment) return;
+		this.crdtHealCooldown.set(noteId, Date.now());
+		this.crdtEnrollment.reset(noteId);
+		this.crdtEnrollment.enroll(noteId);
+		rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+	}
+
+	/** Commit a staged live-bound convergence (see `pendingConvergence`) — the
+	 *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
+	 *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
+	 *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
+	 *  doc's text non-empty — real ops landed, not a guess. Idempotent and
+	 *  cheap when nothing is staged (steady-state live traffic fires this on
+	 *  every frame). Re-resolves the CURRENT path via `noteIdMap` rather than
+	 *  trusting the path captured at stage time, so a rename (path moved) or
+	 *  delete (id unmapped) between staging and commit can't write syncState
+	 *  at a stale/dead path — no separate teardown hook needed. Never throws
+	 *  into the CRDT manager's synchronous callback. */
+	async commitCrdtConvergence(noteId: string): Promise<void> {
+		const staged = this.pendingConvergence.get(noteId);
+		if (!staged) return;
+		this.pendingConvergence.delete(noteId);
+		this.crdtRehandshakeAttempts.delete(noteId);
+		const path = this.noteIdMap?.pathForId(noteId);
+		if (!path) return; // id unmapped since staging (deleted) — nothing to record
+		try {
+			const boundFile = this.app.vault.getFileByPath(path);
+			const stored = this.syncState.get(path);
+			const localHash =
+				stored?.hash ??
+				(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
+			this.syncState.set(path, {
+				...(this.syncState.get(path) ?? {}),
+				hash: localHash,
+				serverHash: staged.serverHash,
+				version: staged.version,
+				seq: staged.seq,
+			});
+			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+		} catch (e) {
+			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
 		}
-		return false;
 	}
 
 	/** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
@@ -3738,9 +3794,9 @@ export class SyncEngine {
 	 *  then clobber it (the exact revert family this fixes elsewhere).
 	 *  `projectedText` is read once, purely so the caller can hash what
 	 *  actually landed for syncState bookkeeping — never to write disk again.
-	 *  Returns that text on success, or null on failure/pending-gap — mirrors
-	 *  socketConvergeLiveBound's retry contract (never record convergence for
-	 *  data that hasn't arrived). */
+	 *  Returns that text on success, or null on failure/pending-gap — never
+	 *  record convergence for data that hasn't arrived (same principle the
+	 *  live-bound leg's `commitCrdtConvergence` applies via op-level proof). */
 	private async restConvergeAndFlush(path: string, noteId: string): Promise<string | null> {
 		const head = await this.restConvergeCore(path, noteId);
 		if (head === null || !this.crdt) return null;
@@ -3763,8 +3819,10 @@ export class SyncEngine {
 	 *  that missed a live announce/STEP2 during a fan-out storm, WITHOUT its
 	 *  per-open synchronous manifest-hash check + forced re-handshake, the
 	 *  #203 false-fire that caused the open-path lag). Fire-and-forget from
-	 *  file-open: a single note, one STEP1 sv-exchange via `socketConvergeLiveBound`
-	 *  (near-no-op STEP2 when already converged). Live-bound-only first cut (design decision iii): a
+	 *  file-open: a single note, one STEP1 re-handshake via
+	 *  `socketConvergeLiveBound` — cheap even when already converged, since
+	 *  the per-note cooldown collapses a redundant fire into a no-op.
+	 *  Live-bound-only first cut (design decision iii): a
 	 *  just-opened note is live-bound after CrdtLiveViews.refresh(), so this
 	 *  covers the real case without a vault-wide heads fetch on every open; an
 	 *  idle note is still covered by reconnect catch-up (#5). Never throws. */
@@ -3785,10 +3843,7 @@ export class SyncEngine {
 				return;
 			}
 			if (!this.isLiveBound(normalized)) return; // idle confirmed notes heal on reconnect (#5)
-			// No `expected` snapshot at open time — a deaf doc matches its own
-			// stale disk perfectly, so passing disk content here would verify
-			// falsely and skip the heal. Always re-fires STEP1.
-			await this.socketConvergeLiveBound(normalized, noteId);
+			this.socketConvergeLiveBound(normalized, noteId);
 		} catch (e) {
 			rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
 		}
@@ -4780,11 +4835,18 @@ export class SyncEngine {
 	 *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
 	 *  socket replay, so it re-delivered the diverged note and converged it; the
 	 *  cursor unification removed that. This restores it: a manifest snapshot
-	 *  re-detects the divergence every catch-up and re-fires the idempotent
-	 *  `socketConvergeLiveBound` (a converged note's serverHash already matches
-	 *  and is skipped). Only live-bound notes (the editor owns the body, so disk
-	 *  writes are unsafe) need it — idle divergences heal through the normal
-	 *  op-log apply. Best-effort; never throws into catchUp. */
+	 *  re-detects the divergence every catch-up and re-fires the STEP1
+	 *  re-handshake (cooldown-gated, so a repeat detection is cheap). Only
+	 *  live-bound notes (the editor owns the body, so disk writes are unsafe)
+	 *  need it — idle divergences heal through the normal op-log apply.
+	 *
+	 *  Recording: this leg STAGES the manifest's `content_hash` into
+	 *  `pendingConvergence` (fix wave 1) rather than recording it directly —
+	 *  the manifest carries hashes only (keyed HMAC, uncomputable
+	 *  client-side), so this leg can never itself prove the doc holds the
+	 *  server's ops. `commitCrdtConvergence` commits the stage once a real
+	 *  STEP2/update frame actually applies. Best-effort; never throws into
+	 *  catchUp. */
 	private async healDivergedLiveBoundNotes(manifest: ManifestResponse | null): Promise<void> {
 		if (!manifest || !this.crdt) return;
 		for (const entry of manifest.notes) {
@@ -4798,14 +4860,10 @@ export class SyncEngine {
 			if (!noteId) continue;
 
 			try {
-				// Socket-native (D3): fire the STEP1 re-handshake; the sv-exchange
-				// delivers the missing ops and the binding paints them. The manifest
-				// carries hashes only (keyed HMAC — uncomputable client-side), so
-				// convergence cannot be verified here and serverHash stays
-				// unrecorded; the next replay row that matches the doc records it
-				// (applyChange's live-bound leg). Idempotent when already
-				// converged: STEP2 returns an empty diff.
-				await this.socketConvergeLiveBound(path, noteId);
+				if (entry.content_hash) {
+					this.pendingConvergence.set(noteId, { path, serverHash: entry.content_hash });
+				}
+				this.socketConvergeLiveBound(path, noteId);
 			} catch (e) {
 				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
 			}
@@ -5060,11 +5118,15 @@ export class SyncEngine {
 					if (this.isLiveBound(normalized)) {
 						// An open, bound editor is the sole CRDT writer for the note —
 						// writing disk under it would fight the binding. Socket-native
-						// converge (single-path D3): verify-first against the row's
-						// snapshot, else re-fire STEP1 so the room sv-exchange delivers
-						// the missing ops over the socket. Recording stays verify-gated —
-						// never record convergence for data that has not verifiably
-						// arrived; an unverified pass retries at the next replay/poll.
+						// re-handshake (single-path D3, fix wave 1): ALWAYS fire STEP1 on
+						// a diverged row (no text-verify skip — text equality doesn't
+						// prove the doc holds the server's ops; see socketConvergeLiveBound
+						// docstring). Recording moves entirely out of this leg: it STAGES
+						// what it would record into `pendingConvergence`, and
+						// `commitCrdtConvergence` commits it only once a real inbound
+						// frame proves the ops landed (op-level proof, not a guess).
+						// `crdtRehandshakeAttempts` stays purely diagnostic (the logged
+						// attempt count) — this leg never writes serverHash itself.
 						const key = noteId ?? normalized;
 						const prevAttempt = this.crdtRehandshakeAttempts.get(key);
 						const attempts =
@@ -5075,36 +5137,17 @@ export class SyncEngine {
 							"pull",
 							`CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`,
 						);
-						const converged = noteId
-							? await this.socketConvergeLiveBound(normalized, noteId, content)
-							: false;
-						if (converged) {
-							this.crdtRehandshakeAttempts.delete(key);
-							// We did NOT write disk (the editor owns the body), so record
-							// the REAL local content hash — NOT a 0 sentinel, which a later
-							// cold-note check would misread as a local divergence and
-							// spuriously route to the conflict flow.
-							const boundFile = this.app.vault.getFileByPath(normalized);
-							const localHash =
-								stored?.hash ??
-								(boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
-							// Spread the existing entry so recorded crdtHead (maintained by
-							// the live fan-out path) survives — coldReceive's cost gate
-							// reads it.
-							this.syncState.set(normalized, {
-								...(this.syncState.get(normalized) ?? {}),
-								hash: localHash,
+						this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts });
+						if (noteId) {
+							// A fresh content_hash overwrites any prior stage — a new
+							// episode, never a stale commit of superseded server content.
+							this.pendingConvergence.set(noteId, {
+								path: normalized,
 								serverHash: change.content_hash,
 								version: change.version,
 								seq: change.seq,
 							});
-						} else {
-							// Keep serverHash UNrecorded so the next pass retries — never
-							// record convergence for data that has not arrived.
-							this.crdtRehandshakeAttempts.set(key, {
-								hash: change.content_hash,
-								attempts,
-							});
+							this.socketConvergeLiveBound(normalized, noteId);
 						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the

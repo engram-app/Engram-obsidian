@@ -12483,10 +12483,13 @@ var _CrdtManager = class _CrdtManager {
   /**
    * Mark `noteId` as having completed its server handshake (STEP2 received).
    * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
-   * to the doc. Idempotent — safe to call on every inbound frame.
+   * to the doc. Idempotent — safe to call on every inbound frame. Also fires
+   * `opts.onSynced` (fix wave 1) — this is the op-level "real ops landed"
+   * signal SyncEngine commits a staged live-bound convergence on.
    */
   markSynced(noteId) {
-    this.synced.add(this.docId(noteId));
+    var _a, _b;
+    this.synced.add(this.docId(noteId)), (_b = (_a = this.opts).onSynced) == null || _b.call(_a, noteId);
   }
   /**
    * Returns true if `noteId`'s handshake has completed this session (i.e.
@@ -13235,7 +13238,10 @@ var EngramApi = class _EngramApi {
   static async probeHealth(rawUrl) {
     let base = _EngramApi.normalizeBaseUrl(rawUrl);
     try {
-      let resp = await (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }), body = null;
+      let resp = await withTimeout(
+        (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }),
+        1e4
+      ), body = null;
       try {
         body = resp.json;
       } catch (e) {
@@ -15389,7 +15395,8 @@ var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_o
 var import_obsidian20 = require("obsidian");
 
 // src/device-flow-modal.ts
-var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends import_obsidian10.Modal {
+var import_obsidian10 = require("obsidian");
+var DeviceFlowModal = class extends import_obsidian10.Modal {
   constructor(app, plugin) {
     super(app);
     this.resolve = () => {
@@ -15425,13 +15432,16 @@ var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends imp
       client_id: this.plugin.settings.clientId
     };
     vaultName && (body.vault_name = vaultName);
-    let resp = await (0, import_obsidian10.requestUrl)({
-      url: `${apiUrl}/auth/device`,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      throw: !1
-    });
+    let resp = await withTimeout(
+      (0, import_obsidian10.requestUrl)({
+        url: `${apiUrl}/auth/device`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        throw: !1
+      }),
+      15e3
+    );
     if (resp.status < 200 || resp.status >= 300)
       throw new Error(`HTTP ${resp.status}`);
     return resp.json;
@@ -15459,13 +15469,16 @@ var import_obsidian10 = require("obsidian"), DeviceFlowModal = class extends imp
           return;
         }
         try {
-          let resp = await (0, import_obsidian10.requestUrl)({
-            url: `${apiUrl}/auth/device/token`,
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ device_code: deviceCode }),
-            throw: !1
-          });
+          let resp = await withTimeout(
+            (0, import_obsidian10.requestUrl)({
+              url: `${apiUrl}/auth/device/token`,
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ device_code: deviceCode }),
+              throw: !1
+            }),
+            15e3
+          );
           if (resp.status === 428) return;
           if (resp.status >= 200 && resp.status < 300) {
             this.pollInterval && window.clearInterval(this.pollInterval);
@@ -16861,15 +16874,19 @@ var import_obsidian16 = require("obsidian");
 var import_obsidian15 = require("obsidian");
 
 // src/waitlist.ts
-var import_obsidian14 = require("obsidian"), WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
+var import_obsidian14 = require("obsidian");
+var WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
 async function submitWaitlistEmail(email) {
-  let resp = await (0, import_obsidian14.requestUrl)({
-    url: WAITLIST_ENDPOINT,
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, source: "obsidian-plugin" }),
-    throw: !1
-  });
+  let resp = await withTimeout(
+    (0, import_obsidian14.requestUrl)({
+      url: WAITLIST_ENDPOINT,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, source: "obsidian-plugin" }),
+      throw: !1
+    }),
+    15e3
+  );
   if (resp.status < 200 || resp.status >= 300)
     throw new Error(`waitlist signup failed: ${resp.status}`);
 }
@@ -17982,9 +17999,35 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     /** Per-note re-handshake attempt tracking for the live-bound catch-up path,
      *  keyed by note_id. `hash` is the server content_hash being retried; a new
      *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
-     *  number): convergence comes from the deterministic REST delta pull, and a
-     *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
+     *  number, and cleared on commit) — convergence recording lives entirely in
+     *  `commitCrdtConvergence`; this map never gates a retry. */
     this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
+    /** Fix wave 1 (single-path D3 review): staged convergence for a diverged
+     *  LIVE-BOUND note, keyed by note_id. `socketConvergeLiveBound` no longer
+     *  verifies-and-records by text equality — text equality does not prove
+     *  the doc holds the server's actual Yjs ops (two independently-typed
+     *  identical bodies are a disjoint lineage; recording on that basis is the
+     *  duplication class this replaces). Instead a diverged pull entry STAGES
+     *  what it would record here, and `commitCrdtConvergence` (wired from
+     *  CrdtManager's onSynced, fired only when a real inbound frame leaves the
+     *  doc non-empty) commits it — actual op-level proof, not a text guess. A
+     *  fresh content_hash overwrites any prior stage (new episode); nothing
+     *  else prunes it — `commitCrdtConvergence` re-resolves the current path
+     *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
+     *  never write syncState at a dead path. */
+    this.pendingConvergence = /* @__PURE__ */ new Map();
+    /** Fix wave 1: per-note_id cooldown for `socketConvergeLiveBound`'s STEP1
+     *  re-handshake — bounds how often a live-bound note can re-fire reset+
+     *  enroll (open, catch-up, and manifest heal can all independently detect
+     *  the same divergence in quick succession; unconditional firing drains
+     *  the handshake budget, the #193 starvation class). Value = last-fired
+     *  `Date.now()`. `healCooldownMs` is a public instance field so tests can
+     *  shrink it. */
+    this.crdtHealCooldown = /* @__PURE__ */ new Map();
+    /** See `crdtHealCooldown`. 30s: long enough that open+catch-up+heal racing
+     *  on the same note collapse to one handshake, short enough that a
+     *  genuinely-still-diverged note keeps retrying within a session. */
+    this.healCooldownMs = 3e4;
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -19817,19 +19860,67 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), null;
     }
   }
-  /** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
-   *  since our real state vector over REST and apply it to the live Y.Doc —
-   *  the editor binding paints it, no disk write. Returns true only when the
-   *  doc verifiably reached server state (applied, no pending gap), so the
-   *  caller records convergence for delivered data ONLY. Best-effort:
-   *  isolates its own failure, never throws. */
-  async restConvergeLiveBound(path, noteId) {
-    let head = await this.restConvergeCore(path, noteId);
-    return head === null ? !1 : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
+  /** Socket-native re-handshake for a diverged LIVE-BOUND note (single-path
+   *  D3, fix wave 1). Supersedes the original verify-by-text design: text
+   *  equality between the doc's projection and a row snapshot does NOT prove
+   *  the doc holds the server's actual Yjs ops — two independently-typed
+   *  identical bodies are a disjoint lineage, and recording convergence on
+   *  that basis let the doubling class through. Also, that design recorded
+   *  on a match WITHOUT re-registering the room subscription, so a doc that
+   *  happened to already match a DEAD room's row stayed silently deaf.
+   *
+   *  Always fires STEP1 (`reset`+`enroll`) on a diverged row — restores
+   *  main's re-registration semantics unconditionally, no text compare.
+   *  Convergence is recorded separately and ONLY on op-level proof: see
+   *  `commitCrdtConvergence`, fired from CrdtManager's `onSynced` when a
+   *  real inbound frame actually applies non-empty. Cooldown-gated per
+   *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
+   *  independently detecting the same divergence collapses to one handshake
+   *  instead of draining the handshake budget (#193 starvation class).
+   *  Never throws. */
+  socketConvergeLiveBound(path, noteId) {
+    let last2 = this.crdtHealCooldown.get(noteId);
+    if (last2 !== void 0 && Date.now() - last2 < this.healCooldownMs) {
+      devLog().log("crdt", `socket converge: cooldown skip for ${path}`);
+      return;
+    }
+    this.crdtEnrollment && (this.crdtHealCooldown.set(noteId, Date.now()), this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`));
+  }
+  /** Commit a staged live-bound convergence (see `pendingConvergence`) — the
+   *  ONLY place that leg's `serverHash`/`version`/`seq` get written. Wired
+   *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
+   *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
+   *  doc's text non-empty — real ops landed, not a guess. Idempotent and
+   *  cheap when nothing is staged (steady-state live traffic fires this on
+   *  every frame). Re-resolves the CURRENT path via `noteIdMap` rather than
+   *  trusting the path captured at stage time, so a rename (path moved) or
+   *  delete (id unmapped) between staging and commit can't write syncState
+   *  at a stale/dead path — no separate teardown hook needed. Never throws
+   *  into the CRDT manager's synchronous callback. */
+  async commitCrdtConvergence(noteId) {
+    var _a, _b, _c;
+    let staged = this.pendingConvergence.get(noteId);
+    if (!staged) return;
+    this.pendingConvergence.delete(noteId), this.crdtRehandshakeAttempts.delete(noteId);
+    let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+    if (path)
+      try {
+        let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_b = stored == null ? void 0 : stored.hash) != null ? _b : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+        this.syncState.set(path, {
+          ...(_c = this.syncState.get(path)) != null ? _c : {},
+          hash: localHash,
+          serverHash: staged.serverHash,
+          version: staged.version,
+          seq: staged.seq
+        }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+      } catch (e) {
+        rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+      }
   }
   /** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
-   *  same Yjs-delta core as restConvergeLiveBound, but there is no editor
-   *  binding to paint the doc. Replaces the old content-snapshot
+   *  same Yjs-delta REST core the live-bound leg used before the D3 socket
+   *  migration (cold-leg REST stays — see restConvergeCore), but there is no
+   *  editor binding to paint the doc. Replaces the old content-snapshot
    *  `flushFromCrdt(path, content)` backfill, which reverted a fresher live
    *  merge when the seq gap-heal's behind-detector fires a catch-up replay
    *  DURING active editing on this note from another device — the feed's
@@ -19849,9 +19940,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  then clobber it (the exact revert family this fixes elsewhere).
    *  `projectedText` is read once, purely so the caller can hash what
    *  actually landed for syncState bookkeeping — never to write disk again.
-   *  Returns that text on success, or null on failure/pending-gap — mirrors
-   *  restConvergeLiveBound's retry contract (never record convergence for
-   *  data that hasn't arrived). */
+   *  Returns that text on success, or null on failure/pending-gap — never
+   *  record convergence for data that hasn't arrived (same principle the
+   *  live-bound leg's `commitCrdtConvergence` applies via op-level proof). */
   async restConvergeAndFlush(path, noteId) {
     let head = await this.restConvergeCore(path, noteId);
     if (head === null || !this.crdt) return null;
@@ -19870,9 +19961,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  that missed a live announce/STEP2 during a fan-out storm, WITHOUT its
    *  per-open synchronous manifest-hash check + forced re-handshake, the
    *  #203 false-fire that caused the open-path lag). Fire-and-forget from
-   *  file-open: a single note, one delta-since-our-real-state-vector via the
-   *  existing guarded `restConvergeLiveBound` — empty (near-no-op) when
-   *  already converged. Live-bound-only first cut (design decision iii): a
+   *  file-open: a single note, one STEP1 re-handshake via
+   *  `socketConvergeLiveBound` — cheap even when already converged, since
+   *  the per-note cooldown collapses a redundant fire into a no-op.
+   *  Live-bound-only first cut (design decision iii): a
    *  just-opened note is live-bound after CrdtLiveViews.refresh(), so this
    *  covers the real case without a vault-wide heads fetch on every open; an
    *  idle note is still covered by reconnect catch-up (#5). Never throws. */
@@ -19887,7 +19979,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return;
         }
         if (!this.isLiveBound(normalized)) return;
-        await this.restConvergeLiveBound(normalized, noteId);
+        this.socketConvergeLiveBound(normalized, noteId);
       } catch (e) {
         rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
       }
@@ -20356,13 +20448,20 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
    *  socket replay, so it re-delivered the diverged note and converged it; the
    *  cursor unification removed that. This restores it: a manifest snapshot
-   *  re-detects the divergence every catch-up and re-fires the same idempotent
-   *  `restConvergeLiveBound` (a converged note's serverHash already matches and
-   *  is skipped). Only live-bound notes (the editor owns the body, so disk
-   *  writes are unsafe) need it — idle divergences heal through the normal
-   *  op-log apply. Best-effort; never throws into catchUp. */
+   *  re-detects the divergence every catch-up and re-fires the STEP1
+   *  re-handshake (cooldown-gated, so a repeat detection is cheap). Only
+   *  live-bound notes (the editor owns the body, so disk writes are unsafe)
+   *  need it — idle divergences heal through the normal op-log apply.
+   *
+   *  Recording: this leg STAGES the manifest's `content_hash` into
+   *  `pendingConvergence` (fix wave 1) rather than recording it directly —
+   *  the manifest carries hashes only (keyed HMAC, uncomputable
+   *  client-side), so this leg can never itself prove the doc holds the
+   *  server's ops. `commitCrdtConvergence` commits the stage once a real
+   *  STEP2/update frame actually applies. Best-effort; never throws into
+   *  catchUp. */
   async healDivergedLiveBoundNotes(manifest) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     if (!(!manifest || !this.crdt))
       for (let entry of manifest.notes) {
         let path = (0, import_obsidian21.normalizePath)(entry.path);
@@ -20372,14 +20471,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
         if (noteId)
           try {
-            if (await this.restConvergeLiveBound(path, noteId) && entry.content_hash) {
-              let boundFile = this.app.vault.getFileByPath(path), localHash = (_d = stored == null ? void 0 : stored.hash) != null ? _d : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-              this.syncState.set(path, {
-                ...(_e = this.syncState.get(path)) != null ? _e : {},
-                hash: localHash,
-                serverHash: entry.content_hash
-              });
-            }
+            entry.content_hash && this.pendingConvergence.set(noteId, { path, serverHash: entry.content_hash }), this.socketConvergeLiveBound(path, noteId);
           } catch (e) {
             rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
           }
@@ -20389,7 +20481,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
@@ -20470,24 +20562,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
             let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
-            if (rlog().warn(
+            rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
-            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
-              this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_s = stored == null ? void 0 : stored.hash) != null ? _s : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-              this.syncState.set(normalized, {
-                ...(_t2 = this.syncState.get(normalized)) != null ? _t2 : {},
-                hash: localHash,
-                serverHash: change.content_hash,
-                version: change.version,
-                seq: change.seq
-              });
-            } else
-              this.crdtRehandshakeAttempts.set(key, {
-                hash: change.content_hash,
-                attempts
-              });
+              `CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`
+            ), this.crdtRehandshakeAttempts.set(key, { hash: change.content_hash, attempts }), noteId && (this.pendingConvergence.set(noteId, {
+              path: normalized,
+              serverHash: change.content_hash,
+              version: change.version,
+              seq: change.seq
+            }), this.socketConvergeLiveBound(normalized, noteId));
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
             if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content)
@@ -20502,7 +20585,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               );
               let flushed = await this.restConvergeAndFlush(normalized, noteId);
               flushed !== null ? this.syncState.set(normalized, {
-                ...(_u = this.syncState.get(normalized)) != null ? _u : {},
+                ...(_s = this.syncState.get(normalized)) != null ? _s : {},
                 hash: fnv1a(flushed),
                 version: change.version,
                 serverHash: change.content_hash,
@@ -20547,14 +20630,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_v = this.baseStore) == null ? void 0 : _v.get(normalized);
+        let pullBase = (_t2 = this.baseStore) == null ? void 0 : _t2.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_w = this.baseStore) == null || _w.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20605,7 +20688,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_x = this.baseStore) == null || _x.set(
+            }), change.version != null && ((_v = this.baseStore) == null || _v.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20627,7 +20710,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_y = this.baseStore) == null || _y.set(
+            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20650,12 +20733,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           hash: localHash,
           version: change.version,
           serverHash: change.content_hash
-        }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+        }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash
-      }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
+      }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20674,7 +20757,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash
-    }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -21645,7 +21728,8 @@ _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3
 var SyncEngine = _SyncEngine;
 
 // src/update-check.ts
-var import_obsidian22 = require("obsidian"), MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
+var import_obsidian22 = require("obsidian");
+var MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
 function isNewerVersion(latest, current) {
   var _a, _b;
   let a = latest.split(".").map((n) => Number.parseInt(n, 10) || 0), b = current.split(".").map((n) => Number.parseInt(n, 10) || 0);
@@ -21658,7 +21742,10 @@ function isNewerVersion(latest, current) {
 async function checkForPluginUpdate(currentVersion) {
   var _a;
   try {
-    let resp = await (0, import_obsidian22.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 });
+    let resp = await withTimeout(
+      (0, import_obsidian22.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 }),
+      1e4
+    );
     if (resp.status !== 200) return null;
     let latest = (_a = resp.json) == null ? void 0 : _a.version;
     return typeof latest == "string" && isNewerVersion(latest, currentVersion) ? latest : null;
@@ -22872,6 +22959,12 @@ function createCrdtWiring(deps) {
         "crdt",
         `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
       );
+    },
+    // Fix wave 1: op-level convergence proof. Fires on every non-empty
+    // inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
+    // is staged for this note_id), so fire-and-forget is safe here.
+    onSynced: (noteId) => {
+      syncEngine.commitCrdtConvergence(noteId);
     }
   }), channel = new CrdtChannel({
     manager,
@@ -23801,13 +23894,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     var _a, _b, _c;
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
-        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await (0, import_obsidian26.requestUrl)({
-          url: `${apiUrl}/auth/token/refresh`,
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ refresh_token: token }),
-          throw: !1
-        });
+        let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await withTimeout(
+          (0, import_obsidian26.requestUrl)({
+            url: `${apiUrl}/auth/token/refresh`,
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ refresh_token: token }),
+            throw: !1
+          }),
+          15e3
+        );
         if (resp.status < 200 || resp.status >= 300) {
           let e = new Error(`Refresh failed: ${resp.status}`);
           throw e.status = resp.status, e;

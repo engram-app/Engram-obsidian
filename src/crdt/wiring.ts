@@ -19,6 +19,7 @@ type WiringSyncEngine = Pick<
 	| "applyPushedNoteUpdate"
 	| "discoverAnnouncedNote"
 	| "applyLiveOpWithSeq"
+	| "commitCrdtConvergence"
 >;
 
 export interface CrdtWiringDeps {
@@ -249,6 +250,10 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
 			);
 		},
+		// Fix wave 1: op-level convergence proof. Fires on every non-empty
+		// inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
+		// is staged for this note_id), so fire-and-forget is safe here.
+		onSynced: (noteId) => void syncEngine.commitCrdtConvergence(noteId),
 	});
 
 	const channel = new CrdtChannel({

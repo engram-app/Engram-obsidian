@@ -9,12 +9,15 @@
  * a fan-out storm stayed diverged until an unrelated reconnect, because
  * file-open (main.ts) is now a pure local bind with no convergence check.
  *
- * Single-path D3 (socket-native converge): healNoteOnOpen no longer pulls a
- * REST delta. It fires `socketConvergeLiveBound` WITHOUT a row snapshot
- * (there is none at open time — see src/sync.ts), so the primitive always
- * re-fires STEP1 (reset+enroll); the room sv-exchange delivers whatever this
- * doc is missing over the socket and paints it through the binding — a
- * near-no-op STEP2 when the note was already converged. No manifest fetch,
+ * Single-path D3 (socket-native converge, fix wave 1): healNoteOnOpen no
+ * longer pulls a REST delta. It fires `socketConvergeLiveBound`, which always
+ * re-fires STEP1 (reset+enroll) on a diverged note — no text-verify skip
+ * (text equality doesn't prove the doc holds the server's ops); the room
+ * sv-exchange delivers whatever this doc is missing over the socket and
+ * paints it through the binding. A per-note_id cooldown
+ * (`crdtHealCooldown`/`healCooldownMs`) collapses repeated same-note
+ * detections (open + catch-up + heal racing) to one handshake instead of
+ * draining the handshake budget (#193 starvation class). No manifest fetch,
  * no REST round trip.
  *
  * Mirrors the mock-engine pattern from tests/sync-socket-catchup.test.ts.
@@ -92,9 +95,25 @@ describe("healNoteOnOpen", () => {
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
-	test("already-converged note: still fires reset+enroll (idempotent — STEP2 is a near-no-op server-side)", async () => {
+	test("repeated opens within the cooldown window collapse to ONE handshake (fix wave 1)", async () => {
 		const crdt = { projectedText: mock().mockResolvedValue("same") };
 		const { engine, enroll, reset } = makeEngine(crdt, {});
+
+		await engine.healNoteOnOpen("Notes/a.md");
+		await engine.healNoteOnOpen("Notes/a.md");
+
+		// Open + catch-up + heal can all independently detect the same
+		// divergence in quick succession — the per-note cooldown collapses
+		// them to one STEP1 instead of draining the handshake budget (#193
+		// starvation class).
+		expect(reset).toHaveBeenCalledTimes(1);
+		expect(enroll).toHaveBeenCalledTimes(1);
+	});
+
+	test("cooldown of 0 allows every open to independently re-fire the handshake", async () => {
+		const crdt = { projectedText: mock().mockResolvedValue("same") };
+		const { engine, enroll, reset } = makeEngine(crdt, {});
+		engine.healCooldownMs = 0;
 
 		await engine.healNoteOnOpen("Notes/a.md");
 		await engine.healNoteOnOpen("Notes/a.md");
