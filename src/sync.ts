@@ -5018,7 +5018,27 @@ export class SyncEngine {
 							stored?.hash !== undefined &&
 							fnv1a(localNow) !== stored.hash &&
 							localNow !== content;
-						if (localDiverged) {
+						// Monotonic fence (CI 29877041947): a catch-up page can carry a
+						// row whose CHECKPOINT lags content this device already applied
+						// live — the backfill then reverts newer disk content to the
+						// stale projection, live delivery re-applies it, and the next
+						// replay reverts again (the ModifyTest 40B/23B oscillation).
+						// A row not NEWER than the version we last converged proves the
+						// server row hasn't moved since — nothing to backfill. Checkpoints
+						// CAS on notes.version (#902/#907), so newer content always means
+						// a newer version; the fence can't strand a real change. Nothing
+						// is recorded here, so a genuinely newer row still converges on
+						// the next pass.
+						const staleRow =
+							stored?.version !== undefined &&
+							change.version !== undefined &&
+							change.version <= stored.version;
+						if (staleRow) {
+							rlog().info(
+								"pull",
+								`CRDT catch-up: row v${change.version} <= applied v${stored.version} — stale checkpoint, skip backfill ${change.path}`,
+							);
+						} else if (localDiverged) {
 							rlog().warn(
 								"pull",
 								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
