@@ -1680,7 +1680,10 @@ export class SyncEngine {
 		const since = now - this.seqHealLastAt;
 		if (since >= SyncEngine.SEQ_HEAL_COOLDOWN_MS) {
 			this.seqHealLastAt = now;
-			rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`);
+			rlog().info(
+				"crdt",
+				`gap-heal fired: note=${noteId} seq=${seq} cursor=${this.catchupSeq}`,
+			);
 			void this.catchupViaSeqReplay();
 			return;
 		}
