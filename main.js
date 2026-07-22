@@ -18702,7 +18702,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       this.recordCrdtBaseline(normalized, disk);
     }
-    return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (devLog().log("crdt", `history-less delta pends for ${normalized} \u2014 rows own disk`), "deferred") : (this.setCrdtHead(normalized, head), "applied");
+    return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().info("crdt", `history-less delta pends for ${normalized} \u2014 socket converge`), this.socketConverge(normalized, noteId), "deferred") : (this.setCrdtHead(normalized, head), "applied");
   }
   /** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
    *  `normalized` and record its baseline so it isn't re-pushed as drift.
@@ -19781,12 +19781,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
    *  coldReceive. Best-effort: isolates its own failure, never throws. */
   async applyPushedNoteUpdate(noteId, update, head) {
-    var _a, _b;
+    var _a, _b, _c, _d;
     if (!this.crdt) return "deferred";
     if (this.recentlyDeleted.has(noteId))
       return rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`), "deferred";
     let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (!path) return "deferred";
+    if (!path) {
+      if (this.ensureNoteIdMapped(noteId), await this.idMapReconcileInflight, path = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.pathForId(noteId)) != null ? _d : null, !path)
+        return rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`), "deferred";
+      rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
+    }
     if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
       try {
         return await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), "applied";
@@ -20603,12 +20607,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
               "pull",
               `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
-            ), crdtConflictFallthrough = !0) : noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? this.syncState.set(normalized, {
+            ), crdtConflictFallthrough = !0) : noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
+              "pull",
+              `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
+            ), this.syncState.set(normalized, {
               ...(_s = this.syncState.get(normalized)) != null ? _s : {},
               hash: fnv1a(content),
               version: change.version,
               serverHash: change.content_hash
-            }) : noteId ? (rlog().warn(
+            })) : noteId ? (rlog().warn(
               "pull",
               `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
             ), this.pendingConvergence.set(noteId, {

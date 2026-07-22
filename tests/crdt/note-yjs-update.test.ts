@@ -165,6 +165,32 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 		expect(applied).toEqual([]);
 	});
 
+	test("an unknown note_id heals the id map from the manifest and applies (test_82 deaf class)", async () => {
+		// A resumed device with a wiped/stale noteIdMap whose replay cursor is
+		// already PAST the note's row seq (live tail appends don't bump seq —
+		// checkpoint owns it) has exactly ONE delivery vehicle for another
+		// device's edit: this fan-out. The feed never re-serves a row behind the
+		// cursor and an unchanged change_seq short-circuits the manifest steps,
+		// so a silent defer here is deaf-forever. Heal the map (single-flight
+		// manifest reconcile) and retry the lookup once.
+		const { e, applied } = noteEngine({});
+		(e as any).api = {
+			getManifest: mock().mockResolvedValue({
+				notes: [{ id: "id-x", path: "x.md" }],
+				attachments: [],
+				total_notes: 1,
+				total_attachments: 0,
+			}),
+		};
+
+		const r = await (e as any).applyPushedNoteUpdate("id-x", new Uint8Array([7]), "SRV");
+
+		expect(r).toBe("applied");
+		expect(applied).toEqual([{ id: "id-x", update: new Uint8Array([7]) }]);
+		expect((e as any).noteIdMap.pathForId("id-x")).toBe("x.md");
+		expect((e as any).getCrdtHead("x.md")).toBe("SRV");
+	});
+
 	test("applyRemoteUpdate failure leaves the head unadvanced and the doc NOT hibernated (isolated, no throw, retry-safe)", async () => {
 		const { e, applied, closed } = noteEngine({ applyThrows: true });
 		markConfirmed(e, "id-a");

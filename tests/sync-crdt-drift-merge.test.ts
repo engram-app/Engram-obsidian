@@ -215,8 +215,8 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		await mgr.destroy();
 	});
 
-	test("(ii) INCREMENTAL delta (note predates this device) → pends, defers with NO re-handshake", async () => {
-		const { e, mgr, disk, enroll } = await historyLessScenario({
+	test("(ii) INCREMENTAL delta (note predates this device) → pends, defers, and fires ONE cooldown-gated socket converge", async () => {
+		const { e, mgr, disk, enroll, reset } = await historyLessScenario({
 			dbPrefix: "hl-incr",
 			disk: "BASE",
 			baselineHash: fnv1a("BASE"),
@@ -235,10 +235,17 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		const result = await (e as any).applyPushedNoteUpdate("id-a", incremental, "SRV");
 
 		expect(result).toBe("deferred");
-		// No room refire (the reconnect-scale storm class, CI 29942250643) —
-		// disk convergence is owned by the op-log rows; the doc hydrates at open.
-		expect(enroll).not.toHaveBeenCalled();
-		expect(disk.get("a.md")).toBe("BASE"); // untouched
+		// A pended incremental delta means the ONLY in-window delivery (this
+		// fan-out) could not reconstruct the note, and the op-log rows do NOT
+		// reliably own disk here: the edit's row seq is checkpoint-lagged and a
+		// resumed device's cursor may already be past the note's old row (e2e
+		// test_82, local repro 2026-07-22). Fire the cooldown-gated re-handshake
+		// so STEP2's full state converges the empty doc — the 15s per-note
+		// cooldown keeps this storm-safe (CI 29942250643 class), since only
+		// actively-edited notes fan out, not catch-up-scale enumerations.
+		expect(reset).toHaveBeenCalledWith("id-a");
+		expect(enroll).toHaveBeenCalledWith("id-a");
+		expect(disk.get("a.md")).toBe("BASE"); // untouched until STEP2 lands
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // unadvanced
 		await mgr.destroy();
 	});

@@ -1332,7 +1332,18 @@ export class SyncEngine {
 			typeof this.crdt.hasPendingGap === "function" &&
 			(await this.crdt.hasPendingGap(noteId));
 		if (gapped) {
-			devLog().log("crdt", `history-less delta pends for ${normalized} — rows own disk`);
+			// The op-log rows do NOT reliably own disk convergence here: the
+			// edit's row seq is checkpoint-lagged (a live tail append never bumps
+			// notes.seq — the checkpoint owns it), and a resumed device's cursor
+			// is already past the note's old row, so the feed never re-serves it
+			// (e2e test_82, local repro 2026-07-22). This fan-out was the only
+			// in-window delivery and it could not reconstruct the note — fire the
+			// cooldown-gated re-handshake so STEP2's full state converges the
+			// empty doc. Storm-safe: only actively-edited notes fan out (not
+			// catch-up-scale enumerations) and the 15s per-note cooldown coalesces
+			// bursts (the CI 29942250643 class this branch once guarded against).
+			rlog().info("crdt", `history-less delta pends for ${normalized} — socket converge`);
+			this.socketConverge(normalized, noteId);
 			return "deferred";
 		}
 		this.setCrdtHead(normalized, head);
@@ -3565,8 +3576,25 @@ export class SyncEngine {
 			rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
 			return "deferred";
 		}
-		const path = this.noteIdMap?.pathForId(noteId) ?? null;
-		if (!path) return "deferred"; // not locally known — first-discovery is pull()'s job
+		let path = this.noteIdMap?.pathForId(noteId) ?? null;
+		if (!path) {
+			// NOT just "first-discovery is pull()'s job": a resumed device with a
+			// wiped/stale map whose replay cursor is already past this note's row
+			// seq (live tail appends don't bump seq — checkpoint owns it) will
+			// never see this note in the feed again, and an unchanged change_seq
+			// short-circuits the manifest steps too — this fan-out is the ONLY
+			// delivery. Heal the map (single-flight manifest reconcile, the same
+			// primitive the crdt_doc_ready announce path uses) and retry the
+			// lookup once (e2e test_82, local repro 2026-07-22).
+			this.ensureNoteIdMapped(noteId);
+			await this.idMapReconcileInflight;
+			path = this.noteIdMap?.pathForId(noteId) ?? null;
+			if (!path) {
+				rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`);
+				return "deferred"; // genuinely unknown — first-discovery is pull()'s job
+			}
+			rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
+		}
 		// A fan-out for a mapped note is the server pushing that note's bytes —
 		// authoritative proof it has a row. So confirm it here rather than dropping
 		// it. Without this, a reconnect (clearConfirmedNoteIds un-confirms every
@@ -5359,6 +5387,10 @@ export class SyncEngine {
 							// consumed-but-unrecorded net re-serves it next pass —
 							// by then the projection caught up and the identical/
 							// diverged branches consume it properly.
+							rlog().info(
+								"pull",
+								`CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`,
+							);
 							this.syncState.set(normalized, {
 								...(this.syncState.get(normalized) ?? {}),
 								hash: fnv1a(content),
