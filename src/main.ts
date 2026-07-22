@@ -433,6 +433,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// pre-seeded with the editor's content, so no in-flight edit is lost).
 		this.syncEngine.setCrdtEditorRebind((path) => this.crdtLiveViews?.rebindPath(path));
 
+		// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
+		// check reads the bound editor's live buffer, and (on a rebind)
+		// nudges its save the same way wiring.ts's onBoundUpdate does.
+		this.syncEngine.setCrdtBoundBufferText(
+			(path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
+		);
+		this.syncEngine.setCrdtRequestSave((path) =>
+			this.crdtLiveViews?.requestSaveForBoundPath(path),
+		);
+
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
 		this.baseStore = new BaseStore(this.app.vault.adapter, basesPath);
@@ -1879,6 +1889,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// Backed lazily: crdtLiveViews is constructed just below, so this
 						// closure must read the field at call time, not capture a value.
 						isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+						// Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
+						// flush a programmatically-updated bound editor to disk — nudge
+						// Obsidian's own save pipeline after a remote merge paints in.
+						onBoundUpdate: (path) => this.crdtLiveViews?.requestSaveForBoundPath(path),
 						// Gate live crdt_msg sends on the note's create-ack (create-before-edit):
 						// a brand-new note's crdt_create must land before any crdt_msg, or the
 						// server drops the edit (note_not_found) — see manager.ts canSendLive.

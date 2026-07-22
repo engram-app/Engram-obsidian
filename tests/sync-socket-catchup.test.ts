@@ -579,7 +579,8 @@ describe("applyOp", () => {
 // unifying fullSync's pull cursor and the socket replay's catchupSeq onto ONE
 // watermark removed a live-bound note's second delivery chance. catchUp now
 // re-detects a diverged live-bound note from the manifest and re-converges it
-// via restConvergeLiveBound, independent of the seq cursor.
+// via the socket-native socketConvergeLiveBound primitive (single-path D3),
+// independent of the seq cursor.
 describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)", () => {
 	function manifestOf(notes: Array<{ id: string; path: string; content_hash: string }>) {
 		return {
@@ -591,11 +592,13 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		};
 	}
 
-	test("re-converges a diverged live-bound note independent of the seq cursor", async () => {
+	test("re-fires the socket re-handshake for a diverged live-bound note independent of the seq cursor", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+			() => {},
+		);
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
@@ -603,7 +606,31 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 
 		expect(converge).toHaveBeenCalledTimes(1);
 		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
-		// Convergence recorded (serverHash advanced) so the next catch-up skips it.
+		// The manifest carries hashes only (keyed HMAC — uncomputable
+		// client-side), so this leg cannot verify convergence — serverHash
+		// stays unrecorded until a real STEP2/update commit lands (fix wave 1).
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
+	});
+
+	test("fix wave 1 (e) / fix wave 5 (3): stages the manifest's content_hash (content:null — hash-only, uncomputable client-side) and commits UNVERIFIED on the next real STEP2/update, preserving the pre-wave-5 best-effort manifest-heal behavior", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
+
+		await (engine as any).healDivergedLiveBoundNotes(
+			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
+		);
+		// Staged, not recorded — the manifest heal alone cannot prove the doc
+		// holds the server's ops.
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
+
+		// Simulates CrdtManager's onSynced firing after a real inbound frame
+		// applies non-empty. content:null means commitCrdtConvergence has no
+		// plaintext to content-verify against — it commits unverified, exactly
+		// like before fix wave 5 (the manifest heal's recording stays
+		// best-effort).
+		await engine.commitCrdtConvergence("id-a");
+
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");
 	});
 
@@ -611,7 +638,9 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => true);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H2" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+			() => {},
+		);
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
@@ -624,7 +653,9 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => false);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConvergeLiveBound").mockImplementation(
+			() => {},
+		);
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),

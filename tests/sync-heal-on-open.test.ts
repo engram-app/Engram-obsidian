@@ -9,13 +9,16 @@
  * a fan-out storm stayed diverged until an unrelated reconnect, because
  * file-open (main.ts) is now a pure local bind with no convergence check.
  *
- * Why this doesn't reintroduce the old lag: healNoteOnOpen does no
- * synchronous manifest-hash comparison and no reset/enroll re-handshake — it
- * just asks for the delta since our real state vector for the ONE opened
- * note via the existing guarded `restConvergeLiveBound`, which is a no-op
- * when already converged. Live-bound-only first cut (design decision iii):
- * an idle (non-live-bound) note is left to reconnect catch-up (#5), so this
- * heal never does a vault-wide heads fetch.
+ * Single-path D3 (socket-native converge, fix wave 1): healNoteOnOpen no
+ * longer pulls a REST delta. It fires `socketConvergeLiveBound`, which always
+ * re-fires STEP1 (reset+enroll) on a diverged note — no text-verify skip
+ * (text equality doesn't prove the doc holds the server's ops); the room
+ * sv-exchange delivers whatever this doc is missing over the socket and
+ * paints it through the binding. A per-note_id cooldown
+ * (`crdtHealCooldown`/`healCooldownMs`) collapses repeated same-note
+ * detections (open + catch-up + heal racing) to one handshake instead of
+ * draining the handshake budget (#193 starvation class). No manifest fetch,
+ * no REST round trip.
  *
  * Mirrors the mock-engine pattern from tests/sync-socket-catchup.test.ts.
  */
@@ -42,8 +45,11 @@ function confirm(engine: SyncEngine, noteId: string): void {
 function makeEngine(
 	crdt: Partial<CrdtManager>,
 	api: Partial<EngramApi>,
-	opts?: { liveBound?: boolean },
-): SyncEngine {
+	opts?: {
+		liveBound?: boolean;
+		enrollment?: { enroll: ReturnType<typeof mock>; reset: ReturnType<typeof mock> };
+	},
+): { engine: SyncEngine; enroll: ReturnType<typeof mock>; reset: ReturnType<typeof mock> } {
 	const mockApi = {
 		getUpdates: mock().mockResolvedValue({ update: new Uint8Array(), head: "head-1" }),
 		...api,
@@ -58,63 +64,67 @@ function makeEngine(
 	e.setCrdtManager(crdt as unknown as CrdtManager);
 	e.setReady();
 	e.setLiveBoundCheck(() => opts?.liveBound ?? true);
+	const enroll = opts?.enrollment?.enroll ?? mock();
+	const reset = opts?.enrollment?.reset ?? mock();
+	e.setCrdtEnrollment({ enroll, reset });
 	const map = new NoteIdMap();
 	map.set("Notes/a.md", "id-a");
 	e.setNoteIdMap(map);
 	confirm(e, "id-a");
-	return e;
+	return { engine: e, enroll, reset };
 }
 
 describe("healNoteOnOpen", () => {
-	test("live-bound note: applies the delta since our real state vector via restConvergeLiveBound", async () => {
-		const applied: Array<[string, Uint8Array]> = [];
-		const crdt = {
-			applyRemoteUpdate: (id: string, update: Uint8Array) => {
-				applied.push([id, update]);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-		};
-		const engine = makeEngine(crdt, {
-			getUpdates: mock().mockResolvedValue({
-				update: new Uint8Array([9, 9]),
-				head: "head-2",
-			}),
+	test("live-bound note: fires the socket re-handshake (reset+enroll) — no REST, no disk write", async () => {
+		const getUpdates = mock().mockResolvedValue({
+			update: new Uint8Array([9, 9]),
+			head: "head-2",
 		});
-
-		await engine.healNoteOnOpen("Notes/a.md");
-
-		expect(applied).toEqual([["id-a", new Uint8Array([9, 9])]]);
-		expect((engine as any).getCrdtHead("Notes/a.md")).toBe("head-2");
-	});
-
-	test("already-converged note: the delta is empty and the head still advances to the returned head — no reset, no re-handshake", async () => {
-		const applied: Array<[string, Uint8Array]> = [];
-		const getUpdates = mock().mockResolvedValue({ update: new Uint8Array(), head: "same" });
-		const crdt = {
-			applyRemoteUpdate: (id: string, update: Uint8Array) => {
-				applied.push([id, update]);
-				return Promise.resolve();
-			},
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-		};
-		const engine = makeEngine(crdt, { getUpdates });
-
-		await engine.healNoteOnOpen("Notes/a.md");
-
-		expect(applied).toEqual([["id-a", new Uint8Array()]]); // empty delta — near-no-op
-		// Exactly one REST call (getUpdates) — no manifest fetch, no separate
-		// reset/enroll round trip: the #203 false-fire lag source is absent.
-		expect(getUpdates).toHaveBeenCalledTimes(1);
-	});
-
-	test("idle (not live-bound) confirmed note: no-op in the first cut — no catch-up replay", async () => {
 		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
 		const crdt = {
 			applyRemoteUpdate,
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
+			projectedText: mock().mockResolvedValue("whatever"),
 		};
-		const engine = makeEngine(crdt, {}, { liveBound: false });
+		const { engine, enroll, reset } = makeEngine(crdt, { getUpdates });
+
+		await engine.healNoteOnOpen("Notes/a.md");
+
+		expect(reset).toHaveBeenCalledWith("id-a");
+		expect(enroll).toHaveBeenCalledWith("id-a");
+		expect(getUpdates).not.toHaveBeenCalled();
+		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+	});
+
+	test("repeated opens within the cooldown window collapse to ONE handshake (fix wave 1)", async () => {
+		const crdt = { projectedText: mock().mockResolvedValue("same") };
+		const { engine, enroll, reset } = makeEngine(crdt, {});
+
+		await engine.healNoteOnOpen("Notes/a.md");
+		await engine.healNoteOnOpen("Notes/a.md");
+
+		// Open + catch-up + heal can all independently detect the same
+		// divergence in quick succession — the per-note cooldown collapses
+		// them to one STEP1 instead of draining the handshake budget (#193
+		// starvation class).
+		expect(reset).toHaveBeenCalledTimes(1);
+		expect(enroll).toHaveBeenCalledTimes(1);
+	});
+
+	test("cooldown of 0 allows every open to independently re-fire the handshake", async () => {
+		const crdt = { projectedText: mock().mockResolvedValue("same") };
+		const { engine, enroll, reset } = makeEngine(crdt, {});
+		engine.healCooldownMs = 0;
+
+		await engine.healNoteOnOpen("Notes/a.md");
+		await engine.healNoteOnOpen("Notes/a.md");
+
+		expect(reset).toHaveBeenCalledTimes(2);
+		expect(enroll).toHaveBeenCalledTimes(2);
+	});
+
+	test("idle (not live-bound) confirmed note: no-op in the first cut — no catch-up replay", async () => {
+		const crdt = { projectedText: mock().mockResolvedValue("x") };
+		const { engine, enroll, reset } = makeEngine(crdt, {}, { liveBound: false });
 		let replayed = false;
 		engine.setCrdtCatchupSince(async () => {
 			replayed = true;
@@ -124,15 +134,16 @@ describe("healNoteOnOpen", () => {
 		await engine.healNoteOnOpen("Notes/a.md");
 
 		expect(replayed).toBe(false); // confirmed + idle → left to reconnect catch-up (#5)
-		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("unmapped path: no-op (nothing to heal against)", async () => {
-		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
-		const engine = makeEngine({ applyRemoteUpdate }, {});
+		const { engine, reset, enroll } = makeEngine({}, {});
 
 		await expect(engine.healNoteOnOpen("Notes/unknown.md")).resolves.toBeUndefined();
-		expect(applyRemoteUpdate).not.toHaveBeenCalled();
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("unconfirmed note: no-op (no server row known yet)", async () => {
@@ -159,14 +170,11 @@ describe("healNoteOnOpen", () => {
 	test("opened-but-unconfirmed note: converges over the seq-replay op-log, not REST", async () => {
 		// A note opened after being discovered via catch-up/fan-out but never
 		// handshaked (unconfirmed). It must not wait for the next reconnect — heal
-		// converges it over the one catch-up path (crdt_catchup_since), NOT via
-		// REST restConvergeLiveBound.
+		// converges it over the one catch-up path (crdt_catchup_since), NOT the
+		// socket re-handshake primitive.
 		const getUpdates = mock().mockResolvedValue({ update: new Uint8Array(), head: "h" });
-		const crdt = {
-			applyRemoteUpdate: mock().mockResolvedValue(undefined),
-			encodeStateVector: (_id: string) => Promise.resolve(new Uint8Array([1])),
-		};
-		const engine = makeEngine(crdt, { getUpdates });
+		const crdt = { projectedText: mock().mockResolvedValue("x") };
+		const { engine, reset } = makeEngine(crdt, { getUpdates });
 		(engine as unknown as { confirmedNoteIds: Set<string> }).confirmedNoteIds.delete("id-a");
 		let replayed = false;
 		engine.setCrdtCatchupSince(async () => {
@@ -178,6 +186,7 @@ describe("healNoteOnOpen", () => {
 
 		expect(replayed).toBe(true); // seq-replay catch-up ran
 		expect(getUpdates).not.toHaveBeenCalled(); // NOT the REST heal path
+		expect(reset).not.toHaveBeenCalled(); // NOT the socket re-handshake path
 	});
 
 	test("crdt disabled: no-op", async () => {
@@ -194,12 +203,16 @@ describe("healNoteOnOpen", () => {
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
-	test("never throws — a failure in the delta fetch is caught and swallowed", async () => {
-		const crdt = {
-			applyRemoteUpdate: mock().mockResolvedValue(undefined),
-			encodeStateVector: (_id: string) => Promise.reject(new Error("boom")),
-		};
-		const engine = makeEngine(crdt, {});
+	test("never throws — a failure inside the socket re-handshake is caught and swallowed", async () => {
+		const crdt = {};
+		const failingReset = mock().mockImplementation(() => {
+			throw new Error("boom");
+		});
+		const { engine } = makeEngine(
+			crdt,
+			{},
+			{ enrollment: { enroll: mock(), reset: failingReset } },
+		);
 
 		await expect(engine.healNoteOnOpen("Notes/a.md")).resolves.toBeUndefined();
 	});
