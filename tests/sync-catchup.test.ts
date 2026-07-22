@@ -409,40 +409,86 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(reset).toHaveBeenCalledWith("note-id-1");
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
 	});
 
-	test("live-bound divergence: REST catch-up applies the missing delta to the live doc and records REAL convergence (2026-07-14 deaf-note fix)", async () => {
-		const { engine, reset, applyRemoteUpdate } = crdtEngine();
+	test("D3 verify-first: doc already projects the row snapshot — records convergence, NO handshake, NO REST", async () => {
+		const { engine, enroll, reset, projectedText } = crdtEngine();
+		projectedText.mockResolvedValue("caught up body");
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
 		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		engine.importSyncState({
-			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
-		});
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "old-hash" } });
 
 		await engine.applyChange({
 			path: "owned.md",
 			action: "upsert",
-			content: "diverged body",
+			content: "caught up body",
 			content_hash: "new-hash",
 			version: 2,
 			mtime: 50,
 		} as any);
 
-		// The missed ops are pulled over REST (deterministic — not a hope that
-		// the room broadcast works) and applied to the LIVE doc; the editor
-		// binding paints them. Only then is convergence recorded.
-		expect(reset).toHaveBeenCalledWith("note-id-1");
-		expect((mockApi as any).getUpdates).toHaveBeenCalledWith("note-id-1", expect.any(String));
-		expect(applyRemoteUpdate).toHaveBeenCalledWith("note-id-1", expect.any(Uint8Array));
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
-		// Editor owns the body (no disk write) → the real local hash is preserved.
-		expect(engine.exportSyncState()["owned.md"]?.hash).toBe(7);
-		// The converged head must SURVIVE the convergence record — a bare
-		// syncState replacement wiped it, defeating coldReceive's cost gate.
-		expect(engine.exportSyncState()["owned.md"]?.crdtHead).toBe("head-1");
+		// `reset` only ever fires from socketConvergeLiveBound's unverified leg —
+		// the discriminator that proves verify-first skipped the re-handshake.
+		// (`enroll` alone is NOT that discriminator here: a pre-existing,
+		// out-of-scope safety net a few lines above this call — "an open, bound
+		// editor... this pull entry is the authoritative safety net" — enrolls
+		// any live-bound known note on every pull entry, converged or not, so it
+		// fires regardless of what socketConvergeLiveBound decides.)
+		expect(reset).not.toHaveBeenCalled();
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("D3 unverified: doc behind the row — fires reset+enroll over the socket, records NOTHING, NO REST", async () => {
+		const { engine, enroll, reset, projectedText } = crdtEngine();
+		projectedText.mockResolvedValue("stale local doc");
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "old-hash" } });
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "server body B never saw",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
+		// never record convergence for data that has not verifiably arrived
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+	});
+
+	test("D3: projectedText throwing is isolated — falls through to the handshake, no convergence recorded", async () => {
+		const { engine, enroll, projectedText } = crdtEngine();
+		projectedText.mockRejectedValue(new Error("IDB dead"));
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "old-hash" } });
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
 	test("live-bound divergence for an UNMAPPED note (no note_id): quietly retries, never throws, never fakes convergence", async () => {
@@ -469,90 +515,15 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["unmapped.md"]?.serverHash).toBe("old-hash");
 	});
 
-	test("live-bound divergence: encodeStateVector throwing is isolated — retry next poll, no convergence recorded", async () => {
-		const { engine, encodeStateVector, applyRemoteUpdate } = crdtEngine();
-		encodeStateVector.mockRejectedValue(new Error("doc destroyed mid-open"));
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		engine.importSyncState({
-			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			mtime: 50,
-		} as any);
-
-		expect(applyRemoteUpdate).not.toHaveBeenCalled();
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
-	});
-
-	test("live-bound divergence: REST catch-up FAILURE never fakes convergence — serverHash stays unrecorded so every poll retries", async () => {
-		const { engine, reset, applyRemoteUpdate } = crdtEngine();
-		((mockApi as any).getUpdates as ReturnType<typeof mock>).mockRejectedValue(
-			new Error("HTTP 500"),
-		);
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		engine.importSyncState({
-			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
-		});
-
-		const change = {
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			mtime: 50,
-		} as any;
-		for (let i = 0; i < 5; i++) await engine.applyChange(change);
-
-		// The old bounded give-up recorded convergence after 3 attempts WITHOUT
-		// the data ever arriving — a silent data hole (the live-edit deaf-note
-		// incident). Now: keep retrying at the poll cadence, never lie.
-		expect(reset).toHaveBeenCalledTimes(5);
-		expect(applyRemoteUpdate).not.toHaveBeenCalled();
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
-	});
-
-	test("live-bound divergence: a delta that leaves a pending gap does NOT record convergence", async () => {
-		const { engine, hasPendingGap } = crdtEngine();
-		hasPendingGap.mockResolvedValue(true);
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		engine.setLiveBoundCheck((p: string) => p === "owned.md");
-		engine.importSyncState({
-			"owned.md": { hash: 7, version: 1, serverHash: "old-hash" },
-		});
-
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "diverged body",
-			content_hash: "new-hash",
-			version: 2,
-			mtime: 50,
-		} as any);
-
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
-	});
-
 	test("live-bound converge with no prior baseline records the REAL local hash, not a poisoning 0", async () => {
-		const { engine } = crdtEngine();
+		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
 		mockApp.vault.cachedRead.mockResolvedValue("actual disk content");
+		// Row content ("x") already matches what the doc projects — verifies on
+		// the first pass, no getUpdates/REST involved.
+		projectedText.mockResolvedValue("x");
 		engine.setLiveBoundCheck((p: string) => p === "owned.md");
 		// NO importSyncState → stored is undefined for owned.md.
 
@@ -609,7 +580,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("no spurious conflict: a VIEWED-then-cold note with the real hash recorded does NOT hit the conflict flow (#2 outcome)", async () => {
-		const { engine } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, projectedText } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -617,10 +588,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		const onConflict = mock().mockResolvedValue({ choice: "skip" });
 		engine.onConflict = onConflict;
 
-		// Phase 1: note OPEN (live-bound), no prior baseline, diverges → after the
-		// retry cap it records the REAL local hash, not a 0 sentinel.
+		// Phase 1: note OPEN (live-bound), no prior baseline. The doc already
+		// projects the row's content ("x") — verifies immediately, records the
+		// REAL local disk hash, not a 0 sentinel.
 		let live = true;
 		engine.setLiveBoundCheck((p: string) => live && p === "owned.md");
+		projectedText.mockResolvedValue("x");
 		const c1 = {
 			path: "owned.md",
 			action: "upsert",
