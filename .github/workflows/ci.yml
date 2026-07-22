@@ -31,6 +31,12 @@ jobs:
       - name: Type-check and build
         run: bun run build
 
+      # Deterministic CRDT convergence sim — fast-fails a convergence regression
+      # with clear attribution before it's buried in the full suite. Proven
+      # differential gate for #282 (seq fence); see tests/sim/README.md.
+      - name: Sim convergence tier
+        run: bun test tests/sim/
+
       - name: Run tests
         run: bun test
 
