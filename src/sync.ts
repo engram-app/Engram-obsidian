@@ -4960,17 +4960,30 @@ export class SyncEngine {
 				// a row converged earlier) also mismatches, and treating that as
 				// "we are behind" backfills a checkpoint-lagged projection over
 				// newer live content (the ModifyTest 40B/23B revert ping-pong; 1805
-				// backfills in one suite run). A row at or below the path's
+				// backfills in one suite run). A row STRICTLY below the path's
 				// high-water seq (or recorded version) is history: skip the whole
 				// diverged block — nothing is recorded, so a genuinely newer row
 				// still converges on a later pass.
+				//
+				// STRICT `<`, never `<=` (main run 29881173619, test_85): an
+				// EQUAL-seq row can carry the server-side MERGE of this device's
+				// own push with an edit it never received — the device's
+				// high-water came from its own push echo, so `<=` fenced the very
+				// row it needed and the missed edit was lost until the next write.
+				// The truly-stale equal-seq row (checkpoint-lagged projection of
+				// the op we just applied) is already skipped by the upstream
+				// serverHash equality gate below; seq only needs to fence rows
+				// PROVABLY behind the high-water. This snapshot-vs-causality
+				// ambiguity is inherent — the proper fix is routing CRDT rows
+				// through the Yjs delta converge (Phase E; see
+				// docs/context/d2-seq-replay-stale-snapshot-stomp.md direction 1).
 				const staleRow =
 					(stored?.seq !== undefined &&
 						change.seq !== undefined &&
-						change.seq <= stored.seq) ||
+						change.seq < stored.seq) ||
 					(stored?.version !== undefined &&
 						change.version !== undefined &&
-						change.version <= stored.version);
+						change.version < stored.version);
 				if (staleRow) {
 					rlog().info(
 						"pull",
