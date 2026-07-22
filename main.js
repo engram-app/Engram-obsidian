@@ -20586,6 +20586,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), this.socketConverge(normalized, noteId));
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
+            if (stored !== void 0 && stored.hash !== void 0 && content !== void 0 && fnv1a(content) === stored.hash)
+              return this.syncState.set(normalized, {
+                ...stored,
+                serverHash: change.content_hash,
+                version: change.version,
+                seq: change.seq
+              }), !1;
             localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
               "pull",
               `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`

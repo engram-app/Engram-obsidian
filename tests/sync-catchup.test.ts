@@ -340,6 +340,45 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
+	test("a row carrying EXACTLY the last-synced baseline while local edited ahead: NO conflict, CAS base recorded quietly (test_82 class)", async () => {
+		// A's own create/edit row echoes back through the op-log while the NEXT
+		// local edit is in flight. The row content hashes to the stored
+		// baseline — the server never moved beyond what this device synced, so
+		// this is a pending local push, not a conflict. The spurious
+		// self-conflict's auto-resolve delay (20s) previously stalled the real
+		// push past e2e test_82's assert window (CI run 29944157587).
+		const { engine, enroll } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		// Disk moved AHEAD of the baseline (pending local edit)…
+		mockApp.vault.cachedRead.mockResolvedValue("baseline body PLUS local edit");
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("baseline body"), version: 1, serverHash: "old-hash" },
+		});
+		const onConflict = mock().mockResolvedValue({ choice: "skip" });
+		engine.onConflict = onConflict;
+
+		// …and the row carries exactly the baseline content (our own echo).
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "baseline body",
+			content_hash: "new-hash",
+			version: 2,
+			seq: 9,
+			mtime: 50,
+		} as any);
+
+		expect(onConflict).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled(); // disk untouched
+		const state = engine.exportSyncState()["owned.md"];
+		expect(state?.serverHash).toBe("new-hash"); // CAS base recorded
+		expect(state?.seq).toBe(9); // row consumed
+		expect(state?.hash).toBe(fnv1a("baseline body")); // baseline hash preserved
+	});
+
 	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
 		const { engine } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");

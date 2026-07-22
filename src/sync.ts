@@ -5285,6 +5285,30 @@ export class SyncEngine {
 						const localNow = localFile
 							? await this.app.vault.cachedRead(localFile)
 							: null;
+						// PURE LOCAL-AHEAD, not a conflict: the row's content hashes
+						// to exactly the last-synced BASELINE — the server never
+						// moved beyond what this device already synced; only LOCAL
+						// moved (a pending push). This is our OWN create/edit row
+						// echoing back through the op-log while the next edit is in
+						// flight (e2e test_82: the spurious self-conflict's 20s
+						// auto-resolve delayed the real push past the assert
+						// window). Record the CAS base quietly (we provably hold
+						// that content — it IS the baseline) and consume the row;
+						// the pending local push proceeds normally.
+						if (
+							stored !== undefined &&
+							stored.hash !== undefined &&
+							content !== undefined &&
+							fnv1a(content) === stored.hash
+						) {
+							this.syncState.set(normalized, {
+								...stored,
+								serverHash: change.content_hash,
+								version: change.version,
+								seq: change.seq,
+							});
+							return false;
+						}
 						const localDiverged =
 							localNow !== null &&
 							stored?.hash !== undefined &&
