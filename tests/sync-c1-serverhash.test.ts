@@ -21,15 +21,10 @@ import { DEFAULT_SETTINGS } from "../src/types";
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
-	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	getRateLimit: mock().mockResolvedValue(0),
-	getAttachmentChanges: mock().mockResolvedValue({
-		changes: [],
-		server_time: "2026-01-01T00:00:00Z",
-	}),
 	getManifest: mock().mockResolvedValue(null),
 	getNote: mock().mockResolvedValue({ path: "", content: "" }),
 } as unknown as EngramApi;
