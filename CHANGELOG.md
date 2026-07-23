@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.17.0](https://github.com/engram-app/Engram-obsidian/compare/1.16.0...1.17.0) (2026-07-23)
+
+
+### Features
+
+* **settings:** adopt getSettingDefinitions (Obsidian 1.13 search) ([#286](https://github.com/engram-app/Engram-obsidian/issues/286)) ([797b340](https://github.com/engram-app/Engram-obsidian/commit/797b340a1170f4be6e30342cfeb2faba6259810c))
+
+
+### Bug Fixes
+
+* **crdt:** skip remote-merge flush of empty body on never-seeded doc ([#288](https://github.com/engram-app/Engram-obsidian/issues/288)) ([#289](https://github.com/engram-app/Engram-obsidian/issues/289)) ([7990494](https://github.com/engram-app/Engram-obsidian/commit/79904944cbea572846764639086ab32fb09e6076))
+
 ## [1.16.0](https://github.com/engram-app/Engram-obsidian/compare/1.15.0...1.16.0) (2026-07-23)
 
 
