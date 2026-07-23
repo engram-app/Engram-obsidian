@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.16.0](https://github.com/engram-app/Engram-obsidian/compare/1.15.0...1.16.0) (2026-07-23)
+
+
+### Features
+
+* **sim:** deterministic CRDT convergence sim tier — differential gate for [#282](https://github.com/engram-app/Engram-obsidian/issues/282) ([#294](https://github.com/engram-app/Engram-obsidian/issues/294)) ([64c284d](https://github.com/engram-app/Engram-obsidian/commit/64c284d14789b3ac8427bee4ba88a3b75a69e2f0))
+* **sim:** model editor enrollment → history-full notes; re-enable seeded random convergence suite ([#298](https://github.com/engram-app/Engram-obsidian/issues/298)) ([b7da6c8](https://github.com/engram-app/Engram-obsidian/commit/b7da6c869c561ffcd9b94b3716046527d33397c7))
+
+
+### Bug Fixes
+
+* **sync:** content-hash-aware equal-seq fence — an equal-seq row with new content is no longer dropped ([#296](https://github.com/engram-app/Engram-obsidian/issues/296)) ([fd1095a](https://github.com/engram-app/Engram-obsidian/commit/fd1095a9ae111f2636b9d657f9ec05bfafa735ab))
+
 ## [1.15.0](https://github.com/engram-app/Engram-obsidian/compare/1.14.0...1.15.0) (2026-07-22)
 
 
