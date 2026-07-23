@@ -1510,6 +1510,7 @@ export class SyncEngine {
 		private saveData: (data: {
 			lastSync?: string;
 			catchupSeq?: number;
+			catchupId?: string | null;
 			manifestSeq?: number;
 			// Signals the engine mutated the shared noteIdMap and it should be
 			// persisted. main.ts's savePluginData writes the map instance directly
@@ -1563,6 +1564,22 @@ export class SyncEngine {
 
 	setCatchupSeq(seq: number): void {
 		this.catchupSeq = Number.isFinite(seq) && seq >= 0 ? seq : 0;
+	}
+
+	/** Composite-cursor id paired with `catchupSeq` (#312). An attachment move
+	 *  writes two rows at one seq; the id lets a resumed replay continue at
+	 *  `(seq, id) > (catchupSeq, catchupId)` instead of the seq-only `seq >`,
+	 *  which would skip the second row. Only feeds the catch-up fetch — NOT the
+	 *  gap-heal fence (that stays seq-only + hash-aware). Null = no id yet
+	 *  (seq-only, e.g. a genesis replay or a pre-#312 backend). */
+	private catchupId: string | null = null;
+
+	getCatchupId(): string | null {
+		return this.catchupId;
+	}
+
+	setCatchupId(id: string | null): void {
+		this.catchupId = typeof id === "string" && id.length > 0 ? id : null;
 	}
 
 	/** The vault change_seq watermark of the last FULLY-processed manifest pass
@@ -1691,6 +1708,7 @@ export class SyncEngine {
 		// seq feed — reset to 0 so the next catch-up replays the new vault from
 		// genesis (else a stale high seq would suppress it entirely).
 		this.catchupSeq = 0;
+		this.catchupId = null;
 		// Same cross-vault hazard for the manifest watermark (E1 #1065): a
 		// stale since_seq could integer-collide with the NEW vault's change_seq
 		// and wrongly short-circuit the first reconcile after a swap.
@@ -3169,14 +3187,26 @@ export class SyncEngine {
 		| ((
 				cursorSeq: number,
 				limit?: number,
-		  ) => Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }>)
+				cursorId?: string | null,
+		  ) => Promise<{
+				changes: SyncChange[];
+				has_more: boolean;
+				next_seq: number | null;
+				next_id?: string | null;
+		  }>)
 		| null = null;
 
 	setCrdtCatchupSince(
 		fn: (
 			cursorSeq: number,
 			limit?: number,
-		) => Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }>,
+			cursorId?: string | null,
+		) => Promise<{
+			changes: SyncChange[];
+			has_more: boolean;
+			next_seq: number | null;
+			next_id?: string | null;
+		}>,
 	): void {
 		this.crdtCatchupSince = fn;
 	}
@@ -3228,6 +3258,24 @@ export class SyncEngine {
 	 *  as `computeSyncPlan`'s inventory (#304, REST-purge Bucket C — the
 	 *  preview was their last caller). Throws when the channel is not live: the
 	 *  preview must error visibly, never render a wrong empty plan. */
+	/** Strict forward comparison of the composite `(seq, id)` catch-up cursor.
+	 *  Returns true iff `(nextSeq, nextId)` is strictly greater than
+	 *  `(curSeq, curId)` — the same keyset ordering the backend queries with. The
+	 *  equal-seq case (`nextSeq === curSeq`, `nextId > curId`) is what pages
+	 *  correctly across an attachment-move pair (#312). Ids compare as strings:
+	 *  canonical UUIDs sort identically byte-wise (Postgres uuid) and lexically. */
+	private cursorAdvances(
+		nextSeq: number | null,
+		nextId: string | null,
+		curSeq: number,
+		curId: string | null,
+	): boolean {
+		if (typeof nextSeq !== "number") return false;
+		if (nextSeq > curSeq) return true;
+		if (nextSeq < curSeq) return false;
+		return (nextId ?? "") > (curId ?? "");
+	}
+
 	private async enumerateServerState(): Promise<{
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
@@ -3252,12 +3300,12 @@ export class SyncEngine {
 		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
 		const attachments = new Map<string, { deleted: boolean }>();
 		let cursor = 0;
+		let cursorId: string | null = null;
 		// Loop ceiling is corruption protection, not a real limit (mirrors
 		// runSeqReplayOnce): 100k pages x 500 rows.
 		for (let page = 0; page < 100_000; page++) {
-			const resp = await this.crdtCatchupSince(cursor, 500);
+			const resp = await this.crdtCatchupSince(cursor, 500, cursorId);
 			for (const c of resp.changes) {
-				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
 				if (c.type === "attachment") {
 					if (c.path) attachments.set(c.path, { deleted: c.deleted });
 				} else if (c.id && c.path) {
@@ -3268,9 +3316,13 @@ export class SyncEngine {
 				}
 			}
 			if (!resp.has_more) break;
-			if (typeof resp.next_seq === "number" && resp.next_seq > cursor) {
-				cursor = resp.next_seq;
-			}
+			// Composite advance: `next_seq` can EQUAL `cursor` for an attachment
+			// move's two same-seq rows split across the page boundary (#312); the
+			// paired `next_id` continues past the exact row. A non-advancing cursor
+			// (backend quirk / pre-#312 empty next) breaks the loop.
+			if (!this.cursorAdvances(resp.next_seq, resp.next_id ?? null, cursor, cursorId)) break;
+			cursor = resp.next_seq as number;
+			cursorId = resp.next_id ?? null;
 		}
 		const notes = new Map<
 			string,
@@ -3439,11 +3491,12 @@ export class SyncEngine {
 		// test_48). Replay that vault from genesis instead; applySyncChange is
 		// idempotent, so a redundant-from-0 replay is safe.
 		const activeVault = this.settings.vaultId ?? null;
-		let cursor = fromZero
-			? 0
-			: this.syncStateVaultId === activeVault
-				? this.getCatchupSeq()
-				: 0;
+		const resumable = !fromZero && this.syncStateVaultId === activeVault;
+		let cursor = resumable ? this.getCatchupSeq() : 0;
+		// Composite-cursor id (#312), paired with `cursor`. Only resumes from the
+		// persisted id when we resume from the persisted seq — a genesis / cross-
+		// vault replay starts seq-only (null).
+		let cursorId: string | null = resumable ? this.getCatchupId() : null;
 		// E1 (#1065): consume a validator rewind atomically at run start. The
 		// validator must NOT write the cursor directly — an in-flight replay
 		// persists its own monotonically-advanced cursor per page and would
@@ -3451,16 +3504,27 @@ export class SyncEngine {
 		// cursor writer). The single-flight loop re-enters here, so a floor set
 		// mid-run is picked up by the coalesced re-run.
 		if (this.seqRewindFloor !== null && !fromZero) {
-			cursor = Math.min(cursor, this.seqRewindFloor);
+			const floored = Math.min(cursor, this.seqRewindFloor);
+			// A rewind to a lower seq invalidates the paired id (it belonged to the
+			// higher cursor) — resume seq-only from the floor.
+			if (floored !== cursor) cursorId = null;
+			cursor = floored;
 		}
 		this.seqRewindFloor = null;
 		let applied = 0;
 		// Bound the loop far above any real backlog (matches pullViaCursor). Applies
 		// are idempotent, so persisting the cursor per page is at-least-once safe.
 		for (let page = 0; page < 100_000; page++) {
-			let resp: { changes: SyncChange[]; has_more: boolean; next_seq: number | null };
+			const pageStartSeq = cursor;
+			const pageStartId = cursorId;
+			let resp: {
+				changes: SyncChange[];
+				has_more: boolean;
+				next_seq: number | null;
+				next_id?: string | null;
+			};
 			try {
-				resp = await this.crdtCatchupSince(cursor, 500);
+				resp = await this.crdtCatchupSince(cursor, 500, cursorId);
 			} catch (e) {
 				rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} — ${errMsg(e)}`);
 				return applied;
@@ -3478,7 +3542,19 @@ export class SyncEngine {
 				}
 				// Advance past every op we've SEEN (applied or skipped) so the cursor
 				// is monotonic and a permanently-unappliable op can't stall the feed.
-				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
+				// Composite (seq, id): the feed is {seq,id}-sorted, so the last row of
+				// a page is its max — that becomes the resume point persisted below.
+				if (
+					this.cursorAdvances(
+						typeof c.seq === "number" ? c.seq : null,
+						c.id ?? null,
+						cursor,
+						cursorId,
+					)
+				) {
+					cursor = c.seq;
+					cursorId = c.id ?? null;
+				}
 				// Every non-deleted id/path SEEN (applied or skipped) — the
 				// pull-all-delete / push-all-delete choices (Tasks 5/5b/6) need the
 				// full server id-set and attachment-path-set, not just the
@@ -3493,23 +3569,26 @@ export class SyncEngine {
 			// genuine catch-up needs to still see every op this enumeration walked
 			// past, since none of them were applied.
 			if (!enumerateOnly) {
+				// Persist the COMPOSITE resume point: an interrupted replay that
+				// stopped mid equal-seq pair must resume at (seq, id), not seq-only,
+				// or the sibling row is skipped (#312). The gap-heal fence still
+				// reads catchupSeq (seq) only — it is untouched.
 				this.setCatchupSeq(cursor);
-				await this.saveData({ catchupSeq: this.getCatchupSeq() });
+				this.setCatchupId(cursorId);
+				await this.saveData({
+					catchupSeq: this.getCatchupSeq(),
+					catchupId: this.getCatchupId(),
+				});
 			}
 			if (!resp.has_more) break;
-			// Guard against a `next_seq` that doesn't move forward (a backend quirk
-			// or malformed page) regressing the cursor mid-replay — `cursor` must
-			// stay monotonic across every page of THIS call so the per-page
-			// persisted write above can never move backwards. This intentionally
-			// does NOT compare against `this.getCatchupSeq()`: the cross-vault
-			// mismatch case above starts `cursor` at 0 on purpose to overwrite a
-			// stale higher cursor left by a different vault, and that reset must
-			// still be allowed to persist a lower value than what's currently
-			// stored (setCatchupSeq itself is intentionally left un-guarded so
-			// resets keep working; see final-review fix notes).
-			if (typeof resp.next_seq === "number" && resp.next_seq > cursor) {
-				cursor = resp.next_seq;
-			}
+			// Stuck-cursor guard: the per-op advance above already moved `cursor`
+			// to this page's max {seq, id} (the feed is sorted, so that equals the
+			// backend's {next_seq, next_id}). If a page returned rows but the
+			// composite cursor did NOT advance from the page start (a backend quirk
+			// / empty page with has_more), stop rather than refetch forever. This
+			// replaces the old seq-only `next_seq > cursor` guard, which would have
+			// wrongly refused to advance across an equal-seq pair boundary.
+			if (!this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
 		}
 		return applied;
 	}

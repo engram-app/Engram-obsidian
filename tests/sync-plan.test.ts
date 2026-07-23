@@ -275,6 +275,57 @@ describe("SyncEngine.enumerateServerState", () => {
 		await expect((engine as any).enumerateServerState()).rejects.toThrow(/live socket/);
 	});
 
+	test("threads the composite {seq,id} cursor to page past an equal-seq move pair (#312)", async () => {
+		// An attachment move writes two rows at ONE seq. If the plugin pages by
+		// seq only, the backend's `seq > cursor` skips the sibling. The plugin
+		// must send `cursor_id` from the prior page's `next_id` so the backend
+		// can continue at `(seq, id) > (cursor_seq, cursor_id)`.
+		const engine = createEngine();
+		engine.setCrdtManager({} as any);
+		engine.setCrdtLiveCheck(() => true);
+		const calls: Array<{ seq: number; id: string | null }> = [];
+		let call = 0;
+		engine.setCrdtCatchupSince(
+			async (cursor: number, _limit?: number, cursorId?: string | null) => {
+				calls.push({ seq: cursor, id: cursorId ?? null });
+				if (call++ === 0) {
+					return {
+						changes: [
+							{
+								type: "note",
+								id: "aaa",
+								seq: 5,
+								path: "new.md",
+								content: "x",
+								content_hash: "H",
+								deleted: false,
+							},
+						] as any,
+						has_more: true,
+						next_seq: 5,
+						next_id: "aaa",
+					};
+				}
+				return {
+					changes: [
+						{ type: "note", id: "bbb", seq: 5, path: "old.md", deleted: true },
+					] as any,
+					has_more: false,
+					next_seq: 5,
+					next_id: "bbb",
+				};
+			},
+		);
+
+		const s = await (engine as any).enumerateServerState();
+
+		// Page 2 was reached (not stopped by a seq-only `next_seq > cursor` guard)
+		// AND fetched with the composite cursor from page 1's next_id.
+		expect(calls[1]).toEqual({ seq: 5, id: "aaa" });
+		expect(s.notes.has("new.md")).toBe(true);
+		expect(s.notes.get("old.md")?.deleted).toBe(true);
+	});
+
 	test("does NOT touch the real catch-up cursor", async () => {
 		const engine = createEngine();
 		engine.setCatchupSeq(7);

@@ -24,7 +24,7 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { NoteChannel, connectRetryDelayMs } from "./channel";
+import { NoteChannel, connectRetryDelayMs, makeCrdtCatchupSender } from "./channel";
 import { ConflictModal } from "./conflict-modal";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
@@ -104,6 +104,9 @@ interface PluginData {
 	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
 	crdtOpQueue?: CrdtOp[];
 	catchupSeq?: number;
+	/** Composite-cursor id paired with `catchupSeq` (#312) so an interrupted
+	 *  replay resumes at `(seq, id)` and can't skip an equal-seq move sibling. */
+	catchupId?: string | null;
 	/** Manifest change_seq watermark of the last fully-processed catch-up pass
 	 *  (Phase E1 #1065) — sent as ?since_seq= to short-circuit an unchanged vault. */
 	manifestSeq?: number;
@@ -399,6 +402,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
 			}
+			if (data.catchupId !== undefined) {
+				this.syncEngine.setCatchupId(data.catchupId);
+			}
 			if (data.manifestSeq !== undefined) {
 				this.syncEngine.setManifestSeq(data.manifestSeq);
 			}
@@ -552,6 +558,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.catchupSeq !== undefined) {
 			this.syncEngine.setCatchupSeq(saved.catchupSeq);
+		}
+		if (saved?.catchupId !== undefined) {
+			this.syncEngine.setCatchupId(saved.catchupId);
 		}
 		if (saved?.manifestSeq !== undefined) {
 			this.syncEngine.setManifestSeq(saved.manifestSeq);
@@ -1310,6 +1319,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// reason (like deviceId) or the next saveData() wipes it; 0 = replay
 			// from genesis.
 			catchupSeq: this.syncEngine.getCatchupSeq(),
+			// Composite-cursor id paired with catchupSeq (#312) — re-listed for the
+			// wholesale-save reason.
+			catchupId: this.syncEngine.getCatchupId(),
 			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
 			// wholesale-save reason.
 			manifestSeq: this.syncEngine.getManifestSeq(),
@@ -1858,21 +1870,12 @@ export default class EngramSyncPlugin extends Plugin {
 				// Delete (and durable create genesis) now route through the plugin-
 				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
 				// Single-path convergence: seq-ordered op-log replayed over the socket.
-				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
-					// The op-log feed is vault-scoped. applyVaultChange rebuilds the
-					// stream for the new vault before computing the plan, so this
-					// closure normally captures the current vault's channel. This
-					// guard is defense against any future path that flips
-					// settings.vaultId without rebuilding: a stale channel would
-					// enumerate the OLD vault and render it as the new vault's plan.
-					// Refuse rather than mislead (enumerateServerState waits for the
-					// rebuilt channel to go live, so this fires only on a true stale
-					// mismatch, not the rebuild window).
-					if (channel.getVaultId() !== this.settings.vaultId) {
-						throw new Error("Sync preview needs the live socket (vault switching)");
-					}
-					return channel.crdtCatchupSince(cursorSeq, limit);
-				});
+				// Vault-mismatch guard (#314) + composite-cursor forwarding (#312),
+				// extracted to a tested helper so a dropped arg can't silently make
+				// the fix inert (TS bivariance accepts a shorter closure).
+				this.syncEngine.setCrdtCatchupSince(
+					makeCrdtCatchupSender(channel, () => this.settings.vaultId),
+				);
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by
