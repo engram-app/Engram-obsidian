@@ -124,9 +124,8 @@ export interface NoteResponse {
 	chunks_indexed: number;
 }
 
-/** A note change row applied by `applyChange`. Sourced from the op-log feed
- *  (`crdt_catchup_since` → `applyOp`) after the REST changes endpoints were
- *  removed (#304). `content` may be absent on meta-only rows — callers must
+/** A change entry from GET /notes/changes.
+ *  `content` is absent on `fields=meta` pages (protocol rev) — callers must
  *  resolve the body before applying a non-deleted change. `content_hash` is
  *  the server's opaque hash; compare it to the stored per-path serverHash. */
 export interface NoteChange {
@@ -146,10 +145,18 @@ export interface NoteChange {
 	seq?: number;
 }
 
-/** A note row on the op-log feed (`crdt_catchup_since`, folded by
- *  `enumerateServerState` / replayed by `applySyncChange`). `content` is absent
- *  on meta-only rows; `content_hash` is the server's opaque hash. `seq` is the
- *  per-vault monotonic change sequence. */
+/** Response from GET /notes/changes */
+export interface ChangesResponse {
+	changes: NoteChange[];
+	server_time: string;
+	/** Protocol rev pagination — absent on pre-rev backends. */
+	has_more?: boolean;
+	next_cursor?: string | null;
+}
+
+/** A note entry from the MERGED ordered feed GET /sync/changes (PR B2).
+ *  `content` is absent on meta-only pages; `content_hash` is the server's
+ *  opaque hash. `seq` is the per-vault monotonic change sequence. */
 export interface SyncNoteChange {
 	type: "note";
 	id: string;
@@ -190,7 +197,7 @@ export interface SyncOp {
 	parse_reason?: ParseReason | null;
 }
 
-/** An attachment row on the op-log feed — metadata only, no bytes. */
+/** An attachment entry from GET /sync/changes — metadata only, no bytes. */
 export interface SyncAttachmentChange {
 	type: "attachment";
 	id: string;
@@ -390,8 +397,7 @@ export interface AttachmentDetail {
 	updated_at: string;
 }
 
-/** An attachment change row applied by `applyAttachmentChange`, sourced from
- *  the op-log feed (`crdt_catchup_since` → `applyOp`). */
+/** A change entry from GET /attachments/changes */
 export interface AttachmentChange {
 	path: string;
 	mime_type: string;
@@ -399,6 +405,12 @@ export interface AttachmentChange {
 	mtime: number;
 	updated_at: string;
 	deleted: boolean;
+}
+
+/** Response from GET /attachments/changes */
+export interface AttachmentChangesResponse {
+	changes: AttachmentChange[];
+	server_time: string;
 }
 
 /** A single entry in the sync manifest (path + content hash). */

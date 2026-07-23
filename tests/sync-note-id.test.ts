@@ -29,6 +29,7 @@ function pushNoteResponse(
 const mockApi = {
 	pushNote: mock(pushNoteResponse),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
+	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "n.md",
@@ -49,6 +50,10 @@ const mockApi = {
 		mtime: 0,
 	}),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
+	getAttachmentChanges: mock().mockResolvedValue({
+		changes: [],
+		server_time: "2026-01-01T00:00:00Z",
+	}),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: mock().mockResolvedValue({

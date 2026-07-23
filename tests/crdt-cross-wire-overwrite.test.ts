@@ -27,6 +27,7 @@ import { DEFAULT_SETTINGS } from "../src/types";
 
 const getManifest = mock().mockResolvedValue(null);
 const mockApi = {
+	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	getManifest,
 } as unknown as EngramApi;
 

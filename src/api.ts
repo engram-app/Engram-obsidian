@@ -11,8 +11,10 @@ import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
 import { rlog } from "./remote-log";
 import type {
+	AttachmentChangesResponse,
 	AttachmentDetail,
 	AttachmentResponse,
+	ChangesResponse,
 	DeleteResponse,
 	ManifestResponse,
 	NoteDetail,
@@ -62,6 +64,9 @@ export class EngramApi {
 	 *  a slow link legitimately outlives the note deadline. */
 	requestTimeoutMs = 15_000;
 	attachmentTimeoutMs = 120_000;
+	/** Bulk pages (batch push, change feeds) can carry many full note bodies —
+	 *  15s starves a slow link, 120s is a transfer budget they don't need. */
+	bulkTimeoutMs = 60_000;
 
 	/** In-flight sendRequest calls, so a channel-disconnect signal can probe
 	 *  for wedged connections and fail them early (see failWedgedRequests). */
@@ -245,12 +250,29 @@ export class EngramApi {
 		}
 		// Deadline classes. Only actual attachment byte transfers earn 120s:
 		// upload (POST /attachments) and download (GET /attachments/<path>).
-		// Everything else is note/metadata traffic on the short deadline —
-		// the REST bulk-page class (batch push, change feeds) died with the
-		// socket-only migration (#304).
+		// The EXACT-endpoint check matters — "/attachments/changes" is the
+		// metadata feed, but "/attachments/changes.pdf" is a real file download
+		// (a prefix match starved any attachment literally named changes*).
+		// Bulk pages that legitimately carry many full note bodies (batch push,
+		// bootstrap/cursor change pages) get a middle deadline: 15s is too
+		// tight for a slow link, but they stay wedge-abortable (below) so a
+		// wedged pull still recovers in probe time, not 60s.
+		const attachmentMeta =
+			path === "/attachments/changes" || path.startsWith("/attachments/changes?");
 		const attachmentTransfer =
-			path.startsWith("/attachments") && (method === "POST" || method === "GET");
-		const timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs;
+			path.startsWith("/attachments") &&
+			!attachmentMeta &&
+			(method === "POST" || method === "GET");
+		const bulk =
+			path === "/notes/batch" ||
+			path.startsWith("/notes/changes?") ||
+			path === "/sync/changes" ||
+			path.startsWith("/sync/changes?");
+		const timeoutMs = attachmentTransfer
+			? this.attachmentTimeoutMs
+			: bulk
+				? this.bulkTimeoutMs
+				: this.requestTimeoutMs;
 		const raw = requestUrl({
 			url: `${this.baseUrl}${path}`,
 			method,
@@ -454,6 +476,22 @@ export class EngramApi {
 		}
 	}
 
+	/** Get changes since a timestamp.
+	 *  Protocol rev: pass limit/cursor to page through large vaults and
+	 *  fields:"meta" to receive content_hash instead of content. Pre-rev
+	 *  backends ignore the extra params and return the legacy full response. */
+	async getChanges(
+		since: string,
+		opts?: { limit?: number; cursor?: string; fields?: "meta" },
+	): Promise<ChangesResponse> {
+		const params = new URLSearchParams({ since });
+		if (opts?.limit !== undefined) params.set("limit", String(opts.limit));
+		if (opts?.cursor) params.set("cursor", opts.cursor);
+		if (opts?.fields) params.set("fields", opts.fields);
+		const resp = await this.request("GET", `/notes/changes?${params.toString()}`);
+		return resp.json as ChangesResponse;
+	}
+
 	/** Get full note by path. */
 	async getNote(path: string): Promise<NoteDetail> {
 		const encoded = encodePath(path);
@@ -550,6 +588,13 @@ export class EngramApi {
 		}[],
 	): Promise<void> {
 		await this.request("POST", "/logs", { logs: entries });
+	}
+
+	/** Get attachment changes since a timestamp. */
+	async getAttachmentChanges(since: string): Promise<AttachmentChangesResponse> {
+		const encoded = encodeURIComponent(since);
+		const resp = await this.request("GET", `/attachments/changes?since=${encoded}`);
+		return resp.json as AttachmentChangesResponse;
 	}
 
 	// --- Explicit folder markers (kind='folder' rows) ---

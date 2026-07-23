@@ -56,12 +56,17 @@ function makeApi(): EngramApi {
 	return {
 		pushNote: mock().mockResolvedValue({ note: { path: "" }, chunks_indexed: 1 }),
 		pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
+		getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 		pushAttachment: mock().mockResolvedValue({ attachment: {} }),
 		deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 		deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
 		health: mock().mockResolvedValue(true),
 		ping: mock().mockResolvedValue({ ok: true }),
 		getManifest: mock().mockResolvedValue(null),
+		getAttachmentChanges: mock().mockResolvedValue({
+			changes: [],
+			server_time: "2026-01-01T00:00:00Z",
+		}),
 		getRateLimit: mock().mockResolvedValue(0),
 		registerVault: mock().mockResolvedValue({
 			id: "v1",

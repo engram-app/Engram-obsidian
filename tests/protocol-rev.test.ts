@@ -4,12 +4,13 @@ import type { EngramApi } from "../src/api";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
-// Protocol rev: hash-compare live sync + serverHash-based reconcile over the
-// op-log feed (the REST batch/changes endpoints were removed in #304).
+// Protocol rev: bulk push via POST /notes/batch, paginated /notes/changes
+// with fields=meta, hash-compare live sync, serverHash-based reconcile.
 
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockResolvedValue({ results: [] }),
+	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -36,6 +37,9 @@ const mockApi = {
 		updated_at: "2026-03-01T12:00:00Z",
 	}),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
+	getAttachmentChanges: jest
+		.fn()
+		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: jest
@@ -90,6 +94,21 @@ function createEngine(overrides = {}): SyncEngine {
 	return engine;
 }
 
+function metaChange(path: string, hash: string, version: number, extra = {}) {
+	return {
+		path,
+		title: path,
+		folder: "",
+		tags: [],
+		mtime: 100,
+		updated_at: "2026-06-12T00:00:00Z",
+		deleted: false,
+		version,
+		content_hash: hash,
+		...extra,
+	};
+}
+
 beforeEach(() => {
 	jest.clearAllMocks();
 	mockApp.vault.getFileByPath.mockReset().mockReturnValue(null);
@@ -97,6 +116,9 @@ beforeEach(() => {
 	mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
 	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockResolvedValue({ results: [] });
+	(mockApi.getChanges as jest.Mock)
+		.mockReset()
+		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" });
 	(mockApi.getNote as jest.Mock).mockReset().mockResolvedValue({
 		path: "Notes/Remote.md",
 		title: "Remote Note",
@@ -117,9 +139,14 @@ afterEach(() => {
 	activeEngines.length = 0;
 });
 
-// pullAll() replays the note op-log from cursor 0 via
-// catchupViaSeqReplay({fromZero:true}); the legacy paginated meta-feed pull
-// (fetchAllNoteChanges) and the REST changes endpoints it rode are gone (#304).
+// REST-purge Bucket B (Task 5) — REMOVED: "paginated pull (legacy meta feed
+// via pullAll)" (3 tests: page-loop cursor threading, serverHash body-skip,
+// body-fetch-on-hash-diff). pullAll() no longer calls fetchAllNoteChanges /
+// resolveChangeBody at all — it replays the note op-log from cursor 0 via
+// catchupViaSeqReplay({fromZero:true}) (tests/sync-push-consolidation.test.ts,
+// "SyncEngine.pullAll — replay-from-0"). fetchAllNoteChanges/resolveChangeBody
+// still exist (another caller in the pushAll/wipeRemote reconcile path,
+// untouched by this task), just no longer reachable through pullAll.
 
 describe("hash-compare live sync", () => {
 	test("skips events whose content_hash matches the stored serverHash", async () => {

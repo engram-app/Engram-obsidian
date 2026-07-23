@@ -275,10 +275,10 @@ describe("EngramApi", () => {
 				enqueueSpy;
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
 
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 
 			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
 			expect(opts.headers?.traceparent).toBeUndefined();
@@ -346,6 +346,18 @@ describe("EngramApi", () => {
 			const opts = mockRequestUrl.mock.calls[0]?.[0] as any;
 			expect(opts.headers?.traceparent).toBeUndefined();
 			expect(enqueueSpy).not.toHaveBeenCalled();
+		});
+	});
+
+	describe("getChanges", () => {
+		test("URL-encodes the since parameter", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { changes: [], deleted: [] },
+			} as any);
+			await api.getChanges("2024-01-01T00:00:00+00:00");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.url).toContain(encodeURIComponent("2024-01-01T00:00:00+00:00"));
 		});
 	});
 
@@ -440,9 +452,9 @@ describe("EngramApi", () => {
 			api.setVaultId("42");
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 			expect(mockRequestUrl).toHaveBeenCalledWith(
 				expect.objectContaining({
 					headers: expect.objectContaining({
@@ -455,9 +467,9 @@ describe("EngramApi", () => {
 		test("omits X-Vault-ID when vaultId is null", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 			const headers = mockRequestUrl.mock.calls[0][0].headers;
 			expect(headers["X-Vault-ID"]).toBeUndefined();
 		});
@@ -476,9 +488,9 @@ describe("EngramApi", () => {
 			api.setVaultId(null);
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 			expect(mockRequestUrl.mock.calls[0][0].headers["X-Vault-ID"]).toBe("engram-vault-id");
 		});
 
@@ -486,17 +498,17 @@ describe("EngramApi", () => {
 			api.setVaultId("10");
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 			expect(mockRequestUrl.mock.calls[0][0].headers["X-Vault-ID"]).toBe("10");
 
 			api.setVaultId("20");
 			mockRequestUrl.mockResolvedValueOnce({
 				status: 200,
-				json: { notes: [], attachments: [] },
+				json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 			} as any);
-			await api.getManifest();
+			await api.getChanges("2026-01-01T00:00:00Z");
 			expect(mockRequestUrl.mock.calls[1][0].headers["X-Vault-ID"]).toBe("20");
 		});
 	});
@@ -797,6 +809,19 @@ describe("EngramApi", () => {
 			expect(opts.url).toBe(`${TEST_API_BASE}/logs`);
 			const body = JSON.parse(opts.body);
 			expect(body.logs).toEqual(entries);
+		});
+	});
+
+	describe("getAttachmentChanges", () => {
+		test("sends GET /attachments/changes with URL-encoded since", async () => {
+			mockRequestUrl.mockResolvedValueOnce({
+				status: 200,
+				json: { changes: [], deleted: [] },
+			} as any);
+			await api.getAttachmentChanges("2026-04-01T00:00:00+00:00");
+			const opts = mockRequestUrl.mock.calls[0][0] as any;
+			expect(opts.method).toBe("GET");
+			expect(opts.url).toContain(encodeURIComponent("2026-04-01T00:00:00+00:00"));
 		});
 	});
 
@@ -1143,22 +1168,41 @@ describe("deadline classification", () => {
 		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
 		const a = new EngramApi("http://host", "key");
 		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 20;
 		a.attachmentTimeoutMs = 300;
 		let settledAt: number | null = null;
 		const p = a.getAttachment("changes.pdf").catch(() => {
 			settledAt = Date.now();
 		});
-		await Bun.sleep(80); // past the note deadline, well short of transfer
+		await Bun.sleep(80); // past note+bulk deadlines, well short of transfer
 		expect(settledAt).toBeNull();
 		await p;
 		expect(settledAt).not.toBeNull();
 	});
 
-	test("metadata GETs keep the short deadline", async () => {
+	test("the /attachments/changes metadata feed keeps the short deadline", async () => {
 		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
 		const a = new EngramApi("http://host", "key");
 		a.requestTimeoutMs = 20;
 		a.attachmentTimeoutMs = 100_000;
-		await expect(a.getManifest()).rejects.toThrow(RequestTimeoutError);
+		await expect(a.getAttachmentChanges("2026-01-01T00:00:00Z")).rejects.toThrow(
+			RequestTimeoutError,
+		);
+	});
+
+	test("bulk change pages use the middle deadline", async () => {
+		mockRequestUrl.mockImplementation(() => new Promise<never>(() => {}));
+		const a = new EngramApi("http://host", "key");
+		a.requestTimeoutMs = 20;
+		a.bulkTimeoutMs = 300;
+		let settledAt: number | null = null;
+		// /notes/changes is a bulk feed (advanced-sync pullAll).
+		const p = a.getChanges("2026-01-01T00:00:00Z").catch(() => {
+			settledAt = Date.now();
+		});
+		await Bun.sleep(80); // past the note deadline, short of the bulk one
+		expect(settledAt).toBeNull();
+		await p;
+		expect(settledAt).not.toBeNull();
 	});
 });
