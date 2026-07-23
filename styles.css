@@ -737,6 +737,15 @@
 
 /* ── Settings tab bar ────────────────────────────────────────── */
 
+/* Obsidian 1.13+ renders our tab via a getSettingDefinitions() render hatch,
+ * which hands us a .setting-item row. Strip the row's flex/padding/border so
+ * the hosted tabbed UI lays out edge-to-edge like it does in display(). */
+.engram-settings-host {
+	display: block;
+	padding: 0;
+	border: none;
+}
+
 .engram-tab-bar {
 	display: flex;
 	flex-wrap: wrap;

@@ -5204,15 +5204,68 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.statusContainerEl = null;
+    /** Container the UI was last drawn into. Differs by path: this.containerEl
+     *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
+     *  it so redisplay/device-flow re-renders land in the right place. */
+    this.activeContainerEl = null;
     this.plugin = plugin, this.activeTab = pickInitialTab(plugin.settings);
   }
   /** Pre-select a tab before the next display() call. */
   setInitialTab(tabId) {
     this.activeTab = tabId;
   }
+  /**
+   * Registers this tab with Obsidian's 1.13+ declarative settings API so it
+   * shows up in the global settings search. We do NOT decompose our settings
+   * into declarative `control` objects: this tab is a rich custom UI (tab bar,
+   * live status dot, progress bar, device-flow) with no 1:1 declarative form.
+   * Instead we expose a single `render` item that draws the existing UI, which
+   * is enough to satisfy the API and index the tab by name.
+   *
+   * On 1.13+ a non-empty return here renders INSTEAD of display(); on <1.13
+   * (minAppVersion is 1.7.2) this method doesn't exist on the base class and
+   * display() is the fallback. Both paths call renderContent(), so there's
+   * one source of truth.
+   *
+   * ponytail: one search entry (indexed by name), not per-setting search.
+   * Upgrade path = decompose each setting into a `control` definition — large,
+   * and would drop the custom tab UX on 1.13+. Not worth it to satisfy a
+   * search-indexing nudge.
+   *
+   * Return type is a local shim for Obsidian 1.13's `SettingDefinitionItem`:
+   * we hold the obsidian typings at 1.8.7 (minAppVersion is 1.7.2), so the
+   * real type isn't available. This covers exactly the `render` item we emit;
+   * swap for `SettingDefinitionItem[]` if the obsidian typings floor is ever
+   * raised to >=1.13.
+   */
+  getSettingDefinitions() {
+    return [
+      {
+        name: "Engram Sync",
+        desc: "Cloud and self-hosted sync, connection, and advanced settings.",
+        render: (setting) => {
+          setting.settingEl.addClass("engram-settings-host"), this.renderContent(setting.settingEl.createDiv());
+        }
+      }
+    ];
+  }
   display() {
-    let { containerEl } = this;
-    containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
+    this.renderContent(this.containerEl);
+  }
+  /** Re-render into whatever container we last drew into. Public so external
+   *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
+   *  the deprecated display() — which on 1.13+ would draw into the tab root
+   *  instead of the render-hatch host. No-op if the tab isn't currently shown
+   *  (activeContainerEl is cleared on hide()) or if the container was detached
+   *  without hide() firing — on 1.13+ Obsidian can tear down the render-hatch
+   *  row on a settings re-render, so guard with isConnected like renderStatus()
+   *  does; it re-renders on next open. */
+  rerender() {
+    var _a;
+    (_a = this.activeContainerEl) != null && _a.isConnected && this.renderContent(this.activeContainerEl);
+  }
+  renderContent(containerEl) {
+    this.activeContainerEl = containerEl, containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
     let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
       text: "Syncing...",
       cls: "engram-progress-label"
@@ -5255,7 +5308,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
       containerEl: contentEl,
       app: this.app,
       plugin: this.plugin,
-      redisplay: () => this.display(),
+      redisplay: () => this.rerender(),
       startDeviceFlow: () => this.startDeviceFlow(),
       openProgressModal: () => this.openProgressModal(),
       switchToTab: (id2) => activateTab(id2)
@@ -5283,7 +5336,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
       result.refresh_token,
       result.vault_id,
       result.user_email
-    ), this.display());
+    ), this.rerender());
   }
   /** Render (or re-render) the connection status row in place. Idempotent —
    *  empties the container first so it can be wired to live status events. */
@@ -5303,7 +5356,7 @@ var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
     }
   }
   hide() {
-    this.plugin.onStatusBarChange = null, this.statusContainerEl = null;
+    this.plugin.onStatusBarChange = null, this.statusContainerEl = null, this.activeContainerEl = null;
   }
 };
 
@@ -24384,7 +24437,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2, _b2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.display(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {

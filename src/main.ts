@@ -2271,7 +2271,7 @@ export default class EngramSyncPlugin extends Plugin {
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
 						// any other vault-derived UI pick up the switch.
-						this.settingTab?.display();
+						this.settingTab?.rerender();
 						return this.syncEngine.computeSyncPlan("full");
 					},
 				});
