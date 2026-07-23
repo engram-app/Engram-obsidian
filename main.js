@@ -17318,21 +17318,28 @@ var _CrdtManager = class _CrdtManager {
    * Also clears the synced mark so a future `openDoc` + `startSync` begins a
    * fresh handshake.
    */
+  /** Shared entry teardown: destroy the Y.Doc (optionally wiping its IDB
+   *  store first) and drop the in-memory entry. Callers own their OWN
+   *  synced/pendingFlush bookkeeping — the four teardown sites deliberately
+   *  differ there (closeDoc/removeDoc clear both, flattenIfBloated keeps
+   *  them for the re-opened entry, destroy() clears in bulk). */
+  async teardownEntry(id2, e, opts) {
+    this.docs.delete(id2), e.doc.destroy(), opts.clearData && await e.persistence.clearData(), await e.persistence.destroy();
+  }
   closeDoc(noteId) {
     var _a;
     let id2 = this.docId(noteId);
     if (((_a = this.inFlightOps.get(id2)) != null ? _a : 0) > 0) return;
     let e = this.docs.get(id2);
-    e && (e.doc.destroy(), e.persistence.destroy(), this.docs.delete(id2), this.synced.delete(id2), this.pendingFlush.delete(id2));
+    e && (this.teardownEntry(id2, e, { clearData: !1 }), this.synced.delete(id2), this.pendingFlush.delete(id2));
   }
   /**
    * Permanently remove the Y.Doc and its IndexedDB store for `noteId`.
    *
    * Call when a note is deleted or renamed (old path) so the ghost lineage
    * does not resurrect stale content if the note is later recreated at the
-   * same path. Mirrors the teardown sequence in `flattenIfBloated`:
-   *   doc.destroy() → persistence.clearData() → persistence.destroy()
-   *   → docs.delete() → synced.delete()
+   * same path. Shares `teardownEntry` (clearData: true) with
+   * `flattenIfBloated`.
    *
    * **Never-opened notes (IDB-only ghost):** if no in-memory entry exists for
    * the noteId, `indexedDB.deleteDatabase(storeName)` clears the IDB store
@@ -17345,7 +17352,7 @@ var _CrdtManager = class _CrdtManager {
    */
   async removeDoc(noteId) {
     let id2 = this.docId(noteId), e = this.docs.get(id2);
-    e ? (e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2)) : await new Promise((resolve) => {
+    e ? await this.teardownEntry(id2, e, { clearData: !0 }) : await new Promise((resolve) => {
       let req = indexedDB.deleteDatabase(this.storeName(noteId));
       req.onsuccess = () => resolve(), req.onerror = () => resolve(), req.onblocked = () => resolve();
     }), this.synced.delete(id2), this.pendingFlush.delete(id2);
@@ -17353,7 +17360,7 @@ var _CrdtManager = class _CrdtManager {
   /** Tear down all open docs. Call on plugin unload. */
   async destroy() {
     for (let [id2, e] of this.docs)
-      e.doc.destroy(), await e.persistence.destroy(), this.docs.delete(id2);
+      await this.teardownEntry(id2, e, { clearData: !1 });
     this.synced.clear(), this.pendingFlush.clear();
   }
   /**
@@ -17381,7 +17388,7 @@ var _CrdtManager = class _CrdtManager {
     if (encoded.length < _CrdtManager.MAX_CONTENT_BYTES || clientIds < _CrdtManager.MAX_CLIENT_IDS)
       return !1;
     let plaintext = e.text.toJSON(), { order, values } = frontmatterOf(e.doc), raws = rawFrontmatterOf(e.doc), id2 = this.docId(noteId);
-    e.doc.destroy(), await e.persistence.clearData(), await e.persistence.destroy(), this.docs.delete(id2);
+    await this.teardownEntry(id2, e, { clearData: !0 });
     let fresh = await this.entry(noteId);
     return fresh.doc.transact(() => {
       this.applyFrontmatterInto(fresh.doc, order, values);
