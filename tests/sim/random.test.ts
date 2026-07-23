@@ -32,22 +32,23 @@
 //
 // OUT OF SCOPE (documented tier gaps — deliberately NOT exercised here; NOT
 // oracle-loosening, these ops are simply not driven):
-//   * OFFLINE editing / offline-online churn. The CRDT rejoin handshake is
-//     PULL-ONLY — the backend never STEP1s back, so a client's offline (or
-//     otherwise gapped) Y.Doc ops are never re-pushed on reconnect; they reach
-//     the server only on the note's NEXT online edit via a full-state flush
-//     (sync.ts:786-790, flushHeldEditsOnCreateAck). A bound note's offline edit
-//     therefore does not converge in this CRDT-only model tier (its disk
-//     autosave is short-circuited by the isLiveBound gate, sync.ts:1982, so it
-//     can't fall back to the legacy REST queue either). The model faithfully
-//     reproduces this (model-server never solicits client ops on rejoin). This
-//     is a candidate real-fragility finding, not a plugin bug caught here — it
-//     needs isolation on the P2 real-backend tier before filing. See the report.
+//   * OFFLINE editing / offline-online churn. Kept out to keep this suite
+//     focused on sustained ONLINE concurrency — NOT because it diverges. A
+//     live-bound note's offline edit is held in the Y.Doc (its REST fallback is
+//     short-circuited by the isLiveBound gate, sync.ts:1982) and recovers on
+//     reconnect via the MUTUAL rejoin handshake: the server answers the client's
+//     re-enroll STEP1 with its OWN STEP1 (the real y_ex backend's
+//     encode_sync_step1_response_v1 — verified on the live crdt_channel as
+//     [step2, step1]), and the client replies STEP2 with the held struct. Proven
+//     deterministically by `#299 live-bound offline edit recovers on reconnect`
+//     in regressions.test.ts. (A prior model-server was PULL-ONLY and falsely
+//     "lost" these edits — the sim infidelity that mis-filed #299; fixed
+//     2026-07-23 by making the model solicit client ops on rejoin.)
 //   * CREATE-during-concurrent-edit. Editing a note still racing its
-//     genesis/enrollment (crdtHead unset → canSendLive HOLDS the edit → a
-//     permanent lineage gap the pull-only handshake never heals). Phase 1
-//     establishes notes first to keep this out; it is the same pull-only-rejoin
-//     limitation as offline.
+//     genesis/enrollment (crdtHead unset → canSendLive HOLDS the edit until the
+//     create acks). Phase 1 establishes notes first to keep this out. Distinct
+//     from offline: the hold here is the genesis race, not the rejoin handshake
+//     (which is faithful — see above).
 //   * DELETE + RENAME. The model omits note_changed (documented divergence #2):
 //     a delete/rename only reaches other replicas via a later reconnect
 //     catch-up, stranding stale old-path files at quiescence. Unchanged from the

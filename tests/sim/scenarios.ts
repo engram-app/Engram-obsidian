@@ -191,3 +191,42 @@ export async function test85MissedDeliveryLocalPush(seed = 85): Promise<Test85Re
 
 	return { topology: t, notePath };
 }
+
+// ---------------------------------------------------------------------------
+// #299 — a LIVE-BOUND note edited OFFLINE recovers on reconnect via the mutual
+// handshake. B opens (binds) the note, disconnects, and edits it: the edit is
+// held in B's Y.Doc and the REST/offline-queue fallback is short-circuited by
+// the isLiveBound gate (sync.ts:1982), so the ONLY way it can reach the server
+// is the rejoin handshake. On reconnect B re-enrolls (STEP1); a FAITHFUL server
+// answers with its OWN STEP1, and B replies STEP2 carrying the held struct — so
+// A + the server converge to B's offline edit. A pull-only model-server never
+// solicits it and the edit is silently lost — the sim infidelity that mis-filed
+// #299 as a real backend bug (the live crdt_channel replies [step2, step1]).
+// ---------------------------------------------------------------------------
+export interface Test299Result {
+	topology: Topology;
+	notePath: string;
+}
+
+export async function offlineBoundEditRecovers(seed = 299): Promise<Test299Result> {
+	const t = await boot(seed, ["A", "B"], { genesisEmptyDoc: true });
+	const [, b] = t.replicas;
+	const notePath = "offline299.md";
+	await t.replicas[0].createNote(notePath, "base\n");
+	await t.scheduler.drain();
+
+	// B binds the note live, then goes offline and edits the BOUND note.
+	await b.openNote(notePath);
+	await t.scheduler.drain();
+	await b.goOffline();
+	await t.scheduler.drain();
+	await b.editNote(notePath, "base\nfrom-B-offline\n");
+	await t.scheduler.drain();
+
+	// Reconnect: re-enroll STEP1 → server STEP1 → B replies STEP2 with the held
+	// struct → fan-out to A. All replicas + the server must converge to the edit.
+	await b.goOnline();
+	await t.scheduler.drain();
+
+	return { topology: t, notePath };
+}

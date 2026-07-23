@@ -218,6 +218,40 @@ test("WS crdt_msg STEP1 → sender gets a STEP2 that materializes server content
 	expect(doc.getText("content").toString()).toBe("server-body");
 });
 
+test("WS crdt_msg STEP1 → sender ALSO gets the server's own STEP1 (bidirectional handshake, #299)", async () => {
+	const { s, server } = boot();
+	const a = await joinCrdt(server, s, "a");
+	server.http({
+		method: "POST",
+		url: "/api/notes",
+		body: JSON.stringify({ path: "a.md", content: "server-body", mtime: 1, id: "n1" }),
+	});
+	a.recv.length = 0;
+	a.sock.send(
+		JSON.stringify([
+			CRDT_JOIN_REF,
+			"31",
+			CRDT_TOPIC,
+			CRDT_MSG,
+			{ doc_id: "n1", b64: step1Frame() },
+		]),
+	);
+	await s.drain();
+
+	// The real y_ex backend answers a client STEP1 with BOTH a STEP2 diff AND its
+	// own STEP1 (encode_sync_step1_response_v1 — the full mutual handshake, verified
+	// against the live crdt_channel: [:sync_step2, :sync_step1]). The client replies
+	// STEP2 to that STEP1, carrying any structs the server lacks — its held offline
+	// edits. A pull-only model that only returns STEP2 falsely "loses" them (#299).
+	const syncTypes = framesOf(a.recv, CRDT_MSG).map((f) => {
+		const dec2 = decoding.createDecoder(fromB64((f[4] as { b64: string }).b64));
+		decoding.readVarUint(dec2); // MESSAGE_SYNC
+		return decoding.readVarUint(dec2); // 0 = STEP1, 1 = STEP2, 2 = UPDATE
+	});
+	expect(syncTypes).toContain(syncProtocol.messageYjsSyncStep2);
+	expect(syncTypes).toContain(syncProtocol.messageYjsSyncStep1);
+});
+
 test("WS crdt_msg UPDATE (seed) → OTHER client gets note_yjs_update with raw update + head + seq", async () => {
 	const { s, server } = boot();
 	const a = await joinCrdt(server, s, "a");

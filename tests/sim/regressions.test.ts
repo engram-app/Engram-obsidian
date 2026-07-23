@@ -38,7 +38,13 @@
 import { afterAll, expect, test } from "bun:test";
 import { assertConverged, findWipes } from "./oracle";
 import { Replica } from "./replica";
-import { cleanup, equalSeqFence, genesisWipe, test85MissedDeliveryLocalPush } from "./scenarios";
+import {
+	cleanup,
+	equalSeqFence,
+	genesisWipe,
+	offlineBoundEditRecovers,
+	test85MissedDeliveryLocalPush,
+} from "./scenarios";
 
 // The scenarios boot replicas (via scenarios.ts), which install the process-global
 // SimClock/WebSocket/indexedDB patches. Restore them so later files in a full
@@ -72,6 +78,27 @@ test("#282 equal-seq fence: B's own-push echo must not fence the sole carrier", 
 // scripted witness for the same fence class (concurrent edits survive, no revert).
 test("test_85 missed-delivery + local push: both edits survive, no revert", async () => {
 	const r = await test85MissedDeliveryLocalPush();
+	try {
+		await assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler);
+	} finally {
+		cleanup(r.topology);
+	}
+	expect(true).toBe(true);
+});
+
+// #299 — live-bound offline edit recovers via the mutual rejoin handshake.
+//
+// DIFFERENTIAL PROOF (model-server fidelity):
+//   base  a PULL-ONLY model-server (readSyncMessage returns only STEP2) never
+//         solicits B's held struct on rejoin — B's offline edit is stranded in
+//         its Y.Doc, A never sees it, DIVERGES. This was the sim infidelity that
+//         mis-filed #299 as a real backend bug.
+//   fix   the model-server now answers a client STEP1 with its OWN STEP1 too
+//         (matching the live y_ex backend's [step2, step1] — encode_sync_step1_
+//         response_v1); B replies STEP2 with the held struct and CONVERGES.
+// The real backend was never pull-only; only the test double was.
+test("#299 live-bound offline edit recovers on reconnect (mutual handshake)", async () => {
+	const r = await offlineBoundEditRecovers();
 	try {
 		await assertConverged(r.topology.replicas, r.topology.server, r.topology.scheduler);
 	} finally {

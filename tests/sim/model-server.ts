@@ -340,7 +340,7 @@ export class ModelServer {
 			});
 			return;
 		}
-		const { replyB64, changed } = this.applyClientFrame(n, b64);
+		const { replyB64, changed, serverStep1B64 } = this.applyClientFrame(n, b64);
 		// A STEP1 produces a STEP2 reply back to the SENDER only (a query answer).
 		if (replyB64 !== null) {
 			this.deliver(clientId, [
@@ -351,20 +351,38 @@ export class ModelServer {
 				{ doc_id: docId, b64: replyB64 },
 			]);
 		}
+		// #299: on a client STEP1, also send the server's OWN STEP1 (mutual handshake),
+		// so the sender replies STEP2 with any held structs the server lacks. Separate
+		// frame, matching the real backend's two-frame [step2, step1] reply.
+		if (serverStep1B64 !== null) {
+			this.deliver(clientId, [
+				null,
+				null,
+				n.crdtTopicKey(),
+				"crdt_msg",
+				{ doc_id: docId, b64: serverStep1B64 },
+			]);
+		}
 		// A STEP2/UPDATE that changed the server doc fans out to OTHER devices.
 		if (changed) this.fanoutUpdate(clientId, n, changed);
 	}
 
 	/** Decode a client `messageSync` frame, apply it to the note's doc, and (for
 	 *  a STEP1) return the STEP2 reply bytes. `changed` is the raw update the
-	 *  apply produced (to fan out), or null. Mirrors CrdtChannel.handleFrame. */
+	 *  apply produced (to fan out), or null. `serverStep1B64` is the server's OWN
+	 *  STEP1 sent back on a client STEP1 (see below). Mirrors CrdtChannel.handleFrame. */
 	private applyClientFrame(
 		n: Note,
 		b64: string,
-	): { replyB64: string | null; changed: Uint8Array | null } {
+	): {
+		replyB64: string | null;
+		changed: Uint8Array | null;
+		serverStep1B64: string | null;
+	} {
 		const decoder = decoding.createDecoder(fromB64(b64));
 		const messageType = decoding.readVarUint(decoder);
-		if (messageType !== MESSAGE_SYNC) return { replyB64: null, changed: null };
+		if (messageType !== MESSAGE_SYNC)
+			return { replyB64: null, changed: null, serverStep1B64: null };
 
 		const updates: Uint8Array[] = [];
 		const onUpdate = (u: Uint8Array, origin: unknown) => {
@@ -373,7 +391,7 @@ export class ModelServer {
 		n.doc.on("update", onUpdate);
 		const replyEncoder = encoding.createEncoder();
 		encoding.writeVarUint(replyEncoder, MESSAGE_SYNC);
-		syncProtocol.readSyncMessage(decoder, replyEncoder, n.doc, APPLY_ORIGIN);
+		const syncType = syncProtocol.readSyncMessage(decoder, replyEncoder, n.doc, APPLY_ORIGIN);
 		n.doc.off("update", onUpdate);
 
 		const changed = updates.length > 0 ? Y.mergeUpdates(updates) : null;
@@ -382,7 +400,23 @@ export class ModelServer {
 		// produces an empty reply, so no handshake storm (mirrors the client gate).
 		const replyB64 =
 			encoding.length(replyEncoder) > 1 ? toB64(encoding.toUint8Array(replyEncoder)) : null;
-		return { replyB64, changed };
+
+		// FIDELITY (#299): the real y_ex backend answers a client STEP1 with its OWN
+		// STEP1 too, not just the STEP2 diff — encode_sync_step1_response_v1 emits the
+		// full mutual handshake (verified against the live crdt_channel:
+		// [:sync_step2, :sync_step1]). The client replies STEP2 to that STEP1 carrying
+		// any structs the server lacks — its held offline edits. Omitting it made this
+		// model PULL-ONLY, so it never solicited a rejoining client's held ops and
+		// falsely "lost" offline edits the real backend recovers. Only a STEP1 gets a
+		// STEP1 back (a STEP2/UPDATE does not), so the exchange terminates — no storm.
+		let serverStep1B64: string | null = null;
+		if (syncType === syncProtocol.messageYjsSyncStep1) {
+			const step1Encoder = encoding.createEncoder();
+			encoding.writeVarUint(step1Encoder, MESSAGE_SYNC);
+			syncProtocol.writeSyncStep1(step1Encoder, n.doc);
+			serverStep1B64 = toB64(encoding.toUint8Array(step1Encoder));
+		}
+		return { replyB64, changed, serverStep1B64 };
 	}
 
 	private fanoutUpdate(fromClient: string, n: Note, update: Uint8Array): void {
