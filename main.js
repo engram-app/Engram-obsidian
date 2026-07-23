@@ -1255,13 +1255,9 @@ var EngramApi = class _EngramApi {
     let encoded = encodePath(path);
     return (await this.request("DELETE", `/notes/${encoded}`)).json;
   }
-  // --- CRDT ops transport: REST /updates DELETED (Phase E3) — the socket
-  // (crdt: channel sv-exchange) is the only Yjs delta path. ---
-  /** Capability probe + convergence check: current head per note across the
-   *  whole vault. */
-  async getVaultHeads() {
-    return { heads: (await this.request("GET", "/vault/heads")).json.heads };
-  }
+  // --- CRDT ops transport: fully socket-native — REST /updates deleted in
+  // Phase E3, the /vault/heads capability probe deleted with the pre-CRDT
+  // backend floor. The crdt: channel is the only Yjs path. ---
   // --- Attachment methods ---
   /** Push a binary attachment as base64. */
   async pushAttachment(path, contentBase64, mimeType, mtime) {
@@ -1504,7 +1500,7 @@ function topicUserIdIsStale(currentUserId, authenticatedUserId) {
   return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
 }
 var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
+  constructor(baseUrl, apiKey, userId, vaultId = null, deviceId = null) {
     this.ws = null;
     this.ref = 0;
     /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
@@ -1626,7 +1622,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     // ---------------------------------------------------------------------------
     /** Guards openSocket against re-entry across its async token fetch. */
     this.opening = !1;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1654,7 +1650,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     return `user:${this.userId}`;
   }
   get crdtTopic() {
-    return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+    return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
   /** Send a CRDT update frame on the crdt topic.
    *  Returns false without sending until the crdt: join is server-acked —
@@ -3535,7 +3531,6 @@ var DEFAULT_SETTINGS = {
   conflictViewMode: "unified",
   diagnosticsEnabled: !1,
   conflictResolution: "auto",
-  enableCrdt: !0,
   vaultId: null,
   clientId: "",
   planState: null,
@@ -18308,21 +18303,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  two genuinely different relocations for the same id within one second
      *  can tie exactly. A tie can't be proven newer, so it must not win. */
     this.lastRelocationTs = /* @__PURE__ */ new Map();
-    /** Push all files that have been modified since last sync, plus any
-     *  syncable file that the engine has never seen (no syncState entry).
-     *  The untracked branch covers the first-sync case and the post
-     *  vault-change case where we cleared sync state — neither would
-     *  otherwise touch the push path because lastSync is empty and the
-     *  mtime comparison short-circuits. */
-    // Version gate: latched OFF the first time an /updates call 404/405s (a
-    // pre-Phase-1 backend). While off, CRDT notes fall back to the whole-doc
-    // base_hash push, exactly as before this feature.
-    this.crdtOpsUnsupported = !1;
-    // Capability comes SOLELY from the probe (Phase 2b remediation): ops are
-    // treated unavailable until getVaultHeads has actually confirmed them, so
-    // a channel-down edit that races the probe takes the durable legacy path
-    // instead of assuming ops work.
-    this.crdtOpsProbed = !1;
     this.parseIgnorePatterns();
   }
   setCrdtManager(mgr) {
@@ -18486,7 +18466,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -18856,18 +18836,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Mark the engine as ready to handle vault events.
    *  Called after layout is ready and initial sync completes. */
   setReady() {
-    this.ready = !0, devLog().log("lifecycle", "setReady \u2014 event handlers enabled"), rlog().info("lifecycle", "Engine ready \u2014 event handlers enabled"), this.probeCrdtOps();
-  }
-  /** One-shot capability probe: a pre-Phase-1 backend 404s /vault/heads, so we
-   *  latch ops off before the first edit and stay on the legacy whole-doc path. */
-  async probeCrdtOps() {
-    if (this.settings.enableCrdt)
-      try {
-        await this.api.getVaultHeads(), this.crdtOpsProbed = !0;
-      } catch (e) {
-        let status = e == null ? void 0 : e.status;
-        (status === 404 || status === 405) && (this.markCrdtOpsUnsupported(status), this.crdtOpsProbed = !0);
-      }
+    this.ready = !0, devLog().log("lifecycle", "setReady \u2014 event handlers enabled"), rlog().info("lifecycle", "Engine ready \u2014 event handlers enabled");
   }
   setSyncBlocked(blocked) {
     this.syncBlocked = blocked, devLog().log("lifecycle", `setSyncBlocked(${blocked})`);
@@ -19268,7 +19237,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -19321,12 +19290,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             ), !1;
           noteId = uuid7(), this.noteIdMap.set(file.path, noteId);
         }
-        file.extension === "md" && rlog().info(
+        if (file.extension === "md" && rlog().info(
           "push",
           `route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
-        );
-        let crdtLive = (_g = (_f = this.crdtLive) == null ? void 0 : _f.call(this)) != null ? _g : !0;
-        if (this.crdt && noteId && this.hasServerNote(noteId) && (crdtLive || this.crdtOpsAvailable())) {
+        ), this.crdt && noteId && this.hasServerNote(noteId)) {
           let consumed = await routeModify(
             {
               isMarkdown: file.extension === "md",
@@ -19342,21 +19309,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return consumed !== null ? (this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
             ...existing,
             hash: fnv1a(consumed)
-          }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_h = this.crdtEnrollment) == null || _h.enroll(noteId)), success = !0, ((_j = (_i = this.crdtLive) == null ? void 0 : _i.call(this)) != null ? _j : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
             "push",
             `crdt edit queued durably (channel down): ${file.path}`
           ), rlog().info(
             "push",
             `CRDT edit queued durably (channel down): ${file.path}`
-          ), !0)) : (file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), !0);
+          ), !0)) : (file.extension === "md" && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
         }
-        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_m = (_l = this.crdtLive) == null ? void 0 : _l.call(this)) == null || _m) && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES)
+        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
               let consumed;
               if (serverId && serverId !== noteId && this.crdtEditorRebind && this.isLiveBound((0, import_obsidian21.normalizePath)(pushedPath))) {
-                (_n = this.noteIdMap) == null || _n.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), effectiveId = serverId;
+                (_l = this.noteIdMap) == null || _l.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), effectiveId = serverId;
                 let mintText = await this.crdt.projectedText(noteId), serverHadContent = typeof this.crdt.hasHistory == "function" && await this.crdt.hasHistory(serverId);
                 consumed = await this.crdt.applyLocalEdit(serverId, mintText), mintText.length > 0 && serverHadContent && rlog().warn(
                   "crdt",
@@ -19364,9 +19331,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 ), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`
-                ), this.crdtEditorRebind(pushedPath), await this.crdt.removeDoc(noteId), (_o = this.crdtEnrollment) == null || _o.reset(noteId);
+                ), this.crdtEditorRebind(pushedPath), await this.crdt.removeDoc(noteId), (_m = this.crdtEnrollment) == null || _m.reset(noteId);
               } else
-                serverId && serverId !== noteId && ((_p = this.noteIdMap) == null || _p.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), rlog().info(
+                serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
@@ -19385,7 +19352,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               }) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
-              ), this.isLiveBound((0, import_obsidian21.normalizePath)(pushedPath)) && ((_q = this.crdtEnrollment) == null || _q.enroll(effectiveId)), devLog().log(
+              ), this.isLiveBound((0, import_obsidian21.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
                 "push",
                 `crdt_create ok: ${pushedPath} (id=${effectiveId})`
               ), rlog().info(
@@ -19419,11 +19386,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian21.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), { hash }), (_r = this.noteIdMap) == null || _r.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
+          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash }), (_t2 = this.noteIdMap) == null || _t2.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
+          this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_u = resp.note.path) != null ? _u : pushedPath,
+          path: (_s = resp.note.path) != null ? _s : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -19452,8 +19419,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_w = (_v = this.issues.get(file.path)) == null ? void 0 : _v.attempts) != null ? _w : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_x = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_u = (_t2 = this.issues.get(file.path)) == null ? void 0 : _t2.attempts) != null ? _u : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_v = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -19463,7 +19430,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_y = this.settings.vaultId) != null ? _y : void 0
+        vaultId: (_w = this.settings.vaultId) != null ? _w : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -20052,7 +20019,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  idle note is still covered by reconnect catch-up (#5). Never throws. */
   async healNoteOnOpen(path) {
     var _a, _b;
-    if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
+    if (!this.crdt) return;
     let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
     if (noteId)
       try {
@@ -21051,15 +21018,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       skipped: this.lastBatchSkipped
     }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
-  crdtOpsAvailable() {
-    return this.settings.enableCrdt === !0 && this.crdtOpsProbed && !this.crdtOpsUnsupported;
-  }
-  markCrdtOpsUnsupported(status) {
-    (status === 404 || status === 405) && (this.crdtOpsUnsupported = !0);
-  }
+  /** Push all files that have been modified since last sync, plus any
+   *  syncable file that the engine has never seen (no syncState entry).
+   *  The untracked branch covers the first-sync case and the post
+   *  vault-change case where we cleared sync state — neither would
+   *  otherwise touch the push path because lastSync is empty and the
+   *  mtime comparison short-circuits. */
   /** Persist a content-free, crdt-tagged upsert to the durable queue. Both of
    *  pushFile's channel-down seams must produce an IDENTICAL entry so
-   *  runFlushQueue's noteId-keyed /updates branch delivers them the same way —
+   *  runFlushQueue's socket-converge branch delivers them the same way —
    *  keep the producers in lockstep here rather than duplicating the object
    *  literal, so a new field can't be added to one seam and forgotten on the
    *  other. */
@@ -21203,7 +21170,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         continue;
       }
       let content = await this.app.vault.read(file);
-      if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) {
+      if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
@@ -21747,16 +21714,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
           await this.api.pushAttachment(entry.path, base64, mimeType, mtime);
         } else {
-          if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
-            (_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d && (this.pendingQueueDeliveries.set(entry.noteId, {
+          if (entry.crdt && entry.noteId) {
+            this.crdt && ((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d) && (this.pendingQueueDeliveries.set(entry.noteId, {
               path: entry.path,
               vaultId: (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
             }), this.socketConverge((0, import_obsidian21.normalizePath)(entry.path), entry.noteId));
             continue;
-          }
-          if (entry.crdt && !this.crdtOpsAvailable()) {
-            let key = (0, import_obsidian21.normalizePath)(entry.path), existing = this.syncState.get(key);
-            (existing == null ? void 0 : existing.serverHash) !== void 0 && this.syncState.set(key, { ...existing, serverHash: void 0 });
           }
           let content = entry.content, mtime = entry.mtime;
           if (content === void 0) {
@@ -23946,7 +23909,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
     let rawSettings = data == null ? void 0 : data.settings;
     this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-    for (let legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"])
+    for (let legacy of [
+      "remoteLoggingEnabled",
+      "diagnosticMode",
+      "tracingEnabled",
+      "enableCrdt"
+    ])
       delete this.settings[legacy];
     this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);
@@ -24255,7 +24223,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.settings.apiKey,
         user.id,
         this.settings.vaultId,
-        this.settings.enableCrdt,
         this.deviceId
       );
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
@@ -24281,7 +24248,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
         (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
-      ), this.settings.enableCrdt && this.settings.vaultId) {
+      ), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),
@@ -24375,7 +24342,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       } else
         rlog().info(
           "crdt",
-          this.settings.enableCrdt ? "vaultId is null \u2014 CRDT disabled; legacy pushNote path active" : "CRDT opt-in disabled \u2014 legacy pushNote path active"
+          "vaultId is null \u2014 CRDT disabled; legacy pushNote path active"
         );
       channel.connect();
     }).catch((e) => {

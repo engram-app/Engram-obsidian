@@ -56,7 +56,7 @@ function joinAndAckCrdt(): void {
 
 describe("outbound oversize frame warning", () => {
 	test("a frame over the threshold triggers a channel warn naming the event and size", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1");
 		await channel.connect();
 		joinAndAckCrdt();
 
@@ -81,7 +81,7 @@ describe("outbound oversize frame warning", () => {
 	});
 
 	test("a small frame does NOT trigger a warn", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "42", "vault-1");
 		await channel.connect();
 		joinAndAckCrdt();
 

@@ -565,7 +565,7 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 	// (e2e test_47). Legacy notes (no id) keep the skip-and-resurrect guard.
 	function makeCrdtDeleteEngine(): { engine: SyncEngine; removed: string[] } {
 		const removed: string[] = [];
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: (id: string) => {
 				removed.push(id);
@@ -891,7 +891,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// doc the new-path upsert just materialized (received=yes materialized=no).
 		const removed: string[] = [];
 		const resets: string[] = [];
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: (id: string) => {
 				removed.push(id);
@@ -930,7 +930,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// A genuine delete: the id maps to THIS path (no upsert relocated it), so
 		// the authoritative teardown must still fire — removeDoc is called.
 		const removed: string[] = [];
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: (id: string) => {
 				removed.push(id);
@@ -964,7 +964,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// pull (received=yes materialized=no). The upsert carries the note's
 		// AUTHORITATIVE content inline, so it must materialize LIVE from event.content.
 		const removed: string[] = [];
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: (id: string) => {
 				removed.push(id);
@@ -1010,7 +1010,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// stay (it now belongs to the new path) AND the old file must be trashed.
 		const removed: string[] = [];
 		const resets: string[] = [];
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: (id: string) => {
 				removed.push(id);
@@ -1057,7 +1057,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 		// then flips (as if a relocation landed) before the write — the new path
 		// must NOT be written.
 		let flipped = false;
-		const engine = createEngine({ enableCrdt: true });
+		const engine = createEngine();
 		engine.setCrdtManager({
 			removeDoc: () => Promise.resolve(),
 			closeDoc: () => {},
@@ -1153,7 +1153,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 
 		// Push is complete — path is no longer in pushing set
 		// But should still be in recentlyPushed cooldown
-		expect(engine.isRecentlyPushed("Notes/Cooldown.canvas")).toBe(true);
+		expect((engine as any).isRecentlyPushed("Notes/Cooldown.canvas")).toBe(true);
 
 		// WebSocket event arriving after push should still be suppressed
 		await engine.handleStreamEvent({
@@ -3088,7 +3088,7 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 			}),
 		);
 
-		expect(engine.isRecentlyPushed(path)).toBe(false);
+		expect((engine as any).isRecentlyPushed(path)).toBe(false);
 
 		// Local content matches what was just pulled — pushFile takes the
 		// echo-skip no-op branch.
@@ -3099,7 +3099,7 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		expect(pushed).toBe(false);
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 		// The no-op must NOT have opened the suppression window.
-		expect(engine.isRecentlyPushed(path)).toBe(false);
+		expect((engine as any).isRecentlyPushed(path)).toBe(false);
 
 		// A real remote update arriving right after must be applied, not
 		// echo-skipped.
@@ -3701,7 +3701,7 @@ describe("SyncEngine attachment pre-gate (client-side plan limits)", () => {
 		expect(mockApi.pushAttachment).not.toHaveBeenCalled();
 		expect(engine.issues.get("photo.png")?.category).toBe("needs_pro");
 		// Informational skip is tallied for the batched toast.
-		expect(engine.getAttachmentLimitedCount()).toBe(1);
+		expect((engine as any).getAttachmentLimitedCount()).toBe(1);
 	});
 
 	test("free text-only: a known text ext (.txt) attachment is NOT pre-skipped", async () => {

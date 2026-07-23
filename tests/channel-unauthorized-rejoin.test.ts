@@ -106,7 +106,7 @@ async function rejectedCycleThenReconnect(reason: string, staleTopic: string): P
 describe("NoteChannel unauthorized-join identity self-heal", () => {
 	test("an unauthorized crdt join re-derives the userId on the next reconnect", async () => {
 		// Channel frozen under stale-user; the socket authenticates as fresh-user.
-		const channel = new NoteChannel("http://localhost:4000", "key", "stale-user", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "stale-user", "v1");
 		let probes = 0;
 		channel.setAuthProbe(async () => {
 			probes++;
@@ -134,7 +134,7 @@ describe("NoteChannel unauthorized-join identity self-heal", () => {
 		// never fires and CRDT routing stays degraded until an unrelated blip.
 		// The channel must cycle the socket itself; the onclose backoff
 		// (crdtJoinFailedReason set) keeps it bounded.
-		const channel = new NoteChannel("http://localhost:4000", "key", "stale-user", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "stale-user", "v1");
 		channel.setAuthProbe(async () => ({ id: "fresh-user" }));
 		await channel.connect();
 		lastWsInstance.onopen?.();
@@ -149,7 +149,7 @@ describe("NoteChannel unauthorized-join identity self-heal", () => {
 	});
 
 	test("a generic join rejection does NOT cycle the socket", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		channel.setAuthProbe(async () => ({ id: "u1" }));
 		await channel.connect();
 		lastWsInstance.onopen?.();
@@ -159,7 +159,7 @@ describe("NoteChannel unauthorized-join identity self-heal", () => {
 	});
 
 	test("a generic join rejection does NOT trigger the identity probe", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		let probes = 0;
 		channel.setAuthProbe(async () => {
 			probes++;

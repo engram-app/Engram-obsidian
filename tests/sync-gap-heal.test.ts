@@ -29,7 +29,7 @@ function makeEngine(): SyncEngine {
 	return new SyncEngine(
 		{} as any,
 		{} as any,
-		{ ...DEFAULT_SETTINGS, enableCrdt: false },
+		{ ...DEFAULT_SETTINGS },
 		mock().mockResolvedValue(undefined),
 	);
 }
@@ -191,7 +191,7 @@ function wiredNote(noteId: string, path: string) {
 			workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 		} as any,
 		{} as any,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setCrdtManager(crdt as unknown as CrdtManager);

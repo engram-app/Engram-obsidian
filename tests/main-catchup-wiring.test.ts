@@ -14,8 +14,8 @@
  * This exercises the REAL connectChannel() (not a reimplementation) via an
  * `Object.create(EngramSyncPlugin.prototype)` fake `this`: real prototype
  * methods (connectChannel, onCrdtTopicJoined, reEnrollOpenCrdtNotes) run with
- * fake data fields, so the actual wiring is under test. enableCrdt:true so the
- * crdt: block wires channel.onCrdtJoined; the heavy CRDT-room objects
+ * fake data fields, so the actual wiring is under test. The crdt: block wires
+ * channel.onCrdtJoined; the heavy CRDT-room objects
  * (createCrdtWiring, CrdtLiveViews) construct against light fakes and are never
  * exercised (syncEngine is stubbed). connectChannel is `private` (genuinely
  * internal), so the cast bypasses the compile-time visibility check without
@@ -39,7 +39,7 @@ class MockWebSocket {
 }
 (globalThis as unknown as { WebSocket: unknown }).WebSocket = MockWebSocket;
 
-// The enableCrdt block probes indexedDB.databases; a bare object makes the probe
+// The CRDT wiring block probes indexedDB.databases; a bare object makes the probe
 // read "not a function" and take the skip-schema-wipe branch (no IDB / localStorage
 // needed). Force it per-test: a prior test file in the same run may have set
 // indexedDB.databases to a real function, which would otherwise route into
@@ -71,7 +71,6 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			apiKey: "key",
 			refreshToken: "",
 			vaultId: "vault-1",
-			enableCrdt: true,
 			userEmail: "a@example.com",
 		},
 		deviceId: "device-1",

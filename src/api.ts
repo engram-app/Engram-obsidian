@@ -506,15 +506,9 @@ export class EngramApi {
 		return resp.json as DeleteResponse;
 	}
 
-	// --- CRDT ops transport: REST /updates DELETED (Phase E3) — the socket
-	// (crdt: channel sv-exchange) is the only Yjs delta path. ---
-
-	/** Capability probe + convergence check: current head per note across the
-	 *  whole vault. */
-	async getVaultHeads(): Promise<{ heads: Record<string, string> }> {
-		const resp = await this.request("GET", "/vault/heads");
-		return { heads: (resp.json as { heads: Record<string, string> }).heads };
-	}
+	// --- CRDT ops transport: fully socket-native — REST /updates deleted in
+	// Phase E3, the /vault/heads capability probe deleted with the pre-CRDT
+	// backend floor. The crdt: channel is the only Yjs path. ---
 
 	// --- Attachment methods ---
 

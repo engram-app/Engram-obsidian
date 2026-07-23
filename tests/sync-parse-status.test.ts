@@ -98,7 +98,7 @@ function makeEngine(): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: false },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	e.setReady();

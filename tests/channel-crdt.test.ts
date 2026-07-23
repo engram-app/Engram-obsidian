@@ -49,7 +49,7 @@ function simulateMessage(ws: any, msg: unknown[]): void {
  *  sendRequest tests. Mirrors the [0]=sync join, [1]=user join,
  *  [2]=crdt join setup used across this file. */
 async function joinedCrdtChannel(): Promise<{ channel: NoteChannel; ws: any }> {
-	const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+	const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 	await channel.connect();
 	const ws = lastWsInstance;
 	simulateOpen(ws);
@@ -66,7 +66,7 @@ beforeEach(() => {
 
 describe("NoteChannel CRDT topic join", () => {
 	test("joins crdt:{userId}:{vaultId} topic when vaultId is set", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -83,7 +83,7 @@ describe("NoteChannel CRDT topic join", () => {
 	});
 
 	test("crdt topic join payload includes crdt_proto: 2", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -111,26 +111,8 @@ describe("NoteChannel CRDT topic join", () => {
 		channel.disconnect();
 	});
 
-	test("does NOT join crdt topic when CRDT is disabled (default), even with vaultId", async () => {
-		// enableCrdt defaults to false → the plugin must behave exactly like a
-		// non-CRDT build: no crdt: join, isCrdtConnected stays false, every save
-		// goes through the legacy push path.
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
-		await channel.connect();
-		simulateOpen(lastWsInstance);
-
-		const crdtJoin = lastWsInstance.sent
-			.map((s: string) => JSON.parse(s) as unknown[])
-			.find((m: unknown[]) => (m[2] as string).startsWith("crdt:"));
-
-		expect(crdtJoin).toBeUndefined();
-		expect(channel.isCrdtConnected()).toBe(false);
-
-		channel.disconnect();
-	});
-
 	test("crdt topic join error is graceful and does not flip connected", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -167,7 +149,7 @@ describe("NoteChannel.sendCrdt", () => {
 	// join_ref is silently dropped server-side). Flipped below: pre-join must
 	// drop, not send.
 	test("drops (returns false) before the crdt: join is acked", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 		// NO join ack delivered for the crdt: topic.
@@ -185,7 +167,7 @@ describe("NoteChannel.sendCrdt", () => {
 	});
 
 	test("emits (returns true) a crdt_msg event with doc_id and b64 after the crdt: join is acked", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 		ackCrdtJoin();
@@ -232,7 +214,7 @@ describe("NoteChannel.sendCrdt", () => {
 
 describe("NoteChannel inbound crdt_msg", () => {
 	test("routes inbound crdt_msg to onCrdtMessage callback", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: { docId: string; b64: string }[] = [];
 		channel.onCrdtMessage = (docId, b64) => received.push({ docId, b64 });
 		await channel.connect();
@@ -254,7 +236,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	});
 
 	test("crdt_msg without onCrdtMessage is a no-op (no crash)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -272,7 +254,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	});
 
 	test("routes inbound note_yjs_update to onNoteYjsUpdate callback, carrying seq", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
 		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
 			received.push({ noteId, b64, head, seq });
@@ -297,7 +279,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	// at all — back-compat must thread through undefined, not crash or coerce
 	// to 0 (0 is a valid gap-heal cursor value, not "absent").
 	test("note_yjs_update without a seq field passes seq=undefined (old-backend back-compat)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
 		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
 			received.push({ noteId, b64, head, seq });
@@ -323,7 +305,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	// malformed/foreign frame from carrying a non-integer at runtime — the
 	// frame boundary must guard it, not just trust the cast (final review).
 	test("note_yjs_update with a non-integer seq (string) is normalized to undefined", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
 		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
 			received.push({ noteId, b64, head, seq });
@@ -346,7 +328,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	});
 
 	test("note_yjs_update with a non-integer seq (float) is normalized to undefined", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: { noteId: string; b64: string; head: string; seq?: number | null }[] = [];
 		channel.onNoteYjsUpdate = (noteId, b64, head, seq) =>
 			received.push({ noteId, b64, head, seq });
@@ -369,7 +351,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	});
 
 	test("note_yjs_update without onNoteYjsUpdate is a no-op (no crash)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -390,7 +372,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 	// field must be dropped silently — never delivered as a partial event that
 	// would apply undefined bytes / persist an undefined head.
 	test("note_yjs_update with a missing field does NOT invoke the callback", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const received: unknown[] = [];
 		channel.onNoteYjsUpdate = (noteId, b64, head) => received.push({ noteId, b64, head });
 		await channel.connect();
@@ -433,7 +415,7 @@ describe("NoteChannel inbound crdt_msg", () => {
 
 describe("NoteChannel inbound crdt_doc_ready", () => {
 	test("routes inbound crdt_doc_ready to onCrdtDocReady callback", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const ready: string[] = [];
 		channel.onCrdtDocReady = (docId) => ready.push(docId);
 		await channel.connect();
@@ -455,7 +437,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 	test("forwards the announce path to onCrdtDocReady (empty-note discovery, test_27)", async () => {
 		// The backend now carries the note's path on the announce so an empty note
 		// (zero Y.Doc ops → no note_yjs_update) can be discovered immediately.
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const calls: Array<[string, string | undefined]> = [];
 		channel.onCrdtDocReady = (docId, path) => calls.push([docId, path]);
 		await channel.connect();
@@ -479,7 +461,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 		// crdt_msg names an id it has no row for — the create-race cross-wire
 		// signature. The plugin must surface it so the sync engine can run its
 		// live id-map reconcile immediately instead of waiting for an announce.
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const missing: string[] = [];
 		channel.onCrdtNoteNotFound = (docId) => missing.push(docId);
 		await channel.connect();
@@ -499,7 +481,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 	});
 
 	test("note_not_found on a NON-crdt topic does not fire the heal callback", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const missing: string[] = [];
 		channel.onCrdtNoteNotFound = (docId) => missing.push(docId);
 		await channel.connect();
@@ -518,7 +500,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 	});
 
 	test("note_not_found without doc_id falls through (no crash, no callback)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const missing: string[] = [];
 		channel.onCrdtNoteNotFound = (docId) => missing.push(docId);
 		await channel.connect();
@@ -539,7 +521,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 	});
 
 	test("crdt_doc_ready without onCrdtDocReady is a no-op (no crash)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -557,7 +539,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 	});
 
 	test("crdt_doc_ready without doc_id does not fire callback", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		let fired = false;
 		channel.onCrdtDocReady = () => {
 			fired = true;
@@ -579,7 +561,7 @@ describe("NoteChannel inbound crdt_doc_ready", () => {
 
 describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	test("isCrdtConnected() is false before the crdt: topic join is acknowledged", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -590,7 +572,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	});
 
 	test("isCrdtConnected() is true after crdt: topic join ok", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -608,7 +590,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	});
 
 	test("isCrdtConnected() stays false when the crdt: topic join errors (non-CRDT backend)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -626,7 +608,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	});
 
 	test("onCrdtJoined fires exactly once when crdt: topic join ok", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const joined = mock();
 		channel.onCrdtJoined = joined;
 		await channel.connect();
@@ -646,7 +628,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	});
 
 	test("onCrdtJoined does NOT fire when the crdt: topic join errors", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const joined = mock();
 		channel.onCrdtJoined = joined;
 		await channel.connect();
@@ -678,7 +660,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 	});
 
 	test("isCrdtConnected() resets to false after disconnect", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -711,7 +693,7 @@ describe("NoteChannel.isCrdtConnected and onCrdtJoined", () => {
 describe("Graceful degradation: setCrdtManager deferred to onCrdtJoined", () => {
 	test("onCrdtJoined wires setCrdtManager; before join, manager is not wired", async () => {
 		// Simulate the pattern from main.ts: wire onCrdtJoined to call setCrdtManager
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -741,7 +723,7 @@ describe("Graceful degradation: setCrdtManager deferred to onCrdtJoined", () => 
 	});
 
 	test("crdt: join error → onCrdtJoined never fires → manager stays null (non-CRDT backend)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -788,7 +770,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 	// behavior (any error on the crdt topic fires) is intentionally updated here.
 
 	test("fires onCrdtJoinError with the reason string when crdt: topic errors (join ref matches)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -818,7 +800,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 	});
 
 	test("fires onCrdtJoinError with undefined reason when no reason in payload (join ref matches)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -849,7 +831,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 		// Backend #846 adds per-message error replies on crdt_msg frames (e.g. "rate_limited",
 		// "frame_too_large"). These carry a DIFFERENT ref than the join frame. A single
 		// rate-limit trip must NOT tear down the CRDT session.
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -874,7 +856,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 	});
 
 	test("does NOT fire onCrdtJoinError for a user topic join error", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -898,7 +880,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 	});
 
 	test("does NOT fire onCrdtJoinError for the sync topic join error", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -930,7 +912,7 @@ describe("onCrdtJoinError: crdt join error fires callback with reason", () => {
 
 describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () => {
 	test("fires onCrdtJoinError with reason and min when crdt_proto_too_old (join ref matches)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -958,7 +940,7 @@ describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () =>
 	});
 
 	test("fires onCrdtJoinError with min undefined when crdt_proto_too_old but no min field (join ref matches)", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -995,7 +977,7 @@ describe("onCrdtJoinError: crdt_proto_too_old surfaces min proto version", () =>
 
 describe("crdtJoined resets on unclean close (#191)", () => {
 	test("crdt ack without sync ack, then unclean close: crdt gate closes", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		simulateOpen(lastWsInstance);
 
@@ -1023,7 +1005,7 @@ describe("crdtJoined resets on unclean close (#191)", () => {
 	});
 
 	test("onCrdtJoined re-fires after an unclean close and rejoin", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		const joined = mock();
 		channel.onCrdtJoined = joined;
 		await channel.connect();

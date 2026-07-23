@@ -45,7 +45,7 @@ function engine(opts?: { crdt?: Partial<CrdtManager> }): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	if (opts?.crdt) e.setCrdtManager(opts.crdt as unknown as CrdtManager);
@@ -229,7 +229,7 @@ describe("applyPushedNoteUpdate — gap heal (missed-open reconnect)", () => {
 		const e = new SyncEngine(
 			mockApp,
 			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);

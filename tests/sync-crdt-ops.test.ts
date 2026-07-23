@@ -1,7 +1,6 @@
 /**
- * Tests: crdtOpsAvailable capability latch on SyncEngine (mirrors
- * batchPushUnsupported). Latches OFF on a 404/405 from an /updates call;
- * stays on for other statuses; requires settings.enableCrdt.
+ * Tests: socket-native CRDT op delivery on SyncEngine — create-ack body
+ * seeding, the channel-down durable queue chain, and TOCTOU liveness.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -25,14 +24,6 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	};
 	const p = e.noteIdMap?.pathForId(noteId);
 	if (p) e.setCrdtHead(p, "server-head");
-}
-
-/** Mark the one-shot capability probe as already complete, for tests that
- *  exercise post-probe latch behavior directly without driving a real
- *  getVaultHeads round-trip (Phase 2b: crdtOpsAvailable() now requires
- *  crdtOpsProbed, not just an unlatched crdtOpsUnsupported). */
-function markProbed(engine: SyncEngine): void {
-	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
 }
 
 // Minimal mock api/app — mirrors tests/sync-crdt-route.test.ts's harness.
@@ -103,14 +94,13 @@ const mockApp = {
 } as any;
 
 function engine(opts?: {
-	enableCrdt?: boolean;
 	api?: Partial<EngramApi>;
 	crdt?: Partial<CrdtManager>;
 }): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		(opts?.api ?? mockApi) as unknown as EngramApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: opts?.enableCrdt ?? true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	if (opts?.crdt) e.setCrdtManager(opts.crdt as unknown as CrdtManager);
@@ -145,7 +135,7 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 		const e = new SyncEngine(
 			localApp as any,
 			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);
@@ -194,100 +184,6 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 	});
 });
 
-describe("crdtOpsAvailable latch", () => {
-	test("is available when enableCrdt, probed, and not latched", () => {
-		const e = engine();
-		markProbed(e);
-		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-
-	test("latches off on a 404/405 from an updates call", () => {
-		const e = engine();
-		markProbed(e);
-		(e as any).markCrdtOpsUnsupported(404);
-		expect((e as any).crdtOpsAvailable()).toBe(false);
-	});
-
-	test("stays available on other statuses", () => {
-		const e = engine();
-		markProbed(e);
-		(e as any).markCrdtOpsUnsupported(500);
-		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-
-	test("405 also latches off", () => {
-		const e = engine();
-		markProbed(e);
-		(e as any).markCrdtOpsUnsupported(405);
-		expect((e as any).crdtOpsAvailable()).toBe(false);
-	});
-
-	test("unavailable when enableCrdt is false, even unlatched and probed", () => {
-		const e = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: false },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setReady();
-		markProbed(e);
-		expect((e as any).crdtOpsAvailable()).toBe(false);
-	});
-});
-
-describe("probeCrdtOps — one-shot capability probe", () => {
-	test("a getVaultHeads 404 pre-latches ops-unsupported", async () => {
-		const api = {
-			getVaultHeads: async () => {
-				const err: any = new Error("nf");
-				err.status = 404;
-				throw err;
-			},
-		};
-		const e = engine({ enableCrdt: true, api });
-		await (e as any).probeCrdtOps();
-		expect((e as any).crdtOpsAvailable()).toBe(false);
-	});
-
-	test("a getVaultHeads success leaves ops available", async () => {
-		const api = { getVaultHeads: async () => ({ heads: {} }) };
-		const e = engine({ enableCrdt: true, api });
-		await (e as any).probeCrdtOps();
-		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-
-	test("no-op when enableCrdt is false", async () => {
-		let called = false;
-		const api = {
-			getVaultHeads: async () => {
-				called = true;
-				return { heads: {} };
-			},
-		};
-		const e = engine({ enableCrdt: false, api });
-		await (e as any).probeCrdtOps();
-		expect(called).toBe(false);
-	});
-
-	// Phase 2b remediation: capability comes SOLELY from the probe. Ops must
-	// read unavailable while the probe is in flight, not just after a failure.
-	test("ops are unavailable until the probe completes, then available on success", async () => {
-		let resolveHeads: (v: unknown) => void = () => {};
-		const api = {
-			getVaultHeads: () =>
-				new Promise((r) => {
-					resolveHeads = r;
-				}),
-		};
-		const e = engine({ enableCrdt: true, api });
-		expect((e as any).crdtOpsAvailable()).toBe(false); // not probed yet
-		const p = e.probeCrdtOps();
-		resolveHeads({ heads: {} });
-		await p;
-		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-});
-
 // The in-memory `scheduleCrdtFlush`/`flushCrdtState`/`crdtFlushTimers` debounce
 // was retired (Task 3, Phase 2b remediation) in favor of routing every
 // channel-down CRDT edit through the DURABLE offline queue: pushFile seeds the
@@ -306,8 +202,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		const crdt = {
 			applyLocalEdit: async () => true,
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
+		const e = engine({ api, crdt });
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -338,8 +233,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		const crdt = { applyLocalEdit: async () => true };
 		const enroll = mock();
 		const reset = mock();
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
+		const e = engine({ api, crdt });
 		e.setCrdtEnrollment({ enroll, reset } as any);
 		e.setCrdtLiveCheck(() => true); // channel live now
 
@@ -366,70 +260,6 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		// An inbound frame fires commitCrdtConvergence — the round-trip is
 		// proven and the entry settles out of the durable queue.
 		await e.commitCrdtConvergence("id-1");
-		expect(e.queue.size).toBe(0);
-	});
-
-	// Probe-race stranding (final review Minor-1, carried over from the retired
-	// scheduleCrdtFlush test): a CRDT note edited while the channel is down is
-	// durably queued while ops still look available. If the capability probe
-	// latches crdtOpsUnsupported AFTER the entry is queued but BEFORE it is
-	// delivered, the next flush must NOT strand it — it must re-drive delivery
-	// via the legacy whole-doc push (runFlushQueue's ops-unavailable fallback).
-	test("ops latch off after a channel-down edit is durably queued: the next flush delivers via legacy push, not silently stranded", async () => {
-		let pushNoteCalled = false;
-		let pushNoteArgs: any[] = [];
-		const testFile = new TFile("p.md");
-		const localApp = {
-			...mockApp,
-			vault: {
-				...mockApp.vault,
-				getFileByPath: mock().mockImplementation((p: string) =>
-					p === "p.md" ? testFile : null,
-				),
-				cachedRead: mock().mockResolvedValue("body"),
-			},
-		};
-		const api = {
-			pushNote: async (...args: any[]) => {
-				pushNoteCalled = true;
-				pushNoteArgs = args;
-				return { note: {}, chunks_indexed: 1 };
-			},
-		};
-		const crdt = {
-			applyLocalEdit: async () => true,
-		};
-		const e = new SyncEngine(
-			localApp as any,
-			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setCrdtManager(crdt as unknown as CrdtManager);
-		e.setReady();
-		markProbed(e);
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("p.md", "id-1");
-		e.setNoteIdMap(noteIdMap);
-		markConfirmed(e, "id-1");
-		e.setCrdtLiveCheck(() => false); // channel down
-
-		const result = await (e as any).pushFile(testFile);
-		expect(result).toBe(true);
-		await new Promise((r) => setTimeout(r, 20)); // auto-flush: channel down → stays queued
-
-		expect(pushNoteCalled).toBe(false); // still queued, not stranded to legacy yet
-		expect(e.queue.size).toBe(1);
-
-		// Capability probe latches ops-unsupported (e.g. a pre-Phase-1 backend
-		// discovered mid-session) AFTER the edit was already durably queued.
-		(e as any).markCrdtOpsUnsupported(404);
-
-		const flushed = await e.flushQueue();
-
-		expect(flushed).toBe(1);
-		expect(pushNoteCalled).toBe(true); // delivered via legacy path, not dropped
-		expect(pushNoteArgs[1]).toBe("body");
 		expect(e.queue.size).toBe(0);
 	});
 });
@@ -459,8 +289,7 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 				return true;
 			},
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
+		const e = engine({ api, crdt });
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("T.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -499,8 +328,7 @@ describe("CRDT notes never whole-doc push (channel down → durable queue)", () 
 		const crdt = {
 			applyLocalEdit: async () => true,
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
+		const e = engine({ api, crdt });
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
 		e.setNoteIdMap(noteIdMap);
@@ -537,8 +365,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 			onUpdate: () => {},
 			onFlushToDisk: async () => {},
 		});
-		const e = engine({ enableCrdt: true, api, crdt: realCrdt });
-		markProbed(e);
+		const e = engine({ api, crdt: realCrdt });
 		const enroll = mock();
 		const reset = mock();
 		e.setCrdtEnrollment({ enroll, reset } as any);
@@ -579,8 +406,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		};
 		const crdt = { applyLocalEdit: async () => true };
 		const enroll = mock();
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
+		const e = engine({ api, crdt });
 		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
 		e.setCrdtLiveCheck(() => false);
 
@@ -597,86 +423,5 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		expect(flushed).toBe(0);
 		expect(e.queue.size).toBe(1); // waits for the channel — not dropped, not parked
 		expect(enroll).not.toHaveBeenCalled();
-	});
-
-	test("crdt entry with ops unavailable clears the stale serverHash then falls through to the legacy push", async () => {
-		let pushNoteArgs: any[] = [];
-		const testFile = new TFile("T.md");
-		const localApp = {
-			...mockApp,
-			vault: {
-				...mockApp.vault,
-				getFileByPath: mock().mockImplementation((p: string) =>
-					p === "T.md" ? testFile : null,
-				),
-				cachedRead: mock().mockResolvedValue("legacy content"),
-			},
-		};
-		const api = {
-			pushNote: async (...args: any[]) => {
-				pushNoteArgs = args;
-				return { note: {}, chunks_indexed: 1 };
-			},
-		};
-		const e = new SyncEngine(
-			localApp as any,
-			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setReady();
-		(e as any).markCrdtOpsUnsupported(404); // ops unavailable (old backend)
-		e.importSyncState({ "T.md": { hash: 1, version: 1, serverHash: "stale-hash" } });
-
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-		});
-		const flushed = await e.flushQueue();
-
-		expect(flushed).toBe(1);
-		// The stale serverHash was cleared before the legacy push — a no-base
-		// push overwrites deliberately instead of 409ing against the CAS base
-		// that CRDT-ops delivery already advanced past.
-		expect(pushNoteArgs[5]).toBeUndefined();
-		expect(pushNoteArgs[1]).toBe("legacy content");
-	});
-
-	test("a crdt entry whose file was renamed away (ops unavailable, legacy fallback) re-enrolls for channel convergence instead of silently dropping", async () => {
-		const api = {
-			pushNote: async () => {
-				throw new Error("must not legacy-push a vanished file");
-			},
-		};
-		const localApp = {
-			...mockApp,
-			vault: { ...mockApp.vault, getFileByPath: mock().mockReturnValue(null) },
-		};
-		const enroll = mock();
-		const e = new SyncEngine(
-			localApp as any,
-			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setReady();
-		(e as any).markCrdtOpsUnsupported(404); // ops unavailable: legacy fallback path
-		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
-		// Content-free crdt entry; its file is no longer on disk (renamed away).
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-		});
-		const flushed = await e.flushQueue();
-
-		expect(enroll).toHaveBeenCalledWith("id-1"); // Y.Doc retained: channel delivers
-		expect(e.queue.size).toBe(0); // dequeued (not looping)
-		expect(flushed).toBe(1);
 	});
 });
