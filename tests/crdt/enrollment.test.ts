@@ -4,8 +4,9 @@
  * Task 7B: opening a note triggers exactly one startSync; reset on reconnect
  * allows a fresh startSync; multiple paths each get their own startSync.
  */
-import { describe, expect, mock, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
 import { CrdtEnrollment } from "../../src/crdt/enrollment";
+import { rlog } from "../../src/remote-log";
 
 function makeEnrollment() {
 	const startSyncCalls: string[] = [];
@@ -163,6 +164,41 @@ describe("CrdtEnrollment bounded concurrency", () => {
 		e.enroll("id-1");
 		for (let i = 0; i < 10; i++) await Promise.resolve();
 		expect(calls).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Failed handshake: a rejected startSync must not permanently latch the
+// once-per-session guard (the note would stay deaf all session, silently).
+// ---------------------------------------------------------------------------
+
+describe("CrdtEnrollment failed handshake", () => {
+	test("a rejected startSync logs a warn and un-marks enrollment so a later enroll retries", async () => {
+		let calls = 0;
+		const e = new CrdtEnrollment({
+			startSync: async () => {
+				calls++;
+				if (calls === 1) throw new Error("transport down");
+			},
+			resetSync: () => {},
+		});
+		const warnSpy = spyOn(rlog(), "warn");
+
+		e.enroll("id-1");
+		await new Promise((r) => setTimeout(r, 0));
+		expect(calls).toBe(1);
+		expect(warnSpy).toHaveBeenCalledTimes(1);
+		const [category, message] = warnSpy.mock.calls[0] as unknown as [string, string];
+		expect(category).toBe("crdt");
+		expect(message).toContain("id-1");
+
+		// The failed handshake must be retryable — a permanent `enrolled` latch
+		// leaves the note deaf to remote CRDT state for the whole session.
+		e.enroll("id-1");
+		await new Promise((r) => setTimeout(r, 0));
+		expect(calls).toBe(2);
+
+		warnSpy.mockRestore();
 	});
 });
 

@@ -196,3 +196,36 @@ describe("A6: first confirmation re-fires the CRDT handshake", () => {
 		expect(enroll).not.toHaveBeenCalled();
 	});
 });
+
+describe("replay mint refusal (#972/#217 guard parity)", () => {
+	test("replay of an engine-flushed path with no id does NOT mint — entry stays queued", async () => {
+		const engine = createEngine();
+		const map = new NoteIdMap();
+		engine.setNoteIdMap(map); // no id mapped for the path
+
+		// Engine-flushed window: flushFromCrdt just wrote this path after its id
+		// was relocated away (#972 class). Live pushes and batch genesis refuse to
+		// mint here (shouldDeferMint) — the replay path must too, or a stale
+		// queued entry mints a FRESH id and creates a duplicate server row.
+		(engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed.set(
+			"flushed.md",
+			1,
+		);
+
+		engine.queue.load([
+			{
+				path: "flushed.md",
+				action: "upsert",
+				content: "stale offline edit",
+				mtime: 100,
+				timestamp: 1,
+			},
+		]);
+
+		await engine.flushQueue();
+
+		expect(mockApi.pushNote).not.toHaveBeenCalled(); // no push under a fresh id
+		expect(map.get("flushed.md")).toBeNull(); // no mint
+		expect(engine.queue.size).toBe(1); // left queued for after the echo window
+	});
+});
