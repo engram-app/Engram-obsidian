@@ -569,6 +569,28 @@ export class CrdtManager {
 	 * Also clears the synced mark so a future `openDoc` + `startSync` begins a
 	 * fresh handshake.
 	 */
+	/** Shared entry teardown: destroy the Y.Doc (optionally wiping its IDB
+	 *  store first) and drop the in-memory entry. Callers own their OWN
+	 *  synced/pendingFlush bookkeeping — the four teardown sites deliberately
+	 *  differ there (closeDoc/removeDoc clear both, flattenIfBloated keeps
+	 *  them for the re-opened entry, destroy() clears in bulk). */
+	private async teardownEntry(
+		id: string,
+		e: {
+			doc: { destroy(): void };
+			persistence: { clearData(): Promise<unknown>; destroy(): Promise<unknown> };
+		},
+		opts: { clearData: boolean },
+	): Promise<void> {
+		// Drop the in-memory entry SYNCHRONOUSLY, before any await — a caller
+		// that fires this un-awaited (closeDoc) may be followed immediately by
+		// an apply whose entry() must mint a FRESH doc, never see the dying one.
+		this.docs.delete(id);
+		e.doc.destroy();
+		if (opts.clearData) await e.persistence.clearData();
+		await e.persistence.destroy();
+	}
+
 	closeDoc(noteId: string): void {
 		const id = this.docId(noteId);
 		// In-flight guard: never destroy a doc while a mutating op (applyLocalEdit
@@ -579,9 +601,7 @@ export class CrdtManager {
 		if ((this.inFlightOps.get(id) ?? 0) > 0) return;
 		const e = this.docs.get(id);
 		if (!e) return;
-		e.doc.destroy();
-		void e.persistence.destroy();
-		this.docs.delete(id);
+		void this.teardownEntry(id, e, { clearData: false });
 		this.synced.delete(id);
 		this.pendingFlush.delete(id);
 	}
@@ -591,9 +611,8 @@ export class CrdtManager {
 	 *
 	 * Call when a note is deleted or renamed (old path) so the ghost lineage
 	 * does not resurrect stale content if the note is later recreated at the
-	 * same path. Mirrors the teardown sequence in `flattenIfBloated`:
-	 *   doc.destroy() → persistence.clearData() → persistence.destroy()
-	 *   → docs.delete() → synced.delete()
+	 * same path. Shares `teardownEntry` (clearData: true) with
+	 * `flattenIfBloated`.
 	 *
 	 * **Never-opened notes (IDB-only ghost):** if no in-memory entry exists for
 	 * the noteId, `indexedDB.deleteDatabase(storeName)` clears the IDB store
@@ -608,11 +627,7 @@ export class CrdtManager {
 		const id = this.docId(noteId);
 		const e = this.docs.get(id);
 		if (e) {
-			// In-memory entry exists: mirror flattenIfBloated's teardown sequence.
-			e.doc.destroy();
-			await e.persistence.clearData();
-			await e.persistence.destroy();
-			this.docs.delete(id);
+			await this.teardownEntry(id, e, { clearData: true });
 		} else {
 			// No in-memory entry — the doc may still exist in IDB from a previous
 			// session. Delete the database directly by name to prevent ghost
@@ -634,9 +649,7 @@ export class CrdtManager {
 	/** Tear down all open docs. Call on plugin unload. */
 	async destroy(): Promise<void> {
 		for (const [id, e] of this.docs) {
-			e.doc.destroy();
-			await e.persistence.destroy();
-			this.docs.delete(id);
+			await this.teardownEntry(id, e, { clearData: false });
 		}
 		this.synced.clear();
 		this.pendingFlush.clear();
@@ -684,10 +697,7 @@ export class CrdtManager {
 		// applying the fresh update on top of the existing doc merges the two
 		// histories and re-inflates the content.
 		const id = this.docId(noteId);
-		e.doc.destroy();
-		await e.persistence.clearData();
-		await e.persistence.destroy();
-		this.docs.delete(id);
+		await this.teardownEntry(id, e, { clearData: true });
 
 		// Re-open a clean entry for this note. `entry()` mints a new Y.Doc +
 		// IndexeddbPersistence and awaits whenSynced (IDB is now empty).
