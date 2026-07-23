@@ -23,10 +23,11 @@
  *   3. an inbound frame for an id the receiver's map doesn't know strands, then
  *      heals via reconcile + retry (the #187 on-strand self-heal).
  */
-import { expect, test } from "bun:test";
+import { expect, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { type CrdtWiring, createCrdtWiring } from "../../src/crdt/wiring";
+import { rlog } from "../../src/remote-log";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -54,17 +55,24 @@ interface Device {
 /** A device: real NoteIdMap + real CrdtManager (via the wiring) + a fake
  *  SyncEngine that records flushes to a path-keyed disk. `reconcile` models the
  *  server manifest — it mutates this device's map and returns the note count. */
-function makeDevice(id: string, reconcile: () => number): Device {
+function makeDevice(
+	id: string,
+	reconcile: () => number,
+	opts?: { flushFromCrdt?: (path: string, content: string) => Promise<boolean> },
+): Device {
 	const map = new NoteIdMap();
 	const disk = new Map<string, string>();
 	const flushedPaths: string[] = [];
 	const relayTo = { send: (_docId: string, _frame: string) => {} };
 
 	const syncEngine = {
-		flushFromCrdt: async (path: string, content: string) => {
-			disk.set(path, content);
-			flushedPaths.push(path);
-		},
+		flushFromCrdt:
+			opts?.flushFromCrdt ??
+			(async (path: string, content: string) => {
+				disk.set(path, content);
+				flushedPaths.push(path);
+				return true;
+			}),
 		isUnchangedSynced: () => false,
 		materializeEmptyDiscovered: async (path: string) => {
 			disk.set(path, "");
@@ -333,6 +341,65 @@ test("rename on A leaves B with exactly one file at the new path", async () => {
 	expect(a.map.pathForId(noteId)).toBe("A/original.md");
 	expect(b.map.pathForId(noteId)).toBe("B/renamed.md");
 
+	await destroy(a, b);
+});
+
+test("onCrdtMessage with a malformed frame logs a warn instead of an unhandled rejection", async () => {
+	const dev = makeDevice("GARBAGE", () => 0);
+	const warnSpy = spyOn(rlog(), "warn");
+
+	// Not valid base64 / not a valid yjs frame — handleFrame rejects. The wiring
+	// must catch it (log + drop the frame), never leak an unhandled rejection.
+	dev.wiring.onCrdtMessage("bad-frame-id", "!!!not-a-frame!!!");
+	await sleep(20);
+
+	expect(warnSpy).toHaveBeenCalled();
+	const [category, message] = warnSpy.mock.calls[warnSpy.mock.calls.length - 1] as unknown as [
+		string,
+		string,
+	];
+	expect(category).toBe("crdt");
+	expect(message).toContain("bad-frame-id");
+
+	warnSpy.mockRestore();
+	await destroy(dev);
+});
+
+test("a refused stranded-flush disk write is logged, not silently dropped", async () => {
+	// Same shape as the strand-heal scenario below, but the receiver's
+	// flushFromCrdt REFUSES the write (returns false — e.g. the empty-over-content
+	// gate). Pre-fix: `void syncEngine.flushFromCrdt(...)` discarded the result,
+	// so content stranded in the Y.Doc with zero observability.
+	const noteId = "note-failflush";
+	const a = makeDevice("FA", () => 0);
+	const b = makeDevice(
+		"FB",
+		() => {
+			b.map.set("FB/fail.md", noteId);
+			return 1;
+		},
+		{ flushFromCrdt: async () => false },
+	);
+	connect(a, b);
+
+	a.map.set("FA/new.md", noteId);
+	a.wiring.manager.markSynced(noteId);
+	await a.wiring.manager.applyLocalEdit(noteId, "refused body", false);
+
+	b.wiring.onCrdtDocReady(noteId);
+	await waitFor(
+		async () => (await b.wiring.manager.getText(noteId)) === "refused body",
+		"B integrates body into the Y.Doc",
+	);
+
+	const warnSpy = spyOn(rlog(), "warn");
+	await b.wiring.drainStrandedFlushes();
+	await sleep(20); // let the (un-awaited) flush promise settle
+
+	const warns = warnSpy.mock.calls as unknown as Array<[string, string]>;
+	expect(warns.some(([cat, msg]) => cat === "crdt" && msg.includes("FB/fail.md"))).toBe(true);
+
+	warnSpy.mockRestore();
 	await destroy(a, b);
 });
 

@@ -25,6 +25,9 @@
  *     fresh handshake fires after a disconnect (mirrors `CrdtChannel.resetSync`).
  */
 
+import { errMsg } from "../error-util";
+import { rlog } from "../remote-log";
+
 export class CrdtEnrollment {
 	/** note_ids that have already received (or been queued for) a startSync this session. */
 	private readonly enrolled = new Set<string>();
@@ -85,6 +88,20 @@ export class CrdtEnrollment {
 			this.active++;
 			void this.startSync(noteId)
 				.then(() => this.onAfterEnroll?.(noteId))
+				.catch((e) => {
+					// Failed handshake: un-mark so a later enroll() retries — a
+					// permanent `enrolled` latch would leave the note deaf to remote
+					// CRDT state for the whole session, with nothing logged.
+					// resetSync clears the channel's once-per-doc `initiated` latch
+					// too (set BEFORE startSync's first await) — without it the
+					// retry's startSync early-returns and never sends a STEP1.
+					this.enrolled.delete(noteId);
+					this.resetSync(noteId);
+					rlog().warn(
+						"crdt",
+						`enroll startSync failed for ${noteId}: ${errMsg(e)} — will retry on next open`,
+					);
+				})
 				.finally(() => {
 					this.active--;
 					this.drain();

@@ -21734,7 +21734,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
           let replayNp = (0, import_obsidian21.normalizePath)(entry.path), replayId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(replayNp)) != null ? _k : null;
-          !replayId && this.noteIdMap && (replayId = uuid7(), this.noteIdMap.set(replayNp, replayId));
+          if (!replayId && this.noteIdMap) {
+            if (this.shouldDeferMint(replayNp)) {
+              rlog().info(
+                "queue",
+                `Replay mint refused (engine-flushed, id relocated away): ${entry.path}`
+              );
+              continue;
+            }
+            replayId = uuid7(), this.noteIdMap.set(replayNp, replayId);
+          }
           let replayState = this.syncState.get(replayNp), replayBase = replayState == null ? void 0 : replayState.serverHash, resp = replayBase !== void 0 ? await this.api.pushNote(
             entry.path,
             content,
@@ -22993,6 +23002,11 @@ var CrdtEnrollment = class {
       this.active++, this.startSync(noteId).then(() => {
         var _a;
         return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
+      }).catch((e) => {
+        this.enrolled.delete(noteId), this.resetSync(noteId), rlog().warn(
+          "crdt",
+          `enroll startSync failed for ${noteId}: ${errMsg(e)} \u2014 will retry on next open`
+        );
       }).finally(() => {
         this.active--, this.drain();
       });
@@ -23061,7 +23075,17 @@ function createCrdtWiring(deps) {
         `onFlushToDisk: still no path for note_id=${id2} after heal \u2014 retrying`
       ), healUnknownNoteId(id2, content);
     for (let { path, content } of toFlush)
-      deps.isBound(path) || syncEngine.flushFromCrdt(path, content);
+      deps.isBound(path) || syncEngine.flushFromCrdt(path, content).then((ok) => {
+        ok || rlog().warn(
+          "crdt",
+          `strand-heal flush refused for ${path} \u2014 retained in Y.Doc`
+        );
+      }).catch(
+        (e) => rlog().warn(
+          "crdt",
+          `strand-heal flush failed for ${path}: ${errMsg(e)} \u2014 retained in Y.Doc`
+        )
+      );
   }
   function healUnknownNoteId(noteId, content) {
     strandedFlushes.set(noteId, content), strandHealTimer === null && (strandHealTimer = window.setTimeout(() => {
@@ -23134,7 +23158,12 @@ function createCrdtWiring(deps) {
       await manager.flattenIfBloated(noteId);
     }
   }), onCrdtMessage = (docId, b64) => {
-    channel.handleFrame(docId, b64);
+    channel.handleFrame(docId, b64).catch((e) => {
+      rlog().warn(
+        "crdt",
+        `handleFrame failed for note_id=${docId}: ${errMsg(e)} \u2014 frame dropped`
+      );
+    });
   }, onNoteYjsUpdate = (noteId, b64, head, seq3) => {
     syncEngine.applyLiveOpWithSeq(
       noteId,
