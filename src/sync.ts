@@ -3888,9 +3888,24 @@ export class SyncEngine {
 	 *  channel's once-per-doc STEP1 gate so a FUTURE heal can re-handshake.
 	 *  A live-bound note keeps its room — the editor owns its lifecycle. */
 	private releaseHealRoom(noteId: string, path: string | null): void {
-		if (path && this.isLiveBound(normalizePath(path))) return;
+		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
+		// path, and a rename in between would otherwise check liveness (and
+		// hibernate) against the stale path and closeDoc a doc the editor still
+		// owns at its NEW path (silent data loss, the bind-race class).
+		const current = this.noteIdMap?.pathForId(noteId) ?? path;
+		if (current && this.isLiveBound(normalizePath(current))) return;
 		this.crdtEnrollment?.reset(noteId);
-		if (path) this.hibernateIfIdle(path, noteId);
+		if (current) {
+			this.hibernateIfIdle(current, noteId);
+		} else if (this.crdt) {
+			// Id unmapped (deleted since staging) — cannot be live-bound; free the
+			// doc directly. Best-effort, mirrors hibernateIfIdle.
+			try {
+				this.crdt.closeDoc(noteId);
+			} catch (e) {
+				devLog().log("crdt", `releaseHealRoom: closeDoc ${noteId} failed — ${errMsg(e)}`);
+			}
+		}
 	}
 
 	/** Cheap mid-session divergence heal for the just-opened note (rework #6 —

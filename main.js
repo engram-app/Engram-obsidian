@@ -20025,8 +20025,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  channel's once-per-doc STEP1 gate so a FUTURE heal can re-handshake.
    *  A live-bound note keeps its room — the editor owns its lifecycle. */
   releaseHealRoom(noteId, path) {
-    var _a;
-    path && this.isLiveBound((0, import_obsidian21.normalizePath)(path)) || ((_a = this.crdtEnrollment) == null || _a.reset(noteId), path && this.hibernateIfIdle(path, noteId));
+    var _a, _b, _c;
+    let current = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : path;
+    if (!(current && this.isLiveBound((0, import_obsidian21.normalizePath)(current)))) {
+      if ((_c = this.crdtEnrollment) == null || _c.reset(noteId), current)
+        this.hibernateIfIdle(current, noteId);
+      else if (this.crdt)
+        try {
+          this.crdt.closeDoc(noteId);
+        } catch (e) {
+          devLog().log("crdt", `releaseHealRoom: closeDoc ${noteId} failed \u2014 ${errMsg(e)}`);
+        }
+    }
   }
   /** Cheap mid-session divergence heal for the just-opened note (rework #6 —
    *  restores the coverage the removed `verifyConvergenceOnOpen` had, a note

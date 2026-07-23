@@ -623,6 +623,58 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect((engine as any).queue.size).toBe(0); // the settle still dequeues
 	});
 
+	test("heal-room release: settle after a RENAME re-resolves the path — never closes the doc live-bound at its NEW path", async () => {
+		const { engine, reset, closeDoc, map } = crdtEngine();
+		// Entry enqueued under the OLD path; the note was renamed and is now
+		// OPEN in the editor at the NEW path.
+		map.set("renamed.md", "note-id-1"); // NoteIdMap: note-id-1 now lives at renamed.md
+		engine.setLiveBoundCheck((p: string) => p === "renamed.md");
+		await (engine as any).queue.enqueue({
+			path: "owned.md",
+			action: "upsert",
+			timestamp: 1,
+			crdt: true,
+			noteId: "note-id-1",
+		});
+		(engine as any).pendingQueueDeliveries.set("note-id-1", { path: "owned.md" });
+
+		await engine.commitCrdtConvergence("note-id-1");
+
+		// Live-bound at the CURRENT path: the room must survive — releasing on
+		// the stale enqueue-time path would closeDoc the editor's live doc.
+		expect(reset).not.toHaveBeenCalled();
+		expect(closeDoc).not.toHaveBeenCalled();
+	});
+
+	test("heal-room release: a DEFERRED commit (doc not at staged row) does NOT release the in-flight heal", async () => {
+		const { engine, enroll, reset, closeDoc, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("old base");
+		engine.setLiveBoundCheck(() => false);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("old base"), version: 1, serverHash: "old-hash" },
+		});
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "new server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+		expect(enroll).toHaveBeenCalledTimes(1);
+
+		// Doc has NOT integrated the staged row yet — commit must defer AND
+		// leave the room alone (the next frame re-runs the check).
+		projectedText.mockResolvedValue("stale partial");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		expect(reset).toHaveBeenCalledTimes(1); // only the heal's own reset
+		expect(closeDoc).not.toHaveBeenCalled();
+	});
+
 	test("heal-room release: a frame with nothing staged and nothing queued stays a pure no-op", async () => {
 		const { engine, reset, closeDoc } = crdtEngine();
 		engine.setLiveBoundCheck(() => false);
