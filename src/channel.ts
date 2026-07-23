@@ -301,14 +301,6 @@ export class NoteChannel {
 		return `user:${this.userId}`;
 	}
 
-	/** The server vault this channel is joined to (`crdt:{userId}:{vaultId}`),
-	 *  or null before a vault is bound. Callers reading vault-scoped state off
-	 *  the socket must confirm this matches their intended vault — a vault
-	 *  switch that skips setupNoteStream leaves this channel on the old vault. */
-	getVaultId(): string | null {
-		return this.vaultId;
-	}
-
 	private get crdtTopic(): string | null {
 		// Vault-scoped only: no vault bound yet → no crdt: room to join.
 		return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;

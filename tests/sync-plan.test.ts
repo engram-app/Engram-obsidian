@@ -11,6 +11,11 @@ const mockApi = {
 	// Legacy-backend shape: no batch endpoint — pushAll falls back to the
 	// per-note path these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
+	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
+	getAttachmentChanges: mock().mockResolvedValue({
+		changes: [],
+		server_time: "2026-01-01T00:00:00Z",
+	}),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue(null),
 	health: mock().mockResolvedValue(true),
@@ -76,211 +81,20 @@ function createEngine(overrides = {}): SyncEngine {
 
 beforeEach(() => {
 	jest.clearAllMocks();
+	(mockApi.getChanges as jest.Mock)
+		.mockReset()
+		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" });
+	(mockApi.getAttachmentChanges as jest.Mock)
+		.mockReset()
+		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" });
 	(mockApi.getManifest as jest.Mock).mockReset().mockResolvedValue(null);
 	mockApp.vault.getFiles.mockReset().mockReturnValue([]);
 });
 
-// ---------------------------------------------------------------------------
-// enumerateServerState — the op-log fold that replaced GET /notes/changes +
-// GET /attachments/changes as the preview's server inventory (#304).
-// ---------------------------------------------------------------------------
-
-function wireFeed(engine: SyncEngine, pages: any[][]) {
-	let call = 0;
-	engine.setCrdtManager({} as any);
-	engine.setCrdtLiveCheck(() => true);
-	engine.setCrdtCatchupSince(async (_cursor: number, _limit?: number) => {
-		const changes = pages[call] ?? [];
-		call++;
-		return {
-			changes,
-			has_more: call < pages.length,
-			next_seq: changes.length ? (changes[changes.length - 1].seq ?? null) : null,
-		};
-	});
-}
-
-describe("SyncEngine.enumerateServerState", () => {
-	test("folds ops per note id — last seq wins (edit supersedes create)", async () => {
-		const engine = createEngine();
-		wireFeed(engine, [
-			[
-				{
-					type: "note",
-					id: "n1",
-					seq: 1,
-					path: "a.md",
-					content: "v1",
-					content_hash: "H1",
-					deleted: false,
-				},
-				{
-					type: "note",
-					id: "n1",
-					seq: 2,
-					path: "a.md",
-					content: "v2",
-					content_hash: "H2",
-					deleted: false,
-				},
-			],
-		]);
-		const s = await (engine as any).enumerateServerState();
-		expect(s.notes.size).toBe(1);
-		expect(s.notes.get("a.md")).toEqual({ deleted: false, content: "v2", contentHash: "H2" });
-	});
-
-	test("skips a row with a null path (leaked folder-marker op) — no bogus key", async () => {
-		const engine = createEngine();
-		wireFeed(engine, [
-			[
-				{ type: "note", id: "n1", seq: 1, path: null, content: "", deleted: false },
-				{
-					type: "note",
-					id: "n2",
-					seq: 2,
-					path: "real.md",
-					content: "v",
-					content_hash: "H",
-					deleted: false,
-				},
-			],
-		]);
-		const s = await (engine as any).enumerateServerState();
-		expect(s.notes.size).toBe(1);
-		expect(s.notes.has("real.md")).toBe(true);
-		expect(s.notes.has(null as any)).toBe(false);
-		expect(s.notes.has(undefined as any)).toBe(false);
-	});
-
-	test("a rename folds to the FINAL path only (no ghost old-path row)", async () => {
-		const engine = createEngine();
-		wireFeed(engine, [
-			[
-				{
-					type: "note",
-					id: "n1",
-					seq: 1,
-					path: "old.md",
-					content: "x",
-					content_hash: "H1",
-					deleted: false,
-				},
-				{
-					type: "note",
-					id: "n1",
-					seq: 2,
-					path: "new.md",
-					content: "x",
-					content_hash: "H1",
-					deleted: false,
-				},
-			],
-		]);
-		const s = await (engine as any).enumerateServerState();
-		expect(s.notes.has("old.md")).toBe(false);
-		expect(s.notes.get("new.md")?.deleted).toBe(false);
-	});
-
-	test("a tombstone folds to deleted:true; attachments fold by path", async () => {
-		const engine = createEngine();
-		wireFeed(engine, [
-			[
-				{
-					type: "note",
-					id: "n1",
-					seq: 1,
-					path: "gone.md",
-					content: "x",
-					content_hash: "H1",
-					deleted: false,
-				},
-				{ type: "note", id: "n1", seq: 2, path: "gone.md", deleted: true },
-				{ type: "attachment", seq: 3, path: "img.png", deleted: false },
-				{ type: "attachment", seq: 4, path: "bye.png", deleted: true },
-			],
-		]);
-		const s = await (engine as any).enumerateServerState();
-		expect(s.notes.get("gone.md")?.deleted).toBe(true);
-		expect(s.attachments.get("img.png")).toEqual({ deleted: false });
-		expect(s.attachments.get("bye.png")).toEqual({ deleted: true });
-	});
-
-	test("walks every page (has_more pagination)", async () => {
-		const engine = createEngine();
-		wireFeed(engine, [
-			[
-				{
-					type: "note",
-					id: "n1",
-					seq: 1,
-					path: "a.md",
-					content: "a",
-					content_hash: "HA",
-					deleted: false,
-				},
-			],
-			[
-				{
-					type: "note",
-					id: "n2",
-					seq: 2,
-					path: "b.md",
-					content: "b",
-					content_hash: "HB",
-					deleted: false,
-				},
-			],
-		]);
-		const s = await (engine as any).enumerateServerState();
-		expect([...s.notes.keys()].sort()).toEqual(["a.md", "b.md"]);
-	});
-
-	test("throws when the channel is not live — a wrong empty plan is worse than an error", async () => {
-		const engine = createEngine();
-		engine.setCrdtManager({} as any);
-		engine.setCrdtLiveCheck(() => false);
-		engine.setCrdtCatchupSince(async () => ({ changes: [], has_more: false, next_seq: null }));
-		await expect((engine as any).enumerateServerState()).rejects.toThrow(/live socket/);
-	});
-
-	test("does NOT touch the real catch-up cursor", async () => {
-		const engine = createEngine();
-		engine.setCatchupSeq(7);
-		wireFeed(engine, [
-			[
-				{
-					type: "note",
-					id: "n1",
-					seq: 99,
-					path: "a.md",
-					content: "a",
-					content_hash: "H",
-					deleted: false,
-				},
-			],
-		]);
-		await (engine as any).enumerateServerState();
-		expect(engine.getCatchupSeq()).toBe(7);
-	});
-});
-
 describe("SyncEngine.computeSyncPlan", () => {
-	const row = (o: Partial<any> & { id: string; seq: number; path: string }) => ({
-		type: "note",
-		title: "t",
-		folder: "",
-		tags: [],
-		mtime: 1,
-		updated_at: "2026-01-01T00:00:00Z",
-		deleted: false,
-		...o,
-	});
-
 	test("empty vault and empty server returns zeroed plan", async () => {
 		const engine = createEngine();
 		mockApp.vault.getFiles.mockReturnValue([]);
-		wireFeed(engine, [[]]);
 
 		const plan = await engine.computeSyncPlan("full");
 
@@ -297,21 +111,15 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.toDeleteRemote).toEqual([]);
 	});
 
-	test("channel down: the plan REJECTS instead of rendering a wrong empty preview", async () => {
-		const engine = createEngine();
-		mockApp.vault.getFiles.mockReturnValue([]);
-		engine.setCrdtManager({} as any);
-		engine.setCrdtLiveCheck(() => false);
-		engine.setCrdtCatchupSince(async () => ({ changes: [], has_more: false, next_seq: null }));
-
-		await expect(engine.computeSyncPlan("full")).rejects.toThrow(/live socket/);
-	});
-
 	test("local files not on server are counted as toPush", async () => {
 		const engine = createEngine();
 		const files = [makeTFile("Notes/local-only.md"), makeTFile("Notes/another.md")];
 		mockApp.vault.getFiles.mockReturnValue(files);
-		wireFeed(engine, [[]]); // op-log knows neither path
+		// Server has no changes — files don't exist on server
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [],
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
@@ -321,20 +129,24 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.localNoteCount).toBe(2);
 	});
 
-	test("server rows not present locally are counted as toPull", async () => {
+	test("server changes not present locally are counted as toPull", async () => {
 		const engine = createEngine();
 		mockApp.vault.getFiles.mockReturnValue([]);
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
 					path: "Notes/remote-only.md",
+					title: "Remote",
 					content: "# Remote",
-					content_hash: "H1",
-				}),
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
 			],
-		]);
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
@@ -343,62 +155,54 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.serverNoteCount).toBe(1);
 	});
 
-	test("server tombstones are counted in toDeleteLocal — and never pushed", async () => {
+	test("server deletions are counted in toDeleteLocal", async () => {
 		const engine = createEngine();
+		// Local file exists
 		const localFile = makeTFile("Notes/to-delete.md");
 		mockApp.vault.getFiles.mockReturnValue([localFile]);
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
+		// Server signals deletion
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
 					path: "Notes/to-delete.md",
-					content: "x",
-					content_hash: "H1",
-				}),
-				row({ id: "n1", seq: 2, path: "Notes/to-delete.md", deleted: true }),
+					title: "Gone",
+					content: "",
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: true,
+				},
 			],
-		]);
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.toDeleteLocal).toContain("Notes/to-delete.md");
 		expect(plan.toPull.notes).not.toContain("Notes/to-delete.md");
-		// Delete-wins: a tombstoned path must not be re-pushed by the local-only leg.
-		expect(plan.toPush.notes).not.toContain("Notes/to-delete.md");
-	});
-
-	test("a rename shows NO ghost work for the old path (id fold)", async () => {
-		const engine = createEngine();
-		mockApp.vault.getFiles.mockReturnValue([]);
-		wireFeed(engine, [
-			[
-				row({ id: "n1", seq: 1, path: "Notes/old.md", content: "x", content_hash: "H1" }),
-				row({ id: "n1", seq: 2, path: "Notes/new.md", content: "x", content_hash: "H1" }),
-			],
-		]);
-
-		const plan = await engine.computeSyncPlan("full");
-
-		expect(plan.toPull.notes).toEqual(["Notes/new.md"]);
-		expect(plan.serverNoteCount).toBe(1);
 	});
 
 	test("push-all mode does not include toPull entries", async () => {
 		const engine = createEngine();
+		// Local has one file, server has a different file not locally present
 		mockApp.vault.getFiles.mockReturnValue([makeTFile("Notes/local.md")]);
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
 					path: "Notes/remote-only.md",
+					title: "Remote",
 					content: "# Remote",
-					content_hash: "H1",
-				}),
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
 			],
-		]);
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("push-all");
 
@@ -409,31 +213,36 @@ describe("SyncEngine.computeSyncPlan", () => {
 
 	test("file changed both locally and on server is a conflict", async () => {
 		const engine = createEngine();
+		const originalContent = "# Original";
+		const localContent = "# Modified locally";
 		const file = makeTFile("Notes/both-changed.md");
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.getFileByPath.mockReturnValue(file);
-		mockApp.vault.cachedRead.mockResolvedValue("# Modified locally");
-		// Last converge recorded the ORIGINAL on both axes.
-		engine.importSyncState({
-			"Notes/both-changed.md": { hash: fnv1a("# Original"), serverHash: "OLD-HMAC" },
-		});
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
+		mockApp.vault.cachedRead.mockResolvedValue(localContent);
+
+		// Simulate prior sync with original content hash
+		engine.importHashes({ "Notes/both-changed.md": fnv1a(originalContent) });
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
 					path: "Notes/both-changed.md",
+					title: "Both",
 					content: "# Modified on server",
-					content_hash: "NEW-HMAC",
-				}),
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
 			],
-		]);
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.conflicts).toContain("Notes/both-changed.md");
 		expect(plan.toPull.notes).not.toContain("Notes/both-changed.md");
-		expect(plan.toPush.notes).not.toContain("Notes/both-changed.md");
 	});
 
 	test("file changed only on server (local unchanged) is a pull, not conflict", async () => {
@@ -443,18 +252,25 @@ describe("SyncEngine.computeSyncPlan", () => {
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.getFileByPath.mockReturnValue(file);
 		mockApp.vault.cachedRead.mockResolvedValue(content);
+
+		// Simulate prior sync with same content hash
 		engine.importHashes({ "Notes/server-updated.md": fnv1a(content) });
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
+
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
 					path: "Notes/server-updated.md",
+					title: "Updated",
 					content: "# New server content",
-					content_hash: "NEW-HMAC",
-				}),
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
 			],
-		]);
+			server_time: "2026-01-01T00:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
@@ -462,131 +278,235 @@ describe("SyncEngine.computeSyncPlan", () => {
 		expect(plan.conflicts).not.toContain("Notes/server-updated.md");
 	});
 
-	test("fully-synced vault shows zero work (identical bytes → clean, no push storm)", async () => {
-		// The PR-#31 bug shape: a fully-synced vault must never render
-		// "server: 0 / local: N toPush". The op-log enumeration IS the
-		// inventory, and identical bytes short-circuit to clean.
+	test("incremental full mode: long-synced local files are NOT flagged toPush when manifest confirms server has them", async () => {
+		// Reproduces the bug from closed PR #31 where PreSyncModal showed e.g.
+		// "server: 0 / local: 299 toPush" on a fully-synced vault. computeSyncPlan
+		// was using getChanges(since=lastSync) as server inventory — long-synced
+		// files don't appear in delta, so they got falsely flagged for push.
 		const engine = createEngine();
 		const file = makeTFile("Notes/already-synced.md");
 		mockApp.vault.getFiles.mockReturnValue([file]);
-		mockApp.vault.getFileByPath.mockReturnValue(file);
-		mockApp.vault.cachedRead.mockResolvedValue("# Test\n\nContent");
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
-					path: "Notes/already-synced.md",
-					content: "# Test\n\nContent",
-					content_hash: "H1",
-				}),
-			],
-		]);
+
+		// Last sync was recent — getChanges(since=lastSync) returns no delta
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [],
+			server_time: "2026-05-16T08:00:00Z",
+		});
+		// Manifest is authoritative: server has this note
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/already-synced.md", content_hash: "abc123" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.toPush.notes).toEqual([]);
-		expect(plan.toPull.notes).toEqual([]);
-		expect(plan.conflicts).toEqual([]);
 		expect(plan.serverNoteCount).toBe(1);
 		expect(plan.localNoteCount).toBe(1);
 	});
 
-	test("fresh install (no syncState) with identical server content is clean — no spurious push storm", async () => {
+	test("incremental full mode: file in manifest but missing locally is still toPull when delta carries content", async () => {
+		// Server has a file the user hasn't pulled yet (e.g., another device pushed it).
+		// Manifest lists the path; delta carries the content for pull.
 		const engine = createEngine();
-		const file = makeTFile("Notes/fresh-install.md");
-		mockApp.vault.getFiles.mockReturnValue([file]);
-		mockApp.vault.getFileByPath.mockReturnValue(file);
-		mockApp.vault.cachedRead.mockResolvedValue("# Content");
-		// No syncState at all.
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
-					path: "Notes/fresh-install.md",
-					content: "# Content",
-					content_hash: "H1",
-				}),
+		mockApp.vault.getFiles.mockReturnValue([]);
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
+					path: "Notes/from-other-device.md",
+					title: "Other",
+					content: "# Other device",
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
 			],
-		]);
+			server_time: "2026-05-16T08:00:00Z",
+		});
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/from-other-device.md", content_hash: "xyz" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
+		expect(plan.toPull.notes).toContain("Notes/from-other-device.md");
 		expect(plan.toPush.notes).toEqual([]);
-		expect(plan.conflicts).toEqual([]);
+		expect(plan.serverNoteCount).toBe(1);
 	});
 
-	test("locally-modified note (server unchanged: row hash == recorded serverHash) is flagged toPush", async () => {
+	test("incremental full mode: manifest-unavailable falls back to delta-since-epoch (full inventory query)", async () => {
+		// Older self-hosted backends without /sync/manifest still need to work.
+		// Fallback: widen the delta query to since=epoch so it doubles as inventory.
+		// Slower per-call (one-shot full fetch) but correct.
+		const engine = createEngine();
+		const file = makeTFile("Notes/local.md");
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		(mockApi.getManifest as jest.Mock).mockResolvedValue(null);
+
+		// Stateful mock: server returns the file ONLY when queried since epoch
+		// (i.e., full-inventory mode). A since=lastSync query gets empty.
+		(mockApi.getChanges as jest.Mock).mockImplementation((since: string) =>
+			Promise.resolve({
+				changes:
+					since === "1970-01-01T00:00:00Z"
+						? [
+								{
+									path: "Notes/local.md",
+									title: "Local",
+									content: "# Local",
+									folder: "Notes",
+									tags: [],
+									mtime: Date.now() / 1000,
+									updated_at: new Date().toISOString(),
+									deleted: false,
+								},
+							]
+						: [],
+				server_time: "2026-05-16T08:00:00Z",
+			}),
+		);
+
+		const plan = await engine.computeSyncPlan("full");
+
+		// Fix widened the since param to epoch so the delta returns the full server set
+		expect(mockApi.getChanges).toHaveBeenCalledWith("1970-01-01T00:00:00Z", expect.anything());
+		expect(plan.toPush.notes).toEqual([]);
+	});
+
+	test("locally-modified note (manifest has it, delta empty, hash diverges) is flagged toPush", async () => {
+		// The PreSyncModal previously had no way to surface "you edited a note
+		// since last sync." The delta only carries server-side changes; the
+		// modal silently missed local edits and lied about the work to do.
 		const engine = createEngine();
 		const file = makeTFile("Notes/edited.md");
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.getFileByPath.mockReturnValue(file);
 		mockApp.vault.cachedRead.mockResolvedValue("# Edited locally");
-		engine.importSyncState({
-			"Notes/edited.md": { hash: fnv1a("# Original"), serverHash: "SAME-HMAC" },
+
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		// syncState was recorded at the LAST sync with a different (earlier) content
+		engine.importHashes({ "Notes/edited.md": fnv1a("# Original") });
+
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/edited.md", content_hash: "server-hash" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
 		});
-		wireFeed(engine, [
-			[
-				row({
-					id: "n1",
-					seq: 1,
-					path: "Notes/edited.md",
-					content: "# Original",
-					content_hash: "SAME-HMAC",
-				}),
-			],
-		]);
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [],
+			server_time: "2026-05-16T08:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.toPush.notes).toContain("Notes/edited.md");
 		expect(plan.conflicts).not.toContain("Notes/edited.md");
-		expect(plan.toPull.notes).not.toContain("Notes/edited.md");
 	});
 
-	test("clean bookkeeping without row content: serverHash match + local hash match → no work", async () => {
-		// A row that carries no content payload (e.g. oversized note) must still
-		// classify as clean when BOTH the recorded serverHash matches the row's
-		// hash AND the local hash matches the recorded one.
+	test("locally-modified note NOT double-counted when delta also reports a server change (pull/conflict branch handles it)", async () => {
+		// If a path is in the delta (server changed it), the existing pull/conflict
+		// branches already decide what to do. Adding the same path to toPush via
+		// the locally-modified detector would double-count and confuse the UI.
 		const engine = createEngine();
-		const content = "# Clean";
-		const file = makeTFile("Notes/clean.md");
+		const file = makeTFile("Notes/both.md");
 		mockApp.vault.getFiles.mockReturnValue([file]);
 		mockApp.vault.getFileByPath.mockReturnValue(file);
-		mockApp.vault.cachedRead.mockResolvedValue(content);
-		engine.importSyncState({
-			"Notes/clean.md": { hash: fnv1a(content), serverHash: "SAME-HMAC" },
+		mockApp.vault.cachedRead.mockResolvedValue("# Modified locally");
+
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		engine.importHashes({ "Notes/both.md": fnv1a("# Original") });
+
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/both.md", content_hash: "server-hash" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
 		});
-		wireFeed(engine, [
-			[row({ id: "n1", seq: 1, path: "Notes/clean.md", content_hash: "SAME-HMAC" })],
-		]);
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [
+				{
+					path: "Notes/both.md",
+					title: "Both",
+					content: "# Modified on server",
+					folder: "Notes",
+					tags: [],
+					mtime: Date.now() / 1000,
+					updated_at: new Date().toISOString(),
+					deleted: false,
+				},
+			],
+			server_time: "2026-05-16T08:00:00Z",
+		});
+
+		const plan = await engine.computeSyncPlan("full");
+
+		// Path appears once at most across pull/conflict/push. The pull/conflict
+		// branches above own this path; toPush must not duplicate it.
+		expect(plan.toPush.notes).not.toContain("Notes/both.md");
+	});
+
+	test("file in manifest with NO syncState entry is treated as clean (no spurious push storm on fresh install)", async () => {
+		// A fresh plugin install will have an empty syncState but a vault full
+		// of files the server already holds. Without this guard we'd push every
+		// file unnecessarily. A real content cross-check needs a plugin-side
+		// computable server hash (Tier 3 backend work) — not in scope.
+		const engine = createEngine();
+		const file = makeTFile("Notes/fresh-install.md");
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+		mockApp.vault.cachedRead.mockResolvedValue("# Content");
+
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		// No importHashes call — syncState is empty
+
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/fresh-install.md", content_hash: "server-hash" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
+		(mockApi.getChanges as jest.Mock).mockResolvedValue({
+			changes: [],
+			server_time: "2026-05-16T08:00:00Z",
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
 		expect(plan.toPush.notes).toEqual([]);
-		expect(plan.toPull.notes).toEqual([]);
-		expect(plan.conflicts).toEqual([]);
 	});
 
-	test("attachments ride the same feed: pull missing, delete tombstoned, push local-only", async () => {
+	test("file in manifest with matching syncState hash is clean (no toPush)", async () => {
 		const engine = createEngine();
-		const localImg = makeTFile("img/local-only.png");
-		const localGone = makeTFile("img/server-deleted.png");
-		mockApp.vault.getFiles.mockReturnValue([localImg, localGone]);
-		wireFeed(engine, [
-			[
-				{ type: "attachment", seq: 1, path: "img/remote-only.png", deleted: false },
-				{ type: "attachment", seq: 2, path: "img/server-deleted.png", deleted: true },
-			],
-		]);
+		const file = makeTFile("Notes/clean.md");
+		const content = "# Clean";
+		mockApp.vault.getFiles.mockReturnValue([file]);
+		mockApp.vault.getFileByPath.mockReturnValue(file);
+		mockApp.vault.cachedRead.mockResolvedValue(content);
+
+		engine.setLastSync("2026-05-16T07:00:00Z");
+		engine.importHashes({ "Notes/clean.md": fnv1a(content) });
+
+		(mockApi.getManifest as jest.Mock).mockResolvedValue({
+			notes: [{ path: "Notes/clean.md", content_hash: "server-hash" }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+		});
 
 		const plan = await engine.computeSyncPlan("full");
 
-		expect(plan.toPull.attachments).toContain("img/remote-only.png");
-		expect(plan.toDeleteLocal).toContain("img/server-deleted.png");
-		expect(plan.toPush.attachments).toContain("img/local-only.png");
-		expect(plan.toPush.attachments).not.toContain("img/server-deleted.png");
+		expect(plan.toPush.notes).toEqual([]);
 	});
 
 	test("ignored files (.obsidian/) are excluded from plan", async () => {
@@ -597,7 +517,6 @@ describe("SyncEngine.computeSyncPlan", () => {
 			makeTFile("Notes/legit.md"),
 		];
 		mockApp.vault.getFiles.mockReturnValue(files);
-		wireFeed(engine, [[]]);
 
 		const plan = await engine.computeSyncPlan("full");
 

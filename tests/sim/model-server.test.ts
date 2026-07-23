@@ -102,6 +102,32 @@ test("HTTP GET /notes/:id/updates returns {update, head} and update reconstructs
 	expect(doc.getText("content").toString()).toBe("hello");
 });
 
+test("HTTP GET /vault/heads returns per-note heads", () => {
+	const { server } = boot();
+	server.http({
+		method: "POST",
+		url: "/api/notes",
+		body: JSON.stringify({ path: "a.md", content: "hi", mtime: 1, id: "n1" }),
+	});
+	const j = server.http({ method: "GET", url: "/api/vault/heads" }).json as {
+		heads: Record<string, string>;
+	};
+	expect(typeof j.heads.n1).toBe("string");
+});
+
+test("HTTP GET /notes/changes returns ChangesResponse shape", () => {
+	const { server } = boot();
+	server.http({
+		method: "POST",
+		url: "/api/notes",
+		body: JSON.stringify({ path: "a.md", content: "hi", mtime: 1, id: "n1" }),
+	});
+	const j = server.http({ method: "GET", url: "/api/notes/changes?since=1970-01-01T00:00:00Z" })
+		.json as { changes: unknown[]; server_time: string };
+	expect(Array.isArray(j.changes)).toBe(true);
+	expect(typeof j.server_time).toBe("string");
+});
+
 test("HTTP POST /logs is a 200 no-op", () => {
 	const { server } = boot();
 	expect(server.http({ method: "POST", url: "/api/logs", body: "{}" }).status).toBe(200);

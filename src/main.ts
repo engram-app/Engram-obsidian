@@ -1858,18 +1858,9 @@ export default class EngramSyncPlugin extends Plugin {
 				// Delete (and durable create genesis) now route through the plugin-
 				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
 				// Single-path convergence: seq-ordered op-log replayed over the socket.
-				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
-					// The op-log feed is vault-scoped. A vault switch that skips
-					// setupNoteStream (applyVaultChange, to avoid stacking a modal)
-					// leaves this channel joined to the OLD vault while
-					// settings.vaultId already points at the new one — enumerating
-					// here would render the old vault's state as the new vault's
-					// plan. Refuse rather than mislead; the caller surfaces it.
-					if (channel.getVaultId() !== this.settings.vaultId) {
-						throw new Error("Sync preview needs the live socket (vault switching)");
-					}
-					return channel.crdtCatchupSince(cursorSeq, limit);
-				});
+				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) =>
+					channel.crdtCatchupSince(cursorSeq, limit),
+				);
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by

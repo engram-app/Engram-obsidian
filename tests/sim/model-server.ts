@@ -473,6 +473,8 @@ export class ModelServer {
 		if (method === "POST" && path === "/logs") return ok({ ok: true });
 
 		if (method === "POST" && path === "/notes") return this.restPushNote(body);
+		if (method === "GET" && path === "/notes/changes") return this.restChanges();
+		if (method === "GET" && path === "/vault/heads") return this.restVaultHeads();
 		if (method === "GET" && path === "/sync/manifest") return this.restManifest();
 
 		// /notes/:id/updates (id, not path-encoded — encodeURIComponent single seg)
@@ -542,6 +544,29 @@ export class ModelServer {
 			this.fanoutUpdate("__rest__", n, raw);
 		}
 		return ok({ head: this.head(n) });
+	}
+
+	private restChanges(): SimResponse {
+		const changes = [...this.byId.values()].map((n) => ({
+			path: n.path,
+			title: titleOf(n.path),
+			content: this.text(n),
+			content_hash: this.head(n),
+			folder: folderOf(n.path),
+			tags: [] as string[],
+			mtime: n.seq,
+			updated_at: n.updatedAt,
+			deleted: n.deleted,
+			version: n.version,
+			seq: n.seq,
+		}));
+		return ok({ changes, server_time: nowIso(), has_more: false, next_cursor: null });
+	}
+
+	private restVaultHeads(): SimResponse {
+		const heads: Record<string, string> = {};
+		for (const n of this.byId.values()) heads[n.id] = this.head(n);
+		return ok({ heads });
 	}
 
 	private restManifest(): SimResponse {

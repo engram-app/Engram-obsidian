@@ -3134,6 +3134,29 @@ export class SyncEngine {
 
 	// --- Pull: Engram → local vault ---
 
+	/** Pull remote changes and apply to vault. */
+	/** Page through GET /notes/changes until has_more=false (protocol rev).
+	 *  Pre-rev backends return no has_more — the loop exits after one page,
+	 *  preserving legacy behavior. fields:"meta" requests hash-only pages. */
+	private async fetchAllNoteChanges(
+		since: string,
+		fields?: "meta",
+	): Promise<{ changes: NoteChange[]; server_time: string }> {
+		const all: NoteChange[] = [];
+		let cursor: string | undefined;
+		let serverTime = "";
+		// Loop ceiling is corruption protection (cursor not advancing), not a
+		// real limit: 10k pages × 500 = 5M notes.
+		for (let page = 0; page < 10_000; page++) {
+			const resp = await this.api.getChanges(since, { limit: 500, cursor, fields });
+			all.push(...resp.changes);
+			serverTime = resp.server_time;
+			if (!resp.has_more || !resp.next_cursor) break;
+			cursor = resp.next_cursor;
+		}
+		return { changes: all, server_time: serverTime };
+	}
+
 	/** Free `noteId`'s Y.Doc after a remote update has been applied and its head
 	 *  durably recorded (P3, plugin #232-series). Idle notes are not
 	 *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
@@ -3212,60 +3235,6 @@ export class SyncEngine {
 	 *  cursor — a "replace remote with local" must download nothing (that would
 	 *  materialize remote extras as local orphans, which then resurrect on the
 	 *  next sync), and mustn't steal seq progress from a later genuine catch-up. */
-	/** Enumerate the FULL current server state from the seq-ordered op-log
-	 *  (`crdt_catchup_since` from seq 0). Nothing is applied and the real
-	 *  catch-up cursor is untouched — this is a pure read. Ops fold per note_id
-	 *  with last-seq-wins, so a rename collapses to its FINAL path (no ghost
-	 *  old-path row — better than the retired REST delta, which listed both)
-	 *  and a tombstone folds to `deleted: true`. Attachments ride the same feed
-	 *  and fold by path. Replaced GET /notes/changes + GET /attachments/changes
-	 *  as `computeSyncPlan`'s inventory (#304, REST-purge Bucket C — the
-	 *  preview was their last caller). Throws when the channel is not live: the
-	 *  preview must error visibly, never render a wrong empty plan. */
-	private async enumerateServerState(): Promise<{
-		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
-		attachments: Map<string, { deleted: boolean }>;
-	}> {
-		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
-			throw new Error("Sync preview needs the live socket (op-log enumeration)");
-		}
-		const byId = new Map<string, Extract<SyncChange, { type: "note" }>>();
-		const attachments = new Map<string, { deleted: boolean }>();
-		let cursor = 0;
-		// Loop ceiling is corruption protection, not a real limit (mirrors
-		// runSeqReplayOnce): 100k pages x 500 rows.
-		for (let page = 0; page < 100_000; page++) {
-			const resp = await this.crdtCatchupSince(cursor, 500);
-			for (const c of resp.changes) {
-				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
-				if (c.type === "attachment") {
-					if (c.path) attachments.set(c.path, { deleted: c.deleted });
-				} else if (c.id && c.path) {
-					// Both guards: an id-less or path-less row (a folder-marker op
-					// leaking into the note feed, mirrored from applyOp) would key
-					// the fold on null and surface as a bogus toPull in the plan.
-					byId.set(c.id, c);
-				}
-			}
-			if (!resp.has_more) break;
-			if (typeof resp.next_seq === "number" && resp.next_seq > cursor) {
-				cursor = resp.next_seq;
-			}
-		}
-		const notes = new Map<
-			string,
-			{ deleted: boolean; content?: string; contentHash?: string }
-		>();
-		for (const c of byId.values()) {
-			notes.set(c.path, {
-				deleted: c.deleted,
-				content: c.content,
-				contentHash: c.content_hash,
-			});
-		}
-		return { notes, attachments };
-	}
-
 	async catchupViaSeqReplay(opts: { fromZero?: boolean; enumerateOnly?: boolean } = {}): Promise<{
 		applied: number;
 		serverIds: Set<string>;
@@ -6486,21 +6455,60 @@ export class SyncEngine {
 	 *  - "full"     — bidirectional: compute toPush, toPull, conflicts, deletions
 	 *  - "push-all" — push only: compute toPush, skip toPull
 	 *  - "pull-all" — pull only: compute toPull, skip toPush
-	 *
-	 *  Server state comes from ONE from-genesis op-log enumeration
-	 *  (`enumerateServerState`) — delta and inventory in a single walk. The
-	 *  REST-era split (manifest for inventory, GET /notes/changes for the
-	 *  delta, epoch-widening when the manifest was missing) died with those
-	 *  endpoints (#304). Per-path classification:
-	 *  - identical bytes (row carries content)            → clean, skip
-	 *  - server unchanged (row hash == recorded serverHash):
-	 *      local unchanged → clean · local changed → toPush
-	 *  - server changed: local unchanged → toPull · both changed → conflict
 	 */
 	async computeSyncPlan(mode: "push-all" | "pull-all" | "full"): Promise<SyncPlan> {
-		const server = await this.enumerateServerState();
-		const serverNotes = server.notes;
-		const serverAttachments = server.attachments;
+		const epoch = "1970-01-01T00:00:00Z";
+
+		// Authoritative server inventory for "is this path on the server?" comparisons.
+		// In incremental "full" mode the changes-since-lastSync delta is NOT a valid
+		// inventory — long-synced files don't appear in the delta and were falsely
+		// flagged for push. Prefer /sync/manifest for inventory; fall back to a full
+		// changes-since-epoch query when the server doesn't expose the manifest.
+		let manifestNotePaths: Set<string> | null = null;
+		let manifestAttachPaths: Set<string> | null = null;
+		let manifestNoteCount: number | null = null;
+		let manifestAttachCount: number | null = null;
+
+		if (mode === "full" && this.lastSync) {
+			const manifest = await this.api.getManifest();
+			if (manifest) {
+				manifestNotePaths = new Set(manifest.notes.map((n) => n.path));
+				manifestAttachPaths = new Set(manifest.attachments.map((a) => a.path));
+				manifestNoteCount = manifest.notes.length;
+				manifestAttachCount = manifest.attachments.length;
+			}
+		}
+
+		// Delta query: changes-since-lastSync for content/pull/conflict computation.
+		// When manifest is unavailable (older self-host backend) AND we're in
+		// incremental mode, widen the query to since=epoch so the delta also serves
+		// as a (slower) inventory. This trades a one-off slow query for correctness.
+		const needsDeltaAsInventory =
+			mode === "full" && this.lastSync !== "" && manifestNotePaths === null;
+		const since = mode !== "full" || needsDeltaAsInventory ? epoch : this.lastSync || epoch;
+
+		const [noteResp, attachResp] = await Promise.all([
+			this.fetchAllNoteChanges(since),
+			this.api.getAttachmentChanges(since),
+		]);
+
+		// Build lookup sets from server state
+		const serverNotes = new Map<string, { deleted: boolean }>();
+		for (const c of noteResp.changes) {
+			serverNotes.set(c.path, { deleted: c.deleted });
+		}
+
+		const serverAttachments = new Map<string, { deleted: boolean }>();
+		for (const c of attachResp.changes) {
+			serverAttachments.set(c.path, { deleted: c.deleted });
+		}
+
+		// `serverHasNote/serverHasAttach` returns the authoritative answer:
+		// manifest when present, else the (epoch-widened) delta as fallback.
+		const serverHasNote = (path: string) =>
+			manifestNotePaths ? manifestNotePaths.has(path) : serverNotes.has(path);
+		const serverHasAttach = (path: string) =>
+			manifestAttachPaths ? manifestAttachPaths.has(path) : serverAttachments.has(path);
 
 		// Enumerate local files
 		const allFiles = this.app.vault.getFiles();
@@ -6519,87 +6527,121 @@ export class SyncEngine {
 		const localNoteSet = new Set(localNotes);
 		const localAttachSet = new Set(localAttachments);
 
-		// Categorise server note rows — each path classified exactly once.
+		// Categorise server note changes
 		const toPullNotes: string[] = [];
 		const conflictNotes: string[] = [];
 		const toDeleteLocal: string[] = [];
-		const toPushNotes: string[] = [];
 
-		for (const [path, row] of serverNotes) {
-			if (row.deleted) {
-				// Server tombstone — mark for local deletion if present.
-				if (localNoteSet.has(path)) toDeleteLocal.push(path);
+		for (const [path, { deleted }] of serverNotes) {
+			if (deleted) {
+				// Server deleted — mark for local deletion if present
+				if (localNoteSet.has(path)) {
+					toDeleteLocal.push(path);
+				}
 				continue;
 			}
-			if (!localNoteSet.has(path)) {
-				toPullNotes.push(path);
-				continue;
-			}
-			const file = this.app.vault.getFileByPath(path);
-			if (!file) {
-				toPullNotes.push(path);
-				continue;
-			}
-			const content = await this.app.vault.cachedRead(file);
-			const localHash = fnv1a(content);
-			// Identical bytes — nothing to do, regardless of bookkeeping.
-			if (row.content !== undefined && localHash === fnv1a(row.content)) continue;
-			const synced = this.syncState.get(path);
-			const localChanged = synced?.hash !== undefined && localHash !== synced.hash;
-			// The row's content_hash is the server-side HMAC — uncomputable
-			// locally, but recorded as serverHash on every commit, so equality
-			// proves the server hasn't moved since our last converge.
-			const serverUnchanged =
-				row.contentHash !== undefined &&
-				synced?.serverHash !== undefined &&
-				row.contentHash === synced.serverHash;
-			if (serverUnchanged) {
-				if (localChanged) toPushNotes.push(path);
-				// else: neither side moved (row content just wasn't compared) — clean.
-			} else if (localChanged) {
-				conflictNotes.push(path);
+			if (localNoteSet.has(path)) {
+				// Both sides have it — compare content to see if pull is needed
+				const file = this.app.vault.getFileByPath(path);
+				if (file) {
+					const content = await this.app.vault.cachedRead(file);
+					const localHash = fnv1a(content);
+
+					// Check if server content actually differs from local
+					const serverChange = noteResp.changes.find((c) => c.path === path);
+					const serverHash =
+						serverChange?.content !== undefined
+							? fnv1a(serverChange.content)
+							: undefined;
+
+					if (serverHash !== undefined && localHash === serverHash) {
+						// Content identical — nothing to do, skip entirely
+						continue;
+					}
+
+					const synced = this.syncState.get(path);
+					if (synced?.hash !== undefined && localHash !== synced.hash) {
+						// Local changed since last sync AND server changed — conflict
+						conflictNotes.push(path);
+					} else {
+						// Local unchanged or never synced — server has new content
+						toPullNotes.push(path);
+					}
+				} else {
+					toPullNotes.push(path);
+				}
 			} else {
+				// Only on server — need to pull
 				toPullNotes.push(path);
 			}
 		}
 
-		// Local-only notes → push. A path with ANY server row (even a tombstone)
-		// is not "new" — the tombstone branch owns it (delete-wins; pushing would
-		// fight the <60s recreate refusal).
-		for (const path of localNotes) {
-			if (!serverNotes.has(path)) toPushNotes.push(path);
-		}
-
-		// Categorise server attachment rows
+		// Categorise server attachment changes
 		const toPullAttachments: string[] = [];
 		const toDeleteLocalAttach: string[] = [];
+
 		for (const [path, { deleted }] of serverAttachments) {
 			if (deleted) {
-				if (localAttachSet.has(path)) toDeleteLocalAttach.push(path);
+				if (localAttachSet.has(path)) {
+					toDeleteLocalAttach.push(path);
+				}
 				continue;
 			}
-			if (!localAttachSet.has(path)) toPullAttachments.push(path);
+			if (!localAttachSet.has(path)) {
+				toPullAttachments.push(path);
+			}
+		}
+
+		// Files only local → need to push (not on server at all).
+		// Then for files that ARE on the server but absent from the delta,
+		// compare current local hash against the last-synced hash so a
+		// locally-edited note shows up as toPush. Skip paths the delta
+		// already owns (pull/conflict branches handle those) to avoid
+		// double-counting. A missing syncState entry is treated as clean —
+		// a true content cross-check needs a plugin-computable server hash
+		// (separate backend work).
+		const toPushNotes: string[] = [];
+		for (const path of localNotes) {
+			if (!serverHasNote(path)) {
+				toPushNotes.push(path);
+				continue;
+			}
+			if (serverNotes.has(path)) continue;
+			const file = this.app.vault.getFileByPath(path);
+			if (!file) continue;
+			const content = await this.app.vault.cachedRead(file);
+			const localHash = fnv1a(content);
+			const synced = this.syncState.get(path);
+			if (synced?.hash !== undefined && synced.hash !== localHash) {
+				toPushNotes.push(path);
+			}
 		}
 
 		const toPushAttachments: string[] = [];
 		for (const path of localAttachments) {
-			if (!serverAttachments.has(path)) toPushAttachments.push(path);
+			if (!serverHasAttach(path)) {
+				toPushAttachments.push(path);
+			}
 		}
 
-		const liveNotePaths = [...serverNotes.entries()]
-			.filter(([, v]) => !v.deleted)
-			.map(([k]) => k);
-		const liveAttachPaths = [...serverAttachments.entries()]
-			.filter(([, v]) => !v.deleted)
-			.map(([k]) => k);
-		const serverPaths = [...liveNotePaths, ...liveAttachPaths];
 		const localFolderCount = countFolders([...localNotes, ...localAttachments]);
+		const serverPaths = manifestNotePaths
+			? [...manifestNotePaths, ...(manifestAttachPaths ?? new Set<string>())]
+			: [
+					...[...serverNotes.entries()].filter(([, v]) => !v.deleted).map(([k]) => k),
+					...[...serverAttachments.entries()]
+						.filter(([, v]) => !v.deleted)
+						.map(([k]) => k),
+				];
 		const serverFolderCount = countFolders(serverPaths);
 
 		return {
 			vaultName: this.app.vault.getName(),
-			serverNoteCount: liveNotePaths.length,
-			serverAttachmentCount: liveAttachPaths.length,
+			serverNoteCount:
+				manifestNoteCount ?? [...serverNotes.values()].filter((v) => !v.deleted).length,
+			serverAttachmentCount:
+				manifestAttachCount ??
+				[...serverAttachments.values()].filter((v) => !v.deleted).length,
 			serverFolderCount,
 			localNoteCount: localNotes.length,
 			localAttachmentCount: localAttachments.length,

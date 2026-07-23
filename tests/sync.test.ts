@@ -13,6 +13,7 @@ const mockApi = {
 	// Legacy-backend shape: no batch endpoint — engine falls back to per-note
 	// pushes, which is exactly what these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
+	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -37,6 +38,9 @@ const mockApi = {
 		updated_at: "2026-03-01T12:00:00Z",
 	}),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
+	getAttachmentChanges: jest
+		.fn()
+		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: jest
@@ -2280,6 +2284,14 @@ describe("SyncEngine pull accuracy", () => {
 		engine.setLastSync(oldSync);
 
 		// Pull will update lastSync to a newer server_time
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-01T12:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-01T12:00:00Z",
+		});
 
 		// A file modified between old lastSync and new server_time.
 		// .canvas so pushModifiedFiles' selected file takes the LWW REST route.
@@ -2313,6 +2325,14 @@ describe("SyncEngine pull accuracy", () => {
 		});
 
 		// Pull returns no changes but advances lastSync to a recent server_time.
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
 
 		// Tracked local file modified Feb 15 — BEFORE the post-pull server_time.
 		const trackedFile = new TFile(
@@ -2338,6 +2358,14 @@ describe("SyncEngine pull accuracy", () => {
 		const phases: string[] = [];
 		engine.onSyncProgress = (p) => phases.push(p.phase);
 
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
 		const a = new TFile("Notes/A.md", new Date("2026-02-15T00:00:00Z").getTime());
 		const b = new TFile("Notes/B.md", new Date("2026-02-15T00:00:00Z").getTime());
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([a, b]);
@@ -2353,6 +2381,14 @@ describe("SyncEngine pull accuracy", () => {
 		// pushModifiedFiles treats them as untracked and re-pushes them on every
 		// Merge (the "pulled 0 pushed 10 every time" loop for binary files).
 		const engine = createEngine();
+
+		// Two pulls, both empty (new/empty remote), each advancing lastSync.
+		(mockApi.getChanges as jest.Mock)
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-02T00:00:00Z" })
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-03T00:00:00Z" });
+		(mockApi.getAttachmentChanges as jest.Mock)
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-02T00:00:00Z" })
+			.mockResolvedValueOnce({ changes: [], server_time: "2026-03-03T00:00:00Z" });
 
 		// One attachment, last modified long ago (not edited between runs).
 		const png = new TFile("Assets/photo.png", new Date("2026-02-15T00:00:00Z").getTime());
@@ -2372,6 +2408,14 @@ describe("SyncEngine pull accuracy", () => {
 		engine.setSyncStateVaultId("vault-old"); // syncState belongs to a different vault
 		engine.importSyncState({ "Notes/Stale.md": { hash: 111 } });
 
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
 
 		await engine.fullSync();
@@ -2385,6 +2429,14 @@ describe("SyncEngine pull accuracy", () => {
 		engine.setSyncStateVaultId("vault-1");
 		engine.importSyncState({ "Notes/Keep.md": { hash: 222 } });
 
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
 
 		await engine.fullSync();
@@ -2397,6 +2449,14 @@ describe("SyncEngine pull accuracy", () => {
 		// No setSyncStateVaultId — simulates pre-upgrade data with existing state.
 		engine.importSyncState({ "Notes/Legacy.md": { hash: 333 } });
 
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-03-02T00:00:00Z",
+		});
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValueOnce([]);
 
 		await engine.fullSync();
@@ -2578,6 +2638,7 @@ describe("SyncEngine auth validation", () => {
 		const engine = createEngine();
 
 		await expect(engine.fullSync()).rejects.toThrow("Invalid API key");
+		expect(mockApi.getChanges).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
@@ -3781,6 +3842,25 @@ describe("SyncEngine.pullAll with deleteLocalExtras", () => {
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([
 			new TFile("local-only.md", Date.now()),
 		]);
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [
+				{
+					path: "remote.md",
+					title: "remote",
+					content: "# remote",
+					folder: "",
+					tags: [],
+					mtime: 1709345678,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			server_time: "2026-01-01T00:00:01Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-01-01T00:00:01Z",
+		});
 
 		await engine.pullAll({ deleteLocalExtras: false });
 
@@ -3791,6 +3871,25 @@ describe("SyncEngine.pullAll with deleteLocalExtras", () => {
 		const engine = createEngine();
 		const localOnly = new TFile("local-only.md", Date.now());
 		(mockApp.vault.getFiles as jest.Mock).mockReturnValue([localOnly]);
+		(mockApi.getChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [
+				{
+					path: "remote.md",
+					title: "remote",
+					content: "# remote",
+					folder: "",
+					tags: [],
+					mtime: 1709345678,
+					updated_at: "2026-01-01T00:00:00Z",
+					deleted: false,
+				},
+			],
+			server_time: "2026-01-01T00:00:01Z",
+		});
+		(mockApi.getAttachmentChanges as jest.Mock).mockResolvedValueOnce({
+			changes: [],
+			server_time: "2026-01-01T00:00:01Z",
+		});
 
 		await engine.pullAll({ deleteLocalExtras: true });
 
@@ -3831,14 +3930,14 @@ describe("SyncEngine sync-blocked gate", () => {
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 	});
 
-	test("setSyncBlocked(true) makes pullAll return 0 without touching the server", async () => {
+	test("setSyncBlocked(true) makes pullAll return 0 without calling getChanges", async () => {
 		const engine = createEngine();
 		engine.setSyncBlocked(true);
 
 		const pulled = await engine.pullAll({ deleteLocalExtras: false });
 
 		expect(pulled).toBe(0);
-		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(mockApi.getChanges).not.toHaveBeenCalled();
 	});
 
 	test("setSyncBlocked(true) makes pushAll return 0 without calling ping/pushNote", async () => {
@@ -3859,7 +3958,7 @@ describe("SyncEngine sync-blocked gate", () => {
 		const result = await engine.fullSync();
 
 		expect(result).toEqual({ pulled: 0, pushed: 0 });
-		expect(mockApi.pushNote).not.toHaveBeenCalled();
+		expect(mockApi.getChanges).not.toHaveBeenCalled();
 	});
 
 	test("setSyncBlocked(false) restores normal handleModify", async () => {

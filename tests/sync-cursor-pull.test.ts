@@ -5,7 +5,7 @@
  * The REST cursor-pull cluster (pull/bootstrap/pullViaCursor/getSyncChanges +
  * syncCursor) was deleted in the REST-purge Bucket A migration — catch-up now
  * runs entirely over the socket seq-replay (catchupViaSeqReplay → applySyncChange).
- * What survives and is exercised here: the X-Device-Id header on REST requests,
+ * What survives and is exercised here: the X-Device-Id header on getChanges,
  * applySyncChange's dispatch to applyChange/applyAttachmentChange, and
  * reconcileFromManifest (server-delete-local + folder markers).
  */
@@ -36,9 +36,9 @@ describe("X-Device-Id header", () => {
 		api.setDeviceId("dev-xyz");
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		expect(mockRequestUrl).toHaveBeenCalledWith(
 			expect.objectContaining({
 				headers: expect.objectContaining({
@@ -51,9 +51,9 @@ describe("X-Device-Id header", () => {
 	test("omits X-Device-Id when no device id is set", async () => {
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		const headers = mockRequestUrl.mock.calls[0][0].headers;
 		expect(headers["X-Device-Id"]).toBeUndefined();
 	});
@@ -63,9 +63,9 @@ describe("X-Device-Id header", () => {
 		api.setDeviceId(null);
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		const headers = mockRequestUrl.mock.calls[0][0].headers;
 		expect(headers["X-Device-Id"]).toBeUndefined();
 	});
@@ -74,9 +74,9 @@ describe("X-Device-Id header", () => {
 		api.setDeviceId("");
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		const headers = mockRequestUrl.mock.calls[0][0].headers;
 		expect(headers["X-Device-Id"]).toBeUndefined();
 	});
@@ -85,17 +85,17 @@ describe("X-Device-Id header", () => {
 		api.setDeviceId("dev-1");
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		expect(mockRequestUrl.mock.calls[0][0].headers["X-Device-Id"]).toBe("dev-1");
 
 		api.setDeviceId("dev-2");
 		mockRequestUrl.mockResolvedValueOnce({
 			status: 200,
-			json: { notes: [], attachments: [] },
+			json: { changes: [], server_time: "2026-01-01T00:00:00Z" },
 		} as any);
-		await api.getManifest();
+		await api.getChanges("2026-01-01T00:00:00Z");
 		expect(mockRequestUrl.mock.calls[1][0].headers["X-Device-Id"]).toBe("dev-2");
 	});
 });
