@@ -23,20 +23,7 @@ TODOs and open issues live in GitHub Issues for this repo — `gh issue list` to
 
 > **Multi-repo project.** This plugin is one half of Engram. For cross-project work (API changes, debugging plugin↔backend, deploy), open `../engram-workspace/` instead. See `../engram-workspace/docs/workspace-pattern.md` for when to use what.
 
-For plugin internals (class map, sync algorithm, API endpoints, type definitions), read `docs/internals.md`.
-For CDP and Obsidian remote debugging (MCP devtools, evaluate_script), read `docs/engram-ops.md`.
-For server ops, infrastructure, and deployment, read `../engram-workspace/docs/deployment.md`.
-For backend REST API (all endpoints, pipelines, auth, config), read `../engram-workspace/docs/api-contract.md`.
-For cross-project debugging workflows, read `../engram-workspace/docs/debugging.md`.
-For Obsidian API best practices and correct usage patterns, read `docs/context/obsidian-api-reference.md`.
-For audit of API misuses and improvement opportunities, read `docs/context/obsidian-api-audit.md`.
-For submitting to the Community Plugins directory (new flow as of 2026-05-12), read `docs/context/obsidian-community-submission.md`.
-For the 3-way merge conflict-resolution algorithm, read `docs/context/three-way-merge.md`.
-For the SSE→WebSocket sync-stream migration (`channel.ts`; the live topic is `sync:{userId}:{vaultId}`, event `note_changed`), read `docs/context/websocket-migration.md`.
-For the logging architecture (dev-log categories, remote-log thresholds), read `docs/context/logging-architecture.md`.
-For the Obsidian mtime quirk that sync logic must account for, read `docs/context/obsidian-mtime-quirk.md`.
-For the 2026-03 pull-sync bug cluster (four interrelated pull-breaking bugs, fixed), read `docs/context/pull-sync-bug-cluster.md`.
-For V8 OOM prevention on large-vault operations, read `docs/context/v8-oom-prevention.md`.
+See "Context Docs" below for the full doc-pointer index (plugin internals, ops, cross-repo, Obsidian API, sync/CRDT architecture, scripts).
 
 ## What This Plugin Does
 
@@ -161,12 +148,28 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 
 ## Context Docs
 
-If you need info on the `version-bump.mjs` script (and the silent-corruption foot-gun where running it directly drops the `version` key from `manifest.json`), see `docs/context/version-bump-script.md`
+**Plugin internals & ops**
+- Class map, sync algorithm, API endpoints, type definitions → `docs/internals.md`
+- CDP + Obsidian remote debugging (MCP devtools, evaluate_script) → `docs/engram-ops.md`
+- Version-bump.mjs foot-gun (running it directly drops `version` from `manifest.json`) → `docs/context/version-bump-script.md`
 
-If a note's content gets copied into a DIFFERENT file on file-switch with a clean noteIdMap (the editor-binding stale-buffer race, PR #194) — the bindTo await gap where the old ySync binding captured Obsidian's setViewData whole-doc replace, the sync-detach-before-await + bindEpoch + drift view-identity-guard fix, and why detach-not-release matters in the drift guard, see `docs/context/crdt-editor-bind-race-pollution.md`
+**Cross-repo (workspace)**
+- Server ops, infra, deployment → `../engram-workspace/docs/deployment.md`
+- Backend REST API contract (endpoints, pipelines, auth, config) → `../engram-workspace/docs/api-contract.md`
+- Cross-project debugging workflows (plugin → backend tracing) → `../engram-workspace/docs/debugging.md`
 
-If a missed CRDT delivery never heals (create-race dead local id → `crdt_channel: dropped crdt_msg → not_found` in Loki, edge-triggered announce black hole, or an ignorant push "convergently" deleting content the client never saw) — the catch-up convergence system from PRs #197 + #198 (id adoption parity, base_hash CAS 409, pull backfill, reset+enroll as the universal re-deliver primitive; per-open `verifyConvergenceOnOpen` REMOVED in the B1 rewire, superseded by socket vault-catchup on connect/reconnect via `catchupViaSocket()`), see `docs/context/sync-catchup-convergence.md`
+**Obsidian API & plugin listing**
+- Obsidian API best practices and correct usage patterns → `docs/context/obsidian-api-reference.md`
+- Submitting to the Community Plugins directory (new flow as of 2026-05-12) → `docs/context/obsidian-community-submission.md`
+- Obsidian mtime quirk (`vault.modify()` sets mtime to "now" — can't use mtime comparison to decide whether to apply a remote change) → `docs/context/obsidian-mtime-quirk.md`
+- Community-scanner `no-unsafe-*` false-positive flood / outside contributors can't `bun install` (registry-poisoned lockfile; `scripts/check-lockfile-registry.mjs` guard) → `docs/context/scanner-type-resolution.md`
 
-If the public plugin listing's scorecard reports a huge pile of `@typescript-eslint/no-unsafe-*` findings against plain Obsidian API lines (`super(app)`, `contentEl.empty()`), or an outside contributor cannot `bun install` at all. Root cause is `registry=http://10.0.20.214:4873` in `~/.npmrc`: bun and npm bake the configured host into every lockfile entry, so the scanner's sandbox installed nothing, `obsidian` never resolved, and every API value became TypeScript's *error* type; covers the one-command `mv node_modules/obsidian` diagnostic (0 vs 3148 findings), why the 2026-05 `package-lock.json` attempt (PR #125) produced a false negative from a poisoned artifact, the measured bun 1.3.11 behaviours (lockfile URL beats `--registry`, `bun add` rewrites every entry, no `replace-registry-host`), the scanner's own config chain (`eslint-plugin-obsidianmd` recommended + `recommendedTypeChecked`, not our `eslint.config.mts`), and the `scripts/check-lockfile-registry.mjs` guard, see `docs/context/scanner-type-resolution.md`
+**Sync / CRDT architecture & bug classes**
+- 3-way merge conflict-resolution algorithm → `docs/context/three-way-merge.md`
+- Logging architecture (dev-log categories, remote-log thresholds) → `docs/context/logging-architecture.md`
+- V8 OOM prevention on large-vault operations → `docs/context/v8-oom-prevention.md`
+- Editor-binding stale-buffer race (note content copied into a DIFFERENT file on file-switch, PR #194 — bindTo await gap, sync-detach-before-await + bindEpoch + drift view-identity-guard fix) → `docs/context/crdt-editor-bind-race-pollution.md`
+- Missed CRDT delivery healing (catch-up convergence: id adoption parity, base_hash CAS 409, pull backfill, socket vault-catchup via `catchupViaSocket()`) → `docs/context/sync-catchup-convergence.md`
+- Convergence sim tier fidelity gaps (`tests/sim/` — differential gate pays rent; seeded random-op suite does NOT converge, kept as a runnable tool not a test) → `docs/context/crdt-convergence-sim-fidelity-gaps.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
