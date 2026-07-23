@@ -1483,7 +1483,15 @@ function fullJitterDelay(windowMs, rng = Math.random) {
 function topicUserIdIsStale(currentUserId, authenticatedUserId) {
   return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
 }
-var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
+var LARGE_FRAME_WARN_BYTES = 1e6;
+function makeCrdtCatchupSender(channel, currentVaultId) {
+  return (cursorSeq, limit, cursorId) => {
+    if (channel.getVaultId() !== currentVaultId())
+      throw new Error("Sync preview needs the live socket (vault switching)");
+    return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
+  };
+}
+var NoteChannel = class {
   constructor(baseUrl, apiKey, userId, vaultId = null, deviceId = null) {
     this.ws = null;
     this.ref = 0;
@@ -24292,11 +24300,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
-        if (channel.getVaultId() !== this.settings.vaultId)
-          throw new Error("Sync preview needs the live socket (vault switching)");
-        return channel.crdtCatchupSince(cursorSeq, limit);
-      }), this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
+        makeCrdtCatchupSender(channel, () => this.settings.vaultId)
+      ), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),

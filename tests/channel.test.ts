@@ -3,7 +3,7 @@
  */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
-import { NoteChannel, connectRetryDelayMs } from "../src/channel";
+import { NoteChannel, connectRetryDelayMs, makeCrdtCatchupSender } from "../src/channel";
 
 // Capture WebSocket constructor calls
 let lastWsUrl: string | null = null;
@@ -792,5 +792,40 @@ describe("NoteChannel onResume (mobile foreground recovery)", () => {
 		expect(lastWsInstance).toBeNull();
 
 		(globalThis as any).WebSocket = MockWebSocket;
+	});
+});
+
+describe("makeCrdtCatchupSender (wiring #312/#314)", () => {
+	function fakeChannel(vaultId: string | null) {
+		const calls: Array<[number, number | undefined, string | null | undefined]> = [];
+		return {
+			calls,
+			getVaultId: () => vaultId,
+			crdtCatchupSince: async (
+				cursorSeq: number,
+				limit?: number,
+				cursorId?: string | null,
+			) => {
+				calls.push([cursorSeq, limit, cursorId]);
+				return { changes: [], has_more: false, next_seq: null };
+			},
+		};
+	}
+
+	test("forwards ALL THREE args incl. the composite cursorId (#312)", async () => {
+		// Regression guard: the production wiring once dropped cursorId (arity-2
+		// closure), making the whole composite-cursor fix inert — TS bivariance
+		// didn't flag it.
+		const ch = fakeChannel("v1");
+		const send = makeCrdtCatchupSender(ch, () => "v1");
+		await send(5, 500, "row-id");
+		expect(ch.calls[0]).toEqual([5, 500, "row-id"]);
+	});
+
+	test("throws on a vault mismatch instead of enumerating the wrong vault (#314)", () => {
+		const ch = fakeChannel("old-vault");
+		const send = makeCrdtCatchupSender(ch, () => "new-vault");
+		expect(() => send(0, 500, null)).toThrow(/vault switching/);
+		expect(ch.calls).toHaveLength(0);
 	});
 });

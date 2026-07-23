@@ -99,6 +99,29 @@ const LARGE_FRAME_WARN_BYTES = 1_000_000;
  */
 import type { NoteStreamEvent, SyncChange } from "./types";
 
+/** Build the catch-up sender the SyncEngine calls (`setCrdtCatchupSince`).
+ *  Guards each fetch against a vault mismatch — a stale channel enumerating the
+ *  WRONG vault would render it as the current vault's plan (#314) — and forwards
+ *  ALL THREE args, including the composite `cursorId` (#312). Extracted from
+ *  main.ts's inline wiring precisely so a dropped arg is caught by a unit test:
+ *  TS parameter bivariance silently accepts a shorter closure, so the compiler
+ *  won't flag `(seq, limit) => ...` where `(seq, limit, id) => ...` is meant. */
+export function makeCrdtCatchupSender(
+	channel: Pick<NoteChannel, "getVaultId" | "crdtCatchupSince">,
+	currentVaultId: () => string | null,
+): (
+	cursorSeq: number,
+	limit?: number,
+	cursorId?: string | null,
+) => ReturnType<NoteChannel["crdtCatchupSince"]> {
+	return (cursorSeq, limit, cursorId) => {
+		if (channel.getVaultId() !== currentVaultId()) {
+			throw new Error("Sync preview needs the live socket (vault switching)");
+		}
+		return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
+	};
+}
+
 export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
