@@ -1633,6 +1633,13 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   get userTopic() {
     return `user:${this.userId}`;
   }
+  /** The server vault this channel is joined to (`crdt:{userId}:{vaultId}`),
+   *  or null before a vault is bound. Callers reading vault-scoped state off
+   *  the socket must confirm this matches their intended vault — a vault
+   *  switch that skips setupNoteStream leaves this channel on the old vault. */
+  getVaultId() {
+    return this.vaultId;
+  }
   get crdtTopic() {
     return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
@@ -19646,7 +19653,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let page = 0; page < 1e5; page++) {
       let resp = await this.crdtCatchupSince(cursor, 500);
       for (let c of resp.changes)
-        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? attachments.set(c.path, { deleted: c.deleted }) : c.id && byId.set(c.id, c);
+        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.path && attachments.set(c.path, { deleted: c.deleted }) : c.id && c.path && byId.set(c.id, c);
       if (!resp.has_more) break;
       typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
     }
@@ -24239,9 +24246,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
-        (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
-      ), this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
+        if (channel.getVaultId() !== this.settings.vaultId)
+          throw new Error("Sync preview needs the live socket (vault switching)");
+        return channel.crdtCatchupSince(cursorSeq, limit);
+      }), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),

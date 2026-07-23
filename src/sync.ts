@@ -3239,8 +3239,11 @@ export class SyncEngine {
 			for (const c of resp.changes) {
 				if (typeof c.seq === "number" && c.seq > cursor) cursor = c.seq;
 				if (c.type === "attachment") {
-					attachments.set(c.path, { deleted: c.deleted });
-				} else if (c.id) {
+					if (c.path) attachments.set(c.path, { deleted: c.deleted });
+				} else if (c.id && c.path) {
+					// Both guards: an id-less or path-less row (a folder-marker op
+					// leaking into the note feed, mirrored from applyOp) would key
+					// the fold on null and surface as a bogus toPull in the plan.
 					byId.set(c.id, c);
 				}
 			}

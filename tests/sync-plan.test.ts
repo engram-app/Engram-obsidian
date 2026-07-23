@@ -130,6 +130,29 @@ describe("SyncEngine.enumerateServerState", () => {
 		expect(s.notes.get("a.md")).toEqual({ deleted: false, content: "v2", contentHash: "H2" });
 	});
 
+	test("skips a row with a null path (leaked folder-marker op) — no bogus key", async () => {
+		const engine = createEngine();
+		wireFeed(engine, [
+			[
+				{ type: "note", id: "n1", seq: 1, path: null, content: "", deleted: false },
+				{
+					type: "note",
+					id: "n2",
+					seq: 2,
+					path: "real.md",
+					content: "v",
+					content_hash: "H",
+					deleted: false,
+				},
+			],
+		]);
+		const s = await (engine as any).enumerateServerState();
+		expect(s.notes.size).toBe(1);
+		expect(s.notes.has("real.md")).toBe(true);
+		expect(s.notes.has(null as any)).toBe(false);
+		expect(s.notes.has(undefined as any)).toBe(false);
+	});
+
 	test("a rename folds to the FINAL path only (no ghost old-path row)", async () => {
 		const engine = createEngine();
 		wireFeed(engine, [
