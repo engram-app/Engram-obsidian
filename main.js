@@ -802,6 +802,4587 @@ async function applyApiUrlChange(target, newUrl, save) {
   return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
 }
 
+// src/limit-error.ts
+var LimitExceededError = class extends Error {
+  constructor(reason, upgradeUrl, limitKey, limit, current) {
+    super(`Engram limit: ${reason}`);
+    this.reason = reason;
+    this.upgradeUrl = upgradeUrl;
+    this.limitKey = limitKey;
+    this.limit = limit;
+    this.current = current;
+    this.name = "LimitExceededError";
+    /** HTTP status that produced this error. Always 402 (the limit status). */
+    this.status = 402;
+  }
+};
+
+// src/observability/beacon.ts
+var BeaconBuffer = class {
+  constructor(transport) {
+    this.transport = transport;
+    this.queue = [];
+    // window.setTimeout/clearTimeout (not the bare globals) for popout-window
+    // compatibility, per obsidianmd/prefer-window-timers.
+    this.timer = null;
+  }
+  enqueue(entry) {
+    this.queue.push(entry), this.queue.length >= 20 ? this.flush() : this.timer === null && (this.timer = window.setTimeout(() => this.flush(), 2e3));
+  }
+  flush() {
+    if (this.timer !== null && (window.clearTimeout(this.timer), this.timer = null), this.queue.length === 0) return;
+    let batch = this.queue.splice(0, this.queue.length);
+    try {
+      let t = this.transport();
+      if (!t) return;
+      window.fetch(`${t.baseUrl}/telemetry/spans`, {
+        method: "POST",
+        keepalive: !0,
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${t.token}`,
+          "X-Vault-ID": t.vaultId,
+          "X-Device-Id": t.deviceId
+        },
+        body: JSON.stringify({ spans: batch })
+      }).catch(() => {
+      });
+    } catch (e) {
+    }
+  }
+};
+
+// src/observability/traceGen.ts
+function hex(bytes) {
+  let buf = new Uint8Array(bytes);
+  return crypto.getRandomValues(buf), Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+function newTraceContext() {
+  let traceId = hex(16), spanId = hex(8);
+  return { traceparent: `00-${traceId}-${spanId}-01`, traceId, spanId };
+}
+
+// src/remote-log.ts
+var RemoteLogger = class {
+  constructor() {
+    this.buffer = [];
+    this.flushTimer = null;
+    this.pushFn = null;
+    this.enabled = !1;
+    this.pluginVersion = "";
+    this.platform = "";
+    this.flushing = !1;
+    this.connId = null;
+    this.deviceId = null;
+    this.vaultId = null;
+    this.seq = 0;
+  }
+  configure(pushFn, pluginVersion, platform) {
+    this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
+  }
+  setEnabled(enabled) {
+    this.enabled = enabled, enabled ? this.startTimer() : (this.stopTimer(), this.flush());
+  }
+  error(category, message, stack) {
+    this.addEntry("error", category, message, stack);
+  }
+  warn(category, message) {
+    this.addEntry("warn", category, message);
+  }
+  info(category, message) {
+    this.addEntry("info", category, message);
+  }
+  setConnId(id2) {
+    this.connId = id2;
+  }
+  setClientContext(deviceId, vaultId) {
+    this.deviceId = deviceId, this.vaultId = vaultId;
+  }
+  /** Diagnostic-flagged info entry (verbose firehose). The backend ships
+   *  diagnostic entries to Loki even at info level. */
+  diag(category, message) {
+    this.addEntry("info", category, message, void 0, !0);
+  }
+  async flush() {
+    if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
+    let batch = this.buffer.splice(0, this.buffer.length);
+    this.flushing = !0;
+    try {
+      await this.pushFn(batch);
+    } catch (e) {
+      let space = 200 - this.buffer.length;
+      space > 0 && this.buffer.unshift(...batch.slice(0, space));
+    } finally {
+      this.flushing = !1;
+    }
+  }
+  async destroy() {
+    this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
+  }
+  addEntry(level, category, message, stack, diagnostic) {
+    if (!this.enabled || !this.pushFn) return;
+    let entry = {
+      ts: (/* @__PURE__ */ new Date()).toISOString(),
+      level,
+      category,
+      message,
+      plugin_version: this.pluginVersion,
+      platform: this.platform,
+      seq: this.seq++
+    };
+    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
+  }
+  startTimer() {
+    this.stopTimer(), this.flushTimer = window.setInterval(() => {
+      this.flush();
+    }, 3e4);
+  }
+  stopTimer() {
+    this.flushTimer && (window.clearInterval(this.flushTimer), this.flushTimer = null);
+  }
+}, _noop = {
+  error() {
+  },
+  warn() {
+  },
+  info() {
+  },
+  diag() {
+  },
+  setConnId() {
+  },
+  setClientContext() {
+  },
+  async flush() {
+  },
+  async destroy() {
+  },
+  setEnabled() {
+  },
+  configure() {
+  }
+}, _instance = null;
+function initRemoteLog() {
+  return _instance = new RemoteLogger(), _instance;
+}
+function rlog() {
+  return _instance != null ? _instance : _noop;
+}
+async function destroyRemoteLog() {
+  await (_instance == null ? void 0 : _instance.destroy()), _instance = null;
+}
+
+// src/api.ts
+var RequestTimeoutError = class extends Error {
+  constructor(ms) {
+    super(`Request timed out after ${ms}ms`), this.name = "RequestTimeoutError";
+  }
+};
+async function withTimeout(p, ms) {
+  let timer, deadline = new Promise((_, reject) => {
+    timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
+  });
+  try {
+    return await Promise.race([p, deadline]);
+  } finally {
+    window.clearTimeout(timer);
+  }
+}
+var EngramApi = class _EngramApi {
+  constructor(baseUrl, apiKey) {
+    this.baseUrl = baseUrl;
+    this.apiKey = apiKey;
+    /** Deadline for note/metadata requests. Instance fields (not consts) so
+     *  tests can shrink them; attachments get a longer one — a large upload on
+     *  a slow link legitimately outlives the note deadline. */
+    this.requestTimeoutMs = 15e3;
+    this.attachmentTimeoutMs = 12e4;
+    /** Bulk pages (batch push, change feeds) can carry many full note bodies —
+     *  15s starves a slow link, 120s is a transfer budget they don't need. */
+    this.bulkTimeoutMs = 6e4;
+    /** In-flight sendRequest calls, so a channel-disconnect signal can probe
+     *  for wedged connections and fail them early (see failWedgedRequests). */
+    this.inflight = /* @__PURE__ */ new Set();
+    /** Single-flight latch for failWedgedRequests (see there). */
+    this.wedgeProbeInFlight = !1;
+    this.vaultId = null;
+    this.deviceId = null;
+    this.authProvider = null;
+    // Dark-launch gate for distributed tracing. Disabled cost must stay a
+    // single boolean check, see sendRequest.
+    this.tracingEnabled = !1;
+    // Cached from the most recent sendRequest call so the beacon transport
+    // thunk (invoked later, on the buffer's own flush timer) can post with a
+    // still-valid token without re-awaiting the auth provider.
+    this.lastToken = "";
+    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.beacon = new BeaconBuffer(() => {
+      var _a, _b;
+      return this.tracingEnabled ? {
+        baseUrl: this.baseUrl,
+        token: this.lastToken,
+        vaultId: (_a = this.getActiveVaultId()) != null ? _a : "",
+        deviceId: (_b = this.deviceId) != null ? _b : ""
+      } : null;
+    });
+  }
+  /** Enable/disable trace header injection + the obsidian.push beacon. When
+   *  false, sendRequest does no id generation, no timing capture, no header,
+   *  and enqueues nothing: cost is exactly one boolean check. */
+  setTracingEnabled(enabled) {
+    this.tracingEnabled = enabled;
+  }
+  setVaultId(id2) {
+    this.vaultId = id2;
+  }
+  /** Set the per-install device id sent as X-Device-Id on cursor pulls. */
+  setDeviceId(id2) {
+    this.deviceId = id2 && id2.length > 0 ? id2 : null;
+  }
+  setAuthProvider(provider) {
+    this.authProvider = provider;
+  }
+  getActiveVaultId() {
+    return this.authProvider ? this.authProvider.getVaultId() : this.vaultId;
+  }
+  async getAuthToken() {
+    return this.authProvider ? this.authProvider.getToken() : this.apiKey;
+  }
+  /** Strip trailing slashes and append /api if not already present. */
+  static normalizeBaseUrl(url) {
+    let base = url.replace(/\/+$/, "");
+    return base.endsWith("/api") ? base : `${base}/api`;
+  }
+  /** Probe an arbitrary candidate URL's `/api/health` WITHOUT committing it as
+   *  the active backend. Used by the self-hosted settings preflight so the user
+   *  gets background confirmation a URL points at a real Engram server before
+   *  they commit to it. No auth — `/health` is public. */
+  static async probeHealth(rawUrl) {
+    let base = _EngramApi.normalizeBaseUrl(rawUrl);
+    try {
+      let resp = await withTimeout(
+        (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }),
+        1e4
+      ), body = null;
+      try {
+        body = resp.json;
+      } catch (e) {
+        body = null;
+      }
+      return interpretHealthProbe(resp.status, body);
+    } catch (e) {
+      return { kind: "unreachable" };
+    }
+  }
+  updateConfig(baseUrl, apiKey) {
+    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
+  }
+  async request(method, path, body, extraHeaders) {
+    var _a, _b;
+    try {
+      return await this.sendRequest(method, path, body, extraHeaders);
+    } catch (e) {
+      let status = e.status;
+      if (status === 402)
+        throw parseLimitExceededError(e);
+      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
+        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body, extraHeaders);
+      throw rlog().warn(
+        "api",
+        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+      ), e;
+    }
+  }
+  async sendRequest(method, path, body, extraHeaders) {
+    let token = await this.getAuthToken();
+    this.lastToken = token;
+    let trace = this.tracingEnabled && method.toUpperCase() !== "GET" ? newTraceContext() : null, startUs = trace ? Date.now() * 1e3 : 0, headers = {
+      Authorization: `Bearer ${token}`,
+      ...trace ? { traceparent: trace.traceparent } : {},
+      ...extraHeaders
+    }, activeVaultId = this.getActiveVaultId();
+    activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
+    let attachmentMeta = path === "/attachments/changes" || path.startsWith("/attachments/changes?"), attachmentTransfer = path.startsWith("/attachments") && !attachmentMeta && (method === "POST" || method === "GET"), bulk = path === "/notes/batch" || path.startsWith("/notes/changes?") || path === "/sync/changes" || path.startsWith("/sync/changes?"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : bulk ? this.bulkTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
+      url: `${this.baseUrl}${path}`,
+      method,
+      headers,
+      body: body !== void 0 ? JSON.stringify(body) : void 0
+    }), abandonReject = () => {
+    }, abandoned = new Promise((_, rej) => {
+      abandonReject = rej;
+    }), entry = {
+      startedAt: Date.now(),
+      abandon: abandonReject,
+      shielded: attachmentTransfer
+    };
+    this.inflight.add(entry);
+    try {
+      return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
+    } finally {
+      if (this.inflight.delete(entry), trace) {
+        let noteId = beaconNoteId(path);
+        this.beacon.enqueue({
+          trace_id: trace.traceId,
+          parent_span_id: trace.spanId,
+          name: "obsidian.push",
+          start_us: startUs,
+          end_us: Date.now() * 1e3,
+          attributes: {
+            "engram.surface": "obsidian",
+            "engram.event_type": method.toLowerCase(),
+            // Which note and which route — the 2026-07-14 deaf-note hunt
+            // stalled on beacons that carried neither. note_id is a
+            // non-sensitive UUID; route has UUIDs collapsed to :id so its
+            // cardinality stays bounded.
+            ...noteId ? { "engram.note_id": noteId } : {},
+            "engram.route": beaconRoute(path)
+          }
+        });
+      }
+    }
+  }
+  /** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
+   *  answers while they still hang — proof the connection they rode is wedged
+   *  (half-open after a deploy drain), not that the server is down. Called on
+   *  channel disconnect (the earliest wedge signal the plugin gets), so
+   *  recovery runs in ~probe time instead of the full request deadline. If
+   *  the probe fails, the server may be genuinely unreachable: leave the
+   *  requests to their normal deadline. Returns how many were failed. */
+  async failWedgedRequests(maxAgeMs = 4e3) {
+    if (this.wedgeProbeInFlight)
+      return 0;
+    this.wedgeProbeInFlight = !0;
+    try {
+      let now = Date.now(), stale = [...this.inflight].filter(
+        (e) => !e.shielded && now - e.startedAt >= maxAgeMs
+      );
+      if (stale.length === 0 || !await this.health())
+        return 0;
+      let failed = 0;
+      for (let e of stale)
+        this.inflight.delete(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
+      return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
+    } finally {
+      this.wedgeProbeInFlight = !1;
+    }
+  }
+  /** Health check — no auth required. Bounded like every other request: the
+   *  offline health-check loop awaits this, so a wedged probe would freeze
+   *  offline recovery. */
+  async health() {
+    try {
+      return (await withTimeout(
+        (0, import_obsidian.requestUrl)({
+          url: `${this.baseUrl}/health`,
+          method: "GET"
+        }),
+        this.requestTimeoutMs
+      )).status === 200;
+    } catch (e) {
+      return !1;
+    }
+  }
+  /** Get the current authenticated user (id + email). Used to determine channel topic. */
+  async getMe() {
+    return (await this.request("GET", "/me")).json.user;
+  }
+  /** Register this vault with the backend. Returns existing vault if client_id matches.
+   *  Throws with status 402 if user has reached their vault limit (free tier). */
+  async registerVault(name, clientId) {
+    return (await this.request("POST", "/vaults/register", {
+      name,
+      client_id: clientId
+    })).json;
+  }
+  /** Create a brand-new, distinct vault for the current user. Unlike
+   *  registerVault (idempotent by client_id), this always makes a new vault.
+   *  Throws with status 402 if the user has reached their vault limit, or 422
+   *  on validation errors. */
+  async createVault(name) {
+    return (await this.request("POST", "/vaults", { name })).json.vault;
+  }
+  /** Fetch all vaults accessible by the current user. Throws the underlying
+   *  request error (with `.status` for HTTP responses) so callers can render
+   *  401/timeout/5xx distinctly from "successful empty list". */
+  async listVaults() {
+    return (await this.request("GET", "/vaults")).json.vaults;
+  }
+  /** Authenticated ping — verifies both connectivity and API key. */
+  async ping() {
+    try {
+      return await this.request("GET", "/folders"), { ok: !0 };
+    } catch (e) {
+      let status = e.status;
+      return status === 401 || status === 403 ? { ok: !1, error: "Invalid API key" } : typeof status == "number" ? { ok: !1, error: `HTTP ${status} from /folders` } : { ok: !1, error: "Connection failed" };
+    }
+  }
+  /** Push a note to Engram.
+   *  When version is provided, the server uses optimistic concurrency control:
+   *  returns 409 with the current server state if the version doesn't match.
+   *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
+   *  isn't yet known server-side — sent as the body `id` field, which the
+   *  server adopts as the note's primary key on first create (note_id-keyed
+   *  CRDT rework, Task 5). Harmless to send for an existing note: the server
+   *  already has an id and ignores it. */
+  async pushNote(path, content, mtime, version, clientId, baseHash) {
+    let body = { path, content, mtime };
+    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId), baseHash !== void 0 && (body.base_hash = baseHash);
+    try {
+      return (await this.request("POST", "/notes", body)).json;
+    } catch (e) {
+      if (typeof e == "object" && e !== null && e.status === 409) {
+        let err = e;
+        if (err.json) return err.json;
+        if (err.text) return JSON.parse(err.text);
+      }
+      throw e;
+    }
+  }
+  /** Get changes since a timestamp.
+   *  Protocol rev: pass limit/cursor to page through large vaults and
+   *  fields:"meta" to receive content_hash instead of content. Pre-rev
+   *  backends ignore the extra params and return the legacy full response. */
+  async getChanges(since, opts) {
+    let params2 = new URLSearchParams({ since });
+    return (opts == null ? void 0 : opts.limit) !== void 0 && params2.set("limit", String(opts.limit)), opts != null && opts.cursor && params2.set("cursor", opts.cursor), opts != null && opts.fields && params2.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params2.toString()}`)).json;
+  }
+  /** Get full note by path. */
+  async getNote(path) {
+    let encoded = encodePath(path);
+    return (await this.request("GET", `/notes/${encoded}`)).json;
+  }
+  /** Delete a note. */
+  async deleteNote(path) {
+    let encoded = encodePath(path);
+    return (await this.request("DELETE", `/notes/${encoded}`)).json;
+  }
+  // --- CRDT ops transport: REST /updates DELETED (Phase E3) — the socket
+  // (crdt: channel sv-exchange) is the only Yjs delta path. ---
+  /** Capability probe + convergence check: current head per note across the
+   *  whole vault. */
+  async getVaultHeads() {
+    return { heads: (await this.request("GET", "/vault/heads")).json.heads };
+  }
+  // --- Attachment methods ---
+  /** Push a binary attachment as base64. */
+  async pushAttachment(path, contentBase64, mimeType, mtime) {
+    return (await this.request("POST", "/attachments", {
+      path,
+      content_base64: contentBase64,
+      mime_type: mimeType,
+      mtime
+    })).json;
+  }
+  /** Get attachment content (base64). */
+  async getAttachment(path) {
+    let encoded = encodePath(path);
+    return (await this.request("GET", `/attachments/${encoded}`)).json;
+  }
+  /** Delete an attachment. */
+  async deleteAttachment(path) {
+    let encoded = encodePath(path);
+    return (await this.request("DELETE", `/attachments/${encoded}`)).json;
+  }
+  /** Semantic search across indexed notes. */
+  async search(query, limit, tags, folder) {
+    let body = { query };
+    return limit !== void 0 && (body.limit = limit), tags != null && tags.length && (body.tags = tags), folder && (body.folder = folder), (await this.request("POST", "/search", body)).json;
+  }
+  /** Fetch sync manifest for reconciliation.
+   *  Returns null if the server doesn't support this endpoint (404). */
+  async getManifest(sinceSeq) {
+    let qs = typeof sinceSeq == "number" && Number.isFinite(sinceSeq) && sinceSeq >= 0 ? `?since_seq=${sinceSeq}` : "";
+    try {
+      return (await this.request("GET", `/sync/manifest${qs}`)).json;
+    } catch (e) {
+      if (typeof e == "object" && e !== null && e.status === 404)
+        return null;
+      throw e;
+    }
+  }
+  /** Push batched log entries to the server for remote debugging. */
+  async pushLogs(entries) {
+    await this.request("POST", "/logs", { logs: entries });
+  }
+  /** Get attachment changes since a timestamp. */
+  async getAttachmentChanges(since) {
+    let encoded = encodeURIComponent(since);
+    return (await this.request("GET", `/attachments/changes?since=${encoded}`)).json;
+  }
+  // --- Explicit folder markers (kind='folder' rows) ---
+  /** Create an explicit empty folder marker. Server is idempotent — repeated
+   *  calls return 200 instead of 201 but the same shape. */
+  async createFolder(folder) {
+    return (await this.request("POST", "/folders", { folder })).json;
+  }
+  /** Delete an explicit empty folder marker. Server always 204 — idempotent.
+   *  Slashes are preserved as path separators; each segment is URL-encoded so
+   *  spaces and other reserved characters survive routing. */
+  async deleteFolder(path) {
+    let segments = path.split("/").map(encodeURIComponent).join("/");
+    await this.request("DELETE", `/folders/${segments}`);
+  }
+  /** Fetch the list of explicit folder marker names. Plugin-only endpoint
+   *  (the frontend lists folders through a different surface). */
+  async listExplicitFolders() {
+    var _a;
+    return ((_a = (await this.request("GET", "/folders/explicit")).json.folders) != null ? _a : []).map((f) => f.name);
+  }
+}, UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+function beaconNoteId(path) {
+  var _a, _b, _c;
+  return UUID_SEGMENT.lastIndex = 0, (_c = (_b = (_a = UUID_SEGMENT.exec(path)) == null ? void 0 : _a[0]) == null ? void 0 : _b.toLowerCase()) != null ? _c : null;
+}
+function beaconRoute(path) {
+  var _a;
+  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").slice(0, 64);
+}
+function parseLimitExceededError(e) {
+  let err = e, body = {};
+  if (err.json && typeof err.json == "object")
+    body = err.json;
+  else if (typeof err.text == "string")
+    try {
+      let parsed = JSON.parse(err.text);
+      parsed && typeof parsed == "object" && (body = parsed);
+    } catch (e2) {
+    }
+  let pick = (key) => body[key] !== void 0 ? body[key] : null;
+  return new LimitExceededError(
+    typeof body.reason == "string" ? body.reason : "unknown",
+    pick("upgrade_url"),
+    pick("limit_key"),
+    pick("limit"),
+    pick("current")
+  );
+}
+function encodePath(path) {
+  return path.split("/").map(encodeURIComponent).join("/");
+}
+function arrayBufferToBase64(buffer) {
+  let bytes = new Uint8Array(buffer), binary2 = "";
+  for (let i = 0; i < bytes.byteLength; i++)
+    binary2 += String.fromCharCode(bytes[i]);
+  return btoa(binary2);
+}
+function base64ToArrayBuffer(base64) {
+  let binary2 = atob(base64), bytes = new Uint8Array(binary2.length);
+  for (let i = 0; i < binary2.length; i++)
+    bytes[i] = binary2.charCodeAt(i);
+  return bytes.buffer;
+}
+
+// src/auth.ts
+function seededAccessToken(settings) {
+  var _a, _b;
+  return !!settings.accessToken && settings.accessTokenVaultId != null && settings.accessTokenVaultId === settings.vaultId ? {
+    token: (_a = settings.accessToken) != null ? _a : null,
+    expiresAt: (_b = settings.accessTokenExpiresAt) != null ? _b : 0
+  } : { token: null, expiresAt: 0 };
+}
+var ApiKeyAuth = class {
+  constructor(apiKey, vaultId) {
+    this.apiKey = apiKey, this.vaultId = vaultId;
+  }
+  async getToken() {
+    return this.apiKey;
+  }
+  getVaultId() {
+    return this.vaultId;
+  }
+  isAuthenticated() {
+    return this.apiKey.length > 0;
+  }
+  signOut() {
+    this.apiKey = "", this.vaultId = null;
+  }
+}, _OAuthAuth = class _OAuthAuth {
+  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0, onAuthInvalidated) {
+    this.accessToken = null;
+    this.expiresAt = 0;
+    this.authenticated = !0;
+    this.inflightRefresh = null;
+    this.authInvalidatedFired = !1;
+    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt, this.onAuthInvalidated = onAuthInvalidated;
+  }
+  async getToken() {
+    if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
+      return this.accessToken;
+    if (this.inflightRefresh)
+      return this.inflightRefresh;
+    rlog().info(
+      "auth",
+      `OAuth.getToken \u2014 triggering refresh (refreshTokenLen=${this.refreshToken.length} hadAccessToken=${this.accessToken !== null} expiresInMs=${this.expiresAt - Date.now()})`
+    ), this.inflightRefresh = this.doRefresh();
+    try {
+      return await this.inflightRefresh;
+    } finally {
+      this.inflightRefresh = null;
+    }
+  }
+  async doRefresh() {
+    var _a, _b;
+    if (!this.refreshToken)
+      throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
+    try {
+      let result = await this.refreshFn(this.refreshToken);
+      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
+        refreshToken: result.refresh_token,
+        accessToken: result.access_token,
+        expiresAt: this.expiresAt
+      })), rlog().info(
+        "auth",
+        `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
+      ), this.accessToken;
+    } catch (err) {
+      this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
+      let status = err == null ? void 0 : err.status, definitive = status === 400 || status === 401 || status === 403 || status === 404;
+      if (rlog().error(
+        "auth",
+        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : void 0
+      ), definitive && !this.authInvalidatedFired) {
+        this.authInvalidatedFired = !0, this.refreshToken = "";
+        try {
+          await ((_b = this.onAuthInvalidated) == null ? void 0 : _b.call(this));
+        } catch (cbErr) {
+          rlog().error(
+            "auth",
+            `onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`
+          );
+        }
+      }
+      throw err;
+    }
+  }
+  getVaultId() {
+    return this.vaultId;
+  }
+  getUserEmail() {
+    return this.userEmail;
+  }
+  getRefreshToken() {
+    return this.refreshToken;
+  }
+  invalidateAccessToken() {
+    this.accessToken = null, this.expiresAt = 0;
+  }
+  isAuthenticated() {
+    return this.authenticated;
+  }
+  signOut() {
+    this.accessToken = null, this.refreshToken = "", this.expiresAt = 0, this.authenticated = !1, this.vaultId = null, this.userEmail = null;
+  }
+};
+/** Buffer in ms — refresh if token expires within this window. */
+_OAuthAuth.EXPIRY_BUFFER_MS = 6e4;
+var OAuthAuth = _OAuthAuth;
+
+// src/error-util.ts
+function errMsg(e) {
+  var _a;
+  if (e instanceof Error) return e.message;
+  if (typeof e == "string") return e;
+  try {
+    return (_a = JSON.stringify(e)) != null ? _a : String(e);
+  } catch (e2) {
+    return String(e);
+  }
+}
+
+// src/channel.ts
+var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
+function connectRetryDelayMs(attempt, baseMs = 2e3) {
+  return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+}
+function clampReconnectJitter(raw) {
+  return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
+}
+function fullJitterDelay(windowMs, rng = Math.random) {
+  return rng() * windowMs;
+}
+function topicUserIdIsStale(currentUserId, authenticatedUserId) {
+  return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
+}
+var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
+  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
+    this.ws = null;
+    this.ref = 0;
+    /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
+     *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
+     *  `disconnect()` — the one await-reply path the channel has. */
+    this.pendingReplies = /* @__PURE__ */ new Map();
+    this.joinRef = "1";
+    this.userJoinRef = "2";
+    this.crdtJoinRef = "3";
+    this.heartbeatTimer = null;
+    this.pendingHeartbeatRef = null;
+    this.reconnectTimer = null;
+    this.reconnectMs = 1e3;
+    this.maxReconnectMs = 6e4;
+    this.reconnectJitterMaxMs = null;
+    this.connected = !1;
+    /** True only when the `crdt:` topic join has been acknowledged by the server.
+     *  Reset on every disconnect so it re-gates on the next connection. A backend
+     *  that does not serve the crdt: topic replies with an error (handled below),
+     *  keeping this false — which allows the legacy pushNote path to remain active. */
+    this.crdtJoined = !1;
+    /**
+     * The `ref` value sent with the crdt: topic phx_join frame.
+     * Stored so handleMessage can distinguish a join-error reply (ref matches)
+     * from a per-message error reply such as "rate_limited" or "frame_too_large"
+     * on a crdt_msg (ref does NOT match). Only the join-error reply should fire
+     * onCrdtJoinError and tear down the CRDT session; per-message errors are
+     * transient and must not degrade the transport.
+     * Reset to null on every joinChannel() call (each (re)connect issues a new join).
+     */
+    this.crdtJoinMsgRef = null;
+    /**
+     * Reason from the most recent crdt: join REJECTION in the session that just
+     * ended (null if that session's crdt join succeeded, was never attempted, or
+     * hasn't replied yet). A rejected crdt join does not by itself force a
+     * reconnect — the sync topic can still be healthy — but if the WHOLE socket
+     * then closes (e.g. a server-side abuse defense, or any other drop), the
+     * next reconnect should back off rather than retry on the flat graceful-drop
+     * jitter: retrying immediately just re-triggers the same rejection before
+     * the backend's rate-limit bucket drains, producing a tight open/reject/
+     * close loop (the prod alert-noise "CRDT channel-join retry loop" — one
+     * user's plugin looping join -> rate_limited -> immediate retry for
+     * ~15 min windows). Reset to null on every joinChannel() (fresh join,
+     * fresh chance) and set only by a
+     * genuine join-ref-matching error reply — a per-message crdt_msg error
+     * (different ref) must NOT set this.
+     */
+    this.crdtJoinFailedReason = null;
+    /** Backoff (ms) for the reconnect that follows a join-class failure. Distinct
+     *  from `reconnectMs` (which only grows on the "closed before ever opening"
+     *  path) because `reconnectMs` resets to 1000 on every successful open —
+     *  and a join-class failure by definition happens AFTER a successful open.
+     *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
+    this.joinFailureBackoffMs = 1e3;
+    /** True once the socket has opened at least once this channel's lifetime. Gates
+     *  the reconnect-only identity re-derivation (see openSocketInner): a fresh
+     *  build already carries the correct userId from connectChannel's getMe(), so
+     *  only RE-opens need re-verification. */
+    this.hasOpened = !1;
+    /** Set when the auth provider is swapped on a KEPT channel (an OAuth rebind
+     *  that setupNoteStream reused rather than rebuilt). Signals that `this.userId`
+     *  may be stale relative to the new identity, so the next reconnect must
+     *  re-derive it from getMe() before rejoining `crdt:` (else the join is
+     *  refused "unauthorized", e2e-clerk test_84). Cleared once verified. */
+    this.identityMaybeStale = !1;
+    /** Current connection id, minted fresh per physical socket. */
+    this.connId = null;
+    this.authProvider = null;
+    /** Authenticated probe injected via `setAuthProbe` (e.g. GET /me). Fired on
+     *  a fast pre-open close instead of guessing the token is stale. */
+    this.authProbe = null;
+    this.onEvent = null;
+    this.onStatusChange = null;
+    this.onVaultDeleted = null;
+    /** Folder markers changed on the server (create/delete/move from the web
+     *  app). Payload is advisory only — the handler re-polls /folders/explicit. */
+    this.onFoldersChanged = null;
+    /** Surfaces the user's current plan/entitlements from the best-effort
+     *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
+     *  broadcasts). Never gates the plugin's connected state. */
+    this.onPlanState = null;
+    /** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
+    this.onCrdtMessage = null;
+    /** A room became active on the server for `docId` (announced via
+     *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
+     *  for this doc so a device that doesn't yet have the note pulls it. */
+    this.onCrdtDocReady = null;
+    /** A crdt_msg we sent was dropped server-side: the note_id has no row
+     *  (backend #955 error reply). The create-race cross-wire signature — wire
+     *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
+    this.onCrdtNoteNotFound = null;
+    /** Fired when the `crdt:` topic join is acknowledged by the server.
+     *  Use this to activate CRDT routing in the SyncEngine — only wire
+     *  `setCrdtManager` after this fires, so the legacy pushNote path stays
+     *  active against non-CRDT backends (which reply with a join error and
+     *  never fire this callback). */
+    this.onCrdtJoined = null;
+    /** Fired when the `crdt:` topic join (or REJOIN) is rejected by the server.
+     *  `reason` is the `response.reason` string from the server payload (undefined
+     *  if absent). `min` is the server's minimum supported proto version, present
+     *  only when `reason === "crdt_proto_too_old"`.
+     *
+     *  In main.ts, wire this to reset `crdtEverJoined = false` and call
+     *  `setCrdtManager(null)` so that a failed rejoin (e.g. backend downgrade or
+     *  transient error after a previously successful join) degrades to the legacy
+     *  pushNote path rather than silently dropping edits into a dead transport. */
+    this.onCrdtJoinError = null;
+    /** Server-pushed Yjs update for a note, fanned out over the per-vault
+     *  `sync:{userId}:{vaultId}` topic regardless of CRDT-room enrollment
+     *  (backend fan-out). `b64` is the raw v1 update, still base64-encoded — the
+     *  CRDT layer decodes it. `head` is the server's post-apply head marker.
+     *  Lets an IDLE note (no dedicated CRDT room) converge without ever
+     *  STEP1-enrolling. `seq` is the backend's vault op-log position (Phase D2
+     *  gap-heal, Task 1) — undefined/null on an old backend or a note deleted
+     *  mid-flight. */
+    this.onNoteYjsUpdate = null;
+    // ---------------------------------------------------------------------------
+    // Private
+    // ---------------------------------------------------------------------------
+    /** Guards openSocket against re-entry across its async token fetch. */
+    this.opening = !1;
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
+      "channel",
+      `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
+    );
+  }
+  setAuthProvider(provider) {
+    this.authProvider = provider, this.identityMaybeStale = !0, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
+  }
+  /** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
+   *  channel fires this instead of guessing the token is stale; the api client
+   *  is the single invalidation authority (a real 401 there invalidates and
+   *  refreshes). */
+  setAuthProbe(probe) {
+    this.authProbe = probe;
+  }
+  async getAuthToken() {
+    return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
+  }
+  updateConfig(baseUrl, apiKey, userId, vaultId = null, deviceId = this.deviceId) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
+  }
+  get topic() {
+    return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
+  }
+  get userTopic() {
+    return `user:${this.userId}`;
+  }
+  get crdtTopic() {
+    return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+  }
+  /** Send a CRDT update frame on the crdt topic.
+   *  Returns false without sending until the crdt: join is server-acked —
+   *  a frame with a stale/absent join_ref is silently dropped server-side
+   *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
+  sendCrdt(docId, b64) {
+    let t = this.crdtTopic;
+    return !t || !this.crdtJoined ? (rlog().warn(
+      "channel",
+      `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`
+    ), !1) : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
+  }
+  /** Push a request frame on the crdt topic and resolve when the matching
+   *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
+   *  disconnect. The one await-reply path the channel has — everything else is
+   *  fire-and-forget. */
+  sendRequest(event, payload, timeoutMs = 1e4) {
+    let t = this.crdtTopic;
+    if (!t || !this.crdtJoined)
+      return Promise.reject(
+        new Error(`sendRequest refused (crdt topic not joined): ${event}`)
+      );
+    let ref = String(++this.ref);
+    return new Promise((resolve, reject) => {
+      let timer = window.setTimeout(() => {
+        this.pendingReplies.delete(ref), reject(new Error(`sendRequest timeout: ${event}`));
+      }, timeoutMs);
+      this.pendingReplies.set(ref, { resolve, reject, timer }), this.send([this.crdtJoinRef, ref, t, event, payload]);
+    });
+  }
+  /** Genesis a server row over the socket. Returns the server's authoritative
+   *  doc_id — on ADOPT (path already owned by a different live note) the server
+   *  returns a DIFFERENT id, which Task 3 uses to remap the local note and avoid
+   *  orphaning edits. */
+  async crdtCreate(docId, path) {
+    return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
+  }
+  /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
+   *  creates per request; chunking is the caller's concern). */
+  async crdtCreateBatch(creates) {
+    return await this.sendRequest("crdt_create_batch", { creates });
+  }
+  /** Delete a note over the socket, AWAITING the server ack (idempotent). The
+   *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
+   *  resolve means the delete is durably applied; a reject carries a retryable
+   *  (rate_limited / not-joined / disconnect) or terminal (bad_doc_id) reason.
+   *  Routed through the durable CrdtOpQueue; there is no REST delete fallback. */
+  async crdtDeleteAcked(docId) {
+    return await this.sendRequest("crdt_delete", { doc_id: docId });
+  }
+  /** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
+   *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
+   *  merged notes+attachments feed), so it is causally complete and can
+   *  never pend the way a state-vector delta can — this is what a
+   *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
+  async crdtCatchupSince(cursorSeq, limit) {
+    let payload = { cursor_seq: cursorSeq };
+    return limit !== void 0 && (payload.limit = limit), await this.sendRequest("crdt_catchup_since", payload);
+  }
+  async connect() {
+    this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
+  }
+  disconnect() {
+    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
+    for (let [, p] of this.pendingReplies)
+      window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
+    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
+  }
+  /** Call when the app returns to the foreground (mobile resume). Mobile OSes
+   *  suspend the socket while backgrounded; readyState can still report OPEN on a
+   *  connection that is actually dead. Rather than wait up to 30s for the next
+   *  heartbeat tick, probe liveness now and pull any pending reconnect forward so
+   *  the first post-unlock interaction is snappy.
+   *
+   *  - OPEN socket: run a heartbeat tick immediately (closes at once if the
+   *    pre-suspend heartbeat was never answered), then a fast follow-up tick so a
+   *    socket that died silently during suspend is caught in ~RESUME_PROBE_MS.
+   *  - Down with a reconnect pending: bring it forward.
+   *  - Connecting, or intentionally disconnected: nothing to do. */
+  onResume() {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      this.heartbeatTick(), window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
+      return;
+    }
+    !this.ws && this.reconnectTimer !== null && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null, this.openSocket());
+  }
+  isConnected() {
+    return this.connected;
+  }
+  /** True only when the `crdt:` topic join has been acknowledged by the server.
+   *  The SyncEngine uses this to decide whether to route markdown saves through
+   *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
+  isCrdtConnected() {
+    return this.crdtJoined;
+  }
+  /** Server-advertised full-jitter reconnect window (ms), or null until the
+   *  sync join reply has been received. Exposed for tests. */
+  getReconnectJitterMaxMs() {
+    return this.reconnectJitterMaxMs;
+  }
+  /** Current connection id (fresh per physical socket). Exposed for tests. */
+  getConnId() {
+    return this.connId;
+  }
+  async openSocket() {
+    if (this.ws || this.opening) {
+      rlog().info("channel", "openSocket skipped \u2014 socket already present or opening");
+      return;
+    }
+    this.opening = !0;
+    try {
+      await this.openSocketInner();
+    } finally {
+      this.opening = !1;
+    }
+  }
+  async openSocketInner() {
+    var _a, _b, _c, _d, _e;
+    let token, source;
+    try {
+      let result = await this.getAuthToken();
+      token = result.token, source = result.source;
+    } catch (e) {
+      rlog().warn(
+        "channel",
+        `getToken threw \u2014 deferring reconnect ${NO_AUTH_RECONNECT_MS}ms \u2014 providerType=${(_b = (_a = this.authProvider) == null ? void 0 : _a.constructor.name) != null ? _b : "none"} err=${errMsg(e)}`
+      ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+      return;
+    }
+    if (!token) {
+      rlog().warn(
+        "channel",
+        `Empty token \u2014 skip WS connect, defer ${NO_AUTH_RECONNECT_MS}ms \u2014 source=${source} hasProvider=${!!this.authProvider} providerType=${(_d = (_c = this.authProvider) == null ? void 0 : _c.constructor.name) != null ? _d : "none"} apiKeyLen=${this.apiKey.length}`
+      ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+      return;
+    }
+    if (this.hasOpened && this.identityMaybeStale && this.authProbe) {
+      this.identityMaybeStale = !1;
+      try {
+        let me = await this.authProbe(), freshId = me == null ? void 0 : me.id;
+        freshId && topicUserIdIsStale(this.userId, freshId) && (rlog().warn(
+          "channel",
+          `reconnect identity refresh: topic userId ${this.userId} -> ${freshId} (provider swapped on a reused channel); rejoining under the authenticated id`
+        ), this.userId = freshId);
+      } catch (e) {
+        rlog().info(
+          "channel",
+          `reconnect identity probe failed, keeping userId: ${errMsg(e)}`
+        );
+      }
+    }
+    rlog().info(
+      "channel",
+      `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
+    ), this.connId = crypto.randomUUID(), rlog().setConnId(this.connId);
+    let wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss"), params2 = new URLSearchParams({
+      token,
+      vsn: "2.0.0",
+      conn_id: this.connId
+    });
+    this.deviceId && params2.set("device_id", this.deviceId), this.vaultId && params2.set("vault_id", this.vaultId);
+    let url = `${wsBase}/socket/websocket?${params2.toString()}`, openedAt = Date.now(), opened = !1;
+    try {
+      this.ws = new WebSocket(url);
+    } catch (e) {
+      rlog().error("channel", `WebSocket open error: ${errMsg(e)}`), this.scheduleReconnect();
+      return;
+    }
+    this.ws.onopen = () => {
+      opened = !0, this.hasOpened = !0, this.identityMaybeStale = !1, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
+    }, this.ws.onmessage = (evt) => {
+      this.handleMessage(evt.data);
+    }, this.ws.onerror = (e) => {
+      rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
+    }, this.ws.onclose = (evt) => {
+      var _a2, _b2, _c2, _d2;
+      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
+      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
+      if (rlog().info(
+        "channel",
+        `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
+      ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe && this.authProbe().catch(() => {
+      }), opened && this.crdtJoinFailedReason !== null) {
+        let floor2 = this.crdtJoinFailedReason === "rate_limited" ? RATE_LIMITED_JOIN_FLOOR_MS : 1e3;
+        this.joinFailureBackoffMs = Math.min(
+          Math.max(this.joinFailureBackoffMs * 2, floor2),
+          this.maxReconnectMs
+        );
+        let delay = this.joinFailureBackoffMs + Math.random() * this.joinFailureBackoffMs * 0.5;
+        rlog().info(
+          "channel",
+          `crdt: join rejected (${this.crdtJoinFailedReason}) \u2014 backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`
+        ), this.reconnectTimer = window.setTimeout(() => {
+          this.openSocket();
+        }, delay);
+      } else if (opened) {
+        let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        rlog().info(
+          "channel",
+          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
+        ), this.reconnectTimer = window.setTimeout(() => {
+          this.openSocket();
+        }, delay);
+      } else
+        rlog().info(
+          "channel",
+          `Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`
+        ), this.scheduleReconnect();
+    };
+  }
+  joinChannel() {
+    this.crdtJoinMsgRef = null, this.crdtJoinFailedReason = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
+    let crdtT = this.crdtTopic;
+    if (crdtT) {
+      let msgRef = String(++this.ref);
+      this.crdtJoinMsgRef = msgRef, this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+    }
+  }
+  startHeartbeat() {
+    this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 3e4);
+  }
+  /** Interval body for the heartbeat. Extracted so tests can drive it directly
+   *  without fake timers. Called once per 30s interval while the socket is open.
+   *
+   *  If `pendingHeartbeatRef` is still set from the previous tick the server never
+   *  replied — the socket is half-dead (classic mobile app-resume state). Force
+   *  close so the existing onclose → scheduleReconnect machinery can recover.
+   *  Otherwise stamp a new pending ref and send the heartbeat frame. */
+  heartbeatTick() {
+    var _a, _b;
+    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+      if (this.pendingHeartbeatRef !== null) {
+        rlog().warn("channel", "heartbeat unanswered \u2014 closing dead socket"), (_b = this.ws) == null || _b.close();
+        return;
+      }
+      this.pendingHeartbeatRef = String(++this.ref), this.send([null, this.pendingHeartbeatRef, "phoenix", "heartbeat", {}]);
+    }
+  }
+  handleMessage(raw) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    let msg;
+    try {
+      msg = JSON.parse(raw);
+    } catch (e) {
+      rlog().error("channel", `Failed to parse message: ${raw}`);
+      return;
+    }
+    let [, ref, topic, event, payload] = msg;
+    if (event === "phx_reply") {
+      if (ref !== null) {
+        let pending = this.pendingReplies.get(ref);
+        if (pending) {
+          this.pendingReplies.delete(ref), window.clearTimeout(pending.timer);
+          let status2 = payload == null ? void 0 : payload.status, response = payload == null ? void 0 : payload.response;
+          status2 === "ok" ? pending.resolve(response) : pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
+          return;
+        }
+      }
+      if (topic === "phoenix") {
+        this.pendingHeartbeatRef = null;
+        return;
+      }
+      let status = payload.status;
+      if (status === "ok")
+        if (topic === this.topic) {
+          let response = payload.response, clamped = clampReconnectJitter(response == null ? void 0 : response.reconnect_jitter_max_ms);
+          clamped !== null && (this.reconnectJitterMaxMs = clamped), this.connected || (this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`));
+        } else if (topic === this.userTopic) {
+          let response = payload.response, plan = response == null ? void 0 : response.plan;
+          plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
+        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, this.joinFailureBackoffMs = 1e3, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
+      else if (status === "error") {
+        let response = payload.response;
+        if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
+          rlog().warn(
+            "channel",
+            `crdt_msg dropped by server (note_not_found): ${response.doc_id} \u2014 triggering id-map reconcile`
+          ), (_c = this.onCrdtNoteNotFound) == null || _c.call(this, response.doc_id);
+          return;
+        }
+        if (rlog().error(
+          "channel",
+          `Channel join error on ${topic}: ${JSON.stringify(payload)}`
+        ), topic === this.crdtTopic) {
+          let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
+          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", reason === "unauthorized" && (this.identityMaybeStale = !0, this.authProbe && ((_d = this.ws) == null || _d.close())), (_e = this.onCrdtJoinError) == null || _e.call(this, reason, min2)) : rlog().warn(
+            "channel",
+            `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
+          );
+        }
+      }
+      return;
+    }
+    if (event === "subscription_activated" && topic === this.userTopic) {
+      rlog().info("channel", "Received subscription_activated event"), (_f = this.onPlanState) == null || _f.call(this, payload);
+      return;
+    }
+    if (event === "vault_deleted") {
+      rlog().info("channel", "Received vault_deleted event"), (_g = this.onVaultDeleted) == null || _g.call(this);
+      return;
+    }
+    if (event === "folders.batch") {
+      rlog().info("channel", "Folder markers changed on server"), (_h = this.onFoldersChanged) == null || _h.call(this);
+      return;
+    }
+    if (event === "crdt_msg" && payload) {
+      let docId = payload.doc_id, b64 = payload.b64;
+      docId && b64 && ((_i = this.onCrdtMessage) == null || _i.call(this, docId, b64));
+      return;
+    }
+    if (event === "note_yjs_update" && payload) {
+      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq3 = Number.isInteger(rawSeq) ? rawSeq : void 0;
+      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq3));
+      return;
+    }
+    if (event === "crdt_doc_ready" && payload) {
+      let docId = payload.doc_id;
+      if (docId) {
+        let path = payload.path;
+        (_k = this.onCrdtDocReady) == null || _k.call(this, docId, path);
+      }
+      return;
+    }
+    if (event === "note_changed" && payload) {
+      let p = payload, streamEvent = {
+        event_type: p.event_type,
+        path: p.path,
+        timestamp: Date.now(),
+        kind: (_l = p.kind) != null ? _l : "note",
+        id: p.id,
+        device_id: p.device_id,
+        content: p.content,
+        content_hash: p.content_hash,
+        title: p.title,
+        folder: p.folder,
+        tags: p.tags,
+        mtime: p.mtime,
+        updated_at: p.updated_at,
+        version: p.version
+      };
+      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_m = this.onEvent) == null || _m.call(this, streamEvent);
+    }
+    if (event === "notes.batch" && payload && payload.op === "upsert") {
+      let notes = (_n = payload.notes) != null ? _n : [];
+      rlog().info("channel", `Batch digest: ${notes.length} notes`);
+      for (let n of notes) {
+        let streamEvent = {
+          event_type: "upsert",
+          path: n.path,
+          timestamp: Date.now(),
+          kind: "note",
+          id: n.id,
+          content_hash: n.content_hash,
+          title: n.title,
+          folder: n.folder,
+          tags: n.tags,
+          mtime: n.mtime,
+          updated_at: n.updated_at,
+          version: n.version
+        };
+        (_o = this.onEvent) == null || _o.call(this, streamEvent);
+      }
+    }
+  }
+  send(msg) {
+    var _a;
+    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
+      let frame = JSON.stringify(msg);
+      if (frame.length > LARGE_FRAME_WARN_BYTES) {
+        let eventType = typeof msg[3] == "string" ? msg[3] : "unknown";
+        rlog().warn(
+          "channel",
+          `Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`
+        );
+      }
+      this.ws.send(frame);
+    }
+  }
+  setConnected(value) {
+    var _a;
+    this.connected !== value && (this.connected = value, value || (this.crdtJoined = !1), (_a = this.onStatusChange) == null || _a.call(this, value));
+  }
+  clearTimers() {
+    this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null), this.pendingHeartbeatRef = null;
+  }
+  scheduleReconnect(overrideMs) {
+    this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null);
+    let base = overrideMs != null ? overrideMs : this.reconnectMs, jitter = Math.random() * base * 0.5;
+    this.reconnectTimer = window.setTimeout(() => {
+      overrideMs === void 0 && (this.reconnectMs = Math.min(this.reconnectMs * 2, this.maxReconnectMs)), this.openSocket();
+    }, base + jitter);
+  }
+};
+
+// src/conflict-modal.ts
+var import_obsidian2 = require("obsidian");
+
+// src/diff.ts
+function computeDiff(oldText, newText) {
+  let oldLines = oldText.split(`
+`), newLines = newText.split(`
+`);
+  return myersDiff(oldLines, newLines);
+}
+function myersDiff(a, b) {
+  let n = a.length, m = b.length, max2 = n + m, v = new Int32Array(2 * max2 + 1);
+  v.fill(-1), v[max2 + 1] = 0;
+  let trace = [];
+  outer: for (let d = 0; d <= max2; d++) {
+    let vCopy = new Int32Array(v);
+    trace.push(vCopy);
+    for (let k = -d; k <= d; k += 2) {
+      let idx = k + max2, x;
+      k === -d || k !== d && v[idx - 1] < v[idx + 1] ? x = v[idx + 1] : x = v[idx - 1] + 1;
+      let y = x - k;
+      for (; x < n && y < m && a[x] === b[y]; )
+        x++, y++;
+      if (v[idx] = x, x >= n && y >= m)
+        break outer;
+    }
+  }
+  return backtrack(trace, a, b, max2);
+}
+function backtrack(trace, a, b, max2) {
+  let x = a.length, y = b.length, ops = [];
+  for (let d = trace.length - 1; d >= 0; d--) {
+    let v = trace[d], k = x - y, idx = k + max2, prevK;
+    k === -d || k !== d && v[idx - 1] < v[idx + 1] ? prevK = k + 1 : prevK = k - 1;
+    let prevX = v[prevK + max2], prevY = prevX - prevK;
+    for (; x > prevX && y > prevY; )
+      x--, y--, ops.push({
+        type: "equal",
+        content: a[x],
+        oldLineNo: x + 1,
+        newLineNo: y + 1
+      });
+    d > 0 && (x === prevX ? (y--, ops.push({
+      type: "add",
+      content: b[y],
+      newLineNo: y + 1
+    })) : (x--, ops.push({
+      type: "remove",
+      content: a[x],
+      oldLineNo: x + 1
+    })));
+  }
+  return ops.reverse(), ops;
+}
+function groupIntoHunks(diffLines, contextLines = 3) {
+  if (diffLines.length === 0) return [];
+  let changeIndices = [];
+  for (let i = 0; i < diffLines.length; i++)
+    diffLines[i].type !== "equal" && changeIndices.push(i);
+  if (changeIndices.length === 0) return [];
+  let ranges = [], rangeStart = Math.max(0, changeIndices[0] - contextLines), rangeEnd = Math.min(diffLines.length - 1, changeIndices[0] + contextLines);
+  for (let i = 1; i < changeIndices.length; i++) {
+    let newStart = Math.max(0, changeIndices[i] - contextLines), newEnd = Math.min(diffLines.length - 1, changeIndices[i] + contextLines);
+    newStart <= rangeEnd + 1 || (ranges.push([rangeStart, rangeEnd]), rangeStart = newStart), rangeEnd = newEnd;
+  }
+  return ranges.push([rangeStart, rangeEnd]), ranges.map(([start, end], id2) => ({
+    id: id2,
+    lines: diffLines.slice(start, end + 1),
+    choice: "remote"
+  }));
+}
+function buildMergedContent(allDiffLines, hunks) {
+  var _a;
+  let hunkRanges = [], searchFrom = 0;
+  for (let hunk of hunks) {
+    let firstLine = hunk.lines[0];
+    if (firstLine)
+      for (let i = searchFrom; i < allDiffLines.length; i++) {
+        let cur = allDiffLines[i];
+        if (cur.type === firstLine.type && cur.content === firstLine.content && cur.oldLineNo === firstLine.oldLineNo && cur.newLineNo === firstLine.newLineNo) {
+          hunkRanges.push({
+            start: i,
+            end: i + hunk.lines.length - 1,
+            choice: hunk.choice
+          }), searchFrom = i + hunk.lines.length;
+          break;
+        }
+      }
+  }
+  let result = [], hunkIdx = 0;
+  for (let i = 0; i < allDiffLines.length; i++) {
+    let line = allDiffLines[i], activeHunk = hunkRanges[hunkIdx], currentHunk = activeHunk && i >= activeHunk.start && i <= activeHunk.end ? activeHunk : null;
+    activeHunk && i > activeHunk.end && hunkIdx++;
+    let choice = (_a = currentHunk == null ? void 0 : currentHunk.choice) != null ? _a : "remote";
+    line.type === "equal" ? result.push(line.content) : line.type === "remove" ? choice === "local" && result.push(line.content) : line.type === "add" && choice === "remote" && result.push(line.content);
+  }
+  return result.join(`
+`);
+}
+
+// src/conflict-modal.ts
+var ConflictModal = class extends import_obsidian2.Modal {
+  constructor(app, info, settings, onViewModeChange) {
+    super(app);
+    this.resolvePromise = () => {
+    };
+    this.diffLines = [];
+    this.hunks = [];
+    this.mergeEditor = null;
+    this.diffContainer = null;
+    this.info = info, this.settings = settings, this.viewMode = settings.conflictViewMode, this.onViewModeChange = onViewModeChange;
+  }
+  onOpen() {
+    let { contentEl, modalEl } = this;
+    contentEl.empty(), contentEl.addClass("engram-conflict"), modalEl.addClass("engram-conflict-modal"), this.diffLines = computeDiff(this.info.localContent, this.info.remoteContent), this.hunks = groupIntoHunks(this.diffLines), this.renderHeader(contentEl), this.renderToolbar(contentEl), this.diffContainer = contentEl.createEl("section", { cls: "engram-conflict-diff" }), this.renderDiff(), this.renderMergeEditor(contentEl), this.renderActions(contentEl);
+  }
+  onClose() {
+    this.contentEl.empty(), this.resolvePromise({ choice: "skip" });
+  }
+  waitForChoice() {
+    return new Promise((resolve) => {
+      this.resolvePromise = (result) => {
+        this.resolvePromise = () => {
+        }, resolve(result);
+      }, this.open();
+    });
+  }
+  // ── Header ──────────────────────────────────────────────────────
+  renderHeader(root) {
+    let header = root.createEl("header", { cls: "engram-conflict-header" }), title = this.info.vaultName ? `Sync Conflict \u2014 ${this.info.vaultName}` : "Sync Conflict";
+    header.createEl("h2", { text: title }), header.createEl("code", { text: this.info.path, cls: "engram-conflict-path" });
+    let meta = header.createEl("aside", { cls: "engram-conflict-meta" });
+    meta.createSpan({
+      text: `Local: ${this.fmtDate(this.info.localMtime)} \xB7 ${this.info.localContent.length} chars`
+    }), meta.createSpan({
+      text: `Remote: ${this.fmtDate(this.info.remoteMtime)} \xB7 ${this.info.remoteContent.length} chars`
+    });
+  }
+  // ── Toolbar (view toggle) ───────────────────────────────────────
+  renderToolbar(root) {
+    let bar = root.createEl("nav", { cls: "engram-conflict-toolbar" }), toggle = bar.createEl("fieldset", { cls: "engram-conflict-view-toggle" });
+    toggle.createEl("legend", { text: "View" });
+    let unifiedBtn = toggle.createEl("button", {
+      text: "Unified",
+      cls: this.viewMode === "unified" ? "is-active" : ""
+    }), sideBySideBtn = toggle.createEl("button", {
+      text: "Side-by-side",
+      cls: this.viewMode === "side-by-side" ? "is-active" : ""
+    });
+    if (unifiedBtn.addEventListener("click", () => {
+      this.viewMode = "unified", unifiedBtn.addClass("is-active"), sideBySideBtn.removeClass("is-active"), this.onViewModeChange("unified"), this.renderDiff();
+    }), sideBySideBtn.addEventListener("click", () => {
+      this.viewMode = "side-by-side", sideBySideBtn.addClass("is-active"), unifiedBtn.removeClass("is-active"), this.onViewModeChange("side-by-side"), this.renderDiff();
+    }), this.hunks.length > 0) {
+      let bulkGroup = bar.createSpan({ cls: "engram-conflict-bulk" }), allLocalBtn = bulkGroup.createEl("button", {
+        text: "All local",
+        cls: "mod-warning"
+      }), allRemoteBtn = bulkGroup.createEl("button", { text: "All remote" });
+      allLocalBtn.addEventListener("click", () => {
+        for (let h of this.hunks)
+          h.choice = "local";
+        this.renderDiff(), this.updateMergeEditor();
+      }), allRemoteBtn.addEventListener("click", () => {
+        for (let h of this.hunks)
+          h.choice = "remote";
+        this.renderDiff(), this.updateMergeEditor();
+      });
+    }
+  }
+  // ── Diff view ───────────────────────────────────────────────────
+  renderDiff() {
+    let container = this.diffContainer;
+    if (container.empty(), this.hunks.length === 0) {
+      container.createEl("p", {
+        text: "No differences found.",
+        cls: "engram-conflict-no-diff"
+      });
+      return;
+    }
+    this.viewMode === "unified" ? this.renderUnified(container) : this.renderSideBySide(container);
+  }
+  renderUnified(container) {
+    var _a, _b, _c, _d;
+    for (let hunk of this.hunks) {
+      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
+      this.renderHunkControls(hunkEl, hunk);
+      let tbody = hunkEl.createEl("table", {
+        cls: "engram-diff-table engram-diff-unified"
+      }).createEl("tbody");
+      for (let line of hunk.lines) {
+        let tr = tbody.createEl("tr", {
+          cls: `engram-diff-line engram-diff-${line.type}`
+        });
+        tr.createEl("td", {
+          text: (_b = (_a = line.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
+          cls: "engram-diff-linenum"
+        }), tr.createEl("td", {
+          text: (_d = (_c = line.newLineNo) == null ? void 0 : _c.toString()) != null ? _d : "",
+          cls: "engram-diff-linenum"
+        }), tr.createEl("td", {
+          text: line.type === "add" ? "+" : line.type === "remove" ? "-" : " ",
+          cls: "engram-diff-marker"
+        }), tr.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: line.content });
+      }
+    }
+  }
+  renderSideBySide(container) {
+    var _a, _b, _c, _d, _e, _f;
+    for (let hunk of this.hunks) {
+      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
+      this.renderHunkControls(hunkEl, hunk);
+      let wrapper = hunkEl.createEl("section", { cls: "engram-diff-sbs-wrapper" }), leftTable = wrapper.createEl("table", {
+        cls: "engram-diff-table engram-diff-sbs"
+      }), rightTable = wrapper.createEl("table", {
+        cls: "engram-diff-table engram-diff-sbs"
+      }), leftBody = leftTable.createEl("tbody"), rightBody = rightTable.createEl("tbody"), leftLines = [], rightLines = [], i = 0, lines = hunk.lines;
+      for (; i < lines.length; ) {
+        let cur = lines[i];
+        if (cur.type === "equal")
+          leftLines.push(cur), rightLines.push(cur), i++;
+        else {
+          let removes = [], adds = [];
+          for (; i < lines.length && lines[i].type === "remove"; )
+            removes.push(lines[i]), i++;
+          for (; i < lines.length && lines[i].type === "add"; )
+            adds.push(lines[i]), i++;
+          let maxLen = Math.max(removes.length, adds.length);
+          for (let j = 0; j < maxLen; j++)
+            leftLines.push(j < removes.length ? removes[j] : null), rightLines.push(j < adds.length ? adds[j] : null);
+        }
+      }
+      for (let r = 0; r < leftLines.length; r++) {
+        let left = leftLines[r], right = rightLines[r], trLeft = leftBody.createEl("tr", {
+          cls: `engram-diff-line ${left ? `engram-diff-${left.type}` : "engram-diff-empty"}`
+        });
+        trLeft.createEl("td", {
+          text: (_b = (_a = left == null ? void 0 : left.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
+          cls: "engram-diff-linenum"
+        }), trLeft.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_c = left == null ? void 0 : left.content) != null ? _c : "" });
+        let trRight = rightBody.createEl("tr", {
+          cls: `engram-diff-line ${right ? `engram-diff-${right.type}` : "engram-diff-empty"}`
+        });
+        trRight.createEl("td", {
+          text: (_e = (_d = right == null ? void 0 : right.newLineNo) == null ? void 0 : _d.toString()) != null ? _e : "",
+          cls: "engram-diff-linenum"
+        }), trRight.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_f = right == null ? void 0 : right.content) != null ? _f : "" });
+      }
+    }
+  }
+  renderHunkControls(parent, hunk) {
+    let controls = parent.createEl("nav", { cls: "engram-conflict-hunk-controls" });
+    controls.createSpan({
+      text: `Hunk ${hunk.id + 1}`,
+      cls: "engram-conflict-hunk-label"
+    });
+    let localBtn = controls.createEl("button", {
+      text: "Use local",
+      cls: hunk.choice === "local" ? "is-active mod-warning" : ""
+    }), remoteBtn = controls.createEl("button", {
+      text: "Use remote",
+      cls: hunk.choice === "remote" ? "is-active" : ""
+    }), updateButtons = () => {
+      localBtn.className = hunk.choice === "local" ? "is-active mod-warning" : "", remoteBtn.className = hunk.choice === "remote" ? "is-active" : "";
+    };
+    localBtn.addEventListener("click", () => {
+      hunk.choice = "local", updateButtons(), this.updateMergeEditor();
+    }), remoteBtn.addEventListener("click", () => {
+      hunk.choice = "remote", updateButtons(), this.updateMergeEditor();
+    });
+  }
+  // ── Merge editor ────────────────────────────────────────────────
+  renderMergeEditor(root) {
+    let section = root.createEl("section", { cls: "engram-conflict-merge" }), header = section.createEl("header", { cls: "engram-conflict-merge-header" });
+    header.createEl("h3", { text: "Merge result" }), header.createSpan({
+      text: "Edit the merged content below, or use hunk controls above",
+      cls: "engram-conflict-merge-hint"
+    }), this.mergeEditor = section.createEl("textarea", {
+      cls: "engram-conflict-merge-editor"
+    }), this.updateMergeEditor();
+  }
+  updateMergeEditor() {
+    this.mergeEditor && (this.mergeEditor.value = buildMergedContent(this.diffLines, this.hunks));
+  }
+  // ── Action buttons ──────────────────────────────────────────────
+  renderActions(root) {
+    let bar = root.createEl("footer", { cls: "engram-conflict-actions" });
+    bar.createEl("button", { text: "Apply merge", cls: "mod-cta" }).addEventListener("click", () => {
+      var _a, _b;
+      this.resolvePromise({
+        choice: "merge",
+        mergedContent: (_b = (_a = this.mergeEditor) == null ? void 0 : _a.value) != null ? _b : ""
+      }), this.close();
+    }), bar.createEl("button", { text: "Keep local", cls: "mod-warning" }).addEventListener("click", () => {
+      this.resolvePromise({ choice: "keep-local" }), this.close();
+    }), bar.createEl("button", { text: "Keep remote" }).addEventListener("click", () => {
+      this.resolvePromise({ choice: "keep-remote" }), this.close();
+    }), bar.createEl("button", { text: "Keep both" }).addEventListener("click", () => {
+      this.resolvePromise({ choice: "keep-both" }), this.close();
+    }), bar.createEl("button", { text: "Skip" }).addEventListener("click", () => {
+      this.resolvePromise({ choice: "skip" }), this.close();
+    });
+  }
+  // ── Helpers ──────────────────────────────────────────────────────
+  fmtDate(epoch) {
+    return new Date(epoch * 1e3).toLocaleString();
+  }
+};
+
+// src/crdt-op-dispatch.ts
+var TERMINAL_REASONS = /* @__PURE__ */ new Set([
+  "id_conflict",
+  "version_conflict",
+  "bad_doc_id",
+  "implausible_state_vector"
+]), LIMIT_REASONS = /* @__PURE__ */ new Set(["notes_cap_reached"]);
+function crdtOpFailureReason(err) {
+  let m = (err instanceof Error ? err.message : String(err)).match(/request failed: (\{.*\})/s);
+  if (!(m != null && m[1])) return null;
+  try {
+    let reason = JSON.parse(m[1]).reason;
+    return typeof reason == "string" ? reason : null;
+  } catch (e) {
+    return null;
+  }
+}
+function makeCrdtOpSend(hooks) {
+  let limitSurfaced = /* @__PURE__ */ new Set();
+  return async (op) => {
+    var _a, _b, _c;
+    let ch = hooks.channel();
+    if (!ch) return "error";
+    try {
+      if (op.kind === "create") {
+        let path = (_b = (_a = op.payload) == null ? void 0 : _a.path) != null ? _b : "", serverId = await ch.crdtCreate(op.docId, path);
+        try {
+          await hooks.onCreated(op.docId, serverId, path);
+        } catch (e) {
+        }
+      } else if (op.kind === "delete")
+        await ch.crdtDeleteAcked(op.docId);
+      else
+        return "ok";
+      return "ok";
+    } catch (err) {
+      let reason = crdtOpFailureReason(err);
+      if (reason && LIMIT_REASONS.has(reason))
+        return limitSurfaced.has(op.id) || (limitSurfaced.add(op.id), (_c = hooks.onLimit) == null || _c.call(hooks, op, reason)), "error";
+      if (reason && TERMINAL_REASONS.has(reason))
+        return hooks.onTerminal(op, reason), "ok";
+      let msg = err instanceof Error ? err.message : String(err);
+      return /timeout/i.test(msg) ? "timeout" : "error";
+    }
+  };
+}
+
+// src/crdt-op-queue.ts
+var DEFAULT_OPTIONS = {
+  maxQueue: 500,
+  opTtlMs: 3e5,
+  maxAttempts: 8,
+  baseBackoffMs: 500,
+  maxBackoffMs: 3e4
+}, CrdtOpQueue = class {
+  constructor(deps) {
+    /** Keyed by docId → at most one pending op per doc (newest supersedes). */
+    this.entries = /* @__PURE__ */ new Map();
+    this.joined = !1;
+    /** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
+    this.flushing = !1;
+    this.persistFn = null;
+    this.persistTimer = null;
+    var _a;
+    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : 1e3;
+  }
+  /** Number of distinct pending ops (docIds). */
+  size() {
+    return this.entries.size;
+  }
+  /** Flat snapshot of pending ops (mirrors OfflineQueue.all()), for the
+   *  wholesale savePluginData blob. Every save must re-list it or the next
+   *  write wipes it. */
+  all() {
+    return this.pending();
+  }
+  /** Register a callback to persist the flat pending op list. */
+  setPersist(fn) {
+    this.persistFn = fn;
+  }
+  /**
+   * Restore persisted ops on startup. Prunes any op already past `opTtlMs`
+   * (fires onDrop "ttl") so a long downtime never resurrects stale ops, and
+   * never restores more than `maxQueue` (oldest-first, dropping the excess).
+   * `attempts`/`nextAttemptAt` are transient scheduling state and are reset:
+   * a reloaded op gets a fresh retry budget and is due immediately.
+   */
+  load(ops) {
+    var _a;
+    this.entries.clear();
+    let now = this.now();
+    for (let op of ops) {
+      if (now - op.enqueuedAt > this.opts.opTtlMs) {
+        (_a = this.onDrop) == null || _a.call(this, op, "ttl");
+        continue;
+      }
+      this.entries.size >= this.opts.maxQueue && this.evictOldest(), this.entries.set(op.docId, { op: { ...op, attempts: 0 }, nextAttemptAt: 0 });
+    }
+  }
+  /** Cancel any pending persist timer. Call on plugin unload. */
+  dispose() {
+    this.persistTimer !== null && (window.clearTimeout(this.persistTimer), this.persistTimer = null);
+  }
+  /**
+   * Add an op. Coalesced by docId: a newer op replaces any pending op for the
+   * same doc (delete supersedes create, latest msg wins). A brand-new docId
+   * beyond `maxQueue` evicts the oldest pending op (onDrop "overflow").
+   * Does not send until the channel is joined.
+   */
+  enqueue(op) {
+    if (this.entries.get(op.docId)) {
+      this.entries.set(op.docId, { op, nextAttemptAt: 0 }), this.schedulePersist();
+      return;
+    }
+    this.entries.size >= this.opts.maxQueue && this.evictOldest(), this.entries.set(op.docId, { op, nextAttemptAt: 0 }), this.schedulePersist();
+  }
+  /** Channel joined: flush all held ops FIFO, retrying failures via backoff. */
+  async onJoined() {
+    this.joined = !0, await this.flush();
+  }
+  /**
+   * Drive retries: send every op that is due (nextAttemptAt <= now) and not
+   * TTL-expired. Call after advancing the clock. No-op until joined.
+   */
+  async tick() {
+    await this.flush();
+  }
+  evictOldest() {
+    var _a;
+    let first = this.entries.keys().next();
+    if (first.done) return;
+    let entry = this.entries.get(first.value);
+    this.entries.delete(first.value), entry && ((_a = this.onDrop) == null || _a.call(this, entry.op, "overflow")), this.schedulePersist();
+  }
+  /** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
+  dropIfExpired(docId, entry) {
+    var _a;
+    return this.now() - entry.op.enqueuedAt <= this.opts.opTtlMs ? !1 : (this.entries.delete(docId), (_a = this.onDrop) == null || _a.call(this, entry.op, "ttl"), this.schedulePersist(), !0);
+  }
+  /** Flat snapshot of pending ops, for persistence. */
+  pending() {
+    return [...this.entries.values()].map((e) => e.op);
+  }
+  /** Debounced persist: coalesces rapid mutations into one write. */
+  schedulePersist() {
+    !this.persistFn || this.persistTimer !== null || (this.persistTimer = window.setTimeout(() => {
+      var _a;
+      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.pending());
+    }, this.persistDelayMs));
+  }
+  backoffFor(attempts) {
+    let delay = this.opts.baseBackoffMs * 2 ** (attempts - 1);
+    return Math.min(delay, this.opts.maxBackoffMs);
+  }
+  async flush() {
+    if (!(!this.joined || this.flushing)) {
+      this.flushing = !0;
+      try {
+        for (let docId of [...this.entries.keys()]) {
+          let entry = this.entries.get(docId);
+          entry && (this.dropIfExpired(docId, entry) || entry.nextAttemptAt > this.now() || await this.attempt(docId, entry));
+        }
+      } finally {
+        this.flushing = !1;
+      }
+    }
+  }
+  async attempt(docId, entry) {
+    var _a;
+    let result = await this.send(entry.op);
+    if (this.entries.get(docId) === entry) {
+      if (result === "ok") {
+        this.entries.delete(docId), this.schedulePersist();
+        return;
+      }
+      if (entry.op.attempts += 1, entry.op.attempts >= this.opts.maxAttempts) {
+        this.entries.delete(docId), (_a = this.onDrop) == null || _a.call(this, entry.op, "max-attempts"), this.schedulePersist();
+        return;
+      }
+      entry.nextAttemptAt = this.now() + this.backoffFor(entry.op.attempts);
+    }
+  }
+};
+
+// src/limit-toast.ts
+var import_obsidian3 = require("obsidian");
+
+// src/limit-copy.ts
+var TABLE = {
+  notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
+  // CRDT channel variant of the note-cap reject (crdt_channel.ex): same copy.
+  notes_cap_reached: "Note limit reached. Upgrade to keep adding notes.",
+  vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
+  attachment_must_be_text: "Free syncs notes only \u2014 images & PDFs need a paid plan.",
+  attachments_disabled: "Attachment sync needs a paid plan.",
+  attachments_quota_exceeded: "Attachment storage is full \u2014 upgrade for more.",
+  file_too_large: "File too large for your plan.",
+  concurrent_devices_exceeded: "Already signed in on another device. Upgrade for multi-device.",
+  device_swap_cooldown: "Device swap cooldown active. Wait or upgrade.",
+  ai_conversations_per_day_exceeded: "Daily AI limit reached.",
+  ai_queries_per_conversation_exceeded: "Conversation length limit reached.",
+  ai_queries_per_day_exceeded: "Daily AI query limit reached.",
+  realtime_disabled: "Realtime sync requires upgrade.",
+  account_suspended: "Account suspended. Contact support.",
+  no_tier: "Account setup incomplete."
+};
+function toastFor(reason) {
+  var _a;
+  return `Engram: ${(_a = TABLE[reason]) != null ? _a : "Limit reached. Upgrade to continue."}`;
+}
+
+// src/limit-toast.ts
+var TOAST_DURATION_MS = 1e4;
+function notifyLimitExceeded(err) {
+  let msg = toastFor(err.reason), notice = new import_obsidian3.Notice(msg, TOAST_DURATION_MS);
+  if (err.upgradeUrl) {
+    let url = err.upgradeUrl, noticeEl = notice.noticeEl;
+    if (!noticeEl) return;
+    noticeEl.createEl("button", {
+      text: "Upgrade",
+      cls: "engram-limit-upgrade-btn"
+    }).addEventListener("click", () => {
+      window.open(url, "_blank");
+    });
+  }
+}
+
+// src/plan-state.ts
+function parsePlanState(raw, now) {
+  var _a;
+  if (typeof raw != "object" || raw === null) return null;
+  let r = raw;
+  return typeof r.tier != "string" ? null : {
+    tier: (_a = r.tier) != null ? _a : "free",
+    attachmentsTextOnly: r.attachments_text_only === !0,
+    maxFileBytes: typeof r.max_file_bytes == "number" ? r.max_file_bytes : 0,
+    attachmentBytesCap: typeof r.attachment_bytes_cap == "number" ? r.attachment_bytes_cap : null,
+    updatedAt: now
+  };
+}
+function attachmentCapabilityGained(prev, next) {
+  var _a;
+  return ((_a = prev == null ? void 0 : prev.attachmentsTextOnly) != null ? _a : !0) && !next.attachmentsTextOnly;
+}
+
+// src/search-modal.ts
+var import_obsidian8 = require("obsidian");
+
+// src/search-ui.ts
+var import_obsidian7 = require("obsidian");
+
+// src/folder-suggest.ts
+var import_obsidian5 = require("obsidian");
+
+// src/input-suggest-base.ts
+var import_obsidian4 = require("obsidian"), WidthMatchedInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
+  constructor(app, inputEl) {
+    super(app, inputEl), this.inputEl = inputEl;
+  }
+  /** Match the dropdown width to the input so it spans the panel instead of
+   *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
+   *  this a harmless no-op if that property ever changes. */
+  open() {
+    super.open();
+    let el = this.suggestEl;
+    el && (el.style.width = `${this.inputEl.offsetWidth}px`);
+  }
+};
+
+// src/folder-suggest.ts
+function folderSuggestions(allFolders, fragment2) {
+  let frag = fragment2.trim().toLowerCase();
+  return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
+}
+var FolderInputSuggest = class extends WidthMatchedInputSuggest {
+  constructor(app, inputEl, getAllFolders, onPick) {
+    super(app, inputEl), this.getAllFolders = getAllFolders, this.onPick = onPick;
+  }
+  getSuggestions(query) {
+    return folderSuggestions(this.getAllFolders(), query);
+  }
+  renderSuggestion(value, el) {
+    el.addClass("engram-folder-suggest-item");
+    let icon = el.createSpan({ cls: "engram-folder-suggest-icon" });
+    (0, import_obsidian5.setIcon)(icon, "folder"), el.createSpan({ text: value });
+  }
+  selectSuggestion(value, _evt) {
+    this.setValue(value), this.onPick(value), this.close();
+  }
+};
+
+// src/search-engine.ts
+var import_obsidian6 = require("obsidian");
+
+// src/search-highlight.ts
+function buildSegments(text2, ranges) {
+  if (!ranges.length) return [{ text: text2, hit: !1 }];
+  let sorted = [...ranges].sort((a, b) => a[0] - b[0]), out = [], cursor = 0;
+  for (let [s, e] of sorted)
+    s < cursor || (s > cursor && out.push({ text: text2.slice(cursor, s), hit: !1 }), out.push({ text: text2.slice(s, e), hit: !0 }), cursor = e);
+  return cursor < text2.length && out.push({ text: text2.slice(cursor), hit: !1 }), out;
+}
+var SCRIPTLESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+function queryTokenRanges(text2, query) {
+  let ranges = [];
+  for (let raw of query.split(/\s+/)) {
+    let token = raw.trim();
+    if (token.length < 2) continue;
+    let esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), pattern = SCRIPTLESS.test(token) ? esc : `(?<![\\p{L}\\p{N}_])${esc}(?![\\p{L}\\p{N}_])`, re = new RegExp(pattern, "giu"), m = re.exec(text2);
+    for (; m !== null; )
+      ranges.push([m.index, m.index + m[0].length]), m = re.exec(text2);
+  }
+  return ranges.sort((a, b) => a[0] - b[0]);
+}
+
+// src/search-engine.ts
+var DEFAULT_LIMIT = 10, EXCERPT_LEN = 140, STRENGTH_FLOOR = 40;
+function matchStrengths(scores) {
+  if (!scores.length) return [];
+  let max2 = Math.max(...scores), min2 = Math.min(...scores), range = max2 - min2;
+  return range === 0 ? scores.map(() => 100) : scores.map(
+    (s) => Math.round(STRENGTH_FLOOR + (s - min2) / range * (100 - STRENGTH_FLOOR))
+  );
+}
+var RRF_K = 60, TITLE_BONUS = 1;
+function excerpt(text2, query) {
+  let t = (text2 != null ? text2 : "").replace(/\s+/g, " ").trim();
+  if (!t) return "";
+  let first = queryTokenRanges(t, query)[0];
+  if (!first)
+    return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN).replace(/\s+$/, "")}\u2026` : t;
+  let start = Math.max(0, first[0] - 24), end = Math.min(t.length, start + EXCERPT_LEN);
+  if (start > 0) {
+    let sp = t.indexOf(" ", start);
+    sp !== -1 && sp < first[0] && (start = sp + 1);
+  }
+  if (end < t.length) {
+    let sp = t.lastIndexOf(" ", end);
+    sp > first[1] && (end = sp);
+  }
+  return `${start > 0 ? "\u2026" : ""}${t.slice(start, end)}${end < t.length ? "\u2026" : ""}`;
+}
+function stripFrontmatter(content) {
+  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
+}
+function mapSemantic(results, query) {
+  return results.map((r) => {
+    var _a, _b, _c;
+    return {
+      source_path: (_b = (_a = r.source_path) != null ? _a : r.path) != null ? _b : "",
+      title: r.title,
+      text: excerpt((_c = r.text) != null ? _c : r.snippet, query),
+      heading_path: r.heading_path,
+      // Guard against a result missing `score` (web-card shapes may omit it):
+      // a non-finite score would propagate NaN through ranking and the strength bar.
+      score: Number.isFinite(r.score) ? r.score : 0,
+      matchType: "semantic"
+    };
+  });
+}
+async function searchSemantic(query, ctx, opts) {
+  var _a;
+  let resp = await ctx.api.search(query, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, opts.tags, opts.folder);
+  return mapSemantic(resp.results, query);
+}
+async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
+  var _a;
+  if (!query.trim()) return { results: [], degraded: !1 };
+  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian6.prepareSimpleSearch;
+  return mode === "semantic" ? { results: await searchSemantic(query, ctx, opts), degraded: !1 } : mode === "keyword" ? { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: !1 } : searchHybrid(query, ctx, opts, fuzzy);
+}
+function basename(path) {
+  var _a;
+  let file = (_a = path.split("/").pop()) != null ? _a : path;
+  return file.endsWith(".md") ? file.slice(0, -3) : file;
+}
+function matchesFolder(path, folder) {
+  if (!folder) return !0;
+  let prefix = folder.endsWith("/") ? folder : `${folder}/`;
+  return path.startsWith(prefix);
+}
+function noteTags(app, file) {
+  var _a;
+  let cache = app.metadataCache.getFileCache(file);
+  if (!cache) return /* @__PURE__ */ new Set();
+  let all2 = (_a = (0, import_obsidian6.getAllTags)(cache)) != null ? _a : [];
+  return new Set(all2.map((t) => t.replace(/^#/, "")));
+}
+function matchesTags(app, file, tags) {
+  if (!(tags != null && tags.length)) return !0;
+  let have = noteTags(app, file);
+  return tags.every((t) => have.has(t.replace(/^#/, "")));
+}
+async function searchKeyword(query, ctx, opts, fuzzy) {
+  var _a;
+  let scorer = fuzzy(query), files = ctx.app.vault.getMarkdownFiles().filter((f) => matchesFolder(f.path, opts.folder)).filter((f) => matchesTags(ctx.app, f, opts.tags)), scored = [];
+  for (let file of files) {
+    let content;
+    try {
+      content = await ctx.app.vault.cachedRead(file);
+    } catch (e) {
+      console.warn("Engram search: skipping unreadable file", file.path, e);
+      continue;
+    }
+    let body = stripFrontmatter(content), title = basename(file.path), titleHit = scorer(title), bodyHit = scorer(body), score = Math.max(
+      titleHit ? titleHit.score + TITLE_BONUS : Number.NEGATIVE_INFINITY,
+      bodyHit ? bodyHit.score : Number.NEGATIVE_INFINITY
+    );
+    score !== Number.NEGATIVE_INFINITY && scored.push({
+      source_path: file.path,
+      title,
+      text: excerpt(body, query),
+      score,
+      matchType: "keyword"
+    });
+  }
+  return scored.sort((a, b) => b.score - a.score), scored.slice(0, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT);
+}
+function filterResultsByTags(app, results, tags) {
+  return tags != null && tags.length ? results.filter((r) => {
+    let file = app.vault.getFileByPath(r.source_path);
+    return file ? matchesTags(app, file, tags) : !1;
+  }) : results;
+}
+function collapseByNote(results) {
+  let best = /* @__PURE__ */ new Map();
+  for (let r of results) {
+    if (!r.source_path) continue;
+    let prev = best.get(r.source_path);
+    (!prev || r.score > prev.score) && best.set(r.source_path, r);
+  }
+  return [...best.values()];
+}
+function rrf(keyword, semantic, limit) {
+  var _a, _b, _c;
+  let scores = /* @__PURE__ */ new Map(), kw = /* @__PURE__ */ new Map(), sem = /* @__PURE__ */ new Map();
+  keyword.forEach((r, i) => {
+    var _a2;
+    scores.set(r.source_path, ((_a2 = scores.get(r.source_path)) != null ? _a2 : 0) + 1 / (RRF_K + i)), kw.set(r.source_path, r);
+  }), semantic.forEach((r, i) => {
+    var _a2;
+    scores.set(r.source_path, ((_a2 = scores.get(r.source_path)) != null ? _a2 : 0) + 1 / (RRF_K + i)), sem.set(r.source_path, r);
+  });
+  let fused = [];
+  for (let [path, score] of scores) {
+    let k = kw.get(path), s = sem.get(path), matchType = k && s ? "both" : k ? "keyword" : "semantic";
+    fused.push({
+      source_path: path,
+      title: (_b = (_a = k != null ? k : s) == null ? void 0 : _a.title) != null ? _b : s == null ? void 0 : s.title,
+      // Prefer the semantic chunk text (heading-aware passage); fall back to keyword.
+      text: (_c = s == null ? void 0 : s.text) != null ? _c : k.text,
+      heading_path: s == null ? void 0 : s.heading_path,
+      score,
+      matchType
+    });
+  }
+  return fused.sort((a, b) => b.score - a.score), fused.slice(0, limit);
+}
+async function searchHybrid(query, ctx, opts, fuzzy) {
+  var _a;
+  let limit = (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, keywordPromise = searchKeyword(query, ctx, opts, fuzzy), semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder);
+  semanticPromise.catch(() => {
+  });
+  let keywordList = await keywordPromise;
+  try {
+    let resp = await semanticPromise, semanticList = filterResultsByTags(
+      ctx.app,
+      collapseByNote(mapSemantic(resp.results, query)),
+      opts.tags
+    );
+    return { results: rrf(keywordList, semanticList, limit), degraded: !1 };
+  } catch (e) {
+    return console.error("Engram hybrid search: semantic leg failed, using keyword only", e), { results: keywordList.slice(0, limit), degraded: !0 };
+  }
+}
+
+// src/tag-suggest.ts
+function tagSuggestions(allTags, fragment2, selected) {
+  let frag = fragment2.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
+  return allTags.filter((t) => {
+    let lc = t.replace(/^#/, "").toLowerCase();
+    return !chosen.has(lc) && (frag === "" || lc.includes(frag));
+  }).slice(0, 50);
+}
+var TagInputSuggest = class extends WidthMatchedInputSuggest {
+  constructor(app, inputEl, getAllVaultTags, getSelected, onAddTag) {
+    super(app, inputEl), this.getAllVaultTags = getAllVaultTags, this.getSelected = getSelected, this.onAddTag = onAddTag;
+  }
+  getSuggestions(query) {
+    return tagSuggestions(this.getAllVaultTags(), query, this.getSelected());
+  }
+  renderSuggestion(value, el) {
+    el.setText(`#${value.replace(/^#/, "")}`);
+  }
+  selectSuggestion(value, _evt) {
+    this.onAddTag(value), this.setValue(""), this.inputEl.dispatchEvent(new Event("input", { bubbles: !0 }));
+  }
+};
+
+// src/search-ui.ts
+var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchPanel = class {
+  constructor(parent, ctx, opts) {
+    this.selectedTags = [];
+    this.filtersOpen = !1;
+    this.debounceTimer = null;
+    this.lastRunQuery = "";
+    this.results = [];
+    this.selectedIndex = -1;
+    /** Bumped on every run() so a slow earlier search can't clobber a newer render. */
+    this.runGeneration = 0;
+    this.ctx = ctx, this.opts = opts, this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid", this.build(parent);
+  }
+  build(parent) {
+    parent.addClass("engram-search-panel");
+    let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
+    (0, import_obsidian7.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
+      type: "search",
+      placeholder: "Search your vault\u2026",
+      cls: "engram-search-input"
+    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearHandler = () => {
+      this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
+    }, this.clearEl.addEventListener("click", this.clearHandler), this.filterToggleEl = searchRow.createSpan({
+      cls: "engram-search-filter-toggle clickable-icon"
+    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleHandler = () => this.toggleFilters(), this.filterToggleEl.addEventListener("click", this.filterToggleHandler), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
+      "Rank results by both exact words and semantic meaning. Off uses meaning only."
+    ).addToggle(
+      (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
+    ), this.folderEl = this.filtersEl.createEl("input", {
+      type: "text",
+      placeholder: "Filter by folder\u2026",
+      cls: "engram-search-input engram-search-folder-input"
+    }), new FolderInputSuggest(
+      this.ctx.app,
+      this.folderEl,
+      () => this.collectVaultFolders(),
+      () => {
+        this.run();
+      }
+    ), this.tagChipsEl = this.filtersEl.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.tagEl = this.filtersEl.createEl("input", {
+      type: "text",
+      placeholder: "Filter by tags\u2026",
+      cls: "engram-search-input engram-search-tag-input"
+    }), new TagInputSuggest(
+      this.ctx.app,
+      this.tagEl,
+      () => this.collectVaultTags(),
+      () => this.selectedTags,
+      (tag) => this.addTag(tag)
+    );
+    let resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
+    resultsSection.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
+      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => {
+        this.run();
+      }, SEARCH_DEBOUNCE_MS);
+    }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
+      if (e.key === "Enter" || e.key === ",") {
+        let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
+        raw && (e.preventDefault(), this.addTag(raw), this.tagEl.value = "");
+      }
+    }, this.tagEl.addEventListener("keydown", this.tagKeydownHandler), this.keydownHandler = (e) => {
+      if (e.key === "ArrowDown")
+        e.preventDefault(), this.moveSelection(1);
+      else if (e.key === "ArrowUp")
+        e.preventDefault(), this.moveSelection(-1);
+      else if (e.key === "Enter") {
+        e.preventDefault();
+        let q = this.inputEl.value.trim();
+        q && q !== this.lastRunQuery ? (this.debounceTimer && window.clearTimeout(this.debounceTimer), this.run()) : this.openSelected();
+      }
+    }, this.inputEl.addEventListener("keydown", this.keydownHandler);
+  }
+  focus() {
+    this.inputEl.focus();
+  }
+  destroy() {
+    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("keydown", this.tagKeydownHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler), this.clearEl.removeEventListener("click", this.clearHandler), this.filterToggleEl.removeEventListener("click", this.filterToggleHandler);
+  }
+  setMode(mode) {
+    var _a, _b;
+    mode !== this.mode && (this.mode = mode, (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run());
+  }
+  toggleFilters() {
+    this.filtersOpen = !this.filtersOpen, this.filtersEl.toggleClass("is-hidden", !this.filtersOpen), this.filterToggleEl.toggleClass("is-active", this.filtersOpen);
+  }
+  /** Reflect transient input state in the chrome: show the clear button when the
+   *  query is non-empty, and mark the filters toggle when a folder/tag filter is
+   *  active (so applied filters aren't invisible while the panel is collapsed). */
+  reflectInputState() {
+    this.clearEl.toggleClass("is-visible", this.inputEl.value.length > 0);
+    let hasFilters = this.folderEl.value.trim().length > 0 || this.selectedTags.length > 0;
+    this.filterToggleEl.toggleClass("has-filters", hasFilters);
+  }
+  parseTags() {
+    return this.selectedTags.length ? [...this.selectedTags] : void 0;
+  }
+  addTag(tag) {
+    let clean = tag.replace(/^#/, "").trim();
+    if (!clean) return;
+    this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase()) || this.selectedTags.push(clean), this.renderTagChips(), this.reflectInputState(), this.tagEl.focus(), this.run();
+  }
+  removeTag(tag) {
+    this.selectedTags = this.selectedTags.filter((t) => t !== tag), this.renderTagChips(), this.reflectInputState(), this.run();
+  }
+  renderTagChips() {
+    this.tagChipsEl.empty();
+    for (let tag of this.selectedTags) {
+      let chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
+      chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" }), chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "\xD7" }), chip.setAttribute("aria-label", `Remove tag ${tag}`), chip.addEventListener("click", () => this.removeTag(tag));
+    }
+  }
+  collectVaultTags() {
+    var _a;
+    let set2 = /* @__PURE__ */ new Set();
+    for (let file of this.ctx.app.vault.getMarkdownFiles()) {
+      let cache = this.ctx.app.metadataCache.getFileCache(file);
+      if (cache)
+        for (let t of (_a = (0, import_obsidian7.getAllTags)(cache)) != null ? _a : []) set2.add(t.replace(/^#/, ""));
+    }
+    return [...set2].sort((a, b) => a.localeCompare(b));
+  }
+  /** Distinct note-bearing folder paths (each ancestor included) for the folder
+   *  filter dropdown. Derived from file paths so we only ever suggest folders
+   *  that actually contain notes the prefix filter can match. */
+  collectVaultFolders() {
+    let set2 = /* @__PURE__ */ new Set();
+    for (let file of this.ctx.app.vault.getMarkdownFiles()) {
+      let slash = file.path.lastIndexOf("/");
+      if (slash <= 0) continue;
+      let dir = file.path.slice(0, slash);
+      for (; dir; ) {
+        set2.add(dir);
+        let s = dir.lastIndexOf("/");
+        dir = s > 0 ? dir.slice(0, s) : "";
+      }
+    }
+    return [...set2].sort((a, b) => a.localeCompare(b));
+  }
+  async run() {
+    let gen = ++this.runGeneration, query = this.inputEl.value.trim();
+    if (!query) {
+      this.lastRunQuery = "", this.results = [], this.selectedIndex = -1, this.renderEmpty();
+      return;
+    }
+    this.lastRunQuery = query;
+    try {
+      let outcome = await searchEngram(this.mode, query, this.ctx, {
+        limit: 10,
+        folder: this.folderEl.value.trim() || void 0,
+        tags: this.parseTags()
+      });
+      if (gen !== this.runGeneration) return;
+      outcome.degraded && new import_obsidian7.Notice("Semantic offline \u2014 keyword results only"), this.results = outcome.results, this.selectedIndex = this.results.length ? 0 : -1, this.renderResults(query);
+    } catch (e) {
+      if (gen !== this.runGeneration) return;
+      console.error("Engram search failed", e), this.resultsEl.empty(), this.resultsEl.createEl("p", {
+        text: "Search failed \u2014 check connection",
+        cls: "engram-search-empty"
+      });
+    }
+  }
+  renderEmpty() {
+    this.resultsEl.empty(), this.resultsEl.createEl("p", {
+      text: "Type to search your vault",
+      cls: "engram-search-empty"
+    });
+  }
+  highlightInto(el, result, query) {
+    for (let seg of buildSegments(result.text, queryTokenRanges(result.text, query)))
+      seg.hit ? el.createSpan({ text: seg.text, cls: "engram-search-hl" }) : el.appendText(seg.text);
+  }
+  renderResults(query) {
+    if (this.resultsEl.empty(), !this.results.length) {
+      this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
+      return;
+    }
+    let strengths = matchStrengths(this.results.map((r) => r.score));
+    this.results.forEach((result, i) => {
+      var _a;
+      let item = this.resultsEl.createDiv({
+        cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`
+      });
+      item.createDiv({ cls: "engram-search-result-header" }).createSpan({
+        text: result.title || result.source_path || "Untitled",
+        cls: "engram-search-result-title"
+      });
+      let meta = item.createDiv({ cls: "engram-search-result-meta" });
+      if (this.mode === "hybrid" && result.matchType) {
+        let pill = meta.createSpan({
+          cls: `engram-search-match engram-search-match-${result.matchType}`
+        }), icon = pill.createSpan({ cls: "engram-search-match-icon" });
+        (0, import_obsidian7.setIcon)(
+          icon,
+          result.matchType === "keyword" ? "case-sensitive" : result.matchType === "both" ? "layers" : "sparkles"
+        ), pill.createSpan({
+          text: result.matchType === "keyword" ? "exact" : result.matchType === "both" ? "meaning + exact" : "meaning"
+        });
+      }
+      let pct = (_a = strengths[i]) != null ? _a : 100, strength = meta.createSpan({ cls: "engram-search-strength" }), bar = strength.createSpan({ cls: "engram-search-strength-bar" });
+      bar.createSpan({ cls: "engram-search-strength-fill" }).style.width = `${pct}%`, strength.createSpan({
+        cls: "engram-search-strength-label",
+        text: `match strength: ${pct}%`
+      });
+      let parts = [], lastSlash = result.source_path.lastIndexOf("/");
+      if (lastSlash > 0 && parts.push(result.source_path.slice(0, lastSlash)), result.heading_path) {
+        let trail = result.heading_path.split(">").slice(1).map((s) => s.trim()).filter(Boolean).join(" \u203A ");
+        trail && parts.push(trail);
+      }
+      parts.length && item.createDiv({
+        text: parts.join(" \xB7 "),
+        cls: "engram-search-result-path"
+      });
+      let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
+      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => {
+        this.openResult(result);
+      });
+    });
+  }
+  /**
+   * Move the selection highlight WITHOUT rebuilding the list DOM. Toggles
+   * `is-selected` on the existing item elements (keeps focus / native
+   * behaviour intact and avoids re-attaching every per-item listener).
+   */
+  updateSelection() {
+    this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
+      let selected = i === this.selectedIndex;
+      el.classList.toggle("is-selected", selected), selected && el.scrollIntoView({ block: "nearest" });
+    });
+  }
+  moveSelection(delta) {
+    this.results.length && (this.selectedIndex = Math.max(
+      0,
+      Math.min(this.results.length - 1, this.selectedIndex + delta)
+    ), this.updateSelection());
+  }
+  openSelected() {
+    let result = this.results[this.selectedIndex];
+    result && this.openResult(result);
+  }
+  headingAnchor(headingPath) {
+    var _a;
+    if (!headingPath) return "";
+    let last2 = (_a = headingPath.split(">").pop()) == null ? void 0 : _a.trim();
+    return last2 ? `#${last2}` : "";
+  }
+  async openResult(result) {
+    var _a, _b;
+    if (!result.source_path) {
+      new import_obsidian7.Notice("No source path for this result");
+      return;
+    }
+    let file = this.ctx.app.vault.getFileByPath(result.source_path);
+    if (!file) {
+      new import_obsidian7.Notice("Note not synced locally");
+      return;
+    }
+    let match2 = await this.buildMatchState(file);
+    if (match2)
+      await this.ctx.app.workspace.getLeaf(!1).openFile(file, { eState: { match: match2 } });
+    else {
+      let linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
+      await this.ctx.app.workspace.openLinkText(linktext, "");
+    }
+    (_b = (_a = this.opts).onResultOpened) == null || _b.call(_a);
+  }
+  /** Compute the native `match` ephemeral state (full content + matched ranges)
+   *  for the current query, or null when there's no literal term hit to jump to. */
+  async buildMatchState(file) {
+    let query = this.lastRunQuery.trim();
+    if (!query) return null;
+    let content;
+    try {
+      content = await this.ctx.app.vault.cachedRead(file);
+    } catch (e) {
+      return console.warn("Engram search: could not read note for match highlight", file.path, e), null;
+    }
+    let res = (0, import_obsidian7.prepareSimpleSearch)(query)(content);
+    return !res || !res.matches.length ? null : { content, matches: res.matches };
+  }
+};
+
+// src/search-modal.ts
+var SearchModal = class extends import_obsidian8.Modal {
+  constructor(app, api, defaultMode, onModeChange) {
+    super(app);
+    this.panel = null;
+    this.api = api, this.defaultMode = defaultMode, this.onModeChange = onModeChange;
+  }
+  onOpen() {
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.addClass("engram-search-modal"), this.panel = new SearchPanel(
+      contentEl,
+      { api: this.api, app: this.app },
+      {
+        defaultMode: this.defaultMode,
+        onModeChange: this.onModeChange,
+        onResultOpened: () => this.close()
+      }
+    ), this.panel.focus();
+  }
+  onClose() {
+    var _a;
+    (_a = this.panel) == null || _a.destroy(), this.panel = null, this.contentEl.empty();
+  }
+};
+
+// src/search-view.ts
+var import_obsidian9 = require("obsidian");
+var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_obsidian9.ItemView {
+  constructor(leaf, api, defaultMode, onModeChange) {
+    super(leaf);
+    this.panel = null;
+    this.api = api, this.defaultMode = defaultMode, this.onModeChange = onModeChange;
+  }
+  getViewType() {
+    return SEARCH_VIEW_TYPE;
+  }
+  getDisplayText() {
+    return "Engram search";
+  }
+  getIcon() {
+    return "brain-circuit";
+  }
+  async onOpen() {
+    this.contentEl.empty(), this.contentEl.addClass("engram-search-view-container"), this.panel = new SearchPanel(
+      this.contentEl,
+      { api: this.api, app: this.app },
+      {
+        defaultMode: this.defaultMode,
+        onModeChange: this.onModeChange
+      }
+    );
+  }
+  async onClose() {
+    var _a;
+    (_a = this.panel) == null || _a.destroy(), this.panel = null;
+  }
+};
+
+// src/settings.ts
+var import_obsidian20 = require("obsidian");
+
+// src/device-flow-modal.ts
+var import_obsidian10 = require("obsidian");
+var DeviceFlowModal = class extends import_obsidian10.Modal {
+  constructor(app, plugin) {
+    super(app);
+    this.resolve = () => {
+    };
+    this.pollInterval = null;
+    this.aborted = !1;
+    this.plugin = plugin;
+  }
+  onOpen() {
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
+    let statusEl = contentEl.createEl("p", { text: "Starting..." });
+    this.beginDeviceFlow(contentEl, statusEl);
+  }
+  async beginDeviceFlow(contentEl, statusEl) {
+    try {
+      let resp = await this.startDeviceFlow();
+      this.renderCodeScreen(contentEl, resp), this.startPolling(resp.device_code);
+    } catch (e) {
+      statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
+    }
+  }
+  onClose() {
+    this.aborted = !0, this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), this.contentEl.empty(), this.resolve(null);
+  }
+  waitForResult() {
+    return new Promise((resolve) => {
+      this.resolve = resolve, this.open();
+    });
+  }
+  async startDeviceFlow() {
+    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, vaultName = this.app.vault.getName().trim(), body = {
+      client_id: this.plugin.settings.clientId
+    };
+    vaultName && (body.vault_name = vaultName);
+    let resp = await withTimeout(
+      (0, import_obsidian10.requestUrl)({
+        url: `${apiUrl}/auth/device`,
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        throw: !1
+      }),
+      15e3
+    );
+    if (resp.status < 200 || resp.status >= 300)
+      throw new Error(`HTTP ${resp.status}`);
+    return resp.json;
+  }
+  renderCodeScreen(contentEl, resp) {
+    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" }), contentEl.createEl("p", { text: "Your code:" });
+    let codeEl = contentEl.createEl("code", {
+      text: resp.user_code,
+      cls: "engram-device-code"
+    });
+    codeEl.title = "Click to copy", codeEl.addEventListener("click", () => {
+      navigator.clipboard.writeText(resp.user_code), new import_obsidian10.Notice("Code copied!");
+    }), contentEl.createEl("p", {
+      text: "A browser window has opened. Sign in and enter this code to link your vault."
+    }), contentEl.createEl("p", {
+      text: "Waiting for authorization...",
+      cls: "engram-device-waiting"
+    }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(resp.verification_url);
+  }
+  startPolling(deviceCode) {
+    let base = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, elapsed = 0, maxSeconds = 300, poll = async () => {
+      if (!this.aborted) {
+        if (elapsed += 5, elapsed >= maxSeconds) {
+          this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
+          return;
+        }
+        try {
+          let resp = await withTimeout(
+            (0, import_obsidian10.requestUrl)({
+              url: `${apiUrl}/auth/device/token`,
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ device_code: deviceCode }),
+              throw: !1
+            }),
+            15e3
+          );
+          if (resp.status === 428) return;
+          if (resp.status >= 200 && resp.status < 300) {
+            this.pollInterval && window.clearInterval(this.pollInterval);
+            let result = resp.json;
+            this.resolve(result), this.resolve = () => {
+            }, this.close();
+            return;
+          }
+          if (resp.status === 410) {
+            this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
+            return;
+          }
+        } catch (e) {
+        }
+      }
+    };
+    this.pollInterval = window.setInterval(() => {
+      poll();
+    }, 5e3);
+  }
+  renderExpired() {
+    let contentEl = this.contentEl;
+    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" }), contentEl.createEl("p", { text: "Code expired. Please try again." });
+    let btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
+    btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" }).addEventListener("click", () => {
+      this.aborted = !1, this.onOpen();
+    }), btnContainer.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
+  }
+};
+
+// src/sync-progress-modal.ts
+var import_obsidian13 = require("obsidian");
+
+// src/sync-center-render.ts
+var import_obsidian12 = require("obsidian");
+
+// src/issue-store.ts
+var IssueStore = class {
+  constructor() {
+    this.issues = /* @__PURE__ */ new Map();
+  }
+  /** Record a new failure or merge into the existing one for `path`. */
+  record(issue) {
+    let existing = this.issues.get(issue.path);
+    if (existing) {
+      this.issues.set(issue.path, {
+        ...issue,
+        firstFailedAt: existing.firstFailedAt,
+        attempts: existing.attempts + 1
+      });
+      return;
+    }
+    this.issues.set(issue.path, { ...issue });
+  }
+  /** Look up the current issue for `path`, if any. */
+  get(path) {
+    return this.issues.get(path);
+  }
+  /** Remove the issue for `path` (called on successful push/pull). */
+  clear(path) {
+    this.issues.delete(path);
+  }
+  clearAll() {
+    this.issues.clear();
+  }
+  all() {
+    return Array.from(this.issues.values());
+  }
+  count(category) {
+    if (!category) return this.issues.size;
+    let n = 0;
+    for (let issue of this.issues.values())
+      issue.category === category && n++;
+    return n;
+  }
+  byCategory() {
+    var _a;
+    let groups = {};
+    for (let issue of this.issues.values()) {
+      let bucket = (_a = groups[issue.category]) != null ? _a : [];
+      bucket.push(issue), groups[issue.category] = bucket;
+    }
+    return groups;
+  }
+  /** Plain-JSON snapshot for persistence. */
+  serialize() {
+    return this.all();
+  }
+  /** Rebuild from persisted JSON. Tolerant of unknown/malformed input. */
+  hydrate(data) {
+    if (this.issues.clear(), !!Array.isArray(data))
+      for (let raw of data)
+        isPersistedIssue(raw) && this.issues.set(raw.path, raw);
+  }
+};
+function limitReasonToCategory(reason) {
+  switch (reason) {
+    case "attachment_must_be_text":
+    case "attachments_disabled":
+      return "needs_pro";
+    case "attachments_quota_exceeded":
+      return "quota";
+    case "file_too_large":
+      return "too_large";
+    // Note/vault-cap 402s come from POST /api/notes, not the attachment path.
+    // Map them to the neutral `other` bucket so they aren't rendered as the
+    // attachment-flavored needs_pro surface nor counted in the attachment skip
+    // toast. Still terminal via categorizeError's LimitExceededError branch.
+    case "notes_cap_exceeded":
+    case "vaults_cap_exceeded":
+      return "other";
+    default:
+      return "needs_pro";
+  }
+}
+function categorizeError(err) {
+  var _a, _b, _c;
+  if (err instanceof LimitExceededError)
+    return {
+      category: limitReasonToCategory(err.reason),
+      status: 402,
+      message: err.message,
+      terminal: !0,
+      upgradeUrl: (_a = err.upgradeUrl) != null ? _a : void 0
+    };
+  let status = typeof err == "object" && err !== null && (_b = err.status) != null ? _b : void 0, message = (_c = extractServerMessage(err)) != null ? _c : err instanceof Error ? err.message : String(err);
+  return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
+}
+function extractServerMessage(err) {
+  if (typeof err != "object" || err === null) return;
+  let e = err, body = null;
+  if (e.json && typeof e.json == "object")
+    body = e.json;
+  else if (typeof e.text == "string")
+    try {
+      let parsed = JSON.parse(e.text);
+      parsed && typeof parsed == "object" && (body = parsed);
+    } catch (e2) {
+      return;
+    }
+  if (body && typeof body.error == "string" && body.error.length > 0) return body.error;
+}
+function shouldGoOffline(err) {
+  return categorizeError(err).category === "network";
+}
+var RETRY_CAP = 5;
+function shouldRetryAfterFailure(classified, attempts) {
+  return classified.terminal ? !1 : attempts < RETRY_CAP;
+}
+function issueDisposition(category, parseReason) {
+  if ((parseReason == null ? void 0 : parseReason.code) === "note_processing_failed") return "actionable";
+  switch (category) {
+    case "needs_pro":
+    case "quota":
+      return "informational";
+    case "too_large":
+    case "auth":
+    case "conflict":
+    case "frontmatter":
+      return "actionable";
+    default:
+      return "transient";
+  }
+}
+function remediation(category, reason) {
+  if ((reason == null ? void 0 : reason.code) === "note_processing_failed")
+    return {
+      title: "Note couldn't be processed",
+      hint: "The server couldn't process this note. Check its contents, then edit and save to try again."
+    };
+  switch (category) {
+    case "needs_pro":
+      return {
+        title: "Attachments need a paid plan",
+        hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs."
+      };
+    case "quota":
+      return {
+        title: "Attachment storage full",
+        hint: "You've used all the attachment storage on your plan. Upgrade for more."
+      };
+    case "too_large":
+      return {
+        title: "Too large for the server",
+        hint: "The server limit is 5 MB. Compress or split the file, then it will sync."
+      };
+    case "auth":
+      return {
+        title: "Sign-in expired",
+        hint: "Reconnect your account to resume syncing."
+      };
+    case "conflict":
+      return {
+        title: "Unresolved conflict",
+        hint: "Open the file to resolve the conflict, then sync again."
+      };
+    case "frontmatter":
+      return {
+        title: "Frontmatter needs a fix",
+        hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line."
+      };
+    case "server":
+      return {
+        title: "Server error",
+        hint: "A temporary server problem \u2014 retrying automatically."
+      };
+    case "network":
+      return {
+        title: "Network unavailable",
+        hint: "Can't reach the server \u2014 retrying automatically."
+      };
+    default:
+      return {
+        title: "Sync failed",
+        hint: "An unexpected error \u2014 retrying automatically."
+      };
+  }
+}
+function parseStatusToIssue(parseStatus, parseReason) {
+  var _a;
+  if (parseStatus !== "degraded") return null;
+  let category = (parseReason == null ? void 0 : parseReason.code) === "note_processing_failed" ? "other" : "frontmatter", message = (_a = parseReason == null ? void 0 : parseReason.message) != null ? _a : "Frontmatter could not be parsed";
+  return parseReason ? { category, message, parseReason } : { category, message };
+}
+var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
+function healthCheckDelay(failures) {
+  return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
+}
+function isPersistedIssue(value) {
+  if (typeof value != "object" || value === null) return !1;
+  let v = value;
+  return typeof v.path == "string" && (v.kind === "note" || v.kind === "attachment") && typeof v.category == "string" && typeof v.message == "string" && typeof v.firstFailedAt == "number" && typeof v.lastFailedAt == "number" && typeof v.attempts == "number";
+}
+
+// src/sync-preview-modal.ts
+var import_obsidian11 = require("obsidian");
+
+// src/mime.ts
+var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
+function isTextAttachment(ext) {
+  return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
+}
+
+// src/types.ts
+var DEFAULT_SETTINGS = {
+  apiUrl: "",
+  apiKey: "",
+  ignorePatterns: "",
+  debounceMs: 2e3,
+  conflictViewMode: "unified",
+  diagnosticsEnabled: !1,
+  conflictResolution: "auto",
+  enableCrdt: !0,
+  vaultId: null,
+  clientId: "",
+  planState: null,
+  searchDefaultMode: "hybrid",
+  waitlistPromptSeen: !1
+}, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
+  "pull-all-delete-local",
+  "push-all-delete-remote"
+]);
+
+// src/sync-plan-format.ts
+function isPlanEmpty(plan) {
+  return plan.toPush.notes.length === 0 && plan.toPush.attachments.length === 0 && plan.toPull.notes.length === 0 && plan.toPull.attachments.length === 0 && plan.conflicts.length === 0 && plan.toDeleteLocal.length === 0 && plan.toDeleteRemote.length === 0;
+}
+function computeMatchPercent(plan) {
+  let local = plan.localNoteCount, remote = plan.serverNoteCount;
+  if (local === 0 && remote === 0) return 100;
+  let localOnly = plan.toPush.notes.length, intersection = Math.max(0, local - localOnly), union = local + Math.max(0, remote - intersection);
+  return union === 0 ? 100 : Math.round(intersection / union * 100);
+}
+function samplePaths(paths, limit) {
+  return paths.slice(0, limit);
+}
+function folderPrefixesOf(paths) {
+  var _a;
+  let set2 = /* @__PURE__ */ new Set();
+  for (let p of paths) {
+    let parts = p.split("/"), prefix = "";
+    for (let i = 0; i < parts.length - 1; i++)
+      prefix = prefix ? `${prefix}/${parts[i]}` : (_a = parts[i]) != null ? _a : "", set2.add(prefix);
+  }
+  return set2;
+}
+function buildDeletionTree(paths, keptPaths) {
+  var _a, _b;
+  let sorted = [...paths].sort(), rows = [], emittedFolders = /* @__PURE__ */ new Set(), survivingFolders = keptPaths ? folderPrefixesOf(keptPaths) : null;
+  for (let path of sorted) {
+    let parts = path.split("/"), folders = parts.slice(0, -1), file = (_a = parts[parts.length - 1]) != null ? _a : "", prefix = "";
+    for (let i = 0; i < folders.length; i++) {
+      let folder = (_b = folders[i]) != null ? _b : "";
+      if (prefix = prefix ? `${prefix}/${folder}` : folder, !emittedFolders.has(prefix)) {
+        emittedFolders.add(prefix);
+        let deleted = survivingFolders ? !survivingFolders.has(prefix) : !1;
+        rows.push({ kind: "folder", depth: i, label: `${folder}/`, deleted });
+      }
+    }
+    rows.push({ kind: "file", depth: folders.length, label: file });
+  }
+  return rows;
+}
+function isDestructiveChoice(choice) {
+  return DESTRUCTIVE_CHOICES.has(choice);
+}
+function optionBreakdown(plan, choice) {
+  switch (choice) {
+    case "smart-merge":
+      return {
+        pullCount: plan.toPull.notes.length + plan.toPull.attachments.length,
+        pushCount: plan.toPush.notes.length + plan.toPush.attachments.length,
+        conflictCount: plan.conflicts.length,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0,
+        samplePaths: samplePaths(plan.conflicts, 5)
+      };
+    case "pull-all-delete-local": {
+      let localOnly = [...plan.toPush.notes, ...plan.toPush.attachments];
+      return {
+        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: localOnly.length,
+        deleteRemoteCount: 0,
+        samplePaths: samplePaths(localOnly, 5)
+      };
+    }
+    case "pull-all-keep-local":
+      return {
+        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0,
+        samplePaths: samplePaths([...plan.toPull.notes, ...plan.toPull.attachments], 5)
+      };
+    case "push-all-delete-remote": {
+      let remoteOnly = [...plan.toPull.notes, ...plan.toPull.attachments];
+      return {
+        pullCount: 0,
+        pushCount: plan.localNoteCount + plan.localAttachmentCount,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: remoteOnly.length,
+        samplePaths: samplePaths(remoteOnly, 5)
+      };
+    }
+    case "push-all-keep-remote":
+      return {
+        pullCount: 0,
+        pushCount: plan.localNoteCount + plan.localAttachmentCount,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0,
+        samplePaths: samplePaths([...plan.toPush.notes, ...plan.toPush.attachments], 5)
+      };
+    case "cancel":
+    case "change-vault":
+      return {
+        pullCount: 0,
+        pushCount: 0,
+        conflictCount: 0,
+        deleteLocalCount: 0,
+        deleteRemoteCount: 0,
+        samplePaths: []
+      };
+  }
+}
+
+// src/sync-preview-modal.ts
+var SyncPreviewState = class {
+  constructor(initialPlan, onResolve) {
+    this.onResolve = onResolve;
+    this.view = "preview";
+    this.pendingChoice = null;
+    this.confirmInput = "";
+    /** Set when the initial plan computation fails; surfaced in the loading
+     *  view so an instant-open modal is not stuck on a blank spinner. */
+    this.planError = null;
+    this.vaultsLoading = !1;
+    this.vaults = null;
+    this.vaultsError = null;
+    /** Within the vault-picker, true while the "make a new vault" form is shown
+     *  instead of the list of existing vaults. */
+    this.creatingVault = !1;
+    /** Whether the "advanced sync options" accordion (push/pull grid) is
+     *  expanded. Collapsed by default so the modal leads with the Sync action. */
+    this.advancedOpen = !1;
+    this.resolved = !1;
+    this.plan = initialPlan;
+  }
+  pickOption(choice) {
+    if (!this.resolved) {
+      if (isDestructiveChoice(choice)) {
+        this.pendingChoice = choice, this.view = "confirm", this.confirmInput = "";
+        return;
+      }
+      this.resolve(choice);
+    }
+  }
+  typeConfirm(input) {
+    this.resolved || this.view !== "confirm" || (this.confirmInput = input);
+  }
+  canSubmitConfirm() {
+    return this.view === "confirm" && this.confirmInput === "delete";
+  }
+  submitConfirm() {
+    !this.canSubmitConfirm() || this.pendingChoice == null || this.resolve(this.pendingChoice);
+  }
+  goBack() {
+    this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
+  }
+  toggleAdvanced() {
+    this.resolved || (this.advancedOpen = !this.advancedOpen);
+  }
+  enterVaultPicker() {
+    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
+  }
+  enterCreateVault() {
+    this.resolved || (this.creatingVault = !0, this.vaultsError = null);
+  }
+  exitCreateVault() {
+    this.creatingVault = !1, this.vaultsError = null;
+  }
+  onVaultsLoaded(vaults) {
+    this.vaultsLoading = !1, this.vaults = vaults, this.vaultsError = null;
+  }
+  onVaultsError(message) {
+    this.vaultsLoading = !1, this.vaults = null, this.vaultsError = message;
+  }
+  exitVaultPicker() {
+    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
+  }
+  /** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
+   *  initial plan once it resolves. Clears any prior plan-load error. Caller is
+   *  responsible for re-rendering. */
+  replacePlan(plan) {
+    this.plan = plan, this.planError = null;
+  }
+  cancel() {
+    this.resolve("cancel");
+  }
+  resolve(choice) {
+    this.resolved || (this.resolved = !0, this.view = "done", this.onResolve(choice));
+  }
+};
+function describeCreateVaultError(e) {
+  return e instanceof LimitExceededError ? toastFor(e.reason) : (e == null ? void 0 : e.status) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
+}
+function extOf(path) {
+  let base = path.slice(path.lastIndexOf("/") + 1), dot = base.lastIndexOf(".");
+  return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
+}
+function countSkippedAttachments(plan, attachmentsTextOnly) {
+  return attachmentsTextOnly ? plan.toPush.attachments.filter((p) => !isTextAttachment(extOf(p))).length : 0;
+}
+function skippedAttachmentsLine(n) {
+  return n <= 0 ? null : `Free syncs notes only \u2014 ${n} ${n === 1 ? "attachment" : "attachments"} will be skipped.`;
+}
+function mergeHelperText(b, context) {
+  let counts = [];
+  b.pushCount > 0 && counts.push(`Uploads ${b.pushCount}`), b.pullCount > 0 && counts.push(`downloads ${b.pullCount}`);
+  let countLine = counts.join(", ");
+  countLine && (countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`);
+  let conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
+  if (context === "first-time" || context === "vault-switch") {
+    let lead = "Safe choice: combines both sides, nothing is deleted.", tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
+    return `${lead}${tail}`;
+  }
+  return countLine ? `${countLine}${conflict} Nothing is deleted.` : "Already in sync. Nothing is deleted.";
+}
+function confirmActions(choice, plan) {
+  let files = (n) => n === 1 ? "file" : "files", lines = [];
+  if (choice === "push-all-delete-remote") {
+    let del2 = plan.serverNoteCount + plan.serverAttachmentCount, up = plan.localNoteCount + plan.localAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} currently on the server`), up > 0 && lines.push(`Upload ${up} ${files(up)} from this vault`);
+  } else if (choice === "pull-all-delete-local") {
+    let del2 = plan.localNoteCount + plan.localAttachmentCount, down = plan.serverNoteCount + plan.serverAttachmentCount;
+    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} in this vault`), down > 0 && lines.push(`Download ${down} ${files(down)} from the server`);
+  }
+  return lines;
+}
+var MERGE_CARD = {
+  choice: "smart-merge",
+  emoji: "\u2728",
+  label: "Sync",
+  cssClass: "engram-sync-preview-option mod-cta"
+}, PUSH_CARDS = [
+  {
+    choice: "push-all-keep-remote",
+    emoji: "\u2B06\uFE0F",
+    label: "Upload local files without downloading the remote",
+    cssClass: "engram-sync-preview-option"
+  },
+  {
+    choice: "push-all-delete-remote",
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all on remote, then upload local files",
+    cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
+  }
+], PULL_CARDS = [
+  {
+    choice: "pull-all-keep-local",
+    emoji: "\u2B07\uFE0F",
+    label: "Download remote files without uploading the local",
+    cssClass: "engram-sync-preview-option"
+  },
+  {
+    choice: "pull-all-delete-local",
+    emoji: "\u{1F5D1}\uFE0F",
+    label: "Delete all local files, then download from remote",
+    cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
+  }
+], HEADER_BY_CONTEXT = {
+  "first-time": "Set up sync for this vault",
+  "vault-switch": "You are now pointing at a different cloud vault",
+  review: "Sync preview"
+}, SyncPreviewModal = class extends import_obsidian11.Modal {
+  constructor(app, plan, opts) {
+    super(app);
+    this.opts = opts;
+    this.resolvedChoice = null;
+    this.resolveFn = null;
+    this.remoteVaultName = opts.remoteVaultName, this.state = new SyncPreviewState(plan, (choice) => {
+      this.resolvedChoice = choice, this.close();
+    });
+  }
+  onOpen() {
+    this.contentEl.addClass("engram-sync-preview-modal"), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
+  }
+  onClose() {
+    var _a;
+    let resolve = this.resolveFn;
+    this.resolveFn = null, this.contentEl.empty(), resolve && resolve((_a = this.resolvedChoice) != null ? _a : "cancel");
+  }
+  awaitChoice() {
+    return new Promise((resolve) => {
+      this.resolveFn = resolve, this.open();
+    });
+  }
+  /** Fill in the deferred initial plan once the background computeSyncPlan
+   *  resolves, refreshing the loading/preview view in place. Only applies while
+   *  the plan is still null: if the user already switched vaults in the picker,
+   *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
+   *  for the old vault must not clobber it. */
+  setPlan(plan) {
+    this.state.plan == null && (this.state.replacePlan(plan), this.state.view === "preview" && this.render());
+  }
+  /** Surface a plan-load failure in the instant-open loading view. Skipped once
+   *  a plan exists (e.g. the user switched vaults), so a stale failure never
+   *  overwrites a good plan. */
+  setPlanError(message) {
+    this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
+  }
+  /** The plan the user ultimately chose against (after any vault switch), or
+   *  null if it never loaded. Lets the caller describe the planned work in the
+   *  progress modal. */
+  getPlan() {
+    return this.state.plan;
+  }
+  render() {
+    let { contentEl } = this;
+    contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
+  }
+  renderPreview() {
+    var _a;
+    let { contentEl } = this, context = (_a = this.opts.context) != null ? _a : "review";
+    if (this.state.plan == null) {
+      this.renderPlanLoading(contentEl, context);
+      return;
+    }
+    let empty = isPlanEmpty(this.state.plan);
+    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
+    let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
+    empty || options.createDiv({
+      cls: "engram-sync-preview-options-header",
+      text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
+    });
+    let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
+    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", {
+      text: empty ? "Close" : "Cancel",
+      cls: empty ? "mod-cta" : void 0
+    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** Instant-open loading state: the modal is on screen while computeSyncPlan
+   *  runs. Shows the context header plus a calm progress line (or the load
+   *  error), and keeps Cancel + Change vault reachable so the user is never
+   *  trapped on a spinner. */
+  renderPlanLoading(parent, context) {
+    this.renderHeader(parent, context);
+    let body = parent.createDiv({ cls: "engram-sync-preview-loading" });
+    this.state.planError ? body.createSpan({
+      cls: "engram-sync-preview-picker-error",
+      text: this.state.planError
+    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" });
+    let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
+      this.openVaultPicker();
+    });
+  }
+  /** The loaded plan. Only reached from render paths that run after the plan
+   *  has arrived (renderPreview gates on it); throws otherwise as a guard
+   *  against a future caller skipping the loading gate. */
+  requirePlan() {
+    let p = this.state.plan;
+    if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
+    return p;
+  }
+  /** Render the advanced sync options as a native <details> accordion holding
+   *  all four direction buttons in one column. Collapsed by default; stays
+   *  reachable even at 100% match for a deliberate force push/pull or recovery. */
+  renderAdvancedOptions(options) {
+    let details = options.createEl("details", { cls: "engram-sync-preview-advanced" });
+    details.open = this.state.advancedOpen;
+    let summary = details.createEl("summary", {
+      cls: "engram-sync-preview-advanced-summary"
+    });
+    summary.createSpan({ text: "Advanced sync options" });
+    let chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
+    (0, import_obsidian11.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
+      this.state.advancedOpen = details.open, (0, import_obsidian11.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
+    });
+    let grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
+    for (let card of [...PUSH_CARDS, ...PULL_CARDS])
+      this.renderOptionCard(grid, card);
+  }
+  /** One calm, non-blocking info line for a text-only (Free) plan when the
+   *  upcoming push includes non-text attachments. Renders nothing when the
+   *  plan isn't text-only, the flag is unknown, or the count is zero. */
+  renderSkippedAttachmentsNote(parent) {
+    let n = countSkippedAttachments(
+      this.requirePlan(),
+      this.opts.attachmentsTextOnly === !0
+    ), text2 = skippedAttachmentsLine(n);
+    if (text2 == null) return;
+    let note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
+    note.createSpan({ text: "\u2139\uFE0F ", cls: "engram-sync-preview-skip-note-icon" }), note.createSpan({ text: text2 });
+  }
+  renderHeader(parent, context) {
+    if (context === "up-to-date") {
+      let h = parent.createEl("h2", {
+        cls: "engram-sync-preview-header engram-sync-preview-header-success"
+      });
+      h.createSpan({ text: "\u2705 ", cls: "engram-sync-preview-header-emoji" }), h.createSpan({ text: "Everything is in sync" });
+      return;
+    }
+    parent.createEl("h2", {
+      text: HEADER_BY_CONTEXT[context],
+      cls: "engram-sync-preview-header"
+    });
+  }
+  renderComparison(parent) {
+    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.requirePlan();
+    this.renderCompareCard(wrap, {
+      emoji: "\u{1F4BB}",
+      name: plan.vaultName,
+      role: "This vault",
+      notes: plan.localNoteCount,
+      attachments: plan.localAttachmentCount,
+      folders: plan.localFolderCount
+    }), this.renderCompareCard(wrap, {
+      emoji: "\u2601\uFE0F",
+      name: this.remoteVaultName || "Cloud server",
+      role: "Cloud server",
+      notes: plan.serverNoteCount,
+      attachments: plan.serverAttachmentCount,
+      folders: plan.serverFolderCount
+    });
+    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
+    matchRow.createSpan({
+      cls: "engram-sync-preview-match-label",
+      text: "Your vault shares "
+    });
+    let matchValue = matchRow.createSpan({
+      cls: "engram-sync-preview-match-value",
+      text: `${match2}%`
+    });
+    if (match2 === 100 && matchValue.addClass("is-perfect"), matchRow.createSpan({
+      cls: "engram-sync-preview-match-label",
+      text: " of its data with Engram"
+    }), conflicts > 0) {
+      let conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
+      conflictRow.createSpan({
+        cls: "engram-sync-preview-conflicts-value",
+        text: `\u26A1 ${conflicts}`
+      }), conflictRow.createSpan({
+        cls: "engram-sync-preview-conflicts-label",
+        text: ` conflict${conflicts === 1 ? "" : "s"} need resolution`
+      });
+    }
+  }
+  renderCompareCard(parent, card) {
+    let col = parent.createDiv({ cls: "engram-sync-preview-compare-col" }), title = col.createDiv({ cls: "engram-sync-preview-compare-title" });
+    title.createSpan({ text: card.emoji, cls: "engram-sync-preview-compare-emoji" }), title.createSpan({ text: card.name, cls: "engram-sync-preview-compare-name" }), col.createDiv({
+      text: card.role,
+      cls: "engram-sync-preview-compare-role"
+    });
+    let body = col.createDiv({ cls: "engram-sync-preview-compare-card" }).createDiv({ cls: "engram-sync-preview-compare-card-body" });
+    this.renderCompareRow(body, "\u{1F4C4}", card.notes, "notes"), this.renderCompareRow(body, "\u{1F4CE}", card.attachments, "attachments"), this.renderCompareRow(body, "\u{1F4C1}", card.folders, "folders");
+  }
+  renderCompareRow(parent, emoji, count2, label) {
+    let row = parent.createDiv({ cls: "engram-sync-preview-compare-row" });
+    row.createSpan({ text: emoji, cls: "engram-sync-preview-compare-row-emoji" }), row.createSpan({
+      text: String(count2),
+      cls: "engram-sync-preview-compare-row-count"
+    }), row.createSpan({
+      text: label,
+      cls: "engram-sync-preview-compare-row-label"
+    });
+  }
+  renderOptionCard(parent, card) {
+    let btn = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }).createEl("button", { cls: card.cssClass });
+    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), btn.addEventListener("click", () => {
+      this.state.pickOption(card.choice), this.render();
+    });
+  }
+  renderConfirm() {
+    let { contentEl } = this, choice = this.state.pendingChoice;
+    if (choice == null) return;
+    contentEl.createEl("h2", {
+      text: "Confirm destructive sync",
+      cls: "engram-sync-preview-header"
+    });
+    let summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
+    summary.createEl("p", { text: "You are about to:" });
+    let ul = summary.createEl("ul");
+    for (let action of confirmActions(choice, this.requirePlan()))
+      ul.createEl("li", { text: action });
+    let deletePaths = this.deletePathsFor(choice);
+    deletePaths.length > 0 && (contentEl.createEl("p", {
+      text: "Files that will be deleted:",
+      cls: "engram-sync-preview-tree-caption"
+    }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
+      cls: "engram-sync-preview-warning",
+      text: "This cannot be undone."
+    });
+    let typeLine = contentEl.createEl("p");
+    typeLine.createSpan({ text: "Type " }), typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" }), typeLine.createSpan({ text: " to confirm:" });
+    let input = contentEl.createEl("input", {
+      type: "text",
+      cls: "engram-sync-preview-confirm-input"
+    }), footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.state.goBack(), this.render();
+    });
+    let confirmBtn = footer.createEl("button", {
+      text: "Confirm",
+      cls: "engram-sync-preview-confirm-btn"
+    });
+    confirmBtn.disabled = !0, confirmBtn.addEventListener("click", () => this.state.submitConfirm()), input.addEventListener("input", () => {
+      this.state.typeConfirm(input.value), confirmBtn.disabled = !this.state.canSubmitConfirm();
+    }), input.focus();
+  }
+  renderVaultPicker() {
+    if (this.state.creatingVault) {
+      this.renderCreateVaultForm();
+      return;
+    }
+    let { contentEl } = this;
+    contentEl.createEl("h2", {
+      text: "Switch vault",
+      cls: "engram-sync-preview-header"
+    }), contentEl.createEl("p", {
+      text: "Pick a vault to sync with. We will recalculate the sync preview after you choose.",
+      cls: "engram-sync-preview-picker-help"
+    });
+    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
+    if (this.state.vaultsLoading)
+      body.createEl("p", { text: "Loading vaults\u2026" });
+    else if (this.state.vaultsError)
+      body.createEl("p", {
+        text: this.state.vaultsError,
+        cls: "engram-sync-preview-picker-error"
+      });
+    else if (this.state.vaults && this.state.vaults.length > 0) {
+      let list = body.createDiv({ cls: "engram-sync-preview-picker-list" });
+      for (let v of this.state.vaults) {
+        let item = list.createEl("button", {
+          cls: "engram-sync-preview-picker-item"
+        });
+        item.createSpan({
+          text: v.name,
+          cls: "engram-sync-preview-picker-item-name"
+        }), v.is_default && item.createSpan({
+          text: " (default)",
+          cls: "engram-sync-preview-picker-item-default"
+        }), item.addEventListener("click", () => {
+          this.applyPickedVault(v);
+        });
+      }
+    } else
+      body.createEl("p", { text: "No other vaults available." });
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.state.exitVaultPicker(), this.render();
+    }), this.opts.createVault && footer.createEl("button", {
+      text: "Make new vault",
+      cls: "mod-cta engram-sync-preview-new-vault-btn"
+    }).addEventListener("click", () => {
+      this.state.enterCreateVault(), this.render();
+    });
+  }
+  /** Render the "make a new vault" form: a name field pre-filled with the
+   *  Obsidian vault name, plus Create / Back. Submitting creates the vault and
+   *  immediately selects it (which recomputes the preview for the empty vault). */
+  renderCreateVaultForm() {
+    let { contentEl } = this;
+    contentEl.createEl("h2", {
+      text: "New vault",
+      cls: "engram-sync-preview-header"
+    }), contentEl.createEl("p", {
+      text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
+      cls: "engram-sync-preview-picker-help"
+    });
+    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
+    this.state.vaultsError && body.createEl("p", {
+      text: this.state.vaultsError,
+      cls: "engram-sync-preview-picker-error"
+    });
+    let input = body.createEl("input", {
+      type: "text",
+      cls: "engram-sync-preview-new-vault-input"
+    });
+    input.value = this.app.vault.getName(), input.placeholder = "Vault name";
+    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
+    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
+      this.state.exitCreateVault(), this.render();
+    });
+    let createBtn = footer.createEl("button", {
+      text: "Create",
+      cls: "mod-cta"
+    }), submit = () => {
+      this.state.vaultsLoading || this.applyCreateVault(input.value);
+    };
+    createBtn.addEventListener("click", submit), input.addEventListener("keydown", (e) => {
+      e.key === "Enter" && submit();
+    });
+  }
+  async openVaultPicker() {
+    if (this.opts.listVaults) {
+      this.state.enterVaultPicker(), this.render();
+      try {
+        let vaults = await this.opts.listVaults();
+        this.state.onVaultsLoaded(vaults);
+      } catch (e) {
+        let msg = e instanceof Error ? e.message : "Could not load vaults";
+        this.state.onVaultsError(msg);
+      }
+      this.render();
+    }
+  }
+  /** Every path that the destructive sync deletes. Both options wipe the whole
+   *  target side (then re-populate it), so this is the entire local/server file
+   *  list — matching the "Delete all N" line on the confirm screen. */
+  deletePathsFor(choice) {
+    let plan = this.requirePlan();
+    return choice === "pull-all-delete-local" ? [...plan.localPaths] : choice === "push-all-delete-remote" ? [...plan.serverPaths] : [];
+  }
+  /** Paths that remain on the affected side after the destructive sync —
+   *  used to decide whether a folder row is going away entirely. */
+  keptPathsFor(choice, deletePaths) {
+    let plan = this.requirePlan(), deleted = new Set(deletePaths);
+    return choice === "pull-all-delete-local" ? plan.localPaths.filter((p) => !deleted.has(p)) : choice === "push-all-delete-remote" ? plan.serverPaths.filter((p) => !deleted.has(p)) : [];
+  }
+  renderDeletionTree(parent, paths, keptPaths) {
+    let code = parent.createEl("pre", { cls: "engram-sync-preview-tree" }).createEl("code"), rows = buildDeletionTree(paths, keptPaths);
+    for (let row of rows) {
+      let cls = "engram-sync-preview-tree-row";
+      row.kind === "file" ? cls += " engram-sync-preview-tree-file" : row.deleted ? cls += " engram-sync-preview-tree-folder engram-sync-preview-tree-folder-deleted" : cls += " engram-sync-preview-tree-folder", code.createDiv({ cls }).setText(`${"  ".repeat(row.depth)}${row.label}`);
+    }
+  }
+  async applyCreateVault(name) {
+    if (!this.opts.createVault) return;
+    let trimmed = name.trim();
+    if (!trimmed) {
+      this.state.onVaultsError("Enter a name for the new vault"), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.vaultsLoading = !0, this.render();
+    let created;
+    try {
+      created = await this.opts.createVault(trimmed);
+    } catch (e) {
+      this.state.vaultsLoading = !1, this.state.onVaultsError(describeCreateVaultError(e)), this.state.creatingVault = !0, this.render();
+      return;
+    }
+    this.state.exitCreateVault(), await this.applyPickedVault(created);
+  }
+  async applyPickedVault(v) {
+    if (this.opts.applyVaultChange) {
+      this.state.vaultsLoading = !0, this.render();
+      try {
+        let newPlan = await this.opts.applyVaultChange(v.id, v.name);
+        this.state.replacePlan(newPlan), this.remoteVaultName = v.name, this.state.exitVaultPicker();
+      } catch (e) {
+        let msg = e instanceof Error ? e.message : "Failed to switch vault";
+        this.state.onVaultsError(msg);
+      }
+      this.render();
+    }
+  }
+};
+
+// src/sync-center-render.ts
+var DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
+function sectionHeading(parent, title) {
+  return new import_obsidian12.Setting(parent).setName(title).setHeading();
+}
+var CATEGORY_ORDER = [
+  "needs_pro",
+  "quota",
+  "frontmatter",
+  "too_large",
+  "auth",
+  "conflict",
+  "server",
+  "network",
+  "other"
+], CATEGORY_ICON = {
+  needs_pro: "\u{1F512}",
+  quota: "\u{1F5C4}",
+  frontmatter: "\u{1F4DD}",
+  too_large: "\u{1F4E6}",
+  auth: "\u{1F511}",
+  conflict: "\u26A1"
+};
+function renderSyncCenter(parent, plugin, refresh) {
+  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderPlanSkips(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
+}
+function groupedByCategory(issues, dispositions) {
+  var _a;
+  let groups = /* @__PURE__ */ new Map();
+  for (let issue of issues) {
+    if (!dispositions.includes(issueDisposition(issue.category, issue.parseReason))) continue;
+    let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
+    bucket.push(issue), groups.set(issue.category, bucket);
+  }
+  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
+}
+function renderHeader(parent, plugin) {
+  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "informational"
+  ).length, attentionCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "actionable"
+  ).length, retryingCount = all2.filter(
+    (i) => issueDisposition(i.category, i.parseReason) === "transient"
+  ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
+  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
+}
+function renderActions(parent, plugin, refresh) {
+  let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
+  makeActionButton(strip, "Sync...", async () => {
+    try {
+      let modal = new SyncPreviewModal(plugin.app, null, {
+        remoteVaultName: plugin.settings.remoteVaultName,
+        showChangeVault: !1,
+        context: "review"
+      });
+      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(
+        () => modal.setPlanError("Could not compare with the cloud. Check your connection.")
+      );
+      let choice = await modal.awaitChoice();
+      if (choice === "change-vault")
+        throw new Error("Sync Center received change-vault choice, caller missing");
+      await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
+    } catch (e) {
+      new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
+    }
+    refresh();
+  }), makeActionButton(strip, "Refresh", () => refresh());
+}
+function makeActionButton(parent, text2, handler) {
+  parent.createEl("button", { text: text2, cls: "engram-sync-center-action-btn" }).addEventListener("click", () => {
+    handler();
+  });
+}
+function renderPlanSkips(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]), total = groups.reduce((n, [, list]) => n + list.length, 0);
+  if (total === 0) return;
+  let section = parent.createDiv({
+    cls: "engram-sync-center-section engram-sync-center-plan-section"
+  });
+  sectionHeading(section, `Not synced on your plan (${total})`);
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  body.createEl("p", {
+    cls: "engram-sync-center-card-hint",
+    text: "These files are fine. They just need a paid plan to sync."
+  });
+  for (let [category, list] of groups)
+    renderPlanCard(body, plugin, refresh, category, list);
+}
+function renderPlanCard(parent, plugin, refresh, category, issues) {
+  var _a, _b, _c;
+  let { title, hint } = remediation(category), card = parent.createDiv({
+    cls: "engram-sync-center-card engram-sync-center-card-info"
+  }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u{1F512}" }), head.createSpan({
+    cls: "engram-sync-center-card-title",
+    text: `${title} (${issues.length})`
+  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" }), url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
+  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank")), actions.createEl("button", { text: "Sync these now" }).addEventListener("click", () => {
+    plugin.syncEngine.resyncSkippedAttachments().then(refresh);
+  });
+  let toggle = actions.createEl("button", {
+    text: `Show files (${issues.length}) \u25BE`,
+    cls: "engram-sync-center-card-toggle"
+  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
+  for (let issue of issues)
+    renderFileRow(fileList, plugin, refresh, issue);
+}
+function renderNeedsAttention(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({
+    cls: "engram-sync-center-section engram-sync-center-attention-section"
+  }), heading2 = sectionHeading(section, `Needs attention (${total})`);
+  total > 0 && heading2.addButton(
+    (btn) => btn.setButtonText("Clear all").onClick(() => {
+      for (let [, list] of groups)
+        for (let issue of list) plugin.syncEngine.issues.clear(issue.path);
+      plugin.persistEngineState().then(refresh);
+    })
+  );
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  if (total === 0) {
+    body.createEl("p", {
+      cls: "engram-sync-center-empty",
+      text: "Nothing needs your attention. \u{1F389}"
+    });
+    return;
+  }
+  for (let [category, list] of groups)
+    renderAttentionCard(body, plugin, refresh, category, list);
+}
+function renderAttentionCard(parent, plugin, refresh, category, issues) {
+  var _a, _b;
+  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
+  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0" }), head.createSpan({
+    cls: "engram-sync-center-card-title",
+    text: `${title} (${issues.length})`
+  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
+  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
+  actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
+    for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
+    plugin.persistEngineState().then(refresh);
+  });
+  let toggle = actions.createEl("button", {
+    text: `Show files (${issues.length}) \u25BE`,
+    cls: "engram-sync-center-card-toggle"
+  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
+  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
+  for (let issue of issues)
+    renderFileRow(fileList, plugin, refresh, issue);
+}
+function renderRetrying(parent, plugin, refresh) {
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
+  if (total === 0) return;
+  let section = parent.createDiv({ cls: "engram-sync-center-section" });
+  sectionHeading(section, `Retrying automatically (${total})`).addButton(
+    (btn) => btn.setButtonText("Retry all now").setCta().onClick(async () => {
+      await plugin.syncEngine.retryFailedNow(), refresh();
+    })
+  );
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  body.createEl("p", {
+    cls: "engram-sync-center-card-hint",
+    text: "Temporary errors. These clear themselves once the server recovers."
+  });
+  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+  for (let [, issues] of groups)
+    for (let issue of issues) renderFileRow(list, plugin, refresh, issue);
+}
+function renderFileRow(parent, plugin, refresh, issue) {
+  var _a;
+  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" });
+  main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
+  let meta = main.createDiv({ cls: "engram-sync-center-issue-meta" }), parts = [];
+  if (issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 ")), issue.parseReason) {
+    let reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
+    reason.createSpan({ text: issue.parseReason.message });
+    let snippet = (_a = issue.parseReason.detail) == null ? void 0 : _a.snippet;
+    snippet && reason.createEl("code", { text: snippet });
+  }
+  let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
+  actions.createEl("button", { text: "Open", cls: "mod-cta" }).addEventListener("click", () => openFile(plugin, issue.path)), actions.createEl("button", { text: "Ignore" }).addEventListener("click", () => {
+    ignoreFilePermanently(plugin, issue.path, refresh);
+  });
+}
+function renderIgnored(parent, plugin, refresh) {
+  let ignored = plugin.syncEngine.ignoredFiles.all(), section = parent.createDiv({ cls: "engram-sync-center-section" });
+  sectionHeading(section, `Ignored (${ignored.length})`);
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  if (ignored.length === 0) {
+    body.createEl("p", {
+      cls: "engram-sync-center-empty",
+      text: "No files ignored. Use the ignore button on a failure row to stop syncing it."
+    });
+    return;
+  }
+  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+  for (let path of ignored)
+    renderIgnoredRow(list, plugin, refresh, path);
+}
+function renderIgnoredRow(parent, plugin, refresh, path) {
+  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
+  row.createDiv({ cls: "engram-sync-center-issue-main" }).createDiv({ cls: "engram-sync-center-issue-path", text: path });
+  let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
+  actions.createEl("button", { text: "Open" }).addEventListener("click", () => openFile(plugin, path)), actions.createEl("button", { text: "Restore", cls: "mod-cta" }).addEventListener("click", () => {
+    restoreFile(plugin, path, refresh);
+  });
+}
+function openFile(plugin, path) {
+  if (!plugin.app.vault.getFileByPath((0, import_obsidian12.normalizePath)(path))) {
+    new import_obsidian12.Notice(`File not found locally: ${path}`);
+    return;
+  }
+  plugin.app.workspace.openLinkText(path, "");
+}
+async function ignoreFilePermanently(plugin, path, refresh) {
+  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
+}
+async function restoreFile(plugin, path, refresh) {
+  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
+}
+var ACTIVITY_LIMIT = 50, ACTION_ICON = {
+  push: "\u2191",
+  pull: "\u2193",
+  delete: "\u2715",
+  conflict: "\u26A1",
+  skip: "\xB7",
+  error: "!"
+}, RESULT_CLASS = {
+  ok: "is-ok",
+  error: "is-error",
+  skipped: "is-skipped"
+};
+function renderActivity(parent, plugin, refresh) {
+  let section = parent.createDiv({ cls: "engram-sync-center-section" }), all2 = plugin.syncLog.entries(), heading2 = sectionHeading(section, `Activity (${all2.length})`);
+  all2.length > 0 && heading2.addButton(
+    (btn) => btn.setButtonText("Clear").onClick(() => {
+      plugin.syncLog.clear(), refresh();
+    })
+  );
+  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
+  if (all2.length === 0) {
+    body.createEl("p", {
+      cls: "engram-sync-center-empty",
+      text: "No activity yet. Push or pull to see entries here."
+    });
+    return;
+  }
+  let list = body.createDiv({ cls: "engram-sync-center-activity-list" }), recent = all2.slice(-ACTIVITY_LIMIT).reverse();
+  for (let entry of recent)
+    renderActivityRow(list, entry);
+}
+function renderActivityRow(parent, entry) {
+  var _a;
+  let row = parent.createDiv({
+    cls: `engram-sync-center-activity-row ${RESULT_CLASS[entry.result]}`
+  });
+  row.createSpan({
+    cls: "engram-sync-center-activity-icon",
+    text: (_a = ACTION_ICON[entry.action]) != null ? _a : "?"
+  }), row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action }), row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path }), row.createSpan({
+    cls: "engram-sync-center-activity-time",
+    text: formatRelative(entry.timestamp.getTime())
+  }), entry.error && parent.createDiv({ cls: "engram-sync-center-activity-error" }).setText(entry.error);
+}
+function renderStats(parent, plugin) {
+  let section = parent.createDiv({ cls: "engram-sync-center-section" });
+  sectionHeading(section, "Stats");
+  let grid = section.createDiv({ cls: "engram-sync-center-section-body" }).createDiv({ cls: "engram-sync-center-stats-grid" }), allFiles = plugin.app.vault.getFiles(), noteCount = 0, attCount = 0;
+  for (let f of allFiles)
+    plugin.syncEngine.isSyncable(f) && (plugin.syncEngine.shouldIgnore(f.path) || (plugin.syncEngine.isBinaryFile(f) ? attCount++ : noteCount++));
+  let lastSync = plugin.syncEngine.getLastSync(), vaultId = plugin.settings.vaultId;
+  addStat(grid, "Local notes", String(noteCount)), addStat(grid, "Local attachments", String(attCount)), addStat(grid, "Vault", plugin.app.vault.getName()), addStat(grid, "Vault ID", vaultId ? String(vaultId) : "\u2014"), addStat(grid, "Last sync", lastSync ? formatRelative(new Date(lastSync).getTime()) : "never"), addStat(grid, "Live (WebSocket)", plugin.isLiveConnected() ? "connected" : "disconnected"), addStat(grid, "Pending in queue", String(plugin.syncEngine.queue.size)), addStat(grid, "Issues", String(plugin.syncEngine.issues.count())), addStat(grid, "Ignored", String(plugin.syncEngine.ignoredFiles.size()));
+}
+function addStat(parent, label, value) {
+  let item = parent.createDiv({ cls: "engram-sync-center-stat" });
+  item.createDiv({ cls: "engram-sync-center-stat-label", text: label }), item.createDiv({ cls: "engram-sync-center-stat-value", text: value });
+}
+function formatBytes(bytes) {
+  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 * 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+}
+function formatRelative(timestamp2) {
+  let seconds = Math.floor((Date.now() - timestamp2) / 1e3);
+  return seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86400)}d ago`;
+}
+
+// src/sync-progress-modal.ts
+function describePlannedWork(choice, plan, firstSync) {
+  let b = optionBreakdown(plan, choice), parts = [];
+  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
+    `deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`
+  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
+  let prefix = firstSync ? "First sync, this may take a moment. " : "";
+  if (parts.length === 0) return `${prefix}Checking for changes.`;
+  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
+  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
+}
+function renderCompletionSummary(parent, summary) {
+  let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
+  if (summary.synced > 0 && line.createSpan({
+    cls: "engram-progress-tally-synced",
+    text: `\u2713 ${summary.synced} synced`
+  }), summary.skipped > 0 && line.createSpan({
+    cls: "engram-progress-tally-skipped",
+    text: `\u2933 ${summary.skipped} skipped (Free plan)`
+  }), summary.failed > 0 && line.createSpan({
+    cls: "engram-progress-tally-failed",
+    text: `\u2715 ${summary.failed} failed`
+  }), summary.skipped > 0) {
+    let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = summary.skipped === 1 ? "attachment" : "attachments";
+    note.createSpan({
+      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
+    }), note.createEl("button", {
+      text: "Upgrade",
+      cls: "engram-progress-upgrade mod-cta"
+    }).addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
+  }
+}
+function describeCompletion(summary) {
+  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
+}
+function plannedPhases(choice, plan) {
+  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
+  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
+}
+var TICK_INTERVAL_MS = 50;
+function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
+  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
+  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
+}
+function settingsBarCounts(progress, planned, prevTotal) {
+  var _a;
+  let { current, total } = rowCounts(
+    !!planned,
+    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
+    progress.current,
+    progress.total,
+    prevTotal
+  );
+  return {
+    current,
+    total,
+    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
+  };
+}
+var SyncProgressModal = class extends import_obsidian13.Modal {
+  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
+   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
+   *  on completion so the user can verify their vault. All optional so callers
+   *  without a plan still get a usable modal. */
+  constructor(app, opts = {}) {
+    super(app);
+    this.opts = opts;
+    this.rows = [];
+    this.rowEls = /* @__PURE__ */ new Map();
+    /** Latest progress update from the engine, applied on the next tick. */
+    this.latest = null;
+    this.tickTimer = null;
+  }
+  onOpen() {
+    var _a;
+    let { contentEl } = this;
+    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
+      text: "Getting started\u2026",
+      cls: "engram-progress-status"
+    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
+      phase: p.phase,
+      label: p.label,
+      plannedTotal: p.total,
+      planned: !0,
+      current: 0,
+      total: p.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }));
+    for (let row of this.rows) this.createRow(row);
+    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
+      let url = this.opts.webUrl;
+      this.verifyEl.createSpan({
+        text: "Open Engram to check your vault and confirm everything synced. "
+      });
+      let link = this.verifyEl.createEl("a", {
+        text: "Open Engram",
+        cls: "engram-progress-verify-link",
+        href: url
+      });
+      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
+        e.preventDefault(), window.open(url, "_blank");
+      });
+    }
+    this.hintEl = contentEl.createEl("p", {
+      text: "You can close this and the sync keeps running in the background.",
+      cls: "engram-progress-hint"
+    });
+    let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
+    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
+  }
+  /** Called by the sync engine's progress callback. Buffers the update. */
+  update(progress) {
+    this.latest = progress;
+  }
+  tick() {
+    if (!this.latest) return;
+    let progress = this.latest;
+    this.latest = null, this.applyProgress(progress);
+  }
+  createRow(row) {
+    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
+    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
+    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
+      cls: "engram-progress-row-count",
+      text: `0 / ${row.plannedTotal}`
+    });
+    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
+  }
+  applyProgress(progress) {
+    var _a, _b;
+    if (progress.phase === "complete") {
+      this.applyComplete(progress);
+      return;
+    }
+    let row = this.rows.find((r) => r.phase === progress.phase);
+    row || (row = {
+      phase: progress.phase,
+      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
+      plannedTotal: progress.total,
+      planned: !1,
+      current: 0,
+      total: progress.total,
+      failed: 0,
+      seen: !1,
+      done: !1
+    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
+    let counts = rowCounts(
+      row.planned,
+      row.plannedTotal,
+      progress.current,
+      progress.total,
+      row.total
+    );
+    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
+    for (let other of this.rows)
+      other !== row && other.seen && (other.done = !0);
+    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
+  }
+  applyComplete(progress) {
+    var _a;
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
+    for (let row of this.rows)
+      row.done = !0, row.current = row.total;
+    this.renderRows();
+    let summary = {
+      synced: progress.current,
+      skipped: (_a = progress.skipped) != null ? _a : 0,
+      failed: progress.failed
+    };
+    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
+      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
+    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
+  }
+  renderRows() {
+    for (let row of this.rows) {
+      let els = this.rowEls.get(row.phase);
+      if (!els) continue;
+      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
+      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
+    }
+  }
+  onClose() {
+    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
+  }
+}, PHASE_FALLBACK_LABEL = {
+  deleting: "Deleting",
+  pushing: "Uploading",
+  pulling: "Downloading",
+  attachments: "Syncing attachments",
+  complete: "Complete"
+};
+
+// src/tabs/about-tab.ts
+var import_obsidian16 = require("obsidian");
+
+// src/email-capture-modal.ts
+var import_obsidian15 = require("obsidian");
+
+// src/waitlist.ts
+var import_obsidian14 = require("obsidian");
+var WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
+async function submitWaitlistEmail(email) {
+  let resp = await withTimeout(
+    (0, import_obsidian14.requestUrl)({
+      url: WAITLIST_ENDPOINT,
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email, source: "obsidian-plugin" }),
+      throw: !1
+    }),
+    15e3
+  );
+  if (resp.status < 200 || resp.status >= 300)
+    throw new Error(`waitlist signup failed: ${resp.status}`);
+}
+function shouldShowWaitlistPrompt(settings) {
+  return settings.waitlistPromptSeen !== !0;
+}
+
+// src/email-capture-modal.ts
+function isLikelyEmail(s) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
+}
+var EmailCaptureState = class {
+  constructor() {
+    this.view = "form";
+    this.email = "";
+    this.errorText = null;
+  }
+  setEmail(v) {
+    this.email = v, this.view === "error" && (this.view = "form", this.errorText = null);
+  }
+  canSubmit() {
+    return (this.view === "form" || this.view === "error") && isLikelyEmail(this.email);
+  }
+  async submit(send) {
+    if (this.canSubmit()) {
+      this.view = "submitting", this.errorText = null;
+      try {
+        await send(this.email.trim()), this.view = "success";
+      } catch (e) {
+        this.view = "error", this.errorText = "Couldn't reach the server. Try again later.";
+      }
+    }
+  }
+};
+function renderEmailCaptureForm({
+  parent,
+  state,
+  rerender,
+  send = submitWaitlistEmail,
+  decorateFooter
+}) {
+  let input = parent.createEl("input", {
+    type: "email",
+    placeholder: "you@example.com",
+    cls: "engram-email-capture-input"
+  });
+  input.value = state.email, input.disabled = state.view === "submitting", state.errorText && parent.createEl("p", { text: state.errorText, cls: "engram-email-capture-error" });
+  let footer = parent.createDiv({ cls: "engram-email-capture-footer" }), submit = footer.createEl("button", {
+    text: state.view === "submitting" ? "Submitting\u2026" : "Notify me",
+    cls: "mod-cta"
+  });
+  submit.disabled = state.view === "submitting", decorateFooter == null || decorateFooter(footer);
+  let doSubmit = async () => {
+    if (state.setEmail(input.value), !state.canSubmit()) {
+      state.view = "error", state.errorText = "Please enter a valid email address.", rerender();
+      return;
+    }
+    await state.submit(send), rerender();
+  };
+  input.addEventListener("input", () => state.setEmail(input.value)), input.addEventListener("keydown", (e) => {
+    e.key === "Enter" && doSubmit();
+  }), submit.addEventListener("click", () => {
+    doSubmit();
+  }), input.focus();
+}
+var EmailCaptureModal = class extends import_obsidian15.Modal {
+  constructor(app, onDone) {
+    super(app);
+    this.onDone = onDone;
+    this.state = new EmailCaptureState();
+    this.done = !1;
+  }
+  onOpen() {
+    this.contentEl.addClass("engram-email-capture-modal"), this.render();
+  }
+  onClose() {
+    this.contentEl.empty(), this.finish();
+  }
+  finish() {
+    this.done || (this.done = !0, this.onDone());
+  }
+  render() {
+    let { contentEl } = this;
+    if (contentEl.empty(), this.state.view === "success") {
+      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" });
+      let join = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+      join.createSpan({ text: "In the meantime, come say hi on " }), join.createEl("a", {
+        text: "Discord",
+        href: ENGRAM_DISCORD_URL,
+        attr: { target: "_blank", rel: "noopener" }
+      }), join.createSpan({ text: "." }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
+      return;
+    }
+    contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet." }), contentEl.createEl("p", {
+      text: "We're building Engram in the open, and early people like you make it better. Leave your email for beta access, an early-supporter discount, and a standing invite to give feedback and steer what comes next."
+    }), contentEl.createEl("p", {
+      cls: "engram-email-capture-contact",
+      text: "Questions or feedback? Email me directly at "
+    }).createEl("a", { text: "todd@engram.page", href: "mailto:todd@engram.page" });
+    let links = contentEl.createEl("p", { cls: "engram-email-capture-links" });
+    links.createEl("a", {
+      text: "engram.page",
+      href: ENGRAM_MARKETING_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "GitHub",
+      href: ENGRAM_GITHUB_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
+      text: "Discord",
+      href: ENGRAM_DISCORD_URL,
+      attr: { target: "_blank", rel: "noopener" }
+    }), renderEmailCaptureForm({
+      parent: contentEl,
+      state: this.state,
+      rerender: () => this.render(),
+      decorateFooter: (footer) => {
+        footer.createEl("button", { text: "Maybe later" }).addEventListener("click", () => this.close());
+      }
+    });
+  }
+};
+
+// src/tabs/about-tab.ts
+function renderWaitlistSection(containerEl) {
+  let state = new EmailCaptureState(), section = containerEl.createDiv({ cls: "engram-about-waitlist" }), render = () => {
+    if (section.empty(), state.view === "success") {
+      section.createEl("p", {
+        cls: "engram-about-waitlist-success",
+        text: "You're on the list. Thanks for your patience!"
+      });
+      return;
+    }
+    section.createEl("p", {
+      text: "Engram is still in active development. Leave your email for beta access, an early-supporter discount, and a say in what comes next."
+    }), renderEmailCaptureForm({ parent: section, state, rerender: render });
+  };
+  render();
+}
+function externalLink(parent, text2, href) {
+  parent.createEl("a", { text: text2, href, attr: { target: "_blank", rel: "noopener" } });
+}
+function heading(containerEl, name) {
+  new import_obsidian16.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
+}
+function renderAboutTab(ctx) {
+  let { containerEl, switchToTab } = ctx;
+  containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
+    "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
+  ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
+  let account = new import_obsidian16.Setting(containerEl).setName("1. Make an account");
+  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian16.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
+    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
+  ).addButton(
+    (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
+  );
+  let ai = new import_obsidian16.Setting(containerEl).setName("3. Connect your AI");
+  ai.descEl.appendText(
+    "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
+  ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
+  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
+    let card = plans.createEl("li", { cls: "engram-plan" });
+    card.createEl("h4", { text: name });
+    let list = card.createEl("ul", { cls: "engram-plan-features" });
+    for (let feature of features) list.createEl("li", { text: feature });
+  };
+  plan("Free", [
+    "1 vault, 1 device",
+    "Auto sync",
+    "Read-only AI access",
+    "Semantic search + MCP"
+  ]), plan("Starter", [
+    "Multiple vaults, all devices",
+    "Real-time sync",
+    "Full API + MCP",
+    "Higher daily AI limit"
+  ]), plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
+  let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
+  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
+  let links = containerEl.createEl("ul", { cls: "engram-about-links" });
+  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL), externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
+}
+
+// src/tabs/account-tab.ts
+var import_obsidian18 = require("obsidian");
+
+// src/tabs/self-hosted-tab.ts
+var import_obsidian17 = require("obsidian");
+var PREFLIGHT_DEBOUNCE_MS = 600;
+function renderSelfHostedTab(ctx) {
+  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
+  if (isOnCloud && hasAuth) {
+    renderCloudLockBanner(containerEl);
+    return;
+  }
+  let repoSetting = new import_obsidian17.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
+  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
+    text: "github.com/engram-app/engram",
+    href: "https://github.com/engram-app/engram"
+  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
+}
+function renderEngramUrlSetting(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian17.Setting(containerEl).setName("Engram URL");
+  setting.settingEl.addClass("engram-url-setting");
+  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
+    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
+      case "engram":
+        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
+        break;
+      case "reachable":
+        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
+        break;
+      case "unreachable":
+        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
+        break;
+    }
+  }, runPreflight = (value) => {
+    if (!completeOrigin(value)) {
+      status.removeClasses(STATUS_CLASSES), status.setText("");
+      return;
+    }
+    let seq3 = ++probeSeq;
+    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
+      seq3 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+    });
+  };
+  setting.addText((text2) => {
+    text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
+      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
+    });
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
+      await applyApiUrlChange(
+        {
+          settings: plugin.settings,
+          api: plugin.api,
+          noteStream: plugin.noteStream,
+          resetAuthProvider: () => {
+            plugin.authProvider = null;
+          }
+        },
+        pendingUrl.trim(),
+        () => plugin.saveSettings()
+      ) && new import_obsidian17.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
+    })
+  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
+}
+function renderCloudLockBanner(containerEl) {
+  let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
+  banner.createEl("p", { text: "You're connected to Engram cloud." }), banner.createEl("p", {
+    text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server."
+  });
+}
+function renderAuthSection(ctx) {
+  var _a;
+  let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
+  if (new import_obsidian17.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
+    new import_obsidian17.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
+      (btn) => btn.setButtonText("Sign out").onClick(async () => {
+        await plugin.clearOAuthTokens(), redisplay();
+      })
+    );
+    return;
+  }
+  if (hasApiKey) {
+    new import_obsidian17.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
+      (btn) => btn.setButtonText("Clear key").setWarning().onClick(async () => {
+        plugin.settings.apiKey = "", await plugin.saveSettings(), redisplay();
+      })
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to sign in").setCta().onClick(async () => {
+        plugin.settings.apiKey = "", await plugin.saveSettings(), startDeviceFlow();
+      })
+    );
+    return;
+  }
+  new import_obsidian17.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
+    (btn) => btn.setButtonText("Sign in").setCta().onClick(() => startDeviceFlow())
+  ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
+  let pendingKey = "";
+  new import_obsidian17.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
+    text2.setPlaceholder("engram_abc123...").onChange((value) => {
+      pendingKey = value;
+    }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");
+  }).addButton(
+    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
+      let trimmed = pendingKey.trim();
+      if (!trimmed) {
+        new import_obsidian17.Notice("Enter an API key first");
+        return;
+      }
+      plugin.settings.apiKey = trimmed, await plugin.saveSettings(), redisplay();
+    })
+  ).settingEl.addClass("engram-setting-api-key");
+}
+function renderVaultSection(ctx) {
+  let { containerEl, plugin, redisplay } = ctx;
+  if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
+  new import_obsidian17.Setting(containerEl).setName("Vault").setHeading();
+  let setting = new import_obsidian17.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
+  if (currentId && storedName) {
+    setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
+      cls: "engram-vault-current-name",
+      text: storedName
+    }).setAttribute("title", `Vault id: ${currentId}`), setting.addButton(
+      (btn) => btn.setButtonText("Change").onClick(() => {
+        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
+      })
+    );
+    return;
+  }
+  let placeholderEl = setting.controlEl.createSpan({ text: "Loading vaults..." });
+  plugin.api.listVaults().then((vaults) => {
+    if (placeholderEl.remove(), vaults.length === 0) {
+      setting.controlEl.createSpan({
+        text: "No vaults found \u2014 first sync will create one"
+      });
+      return;
+    }
+    let current = currentId ? vaults.find((v) => v.id === currentId) : void 0;
+    if (!current) {
+      setting.addDropdown((dropdown) => {
+        currentId ? dropdown.addOption(
+          "",
+          storedName ? `Pick a vault (previous: '${storedName}' not found)` : `Pick a vault (previous: id ${currentId} not found)`
+        ) : dropdown.addOption("", "Pick a vault");
+        for (let v of vaults) {
+          let label = v.is_default ? `${v.name} (default)` : v.name;
+          dropdown.addOption(v.id, label);
+        }
+        dropdown.onChange(async (value) => {
+          let picked = vaults.find((v) => v.id === value);
+          await applyVaultSwitch(plugin, value, picked == null ? void 0 : picked.name) && redisplay();
+        });
+      });
+      return;
+    }
+    plugin.settings.remoteVaultName = current.name, plugin.saveSettings(), setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
+      cls: "engram-vault-current-name",
+      text: current.is_default ? `${current.name} (default)` : current.name
+    }).setAttribute("title", `Vault id: ${current.id}`), setting.addButton(
+      (btn) => btn.setButtonText("Change").onClick(() => {
+        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
+      })
+    );
+  }).catch((e) => {
+    placeholderEl.remove(), setting.controlEl.createSpan({ text: describeListVaultsError(e) });
+  });
+}
+function renderSupportSection(ctx) {
+  let { containerEl } = ctx;
+  new import_obsidian17.Setting(containerEl).setName("Support development").setHeading();
+  let supportSetting = new import_obsidian17.Setting(containerEl).setDesc(
+    "If this plugin saves you time, consider supporting development."
+  );
+  supportSetting.settingEl.addClass("engram-setting-support");
+  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
+    cls: "engram-sponsor-button",
+    href: "https://github.com/sponsors/engram-app",
+    attr: { target: "_blank", rel: "noopener" }
+  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
+  (0, import_obsidian17.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
+  let kofiLink = buttonRow.createEl("a", {
+    cls: "engram-kofi-button",
+    href: "https://ko-fi.com/engrams_sync",
+    attr: { target: "_blank", rel: "noopener" }
+  }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
+  (0, import_obsidian17.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
+}
+function describeListVaultsError(e) {
+  let err = e, status = err == null ? void 0 : err.status;
+  return status === 401 || status === 403 ? "Sign-in required to load vaults" : status && status >= 500 ? `Server error (${status}) \u2014 check Engram logs` : status && status >= 400 ? `Request failed (${status})` : "Could not reach Engram \u2014 check connection";
+}
+async function applyVaultSwitch(plugin, value, name) {
+  return !value || value === plugin.settings.vaultId ? !1 : (plugin.settings.vaultId = value, name !== void 0 && (plugin.settings.remoteVaultName = name), plugin.api.setVaultId(value), await plugin.saveSettings(), !0);
+}
+
+// src/tabs/account-tab.ts
+async function renderAccountTab(ctx) {
+  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
+  if (action === "prompt-switch") {
+    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
+      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
+    ).addButton(
+      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
+        await applyApiUrlChange(
+          {
+            settings: plugin.settings,
+            api: plugin.api,
+            noteStream: plugin.noteStream,
+            resetAuthProvider: () => {
+              plugin.authProvider = null;
+            }
+          },
+          ENGRAM_CLOUD_URL,
+          () => plugin.saveSettings()
+        ), new import_obsidian18.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
+      })
+    );
+    return;
+  }
+  action === "auto-switch" && await applyApiUrlChange(
+    {
+      settings: plugin.settings,
+      api: plugin.api,
+      noteStream: plugin.noteStream,
+      resetAuthProvider: () => {
+        plugin.authProvider = null;
+      }
+    },
+    ENGRAM_CLOUD_URL,
+    () => plugin.saveSettings()
+  );
+  let aboutSetting = new import_obsidian18.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
+  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
+    text: "engram.page",
+    href: ENGRAM_MARKETING_URL,
+    attr: { target: "_blank", rel: "noopener" }
+  }), aboutSetting.descEl.appendText("."), renderAuthSection(ctx), renderVaultSection(ctx);
+}
+
+// src/tabs/advanced-tab.ts
+var import_obsidian19 = require("obsidian"), PROBLEMATIC_DIRS = [
+  { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
+  { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
+  { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
+  { pattern: "__pycache__/", label: "__pycache__", desc: "Python bytecode cache" },
+  { pattern: "vendor/", label: "vendor", desc: "Vendored dependencies" },
+  { pattern: ".gradle/", label: ".gradle", desc: "Gradle build cache" },
+  { pattern: "target/", label: "target", desc: "Rust/Java build output" },
+  { pattern: "build/", label: "build", desc: "Build output" },
+  { pattern: ".next/", label: ".next", desc: "Next.js build output" },
+  { pattern: "dist/", label: "dist", desc: "Distribution build output" },
+  { pattern: ".cargo/", label: ".cargo", desc: "Cargo cache" },
+  { pattern: "Pods/", label: "Pods", desc: "CocoaPods dependencies" },
+  { pattern: ".dart_tool/", label: ".dart_tool", desc: "Dart tool cache" },
+  { pattern: ".cache/", label: ".cache", desc: "Generic cache directory" }
+];
+function renderAdvancedTab(ctx) {
+  let { containerEl, app, plugin, redisplay } = ctx;
+  new import_obsidian19.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian19.Setting(containerEl).setName("Conflict resolution").setDesc(
+    "How to handle conflicts. Automatic creates a conflict copy. Interactive shows a diff dialog."
+  ).addDropdown(
+    (dropdown) => dropdown.addOption("auto", "Automatic (conflict files)").addOption("modal", "Interactive (diff modal)").setValue(plugin.settings.conflictResolution).onChange(async (value) => {
+      plugin.settings.conflictResolution = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
+    (text2) => text2.setPlaceholder("2000").setValue(String(plugin.settings.debounceMs)).onChange(async (value) => {
+      let num = Number.parseInt(value, 10);
+      !Number.isNaN(num) && num >= 100 && (plugin.settings.debounceMs = num, await plugin.saveSettings());
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian19.Setting(containerEl).setName("Custom patterns").setDesc(
+    `Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`
+  ).addTextArea((text2) => {
+    text2.setPlaceholder(`drafts/
+secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
+      plugin.settings.ignorePatterns = value, await plugin.saveSettings();
+    }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
+  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
+    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
+  ).addToggle(
+    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
+      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
+    })
+  ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
+  let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
+  versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
+  let repoItem = aboutList.createEl("li");
+  repoItem.createSpan({ text: "Source: " }), repoItem.createEl("a", {
+    text: "github.com/engram-app/Engram-obsidian",
+    href: "https://github.com/engram-app/Engram-obsidian"
+  }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
+}
+function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
+  let currentIgnores = plugin.settings.ignorePatterns, detected = [];
+  for (let dir of PROBLEMATIC_DIRS) {
+    if (currentIgnores.includes(dir.pattern)) continue;
+    let folder = app.vault.getFolderByPath(dir.label);
+    if (folder) {
+      let count2 = 0, walk = (f) => {
+        for (let child of f.children)
+          child instanceof import_obsidian19.TFolder ? walk(child) : count2++;
+      };
+      walk(folder), detected.push({ ...dir, count: count2 });
+    }
+  }
+  if (detected.length !== 0)
+    for (let item of detected)
+      new import_obsidian19.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
+        (btn) => btn.setButtonText("Add to ignores").setCta().onClick(async () => {
+          let current = plugin.settings.ignorePatterns.trim();
+          plugin.settings.ignorePatterns = current ? `${current}
+${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian19.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
+        })
+      ).settingEl.addClass("engram-status-warning");
+}
+
+// src/tabs/start-tab.ts
+function pickInitialTab(settings) {
+  return !!settings.apiUrl && (!!settings.apiKey || !!settings.refreshToken) ? "account" : "about";
+}
+
+// src/tabs/sync-center-tab.ts
+function renderSyncCenterTab(ctx) {
+  let { containerEl, plugin } = ctx, refresh = () => renderSyncCenter(containerEl, plugin, refresh);
+  refresh();
+}
+
+// src/settings.ts
+var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.statusContainerEl = null;
+    /** Container the UI was last drawn into. Differs by path: this.containerEl
+     *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
+     *  it so redisplay/device-flow re-renders land in the right place. */
+    this.activeContainerEl = null;
+    this.plugin = plugin, this.activeTab = pickInitialTab(plugin.settings);
+  }
+  /** Pre-select a tab before the next display() call. */
+  setInitialTab(tabId) {
+    this.activeTab = tabId;
+  }
+  /**
+   * Registers this tab with Obsidian's 1.13+ declarative settings API so it
+   * shows up in the global settings search. We do NOT decompose our settings
+   * into declarative `control` objects: this tab is a rich custom UI (tab bar,
+   * live status dot, progress bar, device-flow) with no 1:1 declarative form.
+   * Instead we expose a single `render` item that draws the existing UI, which
+   * is enough to satisfy the API and index the tab by name.
+   *
+   * On 1.13+ a non-empty return here renders INSTEAD of display(); on <1.13
+   * (minAppVersion is 1.7.2) this method doesn't exist on the base class and
+   * display() is the fallback. Both paths call renderContent(), so there's
+   * one source of truth.
+   *
+   * ponytail: one search entry (indexed by name), not per-setting search.
+   * Upgrade path = decompose each setting into a `control` definition — large,
+   * and would drop the custom tab UX on 1.13+. Not worth it to satisfy a
+   * search-indexing nudge.
+   *
+   * Return type is a local shim for Obsidian 1.13's `SettingDefinitionItem`:
+   * we hold the obsidian typings at 1.8.7 (minAppVersion is 1.7.2), so the
+   * real type isn't available. This covers exactly the `render` item we emit;
+   * swap for `SettingDefinitionItem[]` if the obsidian typings floor is ever
+   * raised to >=1.13.
+   */
+  getSettingDefinitions() {
+    return [
+      {
+        name: "Engram Sync",
+        desc: "Cloud and self-hosted sync, connection, and advanced settings.",
+        render: (setting) => {
+          setting.settingEl.addClass("engram-settings-host"), this.renderContent(setting.settingEl.createDiv());
+        }
+      }
+    ];
+  }
+  display() {
+    this.renderContent(this.containerEl);
+  }
+  /** Re-render into whatever container we last drew into. Public so external
+   *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
+   *  the deprecated display() — which on 1.13+ would draw into the tab root
+   *  instead of the render-hatch host. No-op if the tab isn't currently shown
+   *  (activeContainerEl is cleared on hide()) or if the container was detached
+   *  without hide() firing — on 1.13+ Obsidian can tear down the render-hatch
+   *  row on a settings re-render, so guard with isConnected like renderStatus()
+   *  does; it re-renders on next open. */
+  rerender() {
+    var _a;
+    (_a = this.activeContainerEl) != null && _a.isConnected && this.renderContent(this.activeContainerEl);
+  }
+  renderContent(containerEl) {
+    this.activeContainerEl = containerEl, containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
+    let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
+      text: "Syncing...",
+      cls: "engram-progress-label"
+    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
+    this.plugin.syncEngine.onSyncProgress = (progress) => {
+      var _a, _b;
+      if (progress.phase === "complete") {
+        progressContainer.removeClass("is-active"), prevTotals.clear();
+        return;
+      }
+      progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
+      let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
+        progress,
+        planned,
+        (_b = prevTotals.get(progress.phase)) != null ? _b : 0
+      );
+      prevTotals.set(progress.phase, total);
+      let phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments", failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
+      progressLabel.setText(
+        total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
+      ), progressBarInner.style.width = `${pct}%`;
+    };
+    let tabs = [
+      { id: "about", label: "\u{1F44B} Welcome", render: renderAboutTab },
+      { id: "account", label: "\u2601\uFE0F Cloud", render: renderAccountTab },
+      { id: "self-hosted", label: "\u{1F5A5}\uFE0F Self-hosted", render: renderSelfHostedTab },
+      { id: "sync-center", label: "\u{1F504} Sync Center", render: renderSyncCenterTab },
+      { id: "advanced", label: "\u2699\uFE0F Advanced", render: renderAdvancedTab }
+    ], tabBar = containerEl.createEl("nav", { cls: "engram-tab-bar" }), contentEl = containerEl.createEl("section", { cls: "engram-tab-content" }), activateTab = (tabId) => {
+      var _a;
+      this.activeTab = tabId;
+      for (let btn2 of Array.from(tabBar.querySelectorAll(".engram-tab")))
+        btn2.removeClass("is-active");
+      contentEl.empty();
+      let tab = (_a = tabs.find((t) => t.id === tabId)) != null ? _a : tabs[0];
+      if (!tab) return;
+      let btn = tabBar.querySelector(`[data-tab="${tab.id}"]`);
+      btn == null || btn.addClass("is-active"), tab.render({ ...ctx, containerEl: contentEl });
+    }, ctx = {
+      containerEl: contentEl,
+      app: this.app,
+      plugin: this.plugin,
+      redisplay: () => this.rerender(),
+      startDeviceFlow: () => this.startDeviceFlow(),
+      openProgressModal: () => this.openProgressModal(),
+      switchToTab: (id2) => activateTab(id2)
+    };
+    for (let tab of tabs) {
+      let btn = tabBar.createEl("button", {
+        text: tab.label,
+        cls: "engram-tab"
+      });
+      btn.dataset.tab = tab.id, btn.addEventListener("click", () => activateTab(tab.id));
+    }
+    let startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "account";
+    activateTab(startTab);
+  }
+  /** Open a progress modal and wire it to the sync engine's progress callback. */
+  async openProgressModal() {
+    let modal = new SyncProgressModal(this.app), prevCallback = this.plugin.syncEngine.onSyncProgress;
+    return this.plugin.syncEngine.onSyncProgress = (progress) => {
+      modal.update(progress), prevCallback == null || prevCallback(progress);
+    }, modal.open(), await new Promise((resolve) => window.requestAnimationFrame(resolve)), modal;
+  }
+  async startDeviceFlow() {
+    let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
+    result && (await this.plugin.saveOAuthTokens(
+      result.refresh_token,
+      result.vault_id,
+      result.user_email
+    ), this.rerender());
+  }
+  /** Render (or re-render) the connection status row in place. Idempotent —
+   *  empties the container first so it can be wired to live status events. */
+  renderStatus() {
+    let statusEl = this.statusContainerEl;
+    if (!statusEl || !statusEl.isConnected) return;
+    statusEl.empty();
+    let status = this.plugin.syncEngine.getStatus(), live = this.plugin.isLiveConnected(), blocked = this.plugin.syncEngine.isSyncBlocked(), dotState, label;
+    if (status.state === "offline" ? (dotState = "is-error", label = "Disconnected") : status.state === "error" ? (dotState = "is-error", label = `Error: ${status.error || "unknown"}`) : blocked && this.plugin.settings.apiUrl && (this.plugin.settings.apiKey || this.plugin.settings.refreshToken) ? (dotState = "is-waiting", label = "Connected \u2014 waiting for first sync decision") : live ? (dotState = "is-connected", label = "Connected \u2014 live sync active") : this.plugin.settings.apiUrl && (this.plugin.settings.apiKey || this.plugin.settings.refreshToken) ? (dotState = "is-polling", label = "Connected \u2014 polling") : (dotState = "is-idle", label = "Not configured"), statusEl.createSpan({ cls: `engram-status-dot ${dotState}` }), statusEl.createSpan({ text: label }), dotState === "is-waiting" && statusEl.createEl("button", {
+      cls: "engram-status-open-sync-btn mod-cta",
+      text: "Open sync setup"
+    }).addEventListener("click", () => {
+      this.plugin.doSyncWithFirstSyncCheck();
+    }), status.lastSync) {
+      let date = new Date(status.lastSync);
+      statusEl.createDiv({ cls: "engram-status-time" }).setText(`Last sync: ${date.toLocaleString()}`);
+    }
+  }
+  hide() {
+    this.plugin.onStatusBarChange = null, this.statusContainerEl = null, this.activeContainerEl = null;
+  }
+};
+
+// src/settings-migrate.ts
+function migrateDiagnosticsEnabled(raw) {
+  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
+}
+
+// src/single-flight.ts
+function createSingleFlight() {
+  let inFlight = !1;
+  return async (fn) => {
+    if (!inFlight) {
+      inFlight = !0;
+      try {
+        return await fn();
+      } finally {
+        inFlight = !1;
+      }
+    }
+  };
+}
+
+// src/sync.ts
+var import_obsidian21 = require("obsidian");
+
 // node_modules/lib0/math.js
 var floor = Math.floor;
 var abs = Math.abs;
@@ -12483,10 +17064,13 @@ var _CrdtManager = class _CrdtManager {
   /**
    * Mark `noteId` as having completed its server handshake (STEP2 received).
    * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
-   * to the doc. Idempotent — safe to call on every inbound frame.
+   * to the doc. Idempotent — safe to call on every inbound frame. Also fires
+   * `opts.onSynced` (fix wave 1) — this is the op-level "real ops landed"
+   * signal SyncEngine commits a staged live-bound convergence on.
    */
   markSynced(noteId) {
-    this.synced.add(this.docId(noteId));
+    var _a, _b;
+    this.synced.add(this.docId(noteId)), (_b = (_a = this.opts).onSynced) == null || _b.call(_a, noteId);
   }
   /**
    * Returns true if `noteId`'s handshake has completed this session (i.e.
@@ -12978,4604 +17562,6 @@ var CrdtChannel = class {
   }
 };
 
-// src/limit-error.ts
-var LimitExceededError = class extends Error {
-  constructor(reason, upgradeUrl, limitKey, limit, current) {
-    super(`Engram limit: ${reason}`);
-    this.reason = reason;
-    this.upgradeUrl = upgradeUrl;
-    this.limitKey = limitKey;
-    this.limit = limit;
-    this.current = current;
-    this.name = "LimitExceededError";
-    /** HTTP status that produced this error. Always 402 (the limit status). */
-    this.status = 402;
-  }
-};
-
-// src/observability/beacon.ts
-var BeaconBuffer = class {
-  constructor(transport) {
-    this.transport = transport;
-    this.queue = [];
-    // window.setTimeout/clearTimeout (not the bare globals) for popout-window
-    // compatibility, per obsidianmd/prefer-window-timers.
-    this.timer = null;
-  }
-  enqueue(entry) {
-    this.queue.push(entry), this.queue.length >= 20 ? this.flush() : this.timer === null && (this.timer = window.setTimeout(() => this.flush(), 2e3));
-  }
-  flush() {
-    if (this.timer !== null && (window.clearTimeout(this.timer), this.timer = null), this.queue.length === 0) return;
-    let batch = this.queue.splice(0, this.queue.length);
-    try {
-      let t = this.transport();
-      if (!t) return;
-      window.fetch(`${t.baseUrl}/telemetry/spans`, {
-        method: "POST",
-        keepalive: !0,
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${t.token}`,
-          "X-Vault-ID": t.vaultId,
-          "X-Device-Id": t.deviceId
-        },
-        body: JSON.stringify({ spans: batch })
-      }).catch(() => {
-      });
-    } catch (e) {
-    }
-  }
-};
-
-// src/observability/traceGen.ts
-function hex(bytes) {
-  let buf = new Uint8Array(bytes);
-  return crypto.getRandomValues(buf), Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
-}
-function newTraceContext() {
-  let traceId = hex(16), spanId = hex(8);
-  return { traceparent: `00-${traceId}-${spanId}-01`, traceId, spanId };
-}
-
-// src/remote-log.ts
-var RemoteLogger = class {
-  constructor() {
-    this.buffer = [];
-    this.flushTimer = null;
-    this.pushFn = null;
-    this.enabled = !1;
-    this.pluginVersion = "";
-    this.platform = "";
-    this.flushing = !1;
-    this.connId = null;
-    this.deviceId = null;
-    this.vaultId = null;
-    this.seq = 0;
-  }
-  configure(pushFn, pluginVersion, platform) {
-    this.pushFn = pushFn, this.pluginVersion = pluginVersion, this.platform = platform;
-  }
-  setEnabled(enabled) {
-    this.enabled = enabled, enabled ? this.startTimer() : (this.stopTimer(), this.flush());
-  }
-  error(category, message, stack) {
-    this.addEntry("error", category, message, stack);
-  }
-  warn(category, message) {
-    this.addEntry("warn", category, message);
-  }
-  info(category, message) {
-    this.addEntry("info", category, message);
-  }
-  setConnId(id2) {
-    this.connId = id2;
-  }
-  setClientContext(deviceId, vaultId) {
-    this.deviceId = deviceId, this.vaultId = vaultId;
-  }
-  /** Diagnostic-flagged info entry (verbose firehose). The backend ships
-   *  diagnostic entries to Loki even at info level. */
-  diag(category, message) {
-    this.addEntry("info", category, message, void 0, !0);
-  }
-  async flush() {
-    if (this.flushing || this.buffer.length === 0 || !this.pushFn) return;
-    let batch = this.buffer.splice(0, this.buffer.length);
-    this.flushing = !0;
-    try {
-      await this.pushFn(batch);
-    } catch (e) {
-      let space = 200 - this.buffer.length;
-      space > 0 && this.buffer.unshift(...batch.slice(0, space));
-    } finally {
-      this.flushing = !1;
-    }
-  }
-  async destroy() {
-    this.stopTimer(), await this.flush(), this.buffer = [], this.pushFn = null;
-  }
-  addEntry(level, category, message, stack, diagnostic) {
-    if (!this.enabled || !this.pushFn) return;
-    let entry = {
-      ts: (/* @__PURE__ */ new Date()).toISOString(),
-      level,
-      category,
-      message,
-      plugin_version: this.pluginVersion,
-      platform: this.platform,
-      seq: this.seq++
-    };
-    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > 200 && this.buffer.splice(0, this.buffer.length - 200), this.buffer.length >= 20 && this.flush();
-  }
-  startTimer() {
-    this.stopTimer(), this.flushTimer = window.setInterval(() => {
-      this.flush();
-    }, 3e4);
-  }
-  stopTimer() {
-    this.flushTimer && (window.clearInterval(this.flushTimer), this.flushTimer = null);
-  }
-}, _noop = {
-  error() {
-  },
-  warn() {
-  },
-  info() {
-  },
-  diag() {
-  },
-  setConnId() {
-  },
-  setClientContext() {
-  },
-  async flush() {
-  },
-  async destroy() {
-  },
-  setEnabled() {
-  },
-  configure() {
-  }
-}, _instance = null;
-function initRemoteLog() {
-  return _instance = new RemoteLogger(), _instance;
-}
-function rlog() {
-  return _instance != null ? _instance : _noop;
-}
-async function destroyRemoteLog() {
-  await (_instance == null ? void 0 : _instance.destroy()), _instance = null;
-}
-
-// src/api.ts
-var RequestTimeoutError = class extends Error {
-  constructor(ms) {
-    super(`Request timed out after ${ms}ms`), this.name = "RequestTimeoutError";
-  }
-};
-async function withTimeout(p, ms) {
-  let timer, deadline = new Promise((_, reject) => {
-    timer = window.setTimeout(() => reject(new RequestTimeoutError(ms)), ms);
-  });
-  try {
-    return await Promise.race([p, deadline]);
-  } finally {
-    window.clearTimeout(timer);
-  }
-}
-var EngramApi = class _EngramApi {
-  constructor(baseUrl, apiKey) {
-    this.baseUrl = baseUrl;
-    this.apiKey = apiKey;
-    /** Deadline for note/metadata requests. Instance fields (not consts) so
-     *  tests can shrink them; attachments get a longer one — a large upload on
-     *  a slow link legitimately outlives the note deadline. */
-    this.requestTimeoutMs = 15e3;
-    this.attachmentTimeoutMs = 12e4;
-    /** Bulk pages (batch push, change feeds) can carry many full note bodies —
-     *  15s starves a slow link, 120s is a transfer budget they don't need. */
-    this.bulkTimeoutMs = 6e4;
-    /** In-flight sendRequest calls, so a channel-disconnect signal can probe
-     *  for wedged connections and fail them early (see failWedgedRequests). */
-    this.inflight = /* @__PURE__ */ new Set();
-    /** Single-flight latch for failWedgedRequests (see there). */
-    this.wedgeProbeInFlight = !1;
-    this.vaultId = null;
-    this.deviceId = null;
-    this.authProvider = null;
-    // Dark-launch gate for distributed tracing. Disabled cost must stay a
-    // single boolean check, see sendRequest.
-    this.tracingEnabled = !1;
-    // Cached from the most recent sendRequest call so the beacon transport
-    // thunk (invoked later, on the buffer's own flush timer) can post with a
-    // still-valid token without re-awaiting the auth provider.
-    this.lastToken = "";
-    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.beacon = new BeaconBuffer(() => {
-      var _a, _b;
-      return this.tracingEnabled ? {
-        baseUrl: this.baseUrl,
-        token: this.lastToken,
-        vaultId: (_a = this.getActiveVaultId()) != null ? _a : "",
-        deviceId: (_b = this.deviceId) != null ? _b : ""
-      } : null;
-    });
-  }
-  /** Enable/disable trace header injection + the obsidian.push beacon. When
-   *  false, sendRequest does no id generation, no timing capture, no header,
-   *  and enqueues nothing: cost is exactly one boolean check. */
-  setTracingEnabled(enabled) {
-    this.tracingEnabled = enabled;
-  }
-  setVaultId(id2) {
-    this.vaultId = id2;
-  }
-  /** Set the per-install device id sent as X-Device-Id on cursor pulls. */
-  setDeviceId(id2) {
-    this.deviceId = id2 && id2.length > 0 ? id2 : null;
-  }
-  setAuthProvider(provider) {
-    this.authProvider = provider;
-  }
-  getActiveVaultId() {
-    return this.authProvider ? this.authProvider.getVaultId() : this.vaultId;
-  }
-  async getAuthToken() {
-    return this.authProvider ? this.authProvider.getToken() : this.apiKey;
-  }
-  /** Strip trailing slashes and append /api if not already present. */
-  static normalizeBaseUrl(url) {
-    let base = url.replace(/\/+$/, "");
-    return base.endsWith("/api") ? base : `${base}/api`;
-  }
-  /** Probe an arbitrary candidate URL's `/api/health` WITHOUT committing it as
-   *  the active backend. Used by the self-hosted settings preflight so the user
-   *  gets background confirmation a URL points at a real Engram server before
-   *  they commit to it. No auth — `/health` is public. */
-  static async probeHealth(rawUrl) {
-    let base = _EngramApi.normalizeBaseUrl(rawUrl);
-    try {
-      let resp = await withTimeout(
-        (0, import_obsidian.requestUrl)({ url: `${base}/health`, method: "GET", throw: !1 }),
-        1e4
-      ), body = null;
-      try {
-        body = resp.json;
-      } catch (e) {
-        body = null;
-      }
-      return interpretHealthProbe(resp.status, body);
-    } catch (e) {
-      return { kind: "unreachable" };
-    }
-  }
-  updateConfig(baseUrl, apiKey) {
-    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
-  }
-  async request(method, path, body, extraHeaders) {
-    var _a, _b;
-    try {
-      return await this.sendRequest(method, path, body, extraHeaders);
-    } catch (e) {
-      let status = e.status;
-      if (status === 402)
-        throw parseLimitExceededError(e);
-      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
-        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body, extraHeaders);
-      throw rlog().warn(
-        "api",
-        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
-      ), e;
-    }
-  }
-  async sendRequest(method, path, body, extraHeaders) {
-    let token = await this.getAuthToken();
-    this.lastToken = token;
-    let trace = this.tracingEnabled && method.toUpperCase() !== "GET" ? newTraceContext() : null, startUs = trace ? Date.now() * 1e3 : 0, headers = {
-      Authorization: `Bearer ${token}`,
-      ...trace ? { traceparent: trace.traceparent } : {},
-      ...extraHeaders
-    }, activeVaultId = this.getActiveVaultId();
-    activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
-    let attachmentMeta = path === "/attachments/changes" || path.startsWith("/attachments/changes?"), attachmentTransfer = path.startsWith("/attachments") && !attachmentMeta && (method === "POST" || method === "GET"), bulk = path === "/notes/batch" || path.startsWith("/notes/changes?") || path === "/sync/changes" || path.startsWith("/sync/changes?"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : bulk ? this.bulkTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
-      url: `${this.baseUrl}${path}`,
-      method,
-      headers,
-      body: body !== void 0 ? JSON.stringify(body) : void 0
-    }), abandonReject = () => {
-    }, abandoned = new Promise((_, rej) => {
-      abandonReject = rej;
-    }), entry = {
-      startedAt: Date.now(),
-      abandon: abandonReject,
-      shielded: attachmentTransfer
-    };
-    this.inflight.add(entry);
-    try {
-      return await withTimeout(Promise.race([raw, abandoned]), timeoutMs);
-    } finally {
-      if (this.inflight.delete(entry), trace) {
-        let noteId = beaconNoteId(path);
-        this.beacon.enqueue({
-          trace_id: trace.traceId,
-          parent_span_id: trace.spanId,
-          name: "obsidian.push",
-          start_us: startUs,
-          end_us: Date.now() * 1e3,
-          attributes: {
-            "engram.surface": "obsidian",
-            "engram.event_type": method.toLowerCase(),
-            // Which note and which route — the 2026-07-14 deaf-note hunt
-            // stalled on beacons that carried neither. note_id is a
-            // non-sensitive UUID; route has UUIDs collapsed to :id so its
-            // cardinality stays bounded.
-            ...noteId ? { "engram.note_id": noteId } : {},
-            "engram.route": beaconRoute(path)
-          }
-        });
-      }
-    }
-  }
-  /** Fail in-flight requests older than maxAgeMs IF a fresh /health probe
-   *  answers while they still hang — proof the connection they rode is wedged
-   *  (half-open after a deploy drain), not that the server is down. Called on
-   *  channel disconnect (the earliest wedge signal the plugin gets), so
-   *  recovery runs in ~probe time instead of the full request deadline. If
-   *  the probe fails, the server may be genuinely unreachable: leave the
-   *  requests to their normal deadline. Returns how many were failed. */
-  async failWedgedRequests(maxAgeMs = 4e3) {
-    if (this.wedgeProbeInFlight)
-      return 0;
-    this.wedgeProbeInFlight = !0;
-    try {
-      let now = Date.now(), stale = [...this.inflight].filter(
-        (e) => !e.shielded && now - e.startedAt >= maxAgeMs
-      );
-      if (stale.length === 0 || !await this.health())
-        return 0;
-      let failed = 0;
-      for (let e of stale)
-        this.inflight.delete(e) && (e.abandon(new RequestTimeoutError(maxAgeMs)), failed++);
-      return failed > 0 && rlog().warn("api", `Failed ${failed} wedged request(s) after healthy probe`), failed;
-    } finally {
-      this.wedgeProbeInFlight = !1;
-    }
-  }
-  /** Health check — no auth required. Bounded like every other request: the
-   *  offline health-check loop awaits this, so a wedged probe would freeze
-   *  offline recovery. */
-  async health() {
-    try {
-      return (await withTimeout(
-        (0, import_obsidian.requestUrl)({
-          url: `${this.baseUrl}/health`,
-          method: "GET"
-        }),
-        this.requestTimeoutMs
-      )).status === 200;
-    } catch (e) {
-      return !1;
-    }
-  }
-  /** Get the current authenticated user (id + email). Used to determine channel topic. */
-  async getMe() {
-    return (await this.request("GET", "/me")).json.user;
-  }
-  /** Register this vault with the backend. Returns existing vault if client_id matches.
-   *  Throws with status 402 if user has reached their vault limit (free tier). */
-  async registerVault(name, clientId) {
-    return (await this.request("POST", "/vaults/register", {
-      name,
-      client_id: clientId
-    })).json;
-  }
-  /** Create a brand-new, distinct vault for the current user. Unlike
-   *  registerVault (idempotent by client_id), this always makes a new vault.
-   *  Throws with status 402 if the user has reached their vault limit, or 422
-   *  on validation errors. */
-  async createVault(name) {
-    return (await this.request("POST", "/vaults", { name })).json.vault;
-  }
-  /** Fetch all vaults accessible by the current user. Throws the underlying
-   *  request error (with `.status` for HTTP responses) so callers can render
-   *  401/timeout/5xx distinctly from "successful empty list". */
-  async listVaults() {
-    return (await this.request("GET", "/vaults")).json.vaults;
-  }
-  /** Authenticated ping — verifies both connectivity and API key. */
-  async ping() {
-    try {
-      return await this.request("GET", "/folders"), { ok: !0 };
-    } catch (e) {
-      let status = e.status;
-      return status === 401 || status === 403 ? { ok: !1, error: "Invalid API key" } : typeof status == "number" ? { ok: !1, error: `HTTP ${status} from /folders` } : { ok: !1, error: "Connection failed" };
-    }
-  }
-  /** Push a note to Engram.
-   *  When version is provided, the server uses optimistic concurrency control:
-   *  returns 409 with the current server state if the version doesn't match.
-   *  `clientId` carries a plugin-minted note_id (UUIDv7) for a note whose id
-   *  isn't yet known server-side — sent as the body `id` field, which the
-   *  server adopts as the note's primary key on first create (note_id-keyed
-   *  CRDT rework, Task 5). Harmless to send for an existing note: the server
-   *  already has an id and ignores it. */
-  async pushNote(path, content, mtime, version, clientId, baseHash) {
-    let body = { path, content, mtime };
-    version !== void 0 && (body.version = version), clientId !== void 0 && (body.id = clientId), baseHash !== void 0 && (body.base_hash = baseHash);
-    try {
-      return (await this.request("POST", "/notes", body)).json;
-    } catch (e) {
-      if (typeof e == "object" && e !== null && e.status === 409) {
-        let err = e;
-        if (err.json) return err.json;
-        if (err.text) return JSON.parse(err.text);
-      }
-      throw e;
-    }
-  }
-  /** Get changes since a timestamp.
-   *  Protocol rev: pass limit/cursor to page through large vaults and
-   *  fields:"meta" to receive content_hash instead of content. Pre-rev
-   *  backends ignore the extra params and return the legacy full response. */
-  async getChanges(since, opts) {
-    let params2 = new URLSearchParams({ since });
-    return (opts == null ? void 0 : opts.limit) !== void 0 && params2.set("limit", String(opts.limit)), opts != null && opts.cursor && params2.set("cursor", opts.cursor), opts != null && opts.fields && params2.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params2.toString()}`)).json;
-  }
-  /** Get full note by path. */
-  async getNote(path) {
-    let encoded = encodePath(path);
-    return (await this.request("GET", `/notes/${encoded}`)).json;
-  }
-  /** Delete a note. */
-  async deleteNote(path) {
-    let encoded = encodePath(path);
-    return (await this.request("DELETE", `/notes/${encoded}`)).json;
-  }
-  // --- CRDT ops transport (Phase 2 REST fallback for the `crdt:` channel) ---
-  /** Flush a note's encoded Y.Doc update to the server (idempotent, lossless
-   *  merge). Used when the realtime `crdt:` channel is down. */
-  async postUpdate(noteId, update) {
-    return { head: (await this.request("POST", `/notes/${encodeURIComponent(noteId)}/updates`, {
-      update: toB64(update)
-    })).json.head };
-  }
-  /** Pull the delta since `since` (a base64 state vector), or the full state
-   *  if omitted. Phase 3 (cold-note head-index pull). Intentionally unconsumed
-   *  in Phase 2/2b. */
-  async getUpdates(noteId, since) {
-    let params2 = new URLSearchParams();
-    since !== void 0 && params2.set("since", since);
-    let qs = params2.toString(), body = (await this.request(
-      "GET",
-      `/notes/${encodeURIComponent(noteId)}/updates${qs ? `?${qs}` : ""}`
-    )).json;
-    return { update: fromB64(body.update), head: body.head };
-  }
-  /** Capability probe + convergence check: current head per note across the
-   *  whole vault. */
-  async getVaultHeads() {
-    return { heads: (await this.request("GET", "/vault/heads")).json.heads };
-  }
-  // --- Attachment methods ---
-  /** Push a binary attachment as base64. */
-  async pushAttachment(path, contentBase64, mimeType, mtime) {
-    return (await this.request("POST", "/attachments", {
-      path,
-      content_base64: contentBase64,
-      mime_type: mimeType,
-      mtime
-    })).json;
-  }
-  /** Get attachment content (base64). */
-  async getAttachment(path) {
-    let encoded = encodePath(path);
-    return (await this.request("GET", `/attachments/${encoded}`)).json;
-  }
-  /** Delete an attachment. */
-  async deleteAttachment(path) {
-    let encoded = encodePath(path);
-    return (await this.request("DELETE", `/attachments/${encoded}`)).json;
-  }
-  /** Semantic search across indexed notes. */
-  async search(query, limit, tags, folder) {
-    let body = { query };
-    return limit !== void 0 && (body.limit = limit), tags != null && tags.length && (body.tags = tags), folder && (body.folder = folder), (await this.request("POST", "/search", body)).json;
-  }
-  /** Fetch sync manifest for reconciliation.
-   *  Returns null if the server doesn't support this endpoint (404). */
-  async getManifest() {
-    try {
-      return (await this.request("GET", "/sync/manifest")).json;
-    } catch (e) {
-      if (typeof e == "object" && e !== null && e.status === 404)
-        return null;
-      throw e;
-    }
-  }
-  /** Push batched log entries to the server for remote debugging. */
-  async pushLogs(entries) {
-    await this.request("POST", "/logs", { logs: entries });
-  }
-  /** Get attachment changes since a timestamp. */
-  async getAttachmentChanges(since) {
-    let encoded = encodeURIComponent(since);
-    return (await this.request("GET", `/attachments/changes?since=${encoded}`)).json;
-  }
-  // --- Explicit folder markers (kind='folder' rows) ---
-  /** Create an explicit empty folder marker. Server is idempotent — repeated
-   *  calls return 200 instead of 201 but the same shape. */
-  async createFolder(folder) {
-    return (await this.request("POST", "/folders", { folder })).json;
-  }
-  /** Delete an explicit empty folder marker. Server always 204 — idempotent.
-   *  Slashes are preserved as path separators; each segment is URL-encoded so
-   *  spaces and other reserved characters survive routing. */
-  async deleteFolder(path) {
-    let segments = path.split("/").map(encodeURIComponent).join("/");
-    await this.request("DELETE", `/folders/${segments}`);
-  }
-  /** Fetch the list of explicit folder marker names. Plugin-only endpoint
-   *  (the frontend lists folders through a different surface). */
-  async listExplicitFolders() {
-    var _a;
-    return ((_a = (await this.request("GET", "/folders/explicit")).json.folders) != null ? _a : []).map((f) => f.name);
-  }
-}, UUID_SEGMENT = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-function beaconNoteId(path) {
-  var _a, _b, _c;
-  return UUID_SEGMENT.lastIndex = 0, (_c = (_b = (_a = UUID_SEGMENT.exec(path)) == null ? void 0 : _a[0]) == null ? void 0 : _b.toLowerCase()) != null ? _c : null;
-}
-function beaconRoute(path) {
-  var _a;
-  return ((_a = path.split("?")[0]) != null ? _a : path).replace(UUID_SEGMENT, ":id").slice(0, 64);
-}
-function parseLimitExceededError(e) {
-  let err = e, body = {};
-  if (err.json && typeof err.json == "object")
-    body = err.json;
-  else if (typeof err.text == "string")
-    try {
-      let parsed = JSON.parse(err.text);
-      parsed && typeof parsed == "object" && (body = parsed);
-    } catch (e2) {
-    }
-  let pick = (key) => body[key] !== void 0 ? body[key] : null;
-  return new LimitExceededError(
-    typeof body.reason == "string" ? body.reason : "unknown",
-    pick("upgrade_url"),
-    pick("limit_key"),
-    pick("limit"),
-    pick("current")
-  );
-}
-function encodePath(path) {
-  return path.split("/").map(encodeURIComponent).join("/");
-}
-function arrayBufferToBase64(buffer) {
-  let bytes = new Uint8Array(buffer), binary2 = "";
-  for (let i = 0; i < bytes.byteLength; i++)
-    binary2 += String.fromCharCode(bytes[i]);
-  return btoa(binary2);
-}
-function base64ToArrayBuffer(base64) {
-  let binary2 = atob(base64), bytes = new Uint8Array(binary2.length);
-  for (let i = 0; i < binary2.length; i++)
-    bytes[i] = binary2.charCodeAt(i);
-  return bytes.buffer;
-}
-
-// src/auth.ts
-function seededAccessToken(settings) {
-  var _a, _b;
-  return !!settings.accessToken && settings.accessTokenVaultId != null && settings.accessTokenVaultId === settings.vaultId ? {
-    token: (_a = settings.accessToken) != null ? _a : null,
-    expiresAt: (_b = settings.accessTokenExpiresAt) != null ? _b : 0
-  } : { token: null, expiresAt: 0 };
-}
-var ApiKeyAuth = class {
-  constructor(apiKey, vaultId) {
-    this.apiKey = apiKey, this.vaultId = vaultId;
-  }
-  async getToken() {
-    return this.apiKey;
-  }
-  getVaultId() {
-    return this.vaultId;
-  }
-  isAuthenticated() {
-    return this.apiKey.length > 0;
-  }
-  signOut() {
-    this.apiKey = "", this.vaultId = null;
-  }
-}, _OAuthAuth = class _OAuthAuth {
-  constructor(refreshToken, vaultId, userEmail, refreshFn, onTokenRotated, initialAccessToken = null, initialExpiresAt = 0, onAuthInvalidated) {
-    this.accessToken = null;
-    this.expiresAt = 0;
-    this.authenticated = !0;
-    this.inflightRefresh = null;
-    this.authInvalidatedFired = !1;
-    this.refreshToken = refreshToken, this.vaultId = vaultId, this.userEmail = userEmail, this.refreshFn = refreshFn, this.onTokenRotated = onTokenRotated, this.accessToken = initialAccessToken, this.expiresAt = initialExpiresAt, this.onAuthInvalidated = onAuthInvalidated;
-  }
-  async getToken() {
-    if (this.accessToken && this.expiresAt > Date.now() + _OAuthAuth.EXPIRY_BUFFER_MS)
-      return this.accessToken;
-    if (this.inflightRefresh)
-      return this.inflightRefresh;
-    rlog().info(
-      "auth",
-      `OAuth.getToken \u2014 triggering refresh (refreshTokenLen=${this.refreshToken.length} hadAccessToken=${this.accessToken !== null} expiresInMs=${this.expiresAt - Date.now()})`
-    ), this.inflightRefresh = this.doRefresh();
-    try {
-      return await this.inflightRefresh;
-    } finally {
-      this.inflightRefresh = null;
-    }
-  }
-  async doRefresh() {
-    var _a, _b;
-    if (!this.refreshToken)
-      throw this.authenticated = !1, new Error("Not authenticated: refresh token cleared");
-    try {
-      let result = await this.refreshFn(this.refreshToken);
-      return this.accessToken = result.access_token, this.refreshToken = result.refresh_token, this.expiresAt = Date.now() + result.expires_in * 1e3, this.authenticated = !0, await ((_a = this.onTokenRotated) == null ? void 0 : _a.call(this, {
-        refreshToken: result.refresh_token,
-        accessToken: result.access_token,
-        expiresAt: this.expiresAt
-      })), rlog().info(
-        "auth",
-        `OAuth refresh ok \u2014 accessTokenLen=${result.access_token.length} expiresInS=${result.expires_in}`
-      ), this.accessToken;
-    } catch (err) {
-      this.authenticated = !1, this.accessToken = null, this.expiresAt = 0;
-      let status = err == null ? void 0 : err.status, definitive = status === 400 || status === 401 || status === 403 || status === 404;
-      if (rlog().error(
-        "auth",
-        `OAuth refresh failed (status=${status != null ? status : "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
-        err instanceof Error ? err.stack : void 0
-      ), definitive && !this.authInvalidatedFired) {
-        this.authInvalidatedFired = !0, this.refreshToken = "";
-        try {
-          await ((_b = this.onAuthInvalidated) == null ? void 0 : _b.call(this));
-        } catch (cbErr) {
-          rlog().error(
-            "auth",
-            `onAuthInvalidated callback threw: ${cbErr instanceof Error ? cbErr.message : String(cbErr)}`
-          );
-        }
-      }
-      throw err;
-    }
-  }
-  getVaultId() {
-    return this.vaultId;
-  }
-  getUserEmail() {
-    return this.userEmail;
-  }
-  getRefreshToken() {
-    return this.refreshToken;
-  }
-  invalidateAccessToken() {
-    this.accessToken = null, this.expiresAt = 0;
-  }
-  isAuthenticated() {
-    return this.authenticated;
-  }
-  signOut() {
-    this.accessToken = null, this.refreshToken = "", this.expiresAt = 0, this.authenticated = !1, this.vaultId = null, this.userEmail = null;
-  }
-};
-/** Buffer in ms — refresh if token expires within this window. */
-_OAuthAuth.EXPIRY_BUFFER_MS = 6e4;
-var OAuthAuth = _OAuthAuth;
-
-// src/error-util.ts
-function errMsg(e) {
-  var _a;
-  if (e instanceof Error) return e.message;
-  if (typeof e == "string") return e;
-  try {
-    return (_a = JSON.stringify(e)) != null ? _a : String(e);
-  } catch (e2) {
-    return String(e);
-  }
-}
-
-// src/channel.ts
-var NO_AUTH_RECONNECT_MS = 3e4, AUTH_FAIL_WINDOW_MS = 5e3, RESUME_PROBE_MS = 5e3, RECONNECT_JITTER_DEFAULT_MS = 5e3, RECONNECT_JITTER_MAX_MS = 6e4, RATE_LIMITED_JOIN_FLOOR_MS = 1e4;
-function connectRetryDelayMs(attempt, baseMs = 2e3) {
-  return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
-}
-function clampReconnectJitter(raw) {
-  return typeof raw != "number" || !Number.isFinite(raw) || raw <= 0 ? null : Math.min(raw, RECONNECT_JITTER_MAX_MS);
-}
-function fullJitterDelay(windowMs, rng = Math.random) {
-  return rng() * windowMs;
-}
-function topicUserIdIsStale(currentUserId, authenticatedUserId) {
-  return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
-}
-var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
-    this.ws = null;
-    this.ref = 0;
-    /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
-     *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
-     *  `disconnect()` — the one await-reply path the channel has. */
-    this.pendingReplies = /* @__PURE__ */ new Map();
-    this.joinRef = "1";
-    this.userJoinRef = "2";
-    this.crdtJoinRef = "3";
-    this.heartbeatTimer = null;
-    this.pendingHeartbeatRef = null;
-    this.reconnectTimer = null;
-    this.reconnectMs = 1e3;
-    this.maxReconnectMs = 6e4;
-    this.reconnectJitterMaxMs = null;
-    this.connected = !1;
-    /** True only when the `crdt:` topic join has been acknowledged by the server.
-     *  Reset on every disconnect so it re-gates on the next connection. A backend
-     *  that does not serve the crdt: topic replies with an error (handled below),
-     *  keeping this false — which allows the legacy pushNote path to remain active. */
-    this.crdtJoined = !1;
-    /**
-     * The `ref` value sent with the crdt: topic phx_join frame.
-     * Stored so handleMessage can distinguish a join-error reply (ref matches)
-     * from a per-message error reply such as "rate_limited" or "frame_too_large"
-     * on a crdt_msg (ref does NOT match). Only the join-error reply should fire
-     * onCrdtJoinError and tear down the CRDT session; per-message errors are
-     * transient and must not degrade the transport.
-     * Reset to null on every joinChannel() call (each (re)connect issues a new join).
-     */
-    this.crdtJoinMsgRef = null;
-    /**
-     * Reason from the most recent crdt: join REJECTION in the session that just
-     * ended (null if that session's crdt join succeeded, was never attempted, or
-     * hasn't replied yet). A rejected crdt join does not by itself force a
-     * reconnect — the sync topic can still be healthy — but if the WHOLE socket
-     * then closes (e.g. a server-side abuse defense, or any other drop), the
-     * next reconnect should back off rather than retry on the flat graceful-drop
-     * jitter: retrying immediately just re-triggers the same rejection before
-     * the backend's rate-limit bucket drains, producing a tight open/reject/
-     * close loop (the prod alert-noise "CRDT channel-join retry loop" — one
-     * user's plugin looping join -> rate_limited -> immediate retry for
-     * ~15 min windows). Reset to null on every joinChannel() (fresh join,
-     * fresh chance) and set only by a
-     * genuine join-ref-matching error reply — a per-message crdt_msg error
-     * (different ref) must NOT set this.
-     */
-    this.crdtJoinFailedReason = null;
-    /** Backoff (ms) for the reconnect that follows a join-class failure. Distinct
-     *  from `reconnectMs` (which only grows on the "closed before ever opening"
-     *  path) because `reconnectMs` resets to 1000 on every successful open —
-     *  and a join-class failure by definition happens AFTER a successful open.
-     *  Reset to 1000 whenever a crdt: join succeeds (health restored). */
-    this.joinFailureBackoffMs = 1e3;
-    /** True once the socket has opened at least once this channel's lifetime. Gates
-     *  the reconnect-only identity re-derivation (see openSocketInner): a fresh
-     *  build already carries the correct userId from connectChannel's getMe(), so
-     *  only RE-opens need re-verification. */
-    this.hasOpened = !1;
-    /** Set when the auth provider is swapped on a KEPT channel (an OAuth rebind
-     *  that setupNoteStream reused rather than rebuilt). Signals that `this.userId`
-     *  may be stale relative to the new identity, so the next reconnect must
-     *  re-derive it from getMe() before rejoining `crdt:` (else the join is
-     *  refused "unauthorized", e2e-clerk test_84). Cleared once verified. */
-    this.identityMaybeStale = !1;
-    /** Current connection id, minted fresh per physical socket. */
-    this.connId = null;
-    this.authProvider = null;
-    /** Authenticated probe injected via `setAuthProbe` (e.g. GET /me). Fired on
-     *  a fast pre-open close instead of guessing the token is stale. */
-    this.authProbe = null;
-    this.onEvent = null;
-    this.onStatusChange = null;
-    this.onVaultDeleted = null;
-    /** Folder markers changed on the server (create/delete/move from the web
-     *  app). Payload is advisory only — the handler re-polls /folders/explicit. */
-    this.onFoldersChanged = null;
-    /** Surfaces the user's current plan/entitlements from the best-effort
-     *  `user:{userId}` topic (join reply `response.plan` + `subscription_activated`
-     *  broadcasts). Never gates the plugin's connected state. */
-    this.onPlanState = null;
-    /** Inbound CRDT frames from the server. `docId` is the note's bare note_id. */
-    this.onCrdtMessage = null;
-    /** A room became active on the server for `docId` (announced via
-     *  `broadcast_from!`, so only OTHER devices see it). Trigger a sync-step-1
-     *  for this doc so a device that doesn't yet have the note pulls it. */
-    this.onCrdtDocReady = null;
-    /** A crdt_msg we sent was dropped server-side: the note_id has no row
-     *  (backend #955 error reply). The create-race cross-wire signature — wire
-     *  to the sync engine's live id-map reconcile (ensureNoteIdMapped). */
-    this.onCrdtNoteNotFound = null;
-    /** Fired when the `crdt:` topic join is acknowledged by the server.
-     *  Use this to activate CRDT routing in the SyncEngine — only wire
-     *  `setCrdtManager` after this fires, so the legacy pushNote path stays
-     *  active against non-CRDT backends (which reply with a join error and
-     *  never fire this callback). */
-    this.onCrdtJoined = null;
-    /** Fired when the `crdt:` topic join (or REJOIN) is rejected by the server.
-     *  `reason` is the `response.reason` string from the server payload (undefined
-     *  if absent). `min` is the server's minimum supported proto version, present
-     *  only when `reason === "crdt_proto_too_old"`.
-     *
-     *  In main.ts, wire this to reset `crdtEverJoined = false` and call
-     *  `setCrdtManager(null)` so that a failed rejoin (e.g. backend downgrade or
-     *  transient error after a previously successful join) degrades to the legacy
-     *  pushNote path rather than silently dropping edits into a dead transport. */
-    this.onCrdtJoinError = null;
-    /** Server-pushed Yjs update for a note, fanned out over the per-vault
-     *  `sync:{userId}:{vaultId}` topic regardless of CRDT-room enrollment
-     *  (backend fan-out). `b64` is the raw v1 update, still base64-encoded — the
-     *  CRDT layer decodes it. `head` is the server's post-apply head marker.
-     *  Lets an IDLE note (no dedicated CRDT room) converge without ever
-     *  STEP1-enrolling. `seq` is the backend's vault op-log position (Phase D2
-     *  gap-heal, Task 1) — undefined/null on an old backend or a note deleted
-     *  mid-flight. */
-    this.onNoteYjsUpdate = null;
-    // ---------------------------------------------------------------------------
-    // Private
-    // ---------------------------------------------------------------------------
-    /** Guards openSocket against re-entry across its async token fetch. */
-    this.opening = !1;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
-      "channel",
-      `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
-    );
-  }
-  setAuthProvider(provider) {
-    this.authProvider = provider, this.identityMaybeStale = !0, rlog().info("channel", `setAuthProvider \u2014 type=${provider.constructor.name}`);
-  }
-  /** Inject an authenticated probe (e.g. GET /me). On a fast pre-open close the
-   *  channel fires this instead of guessing the token is stale; the api client
-   *  is the single invalidation authority (a real 401 there invalidates and
-   *  refreshes). */
-  setAuthProbe(probe) {
-    this.authProbe = probe;
-  }
-  async getAuthToken() {
-    return this.authProvider ? { token: await this.authProvider.getToken(), source: this.authProvider.constructor.name } : { token: this.apiKey, source: "apiKey-fallback" };
-  }
-  updateConfig(baseUrl, apiKey, userId, vaultId = null, deviceId = this.deviceId) {
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, this.reconnectJitterMaxMs = null;
-  }
-  get topic() {
-    return this.vaultId ? `sync:${this.userId}:${this.vaultId}` : `sync:${this.userId}`;
-  }
-  get userTopic() {
-    return `user:${this.userId}`;
-  }
-  get crdtTopic() {
-    return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
-  }
-  /** Send a CRDT update frame on the crdt topic.
-   *  Returns false without sending until the crdt: join is server-acked —
-   *  a frame with a stale/absent join_ref is silently dropped server-side
-   *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
-  sendCrdt(docId, b64) {
-    let t = this.crdtTopic;
-    return !t || !this.crdtJoined ? (rlog().warn(
-      "channel",
-      `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`
-    ), !1) : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
-  }
-  /** Push a request frame on the crdt topic and resolve when the matching
-   *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
-   *  disconnect. The one await-reply path the channel has — everything else is
-   *  fire-and-forget. */
-  sendRequest(event, payload, timeoutMs = 1e4) {
-    let t = this.crdtTopic;
-    if (!t || !this.crdtJoined)
-      return Promise.reject(
-        new Error(`sendRequest refused (crdt topic not joined): ${event}`)
-      );
-    let ref = String(++this.ref);
-    return new Promise((resolve, reject) => {
-      let timer = window.setTimeout(() => {
-        this.pendingReplies.delete(ref), reject(new Error(`sendRequest timeout: ${event}`));
-      }, timeoutMs);
-      this.pendingReplies.set(ref, { resolve, reject, timer }), this.send([this.crdtJoinRef, ref, t, event, payload]);
-    });
-  }
-  /** Genesis a server row over the socket. Returns the server's authoritative
-   *  doc_id — on ADOPT (path already owned by a different live note) the server
-   *  returns a DIFFERENT id, which Task 3 uses to remap the local note and avoid
-   *  orphaning edits. */
-  async crdtCreate(docId, path) {
-    return (await this.sendRequest("crdt_create", { doc_id: docId, path })).doc_id;
-  }
-  /** Batch create: mirrors crdtCreate but takes a list (server caps it at 100
-   *  creates per request; chunking is the caller's concern). */
-  async crdtCreateBatch(creates) {
-    return await this.sendRequest("crdt_create_batch", { creates });
-  }
-  /** Delete a note over the socket, AWAITING the server ack (idempotent). The
-   *  backend replies `{:ok, %{doc_id}}` even when the note is already gone, so a
-   *  resolve means the delete is durably applied; a reject carries a retryable
-   *  (rate_limited / not-joined / disconnect) or terminal (bad_doc_id) reason.
-   *  Routed through the durable CrdtOpQueue; there is no REST delete fallback. */
-  async crdtDeleteAcked(docId) {
-    return await this.sendRequest("crdt_delete", { doc_id: docId });
-  }
-  /** Seq-ordered op-log page after `cursorSeq` (single-path catch-up). Each op
-   *  carries FULL content (a SyncNoteChange or SyncAttachmentChange — the
-   *  merged notes+attachments feed), so it is causally complete and can
-   *  never pend the way a state-vector delta can — this is what a
-   *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
-  async crdtCatchupSince(cursorSeq, limit) {
-    let payload = { cursor_seq: cursorSeq };
-    return limit !== void 0 && (payload.limit = limit), await this.sendRequest("crdt_catchup_since", payload);
-  }
-  async connect() {
-    this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
-  }
-  disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
-    for (let [, p] of this.pendingReplies)
-      window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
-    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
-  }
-  /** Call when the app returns to the foreground (mobile resume). Mobile OSes
-   *  suspend the socket while backgrounded; readyState can still report OPEN on a
-   *  connection that is actually dead. Rather than wait up to 30s for the next
-   *  heartbeat tick, probe liveness now and pull any pending reconnect forward so
-   *  the first post-unlock interaction is snappy.
-   *
-   *  - OPEN socket: run a heartbeat tick immediately (closes at once if the
-   *    pre-suspend heartbeat was never answered), then a fast follow-up tick so a
-   *    socket that died silently during suspend is caught in ~RESUME_PROBE_MS.
-   *  - Down with a reconnect pending: bring it forward.
-   *  - Connecting, or intentionally disconnected: nothing to do. */
-  onResume() {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.heartbeatTick(), window.setTimeout(() => this.heartbeatTick(), RESUME_PROBE_MS);
-      return;
-    }
-    !this.ws && this.reconnectTimer !== null && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null, this.openSocket());
-  }
-  isConnected() {
-    return this.connected;
-  }
-  /** True only when the `crdt:` topic join has been acknowledged by the server.
-   *  The SyncEngine uses this to decide whether to route markdown saves through
-   *  CrdtManager.applyLocalEdit (CRDT path) or the legacy pushNote POST. */
-  isCrdtConnected() {
-    return this.crdtJoined;
-  }
-  /** Server-advertised full-jitter reconnect window (ms), or null until the
-   *  sync join reply has been received. Exposed for tests. */
-  getReconnectJitterMaxMs() {
-    return this.reconnectJitterMaxMs;
-  }
-  /** Current connection id (fresh per physical socket). Exposed for tests. */
-  getConnId() {
-    return this.connId;
-  }
-  async openSocket() {
-    if (this.ws || this.opening) {
-      rlog().info("channel", "openSocket skipped \u2014 socket already present or opening");
-      return;
-    }
-    this.opening = !0;
-    try {
-      await this.openSocketInner();
-    } finally {
-      this.opening = !1;
-    }
-  }
-  async openSocketInner() {
-    var _a, _b, _c, _d, _e;
-    let token, source;
-    try {
-      let result = await this.getAuthToken();
-      token = result.token, source = result.source;
-    } catch (e) {
-      rlog().warn(
-        "channel",
-        `getToken threw \u2014 deferring reconnect ${NO_AUTH_RECONNECT_MS}ms \u2014 providerType=${(_b = (_a = this.authProvider) == null ? void 0 : _a.constructor.name) != null ? _b : "none"} err=${errMsg(e)}`
-      ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
-      return;
-    }
-    if (!token) {
-      rlog().warn(
-        "channel",
-        `Empty token \u2014 skip WS connect, defer ${NO_AUTH_RECONNECT_MS}ms \u2014 source=${source} hasProvider=${!!this.authProvider} providerType=${(_d = (_c = this.authProvider) == null ? void 0 : _c.constructor.name) != null ? _d : "none"} apiKeyLen=${this.apiKey.length}`
-      ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
-      return;
-    }
-    if (this.hasOpened && this.identityMaybeStale && this.authProbe) {
-      this.identityMaybeStale = !1;
-      try {
-        let me = await this.authProbe(), freshId = me == null ? void 0 : me.id;
-        freshId && topicUserIdIsStale(this.userId, freshId) && (rlog().warn(
-          "channel",
-          `reconnect identity refresh: topic userId ${this.userId} -> ${freshId} (provider swapped on a reused channel); rejoining under the authenticated id`
-        ), this.userId = freshId);
-      } catch (e) {
-        rlog().info(
-          "channel",
-          `reconnect identity probe failed, keeping userId: ${errMsg(e)}`
-        );
-      }
-    }
-    rlog().info(
-      "channel",
-      `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
-    ), this.connId = crypto.randomUUID(), rlog().setConnId(this.connId);
-    let wsBase = this.baseUrl.replace(/^http/, "ws").replace(/^https/, "wss"), params2 = new URLSearchParams({
-      token,
-      vsn: "2.0.0",
-      conn_id: this.connId
-    });
-    this.deviceId && params2.set("device_id", this.deviceId), this.vaultId && params2.set("vault_id", this.vaultId);
-    let url = `${wsBase}/socket/websocket?${params2.toString()}`, openedAt = Date.now(), opened = !1;
-    try {
-      this.ws = new WebSocket(url);
-    } catch (e) {
-      rlog().error("channel", `WebSocket open error: ${errMsg(e)}`), this.scheduleReconnect();
-      return;
-    }
-    this.ws.onopen = () => {
-      opened = !0, this.hasOpened = !0, this.identityMaybeStale = !1, this.reconnectMs = 1e3, this.pendingHeartbeatRef = null, this.joinChannel(), this.startHeartbeat(), rlog().info("channel", "WebSocket opened, joining channel");
-    }, this.ws.onmessage = (evt) => {
-      this.handleMessage(evt.data);
-    }, this.ws.onerror = (e) => {
-      rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
-    }, this.ws.onclose = (evt) => {
-      var _a2, _b2, _c2, _d2;
-      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
-      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
-      if (rlog().info(
-        "channel",
-        `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
-      ), !opened && sinceOpen < AUTH_FAIL_WINDOW_MS && online && this.authProbe && this.authProbe().catch(() => {
-      }), opened && this.crdtJoinFailedReason !== null) {
-        let floor2 = this.crdtJoinFailedReason === "rate_limited" ? RATE_LIMITED_JOIN_FLOOR_MS : 1e3;
-        this.joinFailureBackoffMs = Math.min(
-          Math.max(this.joinFailureBackoffMs * 2, floor2),
-          this.maxReconnectMs
-        );
-        let delay = this.joinFailureBackoffMs + Math.random() * this.joinFailureBackoffMs * 0.5;
-        rlog().info(
-          "channel",
-          `crdt: join rejected (${this.crdtJoinFailedReason}) \u2014 backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`
-        ), this.reconnectTimer = window.setTimeout(() => {
-          this.openSocket();
-        }, delay);
-      } else if (opened) {
-        let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
-        rlog().info(
-          "channel",
-          `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
-        ), this.reconnectTimer = window.setTimeout(() => {
-          this.openSocket();
-        }, delay);
-      } else
-        rlog().info(
-          "channel",
-          `Channel closed, reconnecting in ${this.reconnectMs}ms - ${closeInfo}`
-        ), this.scheduleReconnect();
-    };
-  }
-  joinChannel() {
-    this.crdtJoinMsgRef = null, this.crdtJoinFailedReason = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
-    let crdtT = this.crdtTopic;
-    if (crdtT) {
-      let msgRef = String(++this.ref);
-      this.crdtJoinMsgRef = msgRef, this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
-    }
-  }
-  startHeartbeat() {
-    this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 3e4);
-  }
-  /** Interval body for the heartbeat. Extracted so tests can drive it directly
-   *  without fake timers. Called once per 30s interval while the socket is open.
-   *
-   *  If `pendingHeartbeatRef` is still set from the previous tick the server never
-   *  replied — the socket is half-dead (classic mobile app-resume state). Force
-   *  close so the existing onclose → scheduleReconnect machinery can recover.
-   *  Otherwise stamp a new pending ref and send the heartbeat frame. */
-  heartbeatTick() {
-    var _a, _b;
-    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
-      if (this.pendingHeartbeatRef !== null) {
-        rlog().warn("channel", "heartbeat unanswered \u2014 closing dead socket"), (_b = this.ws) == null || _b.close();
-        return;
-      }
-      this.pendingHeartbeatRef = String(++this.ref), this.send([null, this.pendingHeartbeatRef, "phoenix", "heartbeat", {}]);
-    }
-  }
-  handleMessage(raw) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
-    let msg;
-    try {
-      msg = JSON.parse(raw);
-    } catch (e) {
-      rlog().error("channel", `Failed to parse message: ${raw}`);
-      return;
-    }
-    let [, ref, topic, event, payload] = msg;
-    if (event === "phx_reply") {
-      if (ref !== null) {
-        let pending = this.pendingReplies.get(ref);
-        if (pending) {
-          this.pendingReplies.delete(ref), window.clearTimeout(pending.timer);
-          let status2 = payload == null ? void 0 : payload.status, response = payload == null ? void 0 : payload.response;
-          status2 === "ok" ? pending.resolve(response) : pending.reject(new Error(`request failed: ${JSON.stringify(response)}`));
-          return;
-        }
-      }
-      if (topic === "phoenix") {
-        this.pendingHeartbeatRef = null;
-        return;
-      }
-      let status = payload.status;
-      if (status === "ok")
-        if (topic === this.topic) {
-          let response = payload.response, clamped = clampReconnectJitter(response == null ? void 0 : response.reconnect_jitter_max_ms);
-          clamped !== null && (this.reconnectJitterMaxMs = clamped), this.connected || (this.setConnected(!0), rlog().info("channel", `Joined ${this.topic}`));
-        } else if (topic === this.userTopic) {
-          let response = payload.response, plan = response == null ? void 0 : response.plan;
-          plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
-        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, this.joinFailureBackoffMs = 1e3, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
-      else if (status === "error") {
-        let response = payload.response;
-        if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
-          rlog().warn(
-            "channel",
-            `crdt_msg dropped by server (note_not_found): ${response.doc_id} \u2014 triggering id-map reconcile`
-          ), (_c = this.onCrdtNoteNotFound) == null || _c.call(this, response.doc_id);
-          return;
-        }
-        if (rlog().error(
-          "channel",
-          `Channel join error on ${topic}: ${JSON.stringify(payload)}`
-        ), topic === this.crdtTopic) {
-          let response2 = payload.response, reason = typeof (response2 == null ? void 0 : response2.reason) == "string" ? response2.reason : void 0, min2 = typeof (response2 == null ? void 0 : response2.min) == "number" ? response2.min : void 0;
-          ref === this.crdtJoinMsgRef ? (this.crdtJoinFailedReason = reason != null ? reason : "unknown", reason === "unauthorized" && (this.identityMaybeStale = !0, this.authProbe && ((_d = this.ws) == null || _d.close())), (_e = this.onCrdtJoinError) == null || _e.call(this, reason, min2)) : rlog().warn(
-            "channel",
-            `crdt: per-message error (ref=${ref != null ? ref : "null"}, reason=${reason != null ? reason : "unknown"}) \u2014 session intact`
-          );
-        }
-      }
-      return;
-    }
-    if (event === "subscription_activated" && topic === this.userTopic) {
-      rlog().info("channel", "Received subscription_activated event"), (_f = this.onPlanState) == null || _f.call(this, payload);
-      return;
-    }
-    if (event === "vault_deleted") {
-      rlog().info("channel", "Received vault_deleted event"), (_g = this.onVaultDeleted) == null || _g.call(this);
-      return;
-    }
-    if (event === "folders.batch") {
-      rlog().info("channel", "Folder markers changed on server"), (_h = this.onFoldersChanged) == null || _h.call(this);
-      return;
-    }
-    if (event === "crdt_msg" && payload) {
-      let docId = payload.doc_id, b64 = payload.b64;
-      docId && b64 && ((_i = this.onCrdtMessage) == null || _i.call(this, docId, b64));
-      return;
-    }
-    if (event === "note_yjs_update" && payload) {
-      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq3 = Number.isInteger(rawSeq) ? rawSeq : void 0;
-      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq3));
-      return;
-    }
-    if (event === "crdt_doc_ready" && payload) {
-      let docId = payload.doc_id;
-      if (docId) {
-        let path = payload.path;
-        (_k = this.onCrdtDocReady) == null || _k.call(this, docId, path);
-      }
-      return;
-    }
-    if (event === "note_changed" && payload) {
-      let p = payload, streamEvent = {
-        event_type: p.event_type,
-        path: p.path,
-        timestamp: Date.now(),
-        kind: (_l = p.kind) != null ? _l : "note",
-        id: p.id,
-        device_id: p.device_id,
-        content: p.content,
-        content_hash: p.content_hash,
-        title: p.title,
-        folder: p.folder,
-        tags: p.tags,
-        mtime: p.mtime,
-        updated_at: p.updated_at,
-        version: p.version
-      };
-      rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`), (_m = this.onEvent) == null || _m.call(this, streamEvent);
-    }
-    if (event === "notes.batch" && payload && payload.op === "upsert") {
-      let notes = (_n = payload.notes) != null ? _n : [];
-      rlog().info("channel", `Batch digest: ${notes.length} notes`);
-      for (let n of notes) {
-        let streamEvent = {
-          event_type: "upsert",
-          path: n.path,
-          timestamp: Date.now(),
-          kind: "note",
-          id: n.id,
-          content_hash: n.content_hash,
-          title: n.title,
-          folder: n.folder,
-          tags: n.tags,
-          mtime: n.mtime,
-          updated_at: n.updated_at,
-          version: n.version
-        };
-        (_o = this.onEvent) == null || _o.call(this, streamEvent);
-      }
-    }
-  }
-  send(msg) {
-    var _a;
-    if (((_a = this.ws) == null ? void 0 : _a.readyState) === WebSocket.OPEN) {
-      let frame = JSON.stringify(msg);
-      if (frame.length > LARGE_FRAME_WARN_BYTES) {
-        let eventType = typeof msg[3] == "string" ? msg[3] : "unknown";
-        rlog().warn(
-          "channel",
-          `Outbound frame oversized - event=${eventType} bytes=${frame.length} approaching transport max_frame_size limit (risk of 1009 socket kill)`
-        );
-      }
-      this.ws.send(frame);
-    }
-  }
-  setConnected(value) {
-    var _a;
-    this.connected !== value && (this.connected = value, value || (this.crdtJoined = !1), (_a = this.onStatusChange) == null || _a.call(this, value));
-  }
-  clearTimers() {
-    this.heartbeatTimer && (window.clearInterval(this.heartbeatTimer), this.heartbeatTimer = null), this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null), this.pendingHeartbeatRef = null;
-  }
-  scheduleReconnect(overrideMs) {
-    this.reconnectTimer && (window.clearTimeout(this.reconnectTimer), this.reconnectTimer = null);
-    let base = overrideMs != null ? overrideMs : this.reconnectMs, jitter = Math.random() * base * 0.5;
-    this.reconnectTimer = window.setTimeout(() => {
-      overrideMs === void 0 && (this.reconnectMs = Math.min(this.reconnectMs * 2, this.maxReconnectMs)), this.openSocket();
-    }, base + jitter);
-  }
-};
-
-// src/conflict-modal.ts
-var import_obsidian2 = require("obsidian");
-
-// src/diff.ts
-function computeDiff(oldText, newText) {
-  let oldLines = oldText.split(`
-`), newLines = newText.split(`
-`);
-  return myersDiff(oldLines, newLines);
-}
-function myersDiff(a, b) {
-  let n = a.length, m = b.length, max2 = n + m, v = new Int32Array(2 * max2 + 1);
-  v.fill(-1), v[max2 + 1] = 0;
-  let trace = [];
-  outer: for (let d = 0; d <= max2; d++) {
-    let vCopy = new Int32Array(v);
-    trace.push(vCopy);
-    for (let k = -d; k <= d; k += 2) {
-      let idx = k + max2, x;
-      k === -d || k !== d && v[idx - 1] < v[idx + 1] ? x = v[idx + 1] : x = v[idx - 1] + 1;
-      let y = x - k;
-      for (; x < n && y < m && a[x] === b[y]; )
-        x++, y++;
-      if (v[idx] = x, x >= n && y >= m)
-        break outer;
-    }
-  }
-  return backtrack(trace, a, b, max2);
-}
-function backtrack(trace, a, b, max2) {
-  let x = a.length, y = b.length, ops = [];
-  for (let d = trace.length - 1; d >= 0; d--) {
-    let v = trace[d], k = x - y, idx = k + max2, prevK;
-    k === -d || k !== d && v[idx - 1] < v[idx + 1] ? prevK = k + 1 : prevK = k - 1;
-    let prevX = v[prevK + max2], prevY = prevX - prevK;
-    for (; x > prevX && y > prevY; )
-      x--, y--, ops.push({
-        type: "equal",
-        content: a[x],
-        oldLineNo: x + 1,
-        newLineNo: y + 1
-      });
-    d > 0 && (x === prevX ? (y--, ops.push({
-      type: "add",
-      content: b[y],
-      newLineNo: y + 1
-    })) : (x--, ops.push({
-      type: "remove",
-      content: a[x],
-      oldLineNo: x + 1
-    })));
-  }
-  return ops.reverse(), ops;
-}
-function groupIntoHunks(diffLines, contextLines = 3) {
-  if (diffLines.length === 0) return [];
-  let changeIndices = [];
-  for (let i = 0; i < diffLines.length; i++)
-    diffLines[i].type !== "equal" && changeIndices.push(i);
-  if (changeIndices.length === 0) return [];
-  let ranges = [], rangeStart = Math.max(0, changeIndices[0] - contextLines), rangeEnd = Math.min(diffLines.length - 1, changeIndices[0] + contextLines);
-  for (let i = 1; i < changeIndices.length; i++) {
-    let newStart = Math.max(0, changeIndices[i] - contextLines), newEnd = Math.min(diffLines.length - 1, changeIndices[i] + contextLines);
-    newStart <= rangeEnd + 1 || (ranges.push([rangeStart, rangeEnd]), rangeStart = newStart), rangeEnd = newEnd;
-  }
-  return ranges.push([rangeStart, rangeEnd]), ranges.map(([start, end], id2) => ({
-    id: id2,
-    lines: diffLines.slice(start, end + 1),
-    choice: "remote"
-  }));
-}
-function buildMergedContent(allDiffLines, hunks) {
-  var _a;
-  let hunkRanges = [], searchFrom = 0;
-  for (let hunk of hunks) {
-    let firstLine = hunk.lines[0];
-    if (firstLine)
-      for (let i = searchFrom; i < allDiffLines.length; i++) {
-        let cur = allDiffLines[i];
-        if (cur.type === firstLine.type && cur.content === firstLine.content && cur.oldLineNo === firstLine.oldLineNo && cur.newLineNo === firstLine.newLineNo) {
-          hunkRanges.push({
-            start: i,
-            end: i + hunk.lines.length - 1,
-            choice: hunk.choice
-          }), searchFrom = i + hunk.lines.length;
-          break;
-        }
-      }
-  }
-  let result = [], hunkIdx = 0;
-  for (let i = 0; i < allDiffLines.length; i++) {
-    let line = allDiffLines[i], activeHunk = hunkRanges[hunkIdx], currentHunk = activeHunk && i >= activeHunk.start && i <= activeHunk.end ? activeHunk : null;
-    activeHunk && i > activeHunk.end && hunkIdx++;
-    let choice = (_a = currentHunk == null ? void 0 : currentHunk.choice) != null ? _a : "remote";
-    line.type === "equal" ? result.push(line.content) : line.type === "remove" ? choice === "local" && result.push(line.content) : line.type === "add" && choice === "remote" && result.push(line.content);
-  }
-  return result.join(`
-`);
-}
-
-// src/conflict-modal.ts
-var ConflictModal = class extends import_obsidian2.Modal {
-  constructor(app, info, settings, onViewModeChange) {
-    super(app);
-    this.resolvePromise = () => {
-    };
-    this.diffLines = [];
-    this.hunks = [];
-    this.mergeEditor = null;
-    this.diffContainer = null;
-    this.info = info, this.settings = settings, this.viewMode = settings.conflictViewMode, this.onViewModeChange = onViewModeChange;
-  }
-  onOpen() {
-    let { contentEl, modalEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-conflict"), modalEl.addClass("engram-conflict-modal"), this.diffLines = computeDiff(this.info.localContent, this.info.remoteContent), this.hunks = groupIntoHunks(this.diffLines), this.renderHeader(contentEl), this.renderToolbar(contentEl), this.diffContainer = contentEl.createEl("section", { cls: "engram-conflict-diff" }), this.renderDiff(), this.renderMergeEditor(contentEl), this.renderActions(contentEl);
-  }
-  onClose() {
-    this.contentEl.empty(), this.resolvePromise({ choice: "skip" });
-  }
-  waitForChoice() {
-    return new Promise((resolve) => {
-      this.resolvePromise = (result) => {
-        this.resolvePromise = () => {
-        }, resolve(result);
-      }, this.open();
-    });
-  }
-  // ── Header ──────────────────────────────────────────────────────
-  renderHeader(root) {
-    let header = root.createEl("header", { cls: "engram-conflict-header" }), title = this.info.vaultName ? `Sync Conflict \u2014 ${this.info.vaultName}` : "Sync Conflict";
-    header.createEl("h2", { text: title }), header.createEl("code", { text: this.info.path, cls: "engram-conflict-path" });
-    let meta = header.createEl("aside", { cls: "engram-conflict-meta" });
-    meta.createSpan({
-      text: `Local: ${this.fmtDate(this.info.localMtime)} \xB7 ${this.info.localContent.length} chars`
-    }), meta.createSpan({
-      text: `Remote: ${this.fmtDate(this.info.remoteMtime)} \xB7 ${this.info.remoteContent.length} chars`
-    });
-  }
-  // ── Toolbar (view toggle) ───────────────────────────────────────
-  renderToolbar(root) {
-    let bar = root.createEl("nav", { cls: "engram-conflict-toolbar" }), toggle = bar.createEl("fieldset", { cls: "engram-conflict-view-toggle" });
-    toggle.createEl("legend", { text: "View" });
-    let unifiedBtn = toggle.createEl("button", {
-      text: "Unified",
-      cls: this.viewMode === "unified" ? "is-active" : ""
-    }), sideBySideBtn = toggle.createEl("button", {
-      text: "Side-by-side",
-      cls: this.viewMode === "side-by-side" ? "is-active" : ""
-    });
-    if (unifiedBtn.addEventListener("click", () => {
-      this.viewMode = "unified", unifiedBtn.addClass("is-active"), sideBySideBtn.removeClass("is-active"), this.onViewModeChange("unified"), this.renderDiff();
-    }), sideBySideBtn.addEventListener("click", () => {
-      this.viewMode = "side-by-side", sideBySideBtn.addClass("is-active"), unifiedBtn.removeClass("is-active"), this.onViewModeChange("side-by-side"), this.renderDiff();
-    }), this.hunks.length > 0) {
-      let bulkGroup = bar.createSpan({ cls: "engram-conflict-bulk" }), allLocalBtn = bulkGroup.createEl("button", {
-        text: "All local",
-        cls: "mod-warning"
-      }), allRemoteBtn = bulkGroup.createEl("button", { text: "All remote" });
-      allLocalBtn.addEventListener("click", () => {
-        for (let h of this.hunks)
-          h.choice = "local";
-        this.renderDiff(), this.updateMergeEditor();
-      }), allRemoteBtn.addEventListener("click", () => {
-        for (let h of this.hunks)
-          h.choice = "remote";
-        this.renderDiff(), this.updateMergeEditor();
-      });
-    }
-  }
-  // ── Diff view ───────────────────────────────────────────────────
-  renderDiff() {
-    let container = this.diffContainer;
-    if (container.empty(), this.hunks.length === 0) {
-      container.createEl("p", {
-        text: "No differences found.",
-        cls: "engram-conflict-no-diff"
-      });
-      return;
-    }
-    this.viewMode === "unified" ? this.renderUnified(container) : this.renderSideBySide(container);
-  }
-  renderUnified(container) {
-    var _a, _b, _c, _d;
-    for (let hunk of this.hunks) {
-      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
-      this.renderHunkControls(hunkEl, hunk);
-      let tbody = hunkEl.createEl("table", {
-        cls: "engram-diff-table engram-diff-unified"
-      }).createEl("tbody");
-      for (let line of hunk.lines) {
-        let tr = tbody.createEl("tr", {
-          cls: `engram-diff-line engram-diff-${line.type}`
-        });
-        tr.createEl("td", {
-          text: (_b = (_a = line.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
-          cls: "engram-diff-linenum"
-        }), tr.createEl("td", {
-          text: (_d = (_c = line.newLineNo) == null ? void 0 : _c.toString()) != null ? _d : "",
-          cls: "engram-diff-linenum"
-        }), tr.createEl("td", {
-          text: line.type === "add" ? "+" : line.type === "remove" ? "-" : " ",
-          cls: "engram-diff-marker"
-        }), tr.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: line.content });
-      }
-    }
-  }
-  renderSideBySide(container) {
-    var _a, _b, _c, _d, _e, _f;
-    for (let hunk of this.hunks) {
-      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
-      this.renderHunkControls(hunkEl, hunk);
-      let wrapper = hunkEl.createEl("section", { cls: "engram-diff-sbs-wrapper" }), leftTable = wrapper.createEl("table", {
-        cls: "engram-diff-table engram-diff-sbs"
-      }), rightTable = wrapper.createEl("table", {
-        cls: "engram-diff-table engram-diff-sbs"
-      }), leftBody = leftTable.createEl("tbody"), rightBody = rightTable.createEl("tbody"), leftLines = [], rightLines = [], i = 0, lines = hunk.lines;
-      for (; i < lines.length; ) {
-        let cur = lines[i];
-        if (cur.type === "equal")
-          leftLines.push(cur), rightLines.push(cur), i++;
-        else {
-          let removes = [], adds = [];
-          for (; i < lines.length && lines[i].type === "remove"; )
-            removes.push(lines[i]), i++;
-          for (; i < lines.length && lines[i].type === "add"; )
-            adds.push(lines[i]), i++;
-          let maxLen = Math.max(removes.length, adds.length);
-          for (let j = 0; j < maxLen; j++)
-            leftLines.push(j < removes.length ? removes[j] : null), rightLines.push(j < adds.length ? adds[j] : null);
-        }
-      }
-      for (let r = 0; r < leftLines.length; r++) {
-        let left = leftLines[r], right = rightLines[r], trLeft = leftBody.createEl("tr", {
-          cls: `engram-diff-line ${left ? `engram-diff-${left.type}` : "engram-diff-empty"}`
-        });
-        trLeft.createEl("td", {
-          text: (_b = (_a = left == null ? void 0 : left.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
-          cls: "engram-diff-linenum"
-        }), trLeft.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_c = left == null ? void 0 : left.content) != null ? _c : "" });
-        let trRight = rightBody.createEl("tr", {
-          cls: `engram-diff-line ${right ? `engram-diff-${right.type}` : "engram-diff-empty"}`
-        });
-        trRight.createEl("td", {
-          text: (_e = (_d = right == null ? void 0 : right.newLineNo) == null ? void 0 : _d.toString()) != null ? _e : "",
-          cls: "engram-diff-linenum"
-        }), trRight.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_f = right == null ? void 0 : right.content) != null ? _f : "" });
-      }
-    }
-  }
-  renderHunkControls(parent, hunk) {
-    let controls = parent.createEl("nav", { cls: "engram-conflict-hunk-controls" });
-    controls.createSpan({
-      text: `Hunk ${hunk.id + 1}`,
-      cls: "engram-conflict-hunk-label"
-    });
-    let localBtn = controls.createEl("button", {
-      text: "Use local",
-      cls: hunk.choice === "local" ? "is-active mod-warning" : ""
-    }), remoteBtn = controls.createEl("button", {
-      text: "Use remote",
-      cls: hunk.choice === "remote" ? "is-active" : ""
-    }), updateButtons = () => {
-      localBtn.className = hunk.choice === "local" ? "is-active mod-warning" : "", remoteBtn.className = hunk.choice === "remote" ? "is-active" : "";
-    };
-    localBtn.addEventListener("click", () => {
-      hunk.choice = "local", updateButtons(), this.updateMergeEditor();
-    }), remoteBtn.addEventListener("click", () => {
-      hunk.choice = "remote", updateButtons(), this.updateMergeEditor();
-    });
-  }
-  // ── Merge editor ────────────────────────────────────────────────
-  renderMergeEditor(root) {
-    let section = root.createEl("section", { cls: "engram-conflict-merge" }), header = section.createEl("header", { cls: "engram-conflict-merge-header" });
-    header.createEl("h3", { text: "Merge result" }), header.createSpan({
-      text: "Edit the merged content below, or use hunk controls above",
-      cls: "engram-conflict-merge-hint"
-    }), this.mergeEditor = section.createEl("textarea", {
-      cls: "engram-conflict-merge-editor"
-    }), this.updateMergeEditor();
-  }
-  updateMergeEditor() {
-    this.mergeEditor && (this.mergeEditor.value = buildMergedContent(this.diffLines, this.hunks));
-  }
-  // ── Action buttons ──────────────────────────────────────────────
-  renderActions(root) {
-    let bar = root.createEl("footer", { cls: "engram-conflict-actions" });
-    bar.createEl("button", { text: "Apply merge", cls: "mod-cta" }).addEventListener("click", () => {
-      var _a, _b;
-      this.resolvePromise({
-        choice: "merge",
-        mergedContent: (_b = (_a = this.mergeEditor) == null ? void 0 : _a.value) != null ? _b : ""
-      }), this.close();
-    }), bar.createEl("button", { text: "Keep local", cls: "mod-warning" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-local" }), this.close();
-    }), bar.createEl("button", { text: "Keep remote" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-remote" }), this.close();
-    }), bar.createEl("button", { text: "Keep both" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-both" }), this.close();
-    }), bar.createEl("button", { text: "Skip" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "skip" }), this.close();
-    });
-  }
-  // ── Helpers ──────────────────────────────────────────────────────
-  fmtDate(epoch) {
-    return new Date(epoch * 1e3).toLocaleString();
-  }
-};
-
-// src/crdt-op-dispatch.ts
-var TERMINAL_REASONS = /* @__PURE__ */ new Set([
-  "id_conflict",
-  "version_conflict",
-  "bad_doc_id",
-  "implausible_state_vector"
-]), LIMIT_REASONS = /* @__PURE__ */ new Set(["notes_cap_reached"]);
-function crdtOpFailureReason(err) {
-  let m = (err instanceof Error ? err.message : String(err)).match(/request failed: (\{.*\})/s);
-  if (!(m != null && m[1])) return null;
-  try {
-    let reason = JSON.parse(m[1]).reason;
-    return typeof reason == "string" ? reason : null;
-  } catch (e) {
-    return null;
-  }
-}
-function makeCrdtOpSend(hooks) {
-  let limitSurfaced = /* @__PURE__ */ new Set();
-  return async (op) => {
-    var _a, _b, _c;
-    let ch = hooks.channel();
-    if (!ch) return "error";
-    try {
-      if (op.kind === "create") {
-        let path = (_b = (_a = op.payload) == null ? void 0 : _a.path) != null ? _b : "", serverId = await ch.crdtCreate(op.docId, path);
-        try {
-          await hooks.onCreated(op.docId, serverId, path);
-        } catch (e) {
-        }
-      } else if (op.kind === "delete")
-        await ch.crdtDeleteAcked(op.docId);
-      else
-        return "ok";
-      return "ok";
-    } catch (err) {
-      let reason = crdtOpFailureReason(err);
-      if (reason && LIMIT_REASONS.has(reason))
-        return limitSurfaced.has(op.id) || (limitSurfaced.add(op.id), (_c = hooks.onLimit) == null || _c.call(hooks, op, reason)), "error";
-      if (reason && TERMINAL_REASONS.has(reason))
-        return hooks.onTerminal(op, reason), "ok";
-      let msg = err instanceof Error ? err.message : String(err);
-      return /timeout/i.test(msg) ? "timeout" : "error";
-    }
-  };
-}
-
-// src/crdt-op-queue.ts
-var DEFAULT_OPTIONS = {
-  maxQueue: 500,
-  opTtlMs: 3e5,
-  maxAttempts: 8,
-  baseBackoffMs: 500,
-  maxBackoffMs: 3e4
-}, CrdtOpQueue = class {
-  constructor(deps) {
-    /** Keyed by docId → at most one pending op per doc (newest supersedes). */
-    this.entries = /* @__PURE__ */ new Map();
-    this.joined = !1;
-    /** Re-entrancy guard so overlapping flush/tick calls don't double-send. */
-    this.flushing = !1;
-    this.persistFn = null;
-    this.persistTimer = null;
-    var _a;
-    this.send = deps.send, this.now = deps.now, this.onDrop = deps.onDrop, this.opts = { ...DEFAULT_OPTIONS, ...deps.options }, this.persistDelayMs = (_a = deps.persistDelayMs) != null ? _a : 1e3;
-  }
-  /** Number of distinct pending ops (docIds). */
-  size() {
-    return this.entries.size;
-  }
-  /** Flat snapshot of pending ops (mirrors OfflineQueue.all()), for the
-   *  wholesale savePluginData blob. Every save must re-list it or the next
-   *  write wipes it. */
-  all() {
-    return this.pending();
-  }
-  /** Register a callback to persist the flat pending op list. */
-  setPersist(fn) {
-    this.persistFn = fn;
-  }
-  /**
-   * Restore persisted ops on startup. Prunes any op already past `opTtlMs`
-   * (fires onDrop "ttl") so a long downtime never resurrects stale ops, and
-   * never restores more than `maxQueue` (oldest-first, dropping the excess).
-   * `attempts`/`nextAttemptAt` are transient scheduling state and are reset:
-   * a reloaded op gets a fresh retry budget and is due immediately.
-   */
-  load(ops) {
-    var _a;
-    this.entries.clear();
-    let now = this.now();
-    for (let op of ops) {
-      if (now - op.enqueuedAt > this.opts.opTtlMs) {
-        (_a = this.onDrop) == null || _a.call(this, op, "ttl");
-        continue;
-      }
-      this.entries.size >= this.opts.maxQueue && this.evictOldest(), this.entries.set(op.docId, { op: { ...op, attempts: 0 }, nextAttemptAt: 0 });
-    }
-  }
-  /** Cancel any pending persist timer. Call on plugin unload. */
-  dispose() {
-    this.persistTimer !== null && (window.clearTimeout(this.persistTimer), this.persistTimer = null);
-  }
-  /**
-   * Add an op. Coalesced by docId: a newer op replaces any pending op for the
-   * same doc (delete supersedes create, latest msg wins). A brand-new docId
-   * beyond `maxQueue` evicts the oldest pending op (onDrop "overflow").
-   * Does not send until the channel is joined.
-   */
-  enqueue(op) {
-    if (this.entries.get(op.docId)) {
-      this.entries.set(op.docId, { op, nextAttemptAt: 0 }), this.schedulePersist();
-      return;
-    }
-    this.entries.size >= this.opts.maxQueue && this.evictOldest(), this.entries.set(op.docId, { op, nextAttemptAt: 0 }), this.schedulePersist();
-  }
-  /** Channel joined: flush all held ops FIFO, retrying failures via backoff. */
-  async onJoined() {
-    this.joined = !0, await this.flush();
-  }
-  /**
-   * Drive retries: send every op that is due (nextAttemptAt <= now) and not
-   * TTL-expired. Call after advancing the clock. No-op until joined.
-   */
-  async tick() {
-    await this.flush();
-  }
-  evictOldest() {
-    var _a;
-    let first = this.entries.keys().next();
-    if (first.done) return;
-    let entry = this.entries.get(first.value);
-    this.entries.delete(first.value), entry && ((_a = this.onDrop) == null || _a.call(this, entry.op, "overflow")), this.schedulePersist();
-  }
-  /** Drop and notify if the op has aged past its TTL. Returns true if dropped. */
-  dropIfExpired(docId, entry) {
-    var _a;
-    return this.now() - entry.op.enqueuedAt <= this.opts.opTtlMs ? !1 : (this.entries.delete(docId), (_a = this.onDrop) == null || _a.call(this, entry.op, "ttl"), this.schedulePersist(), !0);
-  }
-  /** Flat snapshot of pending ops, for persistence. */
-  pending() {
-    return [...this.entries.values()].map((e) => e.op);
-  }
-  /** Debounced persist: coalesces rapid mutations into one write. */
-  schedulePersist() {
-    !this.persistFn || this.persistTimer !== null || (this.persistTimer = window.setTimeout(() => {
-      var _a;
-      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.pending());
-    }, this.persistDelayMs));
-  }
-  backoffFor(attempts) {
-    let delay = this.opts.baseBackoffMs * 2 ** (attempts - 1);
-    return Math.min(delay, this.opts.maxBackoffMs);
-  }
-  async flush() {
-    if (!(!this.joined || this.flushing)) {
-      this.flushing = !0;
-      try {
-        for (let docId of [...this.entries.keys()]) {
-          let entry = this.entries.get(docId);
-          entry && (this.dropIfExpired(docId, entry) || entry.nextAttemptAt > this.now() || await this.attempt(docId, entry));
-        }
-      } finally {
-        this.flushing = !1;
-      }
-    }
-  }
-  async attempt(docId, entry) {
-    var _a;
-    let result = await this.send(entry.op);
-    if (this.entries.get(docId) === entry) {
-      if (result === "ok") {
-        this.entries.delete(docId), this.schedulePersist();
-        return;
-      }
-      if (entry.op.attempts += 1, entry.op.attempts >= this.opts.maxAttempts) {
-        this.entries.delete(docId), (_a = this.onDrop) == null || _a.call(this, entry.op, "max-attempts"), this.schedulePersist();
-        return;
-      }
-      entry.nextAttemptAt = this.now() + this.backoffFor(entry.op.attempts);
-    }
-  }
-};
-
-// src/limit-toast.ts
-var import_obsidian3 = require("obsidian");
-
-// src/limit-copy.ts
-var TABLE = {
-  notes_cap_exceeded: "Note limit reached. Upgrade to keep adding notes.",
-  // CRDT channel variant of the note-cap reject (crdt_channel.ex): same copy.
-  notes_cap_reached: "Note limit reached. Upgrade to keep adding notes.",
-  vaults_cap_exceeded: "Free tier includes 1 vault. Upgrade for more.",
-  attachment_must_be_text: "Free syncs notes only \u2014 images & PDFs need a paid plan.",
-  attachments_disabled: "Attachment sync needs a paid plan.",
-  attachments_quota_exceeded: "Attachment storage is full \u2014 upgrade for more.",
-  file_too_large: "File too large for your plan.",
-  concurrent_devices_exceeded: "Already signed in on another device. Upgrade for multi-device.",
-  device_swap_cooldown: "Device swap cooldown active. Wait or upgrade.",
-  ai_conversations_per_day_exceeded: "Daily AI limit reached.",
-  ai_queries_per_conversation_exceeded: "Conversation length limit reached.",
-  ai_queries_per_day_exceeded: "Daily AI query limit reached.",
-  realtime_disabled: "Realtime sync requires upgrade.",
-  account_suspended: "Account suspended. Contact support.",
-  no_tier: "Account setup incomplete."
-};
-function toastFor(reason) {
-  var _a;
-  return `Engram: ${(_a = TABLE[reason]) != null ? _a : "Limit reached. Upgrade to continue."}`;
-}
-
-// src/limit-toast.ts
-var TOAST_DURATION_MS = 1e4;
-function notifyLimitExceeded(err) {
-  let msg = toastFor(err.reason), notice = new import_obsidian3.Notice(msg, TOAST_DURATION_MS);
-  if (err.upgradeUrl) {
-    let url = err.upgradeUrl, noticeEl = notice.noticeEl;
-    if (!noticeEl) return;
-    noticeEl.createEl("button", {
-      text: "Upgrade",
-      cls: "engram-limit-upgrade-btn"
-    }).addEventListener("click", () => {
-      window.open(url, "_blank");
-    });
-  }
-}
-
-// src/plan-state.ts
-function parsePlanState(raw, now) {
-  var _a;
-  if (typeof raw != "object" || raw === null) return null;
-  let r = raw;
-  return typeof r.tier != "string" ? null : {
-    tier: (_a = r.tier) != null ? _a : "free",
-    attachmentsTextOnly: r.attachments_text_only === !0,
-    maxFileBytes: typeof r.max_file_bytes == "number" ? r.max_file_bytes : 0,
-    attachmentBytesCap: typeof r.attachment_bytes_cap == "number" ? r.attachment_bytes_cap : null,
-    updatedAt: now
-  };
-}
-function attachmentCapabilityGained(prev, next) {
-  var _a;
-  return ((_a = prev == null ? void 0 : prev.attachmentsTextOnly) != null ? _a : !0) && !next.attachmentsTextOnly;
-}
-
-// src/search-modal.ts
-var import_obsidian8 = require("obsidian");
-
-// src/search-ui.ts
-var import_obsidian7 = require("obsidian");
-
-// src/folder-suggest.ts
-var import_obsidian5 = require("obsidian");
-
-// src/input-suggest-base.ts
-var import_obsidian4 = require("obsidian"), WidthMatchedInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
-  constructor(app, inputEl) {
-    super(app, inputEl), this.inputEl = inputEl;
-  }
-  /** Match the dropdown width to the input so it spans the panel instead of
-   *  sizing to its content. `suggestEl` is an Obsidian internal — the guard keeps
-   *  this a harmless no-op if that property ever changes. */
-  open() {
-    super.open();
-    let el = this.suggestEl;
-    el && (el.style.width = `${this.inputEl.offsetWidth}px`);
-  }
-};
-
-// src/folder-suggest.ts
-function folderSuggestions(allFolders, fragment2) {
-  let frag = fragment2.trim().toLowerCase();
-  return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
-}
-var FolderInputSuggest = class extends WidthMatchedInputSuggest {
-  constructor(app, inputEl, getAllFolders, onPick) {
-    super(app, inputEl), this.getAllFolders = getAllFolders, this.onPick = onPick;
-  }
-  getSuggestions(query) {
-    return folderSuggestions(this.getAllFolders(), query);
-  }
-  renderSuggestion(value, el) {
-    el.addClass("engram-folder-suggest-item");
-    let icon = el.createSpan({ cls: "engram-folder-suggest-icon" });
-    (0, import_obsidian5.setIcon)(icon, "folder"), el.createSpan({ text: value });
-  }
-  selectSuggestion(value, _evt) {
-    this.setValue(value), this.onPick(value), this.close();
-  }
-};
-
-// src/search-engine.ts
-var import_obsidian6 = require("obsidian");
-
-// src/search-highlight.ts
-function buildSegments(text2, ranges) {
-  if (!ranges.length) return [{ text: text2, hit: !1 }];
-  let sorted = [...ranges].sort((a, b) => a[0] - b[0]), out = [], cursor = 0;
-  for (let [s, e] of sorted)
-    s < cursor || (s > cursor && out.push({ text: text2.slice(cursor, s), hit: !1 }), out.push({ text: text2.slice(s, e), hit: !0 }), cursor = e);
-  return cursor < text2.length && out.push({ text: text2.slice(cursor), hit: !1 }), out;
-}
-var SCRIPTLESS = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
-function queryTokenRanges(text2, query) {
-  let ranges = [];
-  for (let raw of query.split(/\s+/)) {
-    let token = raw.trim();
-    if (token.length < 2) continue;
-    let esc = token.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), pattern = SCRIPTLESS.test(token) ? esc : `(?<![\\p{L}\\p{N}_])${esc}(?![\\p{L}\\p{N}_])`, re = new RegExp(pattern, "giu"), m = re.exec(text2);
-    for (; m !== null; )
-      ranges.push([m.index, m.index + m[0].length]), m = re.exec(text2);
-  }
-  return ranges.sort((a, b) => a[0] - b[0]);
-}
-
-// src/search-engine.ts
-var DEFAULT_LIMIT = 10, EXCERPT_LEN = 140, STRENGTH_FLOOR = 40;
-function matchStrengths(scores) {
-  if (!scores.length) return [];
-  let max2 = Math.max(...scores), min2 = Math.min(...scores), range = max2 - min2;
-  return range === 0 ? scores.map(() => 100) : scores.map(
-    (s) => Math.round(STRENGTH_FLOOR + (s - min2) / range * (100 - STRENGTH_FLOOR))
-  );
-}
-var RRF_K = 60, TITLE_BONUS = 1;
-function excerpt(text2, query) {
-  let t = (text2 != null ? text2 : "").replace(/\s+/g, " ").trim();
-  if (!t) return "";
-  let first = queryTokenRanges(t, query)[0];
-  if (!first)
-    return t.length > EXCERPT_LEN ? `${t.slice(0, EXCERPT_LEN).replace(/\s+$/, "")}\u2026` : t;
-  let start = Math.max(0, first[0] - 24), end = Math.min(t.length, start + EXCERPT_LEN);
-  if (start > 0) {
-    let sp = t.indexOf(" ", start);
-    sp !== -1 && sp < first[0] && (start = sp + 1);
-  }
-  if (end < t.length) {
-    let sp = t.lastIndexOf(" ", end);
-    sp > first[1] && (end = sp);
-  }
-  return `${start > 0 ? "\u2026" : ""}${t.slice(start, end)}${end < t.length ? "\u2026" : ""}`;
-}
-function stripFrontmatter(content) {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-}
-function mapSemantic(results, query) {
-  return results.map((r) => {
-    var _a, _b, _c;
-    return {
-      source_path: (_b = (_a = r.source_path) != null ? _a : r.path) != null ? _b : "",
-      title: r.title,
-      text: excerpt((_c = r.text) != null ? _c : r.snippet, query),
-      heading_path: r.heading_path,
-      // Guard against a result missing `score` (web-card shapes may omit it):
-      // a non-finite score would propagate NaN through ranking and the strength bar.
-      score: Number.isFinite(r.score) ? r.score : 0,
-      matchType: "semantic"
-    };
-  });
-}
-async function searchSemantic(query, ctx, opts) {
-  var _a;
-  let resp = await ctx.api.search(query, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, opts.tags, opts.folder);
-  return mapSemantic(resp.results, query);
-}
-async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
-  var _a;
-  if (!query.trim()) return { results: [], degraded: !1 };
-  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian6.prepareSimpleSearch;
-  return mode === "semantic" ? { results: await searchSemantic(query, ctx, opts), degraded: !1 } : mode === "keyword" ? { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: !1 } : searchHybrid(query, ctx, opts, fuzzy);
-}
-function basename(path) {
-  var _a;
-  let file = (_a = path.split("/").pop()) != null ? _a : path;
-  return file.endsWith(".md") ? file.slice(0, -3) : file;
-}
-function matchesFolder(path, folder) {
-  if (!folder) return !0;
-  let prefix = folder.endsWith("/") ? folder : `${folder}/`;
-  return path.startsWith(prefix);
-}
-function noteTags(app, file) {
-  var _a;
-  let cache = app.metadataCache.getFileCache(file);
-  if (!cache) return /* @__PURE__ */ new Set();
-  let all2 = (_a = (0, import_obsidian6.getAllTags)(cache)) != null ? _a : [];
-  return new Set(all2.map((t) => t.replace(/^#/, "")));
-}
-function matchesTags(app, file, tags) {
-  if (!(tags != null && tags.length)) return !0;
-  let have = noteTags(app, file);
-  return tags.every((t) => have.has(t.replace(/^#/, "")));
-}
-async function searchKeyword(query, ctx, opts, fuzzy) {
-  var _a;
-  let scorer = fuzzy(query), files = ctx.app.vault.getMarkdownFiles().filter((f) => matchesFolder(f.path, opts.folder)).filter((f) => matchesTags(ctx.app, f, opts.tags)), scored = [];
-  for (let file of files) {
-    let content;
-    try {
-      content = await ctx.app.vault.cachedRead(file);
-    } catch (e) {
-      console.warn("Engram search: skipping unreadable file", file.path, e);
-      continue;
-    }
-    let body = stripFrontmatter(content), title = basename(file.path), titleHit = scorer(title), bodyHit = scorer(body), score = Math.max(
-      titleHit ? titleHit.score + TITLE_BONUS : Number.NEGATIVE_INFINITY,
-      bodyHit ? bodyHit.score : Number.NEGATIVE_INFINITY
-    );
-    score !== Number.NEGATIVE_INFINITY && scored.push({
-      source_path: file.path,
-      title,
-      text: excerpt(body, query),
-      score,
-      matchType: "keyword"
-    });
-  }
-  return scored.sort((a, b) => b.score - a.score), scored.slice(0, (_a = opts.limit) != null ? _a : DEFAULT_LIMIT);
-}
-function filterResultsByTags(app, results, tags) {
-  return tags != null && tags.length ? results.filter((r) => {
-    let file = app.vault.getFileByPath(r.source_path);
-    return file ? matchesTags(app, file, tags) : !1;
-  }) : results;
-}
-function collapseByNote(results) {
-  let best = /* @__PURE__ */ new Map();
-  for (let r of results) {
-    if (!r.source_path) continue;
-    let prev = best.get(r.source_path);
-    (!prev || r.score > prev.score) && best.set(r.source_path, r);
-  }
-  return [...best.values()];
-}
-function rrf(keyword, semantic, limit) {
-  var _a, _b, _c;
-  let scores = /* @__PURE__ */ new Map(), kw = /* @__PURE__ */ new Map(), sem = /* @__PURE__ */ new Map();
-  keyword.forEach((r, i) => {
-    var _a2;
-    scores.set(r.source_path, ((_a2 = scores.get(r.source_path)) != null ? _a2 : 0) + 1 / (RRF_K + i)), kw.set(r.source_path, r);
-  }), semantic.forEach((r, i) => {
-    var _a2;
-    scores.set(r.source_path, ((_a2 = scores.get(r.source_path)) != null ? _a2 : 0) + 1 / (RRF_K + i)), sem.set(r.source_path, r);
-  });
-  let fused = [];
-  for (let [path, score] of scores) {
-    let k = kw.get(path), s = sem.get(path), matchType = k && s ? "both" : k ? "keyword" : "semantic";
-    fused.push({
-      source_path: path,
-      title: (_b = (_a = k != null ? k : s) == null ? void 0 : _a.title) != null ? _b : s == null ? void 0 : s.title,
-      // Prefer the semantic chunk text (heading-aware passage); fall back to keyword.
-      text: (_c = s == null ? void 0 : s.text) != null ? _c : k.text,
-      heading_path: s == null ? void 0 : s.heading_path,
-      score,
-      matchType
-    });
-  }
-  return fused.sort((a, b) => b.score - a.score), fused.slice(0, limit);
-}
-async function searchHybrid(query, ctx, opts, fuzzy) {
-  var _a;
-  let limit = (_a = opts.limit) != null ? _a : DEFAULT_LIMIT, keywordPromise = searchKeyword(query, ctx, opts, fuzzy), semanticPromise = ctx.api.search(query, limit, opts.tags, opts.folder);
-  semanticPromise.catch(() => {
-  });
-  let keywordList = await keywordPromise;
-  try {
-    let resp = await semanticPromise, semanticList = filterResultsByTags(
-      ctx.app,
-      collapseByNote(mapSemantic(resp.results, query)),
-      opts.tags
-    );
-    return { results: rrf(keywordList, semanticList, limit), degraded: !1 };
-  } catch (e) {
-    return console.error("Engram hybrid search: semantic leg failed, using keyword only", e), { results: keywordList.slice(0, limit), degraded: !0 };
-  }
-}
-
-// src/tag-suggest.ts
-function tagSuggestions(allTags, fragment2, selected) {
-  let frag = fragment2.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
-  return allTags.filter((t) => {
-    let lc = t.replace(/^#/, "").toLowerCase();
-    return !chosen.has(lc) && (frag === "" || lc.includes(frag));
-  }).slice(0, 50);
-}
-var TagInputSuggest = class extends WidthMatchedInputSuggest {
-  constructor(app, inputEl, getAllVaultTags, getSelected, onAddTag) {
-    super(app, inputEl), this.getAllVaultTags = getAllVaultTags, this.getSelected = getSelected, this.onAddTag = onAddTag;
-  }
-  getSuggestions(query) {
-    return tagSuggestions(this.getAllVaultTags(), query, this.getSelected());
-  }
-  renderSuggestion(value, el) {
-    el.setText(`#${value.replace(/^#/, "")}`);
-  }
-  selectSuggestion(value, _evt) {
-    this.onAddTag(value), this.setValue(""), this.inputEl.dispatchEvent(new Event("input", { bubbles: !0 }));
-  }
-};
-
-// src/search-ui.ts
-var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchPanel = class {
-  constructor(parent, ctx, opts) {
-    this.selectedTags = [];
-    this.filtersOpen = !1;
-    this.debounceTimer = null;
-    this.lastRunQuery = "";
-    this.results = [];
-    this.selectedIndex = -1;
-    /** Bumped on every run() so a slow earlier search can't clobber a newer render. */
-    this.runGeneration = 0;
-    this.ctx = ctx, this.opts = opts, this.mode = SELECTABLE_MODES.includes(opts.defaultMode) ? opts.defaultMode : "hybrid", this.build(parent);
-  }
-  build(parent) {
-    parent.addClass("engram-search-panel");
-    let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
-    (0, import_obsidian7.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
-      type: "search",
-      placeholder: "Search your vault\u2026",
-      cls: "engram-search-input"
-    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearHandler = () => {
-      this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
-    }, this.clearEl.addEventListener("click", this.clearHandler), this.filterToggleEl = searchRow.createSpan({
-      cls: "engram-search-filter-toggle clickable-icon"
-    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleHandler = () => this.toggleFilters(), this.filterToggleEl.addEventListener("click", this.filterToggleHandler), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
-      "Rank results by both exact words and semantic meaning. Off uses meaning only."
-    ).addToggle(
-      (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
-    ), this.folderEl = this.filtersEl.createEl("input", {
-      type: "text",
-      placeholder: "Filter by folder\u2026",
-      cls: "engram-search-input engram-search-folder-input"
-    }), new FolderInputSuggest(
-      this.ctx.app,
-      this.folderEl,
-      () => this.collectVaultFolders(),
-      () => {
-        this.run();
-      }
-    ), this.tagChipsEl = this.filtersEl.createDiv({ cls: "engram-search-tag-chips" }), this.renderTagChips(), this.tagEl = this.filtersEl.createEl("input", {
-      type: "text",
-      placeholder: "Filter by tags\u2026",
-      cls: "engram-search-input engram-search-tag-input"
-    }), new TagInputSuggest(
-      this.ctx.app,
-      this.tagEl,
-      () => this.collectVaultTags(),
-      () => this.selectedTags,
-      (tag) => this.addTag(tag)
-    );
-    let resultsSection = parent.createDiv({ cls: "engram-search-results-section" });
-    resultsSection.createEl("hr", { cls: "engram-search-results-divider" }), this.resultsEl = resultsSection.createDiv({ cls: "engram-search-results" }), this.renderEmpty(), this.scheduleHandler = () => {
-      this.reflectInputState(), this.debounceTimer && window.clearTimeout(this.debounceTimer), this.debounceTimer = window.setTimeout(() => {
-        this.run();
-      }, SEARCH_DEBOUNCE_MS);
-    }, this.inputEl.addEventListener("input", this.scheduleHandler), this.folderEl.addEventListener("input", this.scheduleHandler), this.tagKeydownHandler = (e) => {
-      if (e.key === "Enter" || e.key === ",") {
-        let raw = this.tagEl.value.trim().replace(/^#/, "").replace(/,$/, "").trim();
-        raw && (e.preventDefault(), this.addTag(raw), this.tagEl.value = "");
-      }
-    }, this.tagEl.addEventListener("keydown", this.tagKeydownHandler), this.keydownHandler = (e) => {
-      if (e.key === "ArrowDown")
-        e.preventDefault(), this.moveSelection(1);
-      else if (e.key === "ArrowUp")
-        e.preventDefault(), this.moveSelection(-1);
-      else if (e.key === "Enter") {
-        e.preventDefault();
-        let q = this.inputEl.value.trim();
-        q && q !== this.lastRunQuery ? (this.debounceTimer && window.clearTimeout(this.debounceTimer), this.run()) : this.openSelected();
-      }
-    }, this.inputEl.addEventListener("keydown", this.keydownHandler);
-  }
-  focus() {
-    this.inputEl.focus();
-  }
-  destroy() {
-    this.debounceTimer && window.clearTimeout(this.debounceTimer), this.runGeneration++, this.inputEl.removeEventListener("input", this.scheduleHandler), this.folderEl.removeEventListener("input", this.scheduleHandler), this.tagEl.removeEventListener("keydown", this.tagKeydownHandler), this.inputEl.removeEventListener("keydown", this.keydownHandler), this.clearEl.removeEventListener("click", this.clearHandler), this.filterToggleEl.removeEventListener("click", this.filterToggleHandler);
-  }
-  setMode(mode) {
-    var _a, _b;
-    mode !== this.mode && (this.mode = mode, (_b = (_a = this.opts).onModeChange) == null || _b.call(_a, mode), this.run());
-  }
-  toggleFilters() {
-    this.filtersOpen = !this.filtersOpen, this.filtersEl.toggleClass("is-hidden", !this.filtersOpen), this.filterToggleEl.toggleClass("is-active", this.filtersOpen);
-  }
-  /** Reflect transient input state in the chrome: show the clear button when the
-   *  query is non-empty, and mark the filters toggle when a folder/tag filter is
-   *  active (so applied filters aren't invisible while the panel is collapsed). */
-  reflectInputState() {
-    this.clearEl.toggleClass("is-visible", this.inputEl.value.length > 0);
-    let hasFilters = this.folderEl.value.trim().length > 0 || this.selectedTags.length > 0;
-    this.filterToggleEl.toggleClass("has-filters", hasFilters);
-  }
-  parseTags() {
-    return this.selectedTags.length ? [...this.selectedTags] : void 0;
-  }
-  addTag(tag) {
-    let clean = tag.replace(/^#/, "").trim();
-    if (!clean) return;
-    this.selectedTags.some((t) => t.toLowerCase() === clean.toLowerCase()) || this.selectedTags.push(clean), this.renderTagChips(), this.reflectInputState(), this.tagEl.focus(), this.run();
-  }
-  removeTag(tag) {
-    this.selectedTags = this.selectedTags.filter((t) => t !== tag), this.renderTagChips(), this.reflectInputState(), this.run();
-  }
-  renderTagChips() {
-    this.tagChipsEl.empty();
-    for (let tag of this.selectedTags) {
-      let chip = this.tagChipsEl.createSpan({ cls: "engram-search-tag-chip" });
-      chip.createSpan({ text: `#${tag}`, cls: "engram-search-tag-chip-label" }), chip.createSpan({ cls: "engram-search-tag-chip-remove", text: "\xD7" }), chip.setAttribute("aria-label", `Remove tag ${tag}`), chip.addEventListener("click", () => this.removeTag(tag));
-    }
-  }
-  collectVaultTags() {
-    var _a;
-    let set2 = /* @__PURE__ */ new Set();
-    for (let file of this.ctx.app.vault.getMarkdownFiles()) {
-      let cache = this.ctx.app.metadataCache.getFileCache(file);
-      if (cache)
-        for (let t of (_a = (0, import_obsidian7.getAllTags)(cache)) != null ? _a : []) set2.add(t.replace(/^#/, ""));
-    }
-    return [...set2].sort((a, b) => a.localeCompare(b));
-  }
-  /** Distinct note-bearing folder paths (each ancestor included) for the folder
-   *  filter dropdown. Derived from file paths so we only ever suggest folders
-   *  that actually contain notes the prefix filter can match. */
-  collectVaultFolders() {
-    let set2 = /* @__PURE__ */ new Set();
-    for (let file of this.ctx.app.vault.getMarkdownFiles()) {
-      let slash = file.path.lastIndexOf("/");
-      if (slash <= 0) continue;
-      let dir = file.path.slice(0, slash);
-      for (; dir; ) {
-        set2.add(dir);
-        let s = dir.lastIndexOf("/");
-        dir = s > 0 ? dir.slice(0, s) : "";
-      }
-    }
-    return [...set2].sort((a, b) => a.localeCompare(b));
-  }
-  async run() {
-    let gen = ++this.runGeneration, query = this.inputEl.value.trim();
-    if (!query) {
-      this.lastRunQuery = "", this.results = [], this.selectedIndex = -1, this.renderEmpty();
-      return;
-    }
-    this.lastRunQuery = query;
-    try {
-      let outcome = await searchEngram(this.mode, query, this.ctx, {
-        limit: 10,
-        folder: this.folderEl.value.trim() || void 0,
-        tags: this.parseTags()
-      });
-      if (gen !== this.runGeneration) return;
-      outcome.degraded && new import_obsidian7.Notice("Semantic offline \u2014 keyword results only"), this.results = outcome.results, this.selectedIndex = this.results.length ? 0 : -1, this.renderResults(query);
-    } catch (e) {
-      if (gen !== this.runGeneration) return;
-      console.error("Engram search failed", e), this.resultsEl.empty(), this.resultsEl.createEl("p", {
-        text: "Search failed \u2014 check connection",
-        cls: "engram-search-empty"
-      });
-    }
-  }
-  renderEmpty() {
-    this.resultsEl.empty(), this.resultsEl.createEl("p", {
-      text: "Type to search your vault",
-      cls: "engram-search-empty"
-    });
-  }
-  highlightInto(el, result, query) {
-    for (let seg of buildSegments(result.text, queryTokenRanges(result.text, query)))
-      seg.hit ? el.createSpan({ text: seg.text, cls: "engram-search-hl" }) : el.appendText(seg.text);
-  }
-  renderResults(query) {
-    if (this.resultsEl.empty(), !this.results.length) {
-      this.resultsEl.createEl("p", { text: "No results found", cls: "engram-search-empty" });
-      return;
-    }
-    let strengths = matchStrengths(this.results.map((r) => r.score));
-    this.results.forEach((result, i) => {
-      var _a;
-      let item = this.resultsEl.createDiv({
-        cls: `engram-search-result-item${i === this.selectedIndex ? " is-selected" : ""}`
-      });
-      item.createDiv({ cls: "engram-search-result-header" }).createSpan({
-        text: result.title || result.source_path || "Untitled",
-        cls: "engram-search-result-title"
-      });
-      let meta = item.createDiv({ cls: "engram-search-result-meta" });
-      if (this.mode === "hybrid" && result.matchType) {
-        let pill = meta.createSpan({
-          cls: `engram-search-match engram-search-match-${result.matchType}`
-        }), icon = pill.createSpan({ cls: "engram-search-match-icon" });
-        (0, import_obsidian7.setIcon)(
-          icon,
-          result.matchType === "keyword" ? "case-sensitive" : result.matchType === "both" ? "layers" : "sparkles"
-        ), pill.createSpan({
-          text: result.matchType === "keyword" ? "exact" : result.matchType === "both" ? "meaning + exact" : "meaning"
-        });
-      }
-      let pct = (_a = strengths[i]) != null ? _a : 100, strength = meta.createSpan({ cls: "engram-search-strength" }), bar = strength.createSpan({ cls: "engram-search-strength-bar" });
-      bar.createSpan({ cls: "engram-search-strength-fill" }).style.width = `${pct}%`, strength.createSpan({
-        cls: "engram-search-strength-label",
-        text: `match strength: ${pct}%`
-      });
-      let parts = [], lastSlash = result.source_path.lastIndexOf("/");
-      if (lastSlash > 0 && parts.push(result.source_path.slice(0, lastSlash)), result.heading_path) {
-        let trail = result.heading_path.split(">").slice(1).map((s) => s.trim()).filter(Boolean).join(" \u203A ");
-        trail && parts.push(trail);
-      }
-      parts.length && item.createDiv({
-        text: parts.join(" \xB7 "),
-        cls: "engram-search-result-path"
-      });
-      let snippetEl = item.createEl("p", { cls: "engram-search-result-snippet" });
-      this.highlightInto(snippetEl, result, query), item.addEventListener("click", () => {
-        this.openResult(result);
-      });
-    });
-  }
-  /**
-   * Move the selection highlight WITHOUT rebuilding the list DOM. Toggles
-   * `is-selected` on the existing item elements (keeps focus / native
-   * behaviour intact and avoids re-attaching every per-item listener).
-   */
-  updateSelection() {
-    this.resultsEl.querySelectorAll(".engram-search-result-item").forEach((el, i) => {
-      let selected = i === this.selectedIndex;
-      el.classList.toggle("is-selected", selected), selected && el.scrollIntoView({ block: "nearest" });
-    });
-  }
-  moveSelection(delta) {
-    this.results.length && (this.selectedIndex = Math.max(
-      0,
-      Math.min(this.results.length - 1, this.selectedIndex + delta)
-    ), this.updateSelection());
-  }
-  openSelected() {
-    let result = this.results[this.selectedIndex];
-    result && this.openResult(result);
-  }
-  headingAnchor(headingPath) {
-    var _a;
-    if (!headingPath) return "";
-    let last2 = (_a = headingPath.split(">").pop()) == null ? void 0 : _a.trim();
-    return last2 ? `#${last2}` : "";
-  }
-  async openResult(result) {
-    var _a, _b;
-    if (!result.source_path) {
-      new import_obsidian7.Notice("No source path for this result");
-      return;
-    }
-    let file = this.ctx.app.vault.getFileByPath(result.source_path);
-    if (!file) {
-      new import_obsidian7.Notice("Note not synced locally");
-      return;
-    }
-    let match2 = await this.buildMatchState(file);
-    if (match2)
-      await this.ctx.app.workspace.getLeaf(!1).openFile(file, { eState: { match: match2 } });
-    else {
-      let linktext = `${result.source_path}${this.headingAnchor(result.heading_path)}`;
-      await this.ctx.app.workspace.openLinkText(linktext, "");
-    }
-    (_b = (_a = this.opts).onResultOpened) == null || _b.call(_a);
-  }
-  /** Compute the native `match` ephemeral state (full content + matched ranges)
-   *  for the current query, or null when there's no literal term hit to jump to. */
-  async buildMatchState(file) {
-    let query = this.lastRunQuery.trim();
-    if (!query) return null;
-    let content;
-    try {
-      content = await this.ctx.app.vault.cachedRead(file);
-    } catch (e) {
-      return console.warn("Engram search: could not read note for match highlight", file.path, e), null;
-    }
-    let res = (0, import_obsidian7.prepareSimpleSearch)(query)(content);
-    return !res || !res.matches.length ? null : { content, matches: res.matches };
-  }
-};
-
-// src/search-modal.ts
-var SearchModal = class extends import_obsidian8.Modal {
-  constructor(app, api, defaultMode, onModeChange) {
-    super(app);
-    this.panel = null;
-    this.api = api, this.defaultMode = defaultMode, this.onModeChange = onModeChange;
-  }
-  onOpen() {
-    let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-search-modal"), this.panel = new SearchPanel(
-      contentEl,
-      { api: this.api, app: this.app },
-      {
-        defaultMode: this.defaultMode,
-        onModeChange: this.onModeChange,
-        onResultOpened: () => this.close()
-      }
-    ), this.panel.focus();
-  }
-  onClose() {
-    var _a;
-    (_a = this.panel) == null || _a.destroy(), this.panel = null, this.contentEl.empty();
-  }
-};
-
-// src/search-view.ts
-var import_obsidian9 = require("obsidian");
-var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_obsidian9.ItemView {
-  constructor(leaf, api, defaultMode, onModeChange) {
-    super(leaf);
-    this.panel = null;
-    this.api = api, this.defaultMode = defaultMode, this.onModeChange = onModeChange;
-  }
-  getViewType() {
-    return SEARCH_VIEW_TYPE;
-  }
-  getDisplayText() {
-    return "Engram search";
-  }
-  getIcon() {
-    return "brain-circuit";
-  }
-  async onOpen() {
-    this.contentEl.empty(), this.contentEl.addClass("engram-search-view-container"), this.panel = new SearchPanel(
-      this.contentEl,
-      { api: this.api, app: this.app },
-      {
-        defaultMode: this.defaultMode,
-        onModeChange: this.onModeChange
-      }
-    );
-  }
-  async onClose() {
-    var _a;
-    (_a = this.panel) == null || _a.destroy(), this.panel = null;
-  }
-};
-
-// src/settings.ts
-var import_obsidian20 = require("obsidian");
-
-// src/device-flow-modal.ts
-var import_obsidian10 = require("obsidian");
-var DeviceFlowModal = class extends import_obsidian10.Modal {
-  constructor(app, plugin) {
-    super(app);
-    this.resolve = () => {
-    };
-    this.pollInterval = null;
-    this.aborted = !1;
-    this.plugin = plugin;
-  }
-  onOpen() {
-    let { contentEl } = this;
-    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" });
-    let statusEl = contentEl.createEl("p", { text: "Starting..." });
-    this.beginDeviceFlow(contentEl, statusEl);
-  }
-  async beginDeviceFlow(contentEl, statusEl) {
-    try {
-      let resp = await this.startDeviceFlow();
-      this.renderCodeScreen(contentEl, resp), this.startPolling(resp.device_code);
-    } catch (e) {
-      statusEl.setText("Failed to start device flow. Check your Engram URL and try again.");
-    }
-  }
-  onClose() {
-    this.aborted = !0, this.pollInterval && (window.clearInterval(this.pollInterval), this.pollInterval = null), this.contentEl.empty(), this.resolve(null);
-  }
-  waitForResult() {
-    return new Promise((resolve) => {
-      this.resolve = resolve, this.open();
-    });
-  }
-  async startDeviceFlow() {
-    let baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`, vaultName = this.app.vault.getName().trim(), body = {
-      client_id: this.plugin.settings.clientId
-    };
-    vaultName && (body.vault_name = vaultName);
-    let resp = await withTimeout(
-      (0, import_obsidian10.requestUrl)({
-        url: `${apiUrl}/auth/device`,
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-        throw: !1
-      }),
-      15e3
-    );
-    if (resp.status < 200 || resp.status >= 300)
-      throw new Error(`HTTP ${resp.status}`);
-    return resp.json;
-  }
-  renderCodeScreen(contentEl, resp) {
-    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" }), contentEl.createEl("p", { text: "Your code:" });
-    let codeEl = contentEl.createEl("code", {
-      text: resp.user_code,
-      cls: "engram-device-code"
-    });
-    codeEl.title = "Click to copy", codeEl.addEventListener("click", () => {
-      navigator.clipboard.writeText(resp.user_code), new import_obsidian10.Notice("Code copied!");
-    }), contentEl.createEl("p", {
-      text: "A browser window has opened. Sign in and enter this code to link your vault."
-    }), contentEl.createEl("p", {
-      text: "Waiting for authorization...",
-      cls: "engram-device-waiting"
-    }), contentEl.createDiv({ cls: "engram-device-buttons" }).createEl("button", { text: "Cancel" }).addEventListener("click", () => this.close()), window.open(resp.verification_url);
-  }
-  startPolling(deviceCode) {
-    let base = this.plugin.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, elapsed = 0, maxSeconds = 300, poll = async () => {
-      if (!this.aborted) {
-        if (elapsed += 5, elapsed >= maxSeconds) {
-          this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
-          return;
-        }
-        try {
-          let resp = await withTimeout(
-            (0, import_obsidian10.requestUrl)({
-              url: `${apiUrl}/auth/device/token`,
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ device_code: deviceCode }),
-              throw: !1
-            }),
-            15e3
-          );
-          if (resp.status === 428) return;
-          if (resp.status >= 200 && resp.status < 300) {
-            this.pollInterval && window.clearInterval(this.pollInterval);
-            let result = resp.json;
-            this.resolve(result), this.resolve = () => {
-            }, this.close();
-            return;
-          }
-          if (resp.status === 410) {
-            this.pollInterval && window.clearInterval(this.pollInterval), this.renderExpired();
-            return;
-          }
-        } catch (e) {
-        }
-      }
-    };
-    this.pollInterval = window.setInterval(() => {
-      poll();
-    }, 5e3);
-  }
-  renderExpired() {
-    let contentEl = this.contentEl;
-    contentEl.empty(), contentEl.createEl("h2", { text: "Link Obsidian to Engram" }), contentEl.createEl("p", { text: "Code expired. Please try again." });
-    let btnContainer = contentEl.createDiv({ cls: "engram-device-buttons" });
-    btnContainer.createEl("button", { text: "Try again", cls: "mod-cta" }).addEventListener("click", () => {
-      this.aborted = !1, this.onOpen();
-    }), btnContainer.createEl("button", { text: "Close" }).addEventListener("click", () => this.close());
-  }
-};
-
-// src/sync-progress-modal.ts
-var import_obsidian13 = require("obsidian");
-
-// src/sync-center-render.ts
-var import_obsidian12 = require("obsidian");
-
-// src/issue-store.ts
-var IssueStore = class {
-  constructor() {
-    this.issues = /* @__PURE__ */ new Map();
-  }
-  /** Record a new failure or merge into the existing one for `path`. */
-  record(issue) {
-    let existing = this.issues.get(issue.path);
-    if (existing) {
-      this.issues.set(issue.path, {
-        ...issue,
-        firstFailedAt: existing.firstFailedAt,
-        attempts: existing.attempts + 1
-      });
-      return;
-    }
-    this.issues.set(issue.path, { ...issue });
-  }
-  /** Look up the current issue for `path`, if any. */
-  get(path) {
-    return this.issues.get(path);
-  }
-  /** Remove the issue for `path` (called on successful push/pull). */
-  clear(path) {
-    this.issues.delete(path);
-  }
-  clearAll() {
-    this.issues.clear();
-  }
-  all() {
-    return Array.from(this.issues.values());
-  }
-  count(category) {
-    if (!category) return this.issues.size;
-    let n = 0;
-    for (let issue of this.issues.values())
-      issue.category === category && n++;
-    return n;
-  }
-  byCategory() {
-    var _a;
-    let groups = {};
-    for (let issue of this.issues.values()) {
-      let bucket = (_a = groups[issue.category]) != null ? _a : [];
-      bucket.push(issue), groups[issue.category] = bucket;
-    }
-    return groups;
-  }
-  /** Plain-JSON snapshot for persistence. */
-  serialize() {
-    return this.all();
-  }
-  /** Rebuild from persisted JSON. Tolerant of unknown/malformed input. */
-  hydrate(data) {
-    if (this.issues.clear(), !!Array.isArray(data))
-      for (let raw of data)
-        isPersistedIssue(raw) && this.issues.set(raw.path, raw);
-  }
-};
-function limitReasonToCategory(reason) {
-  switch (reason) {
-    case "attachment_must_be_text":
-    case "attachments_disabled":
-      return "needs_pro";
-    case "attachments_quota_exceeded":
-      return "quota";
-    case "file_too_large":
-      return "too_large";
-    // Note/vault-cap 402s come from POST /api/notes, not the attachment path.
-    // Map them to the neutral `other` bucket so they aren't rendered as the
-    // attachment-flavored needs_pro surface nor counted in the attachment skip
-    // toast. Still terminal via categorizeError's LimitExceededError branch.
-    case "notes_cap_exceeded":
-    case "vaults_cap_exceeded":
-      return "other";
-    default:
-      return "needs_pro";
-  }
-}
-function categorizeError(err) {
-  var _a, _b, _c;
-  if (err instanceof LimitExceededError)
-    return {
-      category: limitReasonToCategory(err.reason),
-      status: 402,
-      message: err.message,
-      terminal: !0,
-      upgradeUrl: (_a = err.upgradeUrl) != null ? _a : void 0
-    };
-  let status = typeof err == "object" && err !== null && (_b = err.status) != null ? _b : void 0, message = (_c = extractServerMessage(err)) != null ? _c : err instanceof Error ? err.message : String(err);
-  return status === 413 ? { category: "too_large", status, message, terminal: !0 } : status === 401 || status === 403 ? { category: "auth", status, message, terminal: !0 } : status !== void 0 && status >= 500 ? { category: "server", status, message, terminal: !1 } : status === void 0 ? { category: "network", message, terminal: !1 } : { category: "other", status, message, terminal: !1 };
-}
-function extractServerMessage(err) {
-  if (typeof err != "object" || err === null) return;
-  let e = err, body = null;
-  if (e.json && typeof e.json == "object")
-    body = e.json;
-  else if (typeof e.text == "string")
-    try {
-      let parsed = JSON.parse(e.text);
-      parsed && typeof parsed == "object" && (body = parsed);
-    } catch (e2) {
-      return;
-    }
-  if (body && typeof body.error == "string" && body.error.length > 0) return body.error;
-}
-function shouldGoOffline(err) {
-  return categorizeError(err).category === "network";
-}
-var RETRY_CAP = 5;
-function shouldRetryAfterFailure(classified, attempts) {
-  return classified.terminal ? !1 : attempts < RETRY_CAP;
-}
-function issueDisposition(category, parseReason) {
-  if ((parseReason == null ? void 0 : parseReason.code) === "note_processing_failed") return "actionable";
-  switch (category) {
-    case "needs_pro":
-    case "quota":
-      return "informational";
-    case "too_large":
-    case "auth":
-    case "conflict":
-    case "frontmatter":
-      return "actionable";
-    default:
-      return "transient";
-  }
-}
-function remediation(category, reason) {
-  if ((reason == null ? void 0 : reason.code) === "note_processing_failed")
-    return {
-      title: "Note couldn't be processed",
-      hint: "The server couldn't process this note. Check its contents, then edit and save to try again."
-    };
-  switch (category) {
-    case "needs_pro":
-      return {
-        title: "Attachments need a paid plan",
-        hint: "The Free tier syncs notes only. Upgrade to sync images and PDFs."
-      };
-    case "quota":
-      return {
-        title: "Attachment storage full",
-        hint: "You've used all the attachment storage on your plan. Upgrade for more."
-      };
-    case "too_large":
-      return {
-        title: "Too large for the server",
-        hint: "The server limit is 5 MB. Compress or split the file, then it will sync."
-      };
-    case "auth":
-      return {
-        title: "Sign-in expired",
-        hint: "Reconnect your account to resume syncing."
-      };
-    case "conflict":
-      return {
-        title: "Unresolved conflict",
-        hint: "Open the file to resolve the conflict, then sync again."
-      };
-    case "frontmatter":
-      return {
-        title: "Frontmatter needs a fix",
-        hint: "The note synced, but its frontmatter could not be fully parsed. Open it to fix the highlighted line."
-      };
-    case "server":
-      return {
-        title: "Server error",
-        hint: "A temporary server problem \u2014 retrying automatically."
-      };
-    case "network":
-      return {
-        title: "Network unavailable",
-        hint: "Can't reach the server \u2014 retrying automatically."
-      };
-    default:
-      return {
-        title: "Sync failed",
-        hint: "An unexpected error \u2014 retrying automatically."
-      };
-  }
-}
-function parseStatusToIssue(parseStatus, parseReason) {
-  var _a;
-  if (parseStatus !== "degraded") return null;
-  let category = (parseReason == null ? void 0 : parseReason.code) === "note_processing_failed" ? "other" : "frontmatter", message = (_a = parseReason == null ? void 0 : parseReason.message) != null ? _a : "Frontmatter could not be parsed";
-  return parseReason ? { category, message, parseReason } : { category, message };
-}
-var HEALTH_CHECK_BASE_MS = 5e3, HEALTH_CHECK_MAX_MS = 6e4;
-function healthCheckDelay(failures) {
-  return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
-}
-function isPersistedIssue(value) {
-  if (typeof value != "object" || value === null) return !1;
-  let v = value;
-  return typeof v.path == "string" && (v.kind === "note" || v.kind === "attachment") && typeof v.category == "string" && typeof v.message == "string" && typeof v.firstFailedAt == "number" && typeof v.lastFailedAt == "number" && typeof v.attempts == "number";
-}
-
-// src/sync-preview-modal.ts
-var import_obsidian11 = require("obsidian");
-
-// src/mime.ts
-var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
-function isTextAttachment(ext) {
-  return TEXT_ATTACHMENT_EXTS.has(ext.toLowerCase());
-}
-
-// src/types.ts
-var DEFAULT_SETTINGS = {
-  apiUrl: "",
-  apiKey: "",
-  ignorePatterns: "",
-  debounceMs: 2e3,
-  conflictViewMode: "unified",
-  diagnosticsEnabled: !1,
-  conflictResolution: "auto",
-  enableCrdt: !0,
-  vaultId: null,
-  clientId: "",
-  planState: null,
-  searchDefaultMode: "hybrid",
-  waitlistPromptSeen: !1
-}, DESTRUCTIVE_CHOICES = /* @__PURE__ */ new Set([
-  "pull-all-delete-local",
-  "push-all-delete-remote"
-]);
-
-// src/sync-plan-format.ts
-function isPlanEmpty(plan) {
-  return plan.toPush.notes.length === 0 && plan.toPush.attachments.length === 0 && plan.toPull.notes.length === 0 && plan.toPull.attachments.length === 0 && plan.conflicts.length === 0 && plan.toDeleteLocal.length === 0 && plan.toDeleteRemote.length === 0;
-}
-function computeMatchPercent(plan) {
-  let local = plan.localNoteCount, remote = plan.serverNoteCount;
-  if (local === 0 && remote === 0) return 100;
-  let localOnly = plan.toPush.notes.length, intersection = Math.max(0, local - localOnly), union = local + Math.max(0, remote - intersection);
-  return union === 0 ? 100 : Math.round(intersection / union * 100);
-}
-function samplePaths(paths, limit) {
-  return paths.slice(0, limit);
-}
-function folderPrefixesOf(paths) {
-  var _a;
-  let set2 = /* @__PURE__ */ new Set();
-  for (let p of paths) {
-    let parts = p.split("/"), prefix = "";
-    for (let i = 0; i < parts.length - 1; i++)
-      prefix = prefix ? `${prefix}/${parts[i]}` : (_a = parts[i]) != null ? _a : "", set2.add(prefix);
-  }
-  return set2;
-}
-function buildDeletionTree(paths, keptPaths) {
-  var _a, _b;
-  let sorted = [...paths].sort(), rows = [], emittedFolders = /* @__PURE__ */ new Set(), survivingFolders = keptPaths ? folderPrefixesOf(keptPaths) : null;
-  for (let path of sorted) {
-    let parts = path.split("/"), folders = parts.slice(0, -1), file = (_a = parts[parts.length - 1]) != null ? _a : "", prefix = "";
-    for (let i = 0; i < folders.length; i++) {
-      let folder = (_b = folders[i]) != null ? _b : "";
-      if (prefix = prefix ? `${prefix}/${folder}` : folder, !emittedFolders.has(prefix)) {
-        emittedFolders.add(prefix);
-        let deleted = survivingFolders ? !survivingFolders.has(prefix) : !1;
-        rows.push({ kind: "folder", depth: i, label: `${folder}/`, deleted });
-      }
-    }
-    rows.push({ kind: "file", depth: folders.length, label: file });
-  }
-  return rows;
-}
-function isDestructiveChoice(choice) {
-  return DESTRUCTIVE_CHOICES.has(choice);
-}
-function optionBreakdown(plan, choice) {
-  switch (choice) {
-    case "smart-merge":
-      return {
-        pullCount: plan.toPull.notes.length + plan.toPull.attachments.length,
-        pushCount: plan.toPush.notes.length + plan.toPush.attachments.length,
-        conflictCount: plan.conflicts.length,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(plan.conflicts, 5)
-      };
-    case "pull-all-delete-local": {
-      let localOnly = [...plan.toPush.notes, ...plan.toPush.attachments];
-      return {
-        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: localOnly.length,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(localOnly, 5)
-      };
-    }
-    case "pull-all-keep-local":
-      return {
-        pullCount: plan.serverNoteCount + plan.serverAttachmentCount,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPull.notes, ...plan.toPull.attachments], 5)
-      };
-    case "push-all-delete-remote": {
-      let remoteOnly = [...plan.toPull.notes, ...plan.toPull.attachments];
-      return {
-        pullCount: 0,
-        pushCount: plan.localNoteCount + plan.localAttachmentCount,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: remoteOnly.length,
-        samplePaths: samplePaths(remoteOnly, 5)
-      };
-    }
-    case "push-all-keep-remote":
-      return {
-        pullCount: 0,
-        pushCount: plan.localNoteCount + plan.localAttachmentCount,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPush.notes, ...plan.toPush.attachments], 5)
-      };
-    case "cancel":
-    case "change-vault":
-      return {
-        pullCount: 0,
-        pushCount: 0,
-        conflictCount: 0,
-        deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: []
-      };
-  }
-}
-
-// src/sync-preview-modal.ts
-var SyncPreviewState = class {
-  constructor(initialPlan, onResolve) {
-    this.onResolve = onResolve;
-    this.view = "preview";
-    this.pendingChoice = null;
-    this.confirmInput = "";
-    /** Set when the initial plan computation fails; surfaced in the loading
-     *  view so an instant-open modal is not stuck on a blank spinner. */
-    this.planError = null;
-    this.vaultsLoading = !1;
-    this.vaults = null;
-    this.vaultsError = null;
-    /** Within the vault-picker, true while the "make a new vault" form is shown
-     *  instead of the list of existing vaults. */
-    this.creatingVault = !1;
-    /** Whether the "advanced sync options" accordion (push/pull grid) is
-     *  expanded. Collapsed by default so the modal leads with the Sync action. */
-    this.advancedOpen = !1;
-    this.resolved = !1;
-    this.plan = initialPlan;
-  }
-  pickOption(choice) {
-    if (!this.resolved) {
-      if (isDestructiveChoice(choice)) {
-        this.pendingChoice = choice, this.view = "confirm", this.confirmInput = "";
-        return;
-      }
-      this.resolve(choice);
-    }
-  }
-  typeConfirm(input) {
-    this.resolved || this.view !== "confirm" || (this.confirmInput = input);
-  }
-  canSubmitConfirm() {
-    return this.view === "confirm" && this.confirmInput === "delete";
-  }
-  submitConfirm() {
-    !this.canSubmitConfirm() || this.pendingChoice == null || this.resolve(this.pendingChoice);
-  }
-  goBack() {
-    this.resolved || (this.view = "preview", this.pendingChoice = null, this.confirmInput = "");
-  }
-  toggleAdvanced() {
-    this.resolved || (this.advancedOpen = !this.advancedOpen);
-  }
-  enterVaultPicker() {
-    this.resolved || (this.view = "vault-picker", this.vaultsLoading = !0, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
-  }
-  enterCreateVault() {
-    this.resolved || (this.creatingVault = !0, this.vaultsError = null);
-  }
-  exitCreateVault() {
-    this.creatingVault = !1, this.vaultsError = null;
-  }
-  onVaultsLoaded(vaults) {
-    this.vaultsLoading = !1, this.vaults = vaults, this.vaultsError = null;
-  }
-  onVaultsError(message) {
-    this.vaultsLoading = !1, this.vaults = null, this.vaultsError = message;
-  }
-  exitVaultPicker() {
-    this.resolved || (this.view = "preview", this.vaultsLoading = !1, this.vaults = null, this.vaultsError = null, this.creatingVault = !1);
-  }
-  /** Swap in the SyncPlan that came back from applyVaultChange, or the deferred
-   *  initial plan once it resolves. Clears any prior plan-load error. Caller is
-   *  responsible for re-rendering. */
-  replacePlan(plan) {
-    this.plan = plan, this.planError = null;
-  }
-  cancel() {
-    this.resolve("cancel");
-  }
-  resolve(choice) {
-    this.resolved || (this.resolved = !0, this.view = "done", this.onResolve(choice));
-  }
-};
-function describeCreateVaultError(e) {
-  return e instanceof LimitExceededError ? toastFor(e.reason) : (e == null ? void 0 : e.status) === 422 ? "Couldn't create vault \u2014 the name may be invalid or already in use." : "Could not create the vault \u2014 check your connection and try again.";
-}
-function extOf(path) {
-  let base = path.slice(path.lastIndexOf("/") + 1), dot = base.lastIndexOf(".");
-  return dot <= 0 ? "" : base.slice(dot + 1).toLowerCase();
-}
-function countSkippedAttachments(plan, attachmentsTextOnly) {
-  return attachmentsTextOnly ? plan.toPush.attachments.filter((p) => !isTextAttachment(extOf(p))).length : 0;
-}
-function skippedAttachmentsLine(n) {
-  return n <= 0 ? null : `Free syncs notes only \u2014 ${n} ${n === 1 ? "attachment" : "attachments"} will be skipped.`;
-}
-function mergeHelperText(b, context) {
-  let counts = [];
-  b.pushCount > 0 && counts.push(`Uploads ${b.pushCount}`), b.pullCount > 0 && counts.push(`downloads ${b.pullCount}`);
-  let countLine = counts.join(", ");
-  countLine && (countLine = `${countLine.charAt(0).toUpperCase()}${countLine.slice(1)}.`);
-  let conflict = b.conflictCount > 0 ? ` ${b.conflictCount} conflicts to resolve.` : "";
-  if (context === "first-time" || context === "vault-switch") {
-    let lead = "Safe choice: combines both sides, nothing is deleted.", tail = countLine ? ` ${countLine}${conflict}`.trimEnd() : "";
-    return `${lead}${tail}`;
-  }
-  return countLine ? `${countLine}${conflict} Nothing is deleted.` : "Already in sync. Nothing is deleted.";
-}
-function confirmActions(choice, plan) {
-  let files = (n) => n === 1 ? "file" : "files", lines = [];
-  if (choice === "push-all-delete-remote") {
-    let del2 = plan.serverNoteCount + plan.serverAttachmentCount, up = plan.localNoteCount + plan.localAttachmentCount;
-    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} currently on the server`), up > 0 && lines.push(`Upload ${up} ${files(up)} from this vault`);
-  } else if (choice === "pull-all-delete-local") {
-    let del2 = plan.localNoteCount + plan.localAttachmentCount, down = plan.serverNoteCount + plan.serverAttachmentCount;
-    del2 > 0 && lines.push(`Delete all ${del2} ${files(del2)} in this vault`), down > 0 && lines.push(`Download ${down} ${files(down)} from the server`);
-  }
-  return lines;
-}
-var MERGE_CARD = {
-  choice: "smart-merge",
-  emoji: "\u2728",
-  label: "Sync",
-  cssClass: "engram-sync-preview-option mod-cta"
-}, PUSH_CARDS = [
-  {
-    choice: "push-all-keep-remote",
-    emoji: "\u2B06\uFE0F",
-    label: "Upload local files without downloading the remote",
-    cssClass: "engram-sync-preview-option"
-  },
-  {
-    choice: "push-all-delete-remote",
-    emoji: "\u{1F5D1}\uFE0F",
-    label: "Delete all on remote, then upload local files",
-    cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
-  }
-], PULL_CARDS = [
-  {
-    choice: "pull-all-keep-local",
-    emoji: "\u2B07\uFE0F",
-    label: "Download remote files without uploading the local",
-    cssClass: "engram-sync-preview-option"
-  },
-  {
-    choice: "pull-all-delete-local",
-    emoji: "\u{1F5D1}\uFE0F",
-    label: "Delete all local files, then download from remote",
-    cssClass: "engram-sync-preview-option engram-sync-preview-destructive"
-  }
-], HEADER_BY_CONTEXT = {
-  "first-time": "Set up sync for this vault",
-  "vault-switch": "You are now pointing at a different cloud vault",
-  review: "Sync preview"
-}, SyncPreviewModal = class extends import_obsidian11.Modal {
-  constructor(app, plan, opts) {
-    super(app);
-    this.opts = opts;
-    this.resolvedChoice = null;
-    this.resolveFn = null;
-    this.remoteVaultName = opts.remoteVaultName, this.state = new SyncPreviewState(plan, (choice) => {
-      this.resolvedChoice = choice, this.close();
-    });
-  }
-  onOpen() {
-    this.contentEl.addClass("engram-sync-preview-modal"), this.opts.initialView === "vault-picker" ? this.openVaultPicker() : this.render();
-  }
-  onClose() {
-    var _a;
-    let resolve = this.resolveFn;
-    this.resolveFn = null, this.contentEl.empty(), resolve && resolve((_a = this.resolvedChoice) != null ? _a : "cancel");
-  }
-  awaitChoice() {
-    return new Promise((resolve) => {
-      this.resolveFn = resolve, this.open();
-    });
-  }
-  /** Fill in the deferred initial plan once the background computeSyncPlan
-   *  resolves, refreshing the loading/preview view in place. Only applies while
-   *  the plan is still null: if the user already switched vaults in the picker,
-   *  applyVaultChange's replacePlan is authoritative and a late-arriving plan
-   *  for the old vault must not clobber it. */
-  setPlan(plan) {
-    this.state.plan == null && (this.state.replacePlan(plan), this.state.view === "preview" && this.render());
-  }
-  /** Surface a plan-load failure in the instant-open loading view. Skipped once
-   *  a plan exists (e.g. the user switched vaults), so a stale failure never
-   *  overwrites a good plan. */
-  setPlanError(message) {
-    this.state.plan == null && (this.state.planError = message, this.state.view === "preview" && this.render());
-  }
-  /** The plan the user ultimately chose against (after any vault switch), or
-   *  null if it never loaded. Lets the caller describe the planned work in the
-   *  progress modal. */
-  getPlan() {
-    return this.state.plan;
-  }
-  render() {
-    let { contentEl } = this;
-    contentEl.empty(), this.state.view === "preview" ? this.renderPreview() : this.state.view === "vault-picker" ? this.renderVaultPicker() : this.renderConfirm();
-  }
-  renderPreview() {
-    var _a;
-    let { contentEl } = this, context = (_a = this.opts.context) != null ? _a : "review";
-    if (this.state.plan == null) {
-      this.renderPlanLoading(contentEl, context);
-      return;
-    }
-    let empty = isPlanEmpty(this.state.plan);
-    this.renderHeader(contentEl, empty ? "up-to-date" : context), this.renderComparison(contentEl), this.renderSkippedAttachmentsNote(contentEl);
-    let options = contentEl.createDiv({ cls: "engram-sync-preview-options" });
-    empty || options.createDiv({
-      cls: "engram-sync-preview-options-header",
-      text: mergeHelperText(optionBreakdown(this.requirePlan(), "smart-merge"), context)
-    });
-    let mergeRow = options.createDiv({ cls: "engram-sync-preview-options-merge" });
-    this.renderOptionCard(mergeRow, MERGE_CARD), this.renderAdvancedOptions(options);
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", {
-      text: empty ? "Close" : "Cancel",
-      cls: empty ? "mod-cta" : void 0
-    }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
-      this.openVaultPicker();
-    });
-  }
-  /** Instant-open loading state: the modal is on screen while computeSyncPlan
-   *  runs. Shows the context header plus a calm progress line (or the load
-   *  error), and keeps Cancel + Change vault reachable so the user is never
-   *  trapped on a spinner. */
-  renderPlanLoading(parent, context) {
-    this.renderHeader(parent, context);
-    let body = parent.createDiv({ cls: "engram-sync-preview-loading" });
-    this.state.planError ? body.createSpan({
-      cls: "engram-sync-preview-picker-error",
-      text: this.state.planError
-    }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" });
-    let footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Cancel" }).addEventListener("click", () => this.state.cancel()), this.opts.showChangeVault && footer.createEl("button", { text: "Change vault" }).addEventListener("click", () => {
-      this.openVaultPicker();
-    });
-  }
-  /** The loaded plan. Only reached from render paths that run after the plan
-   *  has arrived (renderPreview gates on it); throws otherwise as a guard
-   *  against a future caller skipping the loading gate. */
-  requirePlan() {
-    let p = this.state.plan;
-    if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
-    return p;
-  }
-  /** Render the advanced sync options as a native <details> accordion holding
-   *  all four direction buttons in one column. Collapsed by default; stays
-   *  reachable even at 100% match for a deliberate force push/pull or recovery. */
-  renderAdvancedOptions(options) {
-    let details = options.createEl("details", { cls: "engram-sync-preview-advanced" });
-    details.open = this.state.advancedOpen;
-    let summary = details.createEl("summary", {
-      cls: "engram-sync-preview-advanced-summary"
-    });
-    summary.createSpan({ text: "Advanced sync options" });
-    let chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
-    (0, import_obsidian11.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
-      this.state.advancedOpen = details.open, (0, import_obsidian11.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
-    });
-    let grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
-    for (let card of [...PUSH_CARDS, ...PULL_CARDS])
-      this.renderOptionCard(grid, card);
-  }
-  /** One calm, non-blocking info line for a text-only (Free) plan when the
-   *  upcoming push includes non-text attachments. Renders nothing when the
-   *  plan isn't text-only, the flag is unknown, or the count is zero. */
-  renderSkippedAttachmentsNote(parent) {
-    let n = countSkippedAttachments(
-      this.requirePlan(),
-      this.opts.attachmentsTextOnly === !0
-    ), text2 = skippedAttachmentsLine(n);
-    if (text2 == null) return;
-    let note = parent.createDiv({ cls: "engram-sync-preview-skip-note" });
-    note.createSpan({ text: "\u2139\uFE0F ", cls: "engram-sync-preview-skip-note-icon" }), note.createSpan({ text: text2 });
-  }
-  renderHeader(parent, context) {
-    if (context === "up-to-date") {
-      let h = parent.createEl("h2", {
-        cls: "engram-sync-preview-header engram-sync-preview-header-success"
-      });
-      h.createSpan({ text: "\u2705 ", cls: "engram-sync-preview-header-emoji" }), h.createSpan({ text: "Everything is in sync" });
-      return;
-    }
-    parent.createEl("h2", {
-      text: HEADER_BY_CONTEXT[context],
-      cls: "engram-sync-preview-header"
-    });
-  }
-  renderComparison(parent) {
-    let wrap = parent.createDiv({ cls: "engram-sync-preview-compare" }), plan = this.requirePlan();
-    this.renderCompareCard(wrap, {
-      emoji: "\u{1F4BB}",
-      name: plan.vaultName,
-      role: "This vault",
-      notes: plan.localNoteCount,
-      attachments: plan.localAttachmentCount,
-      folders: plan.localFolderCount
-    }), this.renderCompareCard(wrap, {
-      emoji: "\u2601\uFE0F",
-      name: this.remoteVaultName || "Cloud server",
-      role: "Cloud server",
-      notes: plan.serverNoteCount,
-      attachments: plan.serverAttachmentCount,
-      folders: plan.serverFolderCount
-    });
-    let match2 = computeMatchPercent(plan), conflicts = plan.conflicts.length, matchRow = parent.createDiv({ cls: "engram-sync-preview-match" });
-    matchRow.createSpan({
-      cls: "engram-sync-preview-match-label",
-      text: "Your vault shares "
-    });
-    let matchValue = matchRow.createSpan({
-      cls: "engram-sync-preview-match-value",
-      text: `${match2}%`
-    });
-    if (match2 === 100 && matchValue.addClass("is-perfect"), matchRow.createSpan({
-      cls: "engram-sync-preview-match-label",
-      text: " of its data with Engram"
-    }), conflicts > 0) {
-      let conflictRow = parent.createDiv({ cls: "engram-sync-preview-conflicts" });
-      conflictRow.createSpan({
-        cls: "engram-sync-preview-conflicts-value",
-        text: `\u26A1 ${conflicts}`
-      }), conflictRow.createSpan({
-        cls: "engram-sync-preview-conflicts-label",
-        text: ` conflict${conflicts === 1 ? "" : "s"} need resolution`
-      });
-    }
-  }
-  renderCompareCard(parent, card) {
-    let col = parent.createDiv({ cls: "engram-sync-preview-compare-col" }), title = col.createDiv({ cls: "engram-sync-preview-compare-title" });
-    title.createSpan({ text: card.emoji, cls: "engram-sync-preview-compare-emoji" }), title.createSpan({ text: card.name, cls: "engram-sync-preview-compare-name" }), col.createDiv({
-      text: card.role,
-      cls: "engram-sync-preview-compare-role"
-    });
-    let body = col.createDiv({ cls: "engram-sync-preview-compare-card" }).createDiv({ cls: "engram-sync-preview-compare-card-body" });
-    this.renderCompareRow(body, "\u{1F4C4}", card.notes, "notes"), this.renderCompareRow(body, "\u{1F4CE}", card.attachments, "attachments"), this.renderCompareRow(body, "\u{1F4C1}", card.folders, "folders");
-  }
-  renderCompareRow(parent, emoji, count2, label) {
-    let row = parent.createDiv({ cls: "engram-sync-preview-compare-row" });
-    row.createSpan({ text: emoji, cls: "engram-sync-preview-compare-row-emoji" }), row.createSpan({
-      text: String(count2),
-      cls: "engram-sync-preview-compare-row-count"
-    }), row.createSpan({
-      text: label,
-      cls: "engram-sync-preview-compare-row-label"
-    });
-  }
-  renderOptionCard(parent, card) {
-    let btn = parent.createDiv({ cls: "engram-sync-preview-option-wrap" }).createEl("button", { cls: card.cssClass });
-    btn.createSpan({ text: card.emoji, cls: "engram-sync-preview-option-emoji" }), btn.createSpan({ text: card.label, cls: "engram-sync-preview-option-label" }), btn.addEventListener("click", () => {
-      this.state.pickOption(card.choice), this.render();
-    });
-  }
-  renderConfirm() {
-    let { contentEl } = this, choice = this.state.pendingChoice;
-    if (choice == null) return;
-    contentEl.createEl("h2", {
-      text: "Confirm destructive sync",
-      cls: "engram-sync-preview-header"
-    });
-    let summary = contentEl.createDiv({ cls: "engram-sync-preview-confirm-summary" });
-    summary.createEl("p", { text: "You are about to:" });
-    let ul = summary.createEl("ul");
-    for (let action of confirmActions(choice, this.requirePlan()))
-      ul.createEl("li", { text: action });
-    let deletePaths = this.deletePathsFor(choice);
-    deletePaths.length > 0 && (contentEl.createEl("p", {
-      text: "Files that will be deleted:",
-      cls: "engram-sync-preview-tree-caption"
-    }), this.renderDeletionTree(contentEl, deletePaths, this.keptPathsFor(choice, deletePaths))), contentEl.createEl("p", {
-      cls: "engram-sync-preview-warning",
-      text: "This cannot be undone."
-    });
-    let typeLine = contentEl.createEl("p");
-    typeLine.createSpan({ text: "Type " }), typeLine.createSpan({ text: "delete", cls: "engram-sync-preview-confirm-keyword" }), typeLine.createSpan({ text: " to confirm:" });
-    let input = contentEl.createEl("input", {
-      type: "text",
-      cls: "engram-sync-preview-confirm-input"
-    }), footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
-      this.state.goBack(), this.render();
-    });
-    let confirmBtn = footer.createEl("button", {
-      text: "Confirm",
-      cls: "engram-sync-preview-confirm-btn"
-    });
-    confirmBtn.disabled = !0, confirmBtn.addEventListener("click", () => this.state.submitConfirm()), input.addEventListener("input", () => {
-      this.state.typeConfirm(input.value), confirmBtn.disabled = !this.state.canSubmitConfirm();
-    }), input.focus();
-  }
-  renderVaultPicker() {
-    if (this.state.creatingVault) {
-      this.renderCreateVaultForm();
-      return;
-    }
-    let { contentEl } = this;
-    contentEl.createEl("h2", {
-      text: "Switch vault",
-      cls: "engram-sync-preview-header"
-    }), contentEl.createEl("p", {
-      text: "Pick a vault to sync with. We will recalculate the sync preview after you choose.",
-      cls: "engram-sync-preview-picker-help"
-    });
-    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
-    if (this.state.vaultsLoading)
-      body.createEl("p", { text: "Loading vaults\u2026" });
-    else if (this.state.vaultsError)
-      body.createEl("p", {
-        text: this.state.vaultsError,
-        cls: "engram-sync-preview-picker-error"
-      });
-    else if (this.state.vaults && this.state.vaults.length > 0) {
-      let list = body.createDiv({ cls: "engram-sync-preview-picker-list" });
-      for (let v of this.state.vaults) {
-        let item = list.createEl("button", {
-          cls: "engram-sync-preview-picker-item"
-        });
-        item.createSpan({
-          text: v.name,
-          cls: "engram-sync-preview-picker-item-name"
-        }), v.is_default && item.createSpan({
-          text: " (default)",
-          cls: "engram-sync-preview-picker-item-default"
-        }), item.addEventListener("click", () => {
-          this.applyPickedVault(v);
-        });
-      }
-    } else
-      body.createEl("p", { text: "No other vaults available." });
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
-      this.state.exitVaultPicker(), this.render();
-    }), this.opts.createVault && footer.createEl("button", {
-      text: "Make new vault",
-      cls: "mod-cta engram-sync-preview-new-vault-btn"
-    }).addEventListener("click", () => {
-      this.state.enterCreateVault(), this.render();
-    });
-  }
-  /** Render the "make a new vault" form: a name field pre-filled with the
-   *  Obsidian vault name, plus Create / Back. Submitting creates the vault and
-   *  immediately selects it (which recomputes the preview for the empty vault). */
-  renderCreateVaultForm() {
-    let { contentEl } = this;
-    contentEl.createEl("h2", {
-      text: "New vault",
-      cls: "engram-sync-preview-header"
-    }), contentEl.createEl("p", {
-      text: "Create a new empty vault on the server, then sync this Obsidian vault into it.",
-      cls: "engram-sync-preview-picker-help"
-    });
-    let body = contentEl.createDiv({ cls: "engram-sync-preview-picker-body" });
-    this.state.vaultsError && body.createEl("p", {
-      text: this.state.vaultsError,
-      cls: "engram-sync-preview-picker-error"
-    });
-    let input = body.createEl("input", {
-      type: "text",
-      cls: "engram-sync-preview-new-vault-input"
-    });
-    input.value = this.app.vault.getName(), input.placeholder = "Vault name";
-    let footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-    footer.createEl("button", { text: "Back" }).addEventListener("click", () => {
-      this.state.exitCreateVault(), this.render();
-    });
-    let createBtn = footer.createEl("button", {
-      text: "Create",
-      cls: "mod-cta"
-    }), submit = () => {
-      this.state.vaultsLoading || this.applyCreateVault(input.value);
-    };
-    createBtn.addEventListener("click", submit), input.addEventListener("keydown", (e) => {
-      e.key === "Enter" && submit();
-    });
-  }
-  async openVaultPicker() {
-    if (this.opts.listVaults) {
-      this.state.enterVaultPicker(), this.render();
-      try {
-        let vaults = await this.opts.listVaults();
-        this.state.onVaultsLoaded(vaults);
-      } catch (e) {
-        let msg = e instanceof Error ? e.message : "Could not load vaults";
-        this.state.onVaultsError(msg);
-      }
-      this.render();
-    }
-  }
-  /** Every path that the destructive sync deletes. Both options wipe the whole
-   *  target side (then re-populate it), so this is the entire local/server file
-   *  list — matching the "Delete all N" line on the confirm screen. */
-  deletePathsFor(choice) {
-    let plan = this.requirePlan();
-    return choice === "pull-all-delete-local" ? [...plan.localPaths] : choice === "push-all-delete-remote" ? [...plan.serverPaths] : [];
-  }
-  /** Paths that remain on the affected side after the destructive sync —
-   *  used to decide whether a folder row is going away entirely. */
-  keptPathsFor(choice, deletePaths) {
-    let plan = this.requirePlan(), deleted = new Set(deletePaths);
-    return choice === "pull-all-delete-local" ? plan.localPaths.filter((p) => !deleted.has(p)) : choice === "push-all-delete-remote" ? plan.serverPaths.filter((p) => !deleted.has(p)) : [];
-  }
-  renderDeletionTree(parent, paths, keptPaths) {
-    let code = parent.createEl("pre", { cls: "engram-sync-preview-tree" }).createEl("code"), rows = buildDeletionTree(paths, keptPaths);
-    for (let row of rows) {
-      let cls = "engram-sync-preview-tree-row";
-      row.kind === "file" ? cls += " engram-sync-preview-tree-file" : row.deleted ? cls += " engram-sync-preview-tree-folder engram-sync-preview-tree-folder-deleted" : cls += " engram-sync-preview-tree-folder", code.createDiv({ cls }).setText(`${"  ".repeat(row.depth)}${row.label}`);
-    }
-  }
-  async applyCreateVault(name) {
-    if (!this.opts.createVault) return;
-    let trimmed = name.trim();
-    if (!trimmed) {
-      this.state.onVaultsError("Enter a name for the new vault"), this.state.creatingVault = !0, this.render();
-      return;
-    }
-    this.state.vaultsLoading = !0, this.render();
-    let created;
-    try {
-      created = await this.opts.createVault(trimmed);
-    } catch (e) {
-      this.state.vaultsLoading = !1, this.state.onVaultsError(describeCreateVaultError(e)), this.state.creatingVault = !0, this.render();
-      return;
-    }
-    this.state.exitCreateVault(), await this.applyPickedVault(created);
-  }
-  async applyPickedVault(v) {
-    if (this.opts.applyVaultChange) {
-      this.state.vaultsLoading = !0, this.render();
-      try {
-        let newPlan = await this.opts.applyVaultChange(v.id, v.name);
-        this.state.replacePlan(newPlan), this.remoteVaultName = v.name, this.state.exitVaultPicker();
-      } catch (e) {
-        let msg = e instanceof Error ? e.message : "Failed to switch vault";
-        this.state.onVaultsError(msg);
-      }
-      this.render();
-    }
-  }
-};
-
-// src/sync-center-render.ts
-var DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
-function sectionHeading(parent, title) {
-  return new import_obsidian12.Setting(parent).setName(title).setHeading();
-}
-var CATEGORY_ORDER = [
-  "needs_pro",
-  "quota",
-  "frontmatter",
-  "too_large",
-  "auth",
-  "conflict",
-  "server",
-  "network",
-  "other"
-], CATEGORY_ICON = {
-  needs_pro: "\u{1F512}",
-  quota: "\u{1F5C4}",
-  frontmatter: "\u{1F4DD}",
-  too_large: "\u{1F4E6}",
-  auth: "\u{1F511}",
-  conflict: "\u26A1"
-};
-function renderSyncCenter(parent, plugin, refresh) {
-  parent.empty(), parent.addClass("engram-sync-center"), renderHeader(parent, plugin), renderActions(parent, plugin, refresh), renderPlanSkips(parent, plugin, refresh), renderNeedsAttention(parent, plugin, refresh), renderRetrying(parent, plugin, refresh), renderIgnored(parent, plugin, refresh), renderActivity(parent, plugin, refresh), renderStats(parent, plugin);
-}
-function groupedByCategory(issues, dispositions) {
-  var _a;
-  let groups = /* @__PURE__ */ new Map();
-  for (let issue of issues) {
-    if (!dispositions.includes(issueDisposition(issue.category, issue.parseReason))) continue;
-    let bucket = (_a = groups.get(issue.category)) != null ? _a : [];
-    bucket.push(issue), groups.set(issue.category, bucket);
-  }
-  return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
-}
-function renderHeader(parent, plugin) {
-  let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
-    (i) => issueDisposition(i.category, i.parseReason) === "informational"
-  ).length, attentionCount = all2.filter(
-    (i) => issueDisposition(i.category, i.parseReason) === "actionable"
-  ).length, retryingCount = all2.filter(
-    (i) => issueDisposition(i.category, i.parseReason) === "transient"
-  ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
-  header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
-}
-function renderActions(parent, plugin, refresh) {
-  let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
-  makeActionButton(strip, "Sync...", async () => {
-    try {
-      let modal = new SyncPreviewModal(plugin.app, null, {
-        remoteVaultName: plugin.settings.remoteVaultName,
-        showChangeVault: !1,
-        context: "review"
-      });
-      plugin.syncEngine.computeSyncPlan("full").then((p) => modal.setPlan(p)).catch(
-        () => modal.setPlanError("Could not compare with the cloud. Check your connection.")
-      );
-      let choice = await modal.awaitChoice();
-      if (choice === "change-vault")
-        throw new Error("Sync Center received change-vault choice, caller missing");
-      await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
-    } catch (e) {
-      new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
-    }
-    refresh();
-  }), makeActionButton(strip, "Refresh", () => refresh());
-}
-function makeActionButton(parent, text2, handler) {
-  parent.createEl("button", { text: text2, cls: "engram-sync-center-action-btn" }).addEventListener("click", () => {
-    handler();
-  });
-}
-function renderPlanSkips(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]), total = groups.reduce((n, [, list]) => n + list.length, 0);
-  if (total === 0) return;
-  let section = parent.createDiv({
-    cls: "engram-sync-center-section engram-sync-center-plan-section"
-  });
-  sectionHeading(section, `Not synced on your plan (${total})`);
-  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  body.createEl("p", {
-    cls: "engram-sync-center-card-hint",
-    text: "These files are fine. They just need a paid plan to sync."
-  });
-  for (let [category, list] of groups)
-    renderPlanCard(body, plugin, refresh, category, list);
-}
-function renderPlanCard(parent, plugin, refresh, category, issues) {
-  var _a, _b, _c;
-  let { title, hint } = remediation(category), card = parent.createDiv({
-    cls: "engram-sync-center-card engram-sync-center-card-info"
-  }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_a = CATEGORY_ICON[category]) != null ? _a : "\u{1F512}" }), head.createSpan({
-    cls: "engram-sync-center-card-title",
-    text: `${title} (${issues.length})`
-  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
-  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" }), url = (_c = (_b = issues.find((i) => i.upgradeUrl)) == null ? void 0 : _b.upgradeUrl) != null ? _c : DEFAULT_UPGRADE_URL;
-  actions.createEl("button", { text: "Upgrade", cls: "mod-cta" }).addEventListener("click", () => window.open(url, "_blank")), actions.createEl("button", { text: "Sync these now" }).addEventListener("click", () => {
-    plugin.syncEngine.resyncSkippedAttachments().then(refresh);
-  });
-  let toggle = actions.createEl("button", {
-    text: `Show files (${issues.length}) \u25BE`,
-    cls: "engram-sync-center-card-toggle"
-  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
-  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
-  for (let issue of issues)
-    renderFileRow(fileList, plugin, refresh, issue);
-}
-function renderNeedsAttention(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({
-    cls: "engram-sync-center-section engram-sync-center-attention-section"
-  }), heading2 = sectionHeading(section, `Needs attention (${total})`);
-  total > 0 && heading2.addButton(
-    (btn) => btn.setButtonText("Clear all").onClick(() => {
-      for (let [, list] of groups)
-        for (let issue of list) plugin.syncEngine.issues.clear(issue.path);
-      plugin.persistEngineState().then(refresh);
-    })
-  );
-  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  if (total === 0) {
-    body.createEl("p", {
-      cls: "engram-sync-center-empty",
-      text: "Nothing needs your attention. \u{1F389}"
-    });
-    return;
-  }
-  for (let [category, list] of groups)
-    renderAttentionCard(body, plugin, refresh, category, list);
-}
-function renderAttentionCard(parent, plugin, refresh, category, issues) {
-  var _a, _b;
-  let { title, hint } = remediation(category, (_a = issues[0]) == null ? void 0 : _a.parseReason), card = parent.createDiv({ cls: "engram-sync-center-card" }), head = card.createDiv({ cls: "engram-sync-center-card-head" });
-  head.createSpan({ cls: "engram-sync-center-card-icon", text: (_b = CATEGORY_ICON[category]) != null ? _b : "\u26A0" }), head.createSpan({
-    cls: "engram-sync-center-card-title",
-    text: `${title} (${issues.length})`
-  }), card.createEl("p", { cls: "engram-sync-center-card-hint", text: hint });
-  let actions = card.createDiv({ cls: "engram-sync-center-card-actions" });
-  actions.createEl("button", { text: "Dismiss" }).addEventListener("click", () => {
-    for (let issue of issues) plugin.syncEngine.issues.clear(issue.path);
-    plugin.persistEngineState().then(refresh);
-  });
-  let toggle = actions.createEl("button", {
-    text: `Show files (${issues.length}) \u25BE`,
-    cls: "engram-sync-center-card-toggle"
-  }), fileList = card.createDiv({ cls: "engram-sync-center-issue-list is-collapsed" });
-  toggle.addEventListener("click", () => fileList.classList.toggle("is-collapsed"));
-  for (let issue of issues)
-    renderFileRow(fileList, plugin, refresh, issue);
-}
-function renderRetrying(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
-  if (total === 0) return;
-  let section = parent.createDiv({ cls: "engram-sync-center-section" });
-  sectionHeading(section, `Retrying automatically (${total})`).addButton(
-    (btn) => btn.setButtonText("Retry all now").setCta().onClick(async () => {
-      await plugin.syncEngine.retryFailedNow(), refresh();
-    })
-  );
-  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  body.createEl("p", {
-    cls: "engram-sync-center-card-hint",
-    text: "Temporary errors. These clear themselves once the server recovers."
-  });
-  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
-  for (let [, issues] of groups)
-    for (let issue of issues) renderFileRow(list, plugin, refresh, issue);
-}
-function renderFileRow(parent, plugin, refresh, issue) {
-  var _a;
-  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" }), main = row.createDiv({ cls: "engram-sync-center-issue-main" });
-  main.createDiv({ cls: "engram-sync-center-issue-path", text: issue.path });
-  let meta = main.createDiv({ cls: "engram-sync-center-issue-meta" }), parts = [];
-  if (issue.sizeBytes !== void 0 && parts.push(formatBytes(issue.sizeBytes)), issue.status !== void 0 && parts.push(`HTTP ${issue.status}`), parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`), parts.push(formatRelative(issue.lastFailedAt)), meta.setText(parts.join(" \xB7 ")), issue.parseReason) {
-    let reason = main.createDiv({ cls: "engram-sync-center-issue-reason" });
-    reason.createSpan({ text: issue.parseReason.message });
-    let snippet = (_a = issue.parseReason.detail) == null ? void 0 : _a.snippet;
-    snippet && reason.createEl("code", { text: snippet });
-  }
-  let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
-  actions.createEl("button", { text: "Open", cls: "mod-cta" }).addEventListener("click", () => openFile(plugin, issue.path)), actions.createEl("button", { text: "Ignore" }).addEventListener("click", () => {
-    ignoreFilePermanently(plugin, issue.path, refresh);
-  });
-}
-function renderIgnored(parent, plugin, refresh) {
-  let ignored = plugin.syncEngine.ignoredFiles.all(), section = parent.createDiv({ cls: "engram-sync-center-section" });
-  sectionHeading(section, `Ignored (${ignored.length})`);
-  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  if (ignored.length === 0) {
-    body.createEl("p", {
-      cls: "engram-sync-center-empty",
-      text: "No files ignored. Use the ignore button on a failure row to stop syncing it."
-    });
-    return;
-  }
-  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
-  for (let path of ignored)
-    renderIgnoredRow(list, plugin, refresh, path);
-}
-function renderIgnoredRow(parent, plugin, refresh, path) {
-  let row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
-  row.createDiv({ cls: "engram-sync-center-issue-main" }).createDiv({ cls: "engram-sync-center-issue-path", text: path });
-  let actions = row.createDiv({ cls: "engram-sync-center-issue-actions" });
-  actions.createEl("button", { text: "Open" }).addEventListener("click", () => openFile(plugin, path)), actions.createEl("button", { text: "Restore", cls: "mod-cta" }).addEventListener("click", () => {
-    restoreFile(plugin, path, refresh);
-  });
-}
-function openFile(plugin, path) {
-  if (!plugin.app.vault.getFileByPath((0, import_obsidian12.normalizePath)(path))) {
-    new import_obsidian12.Notice(`File not found locally: ${path}`);
-    return;
-  }
-  plugin.app.workspace.openLinkText(path, "");
-}
-async function ignoreFilePermanently(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
-}
-async function restoreFile(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
-}
-var ACTIVITY_LIMIT = 50, ACTION_ICON = {
-  push: "\u2191",
-  pull: "\u2193",
-  delete: "\u2715",
-  conflict: "\u26A1",
-  skip: "\xB7",
-  error: "!"
-}, RESULT_CLASS = {
-  ok: "is-ok",
-  error: "is-error",
-  skipped: "is-skipped"
-};
-function renderActivity(parent, plugin, refresh) {
-  let section = parent.createDiv({ cls: "engram-sync-center-section" }), all2 = plugin.syncLog.entries(), heading2 = sectionHeading(section, `Activity (${all2.length})`);
-  all2.length > 0 && heading2.addButton(
-    (btn) => btn.setButtonText("Clear").onClick(() => {
-      plugin.syncLog.clear(), refresh();
-    })
-  );
-  let body = section.createDiv({ cls: "engram-sync-center-section-body" });
-  if (all2.length === 0) {
-    body.createEl("p", {
-      cls: "engram-sync-center-empty",
-      text: "No activity yet. Push or pull to see entries here."
-    });
-    return;
-  }
-  let list = body.createDiv({ cls: "engram-sync-center-activity-list" }), recent = all2.slice(-ACTIVITY_LIMIT).reverse();
-  for (let entry of recent)
-    renderActivityRow(list, entry);
-}
-function renderActivityRow(parent, entry) {
-  var _a;
-  let row = parent.createDiv({
-    cls: `engram-sync-center-activity-row ${RESULT_CLASS[entry.result]}`
-  });
-  row.createSpan({
-    cls: "engram-sync-center-activity-icon",
-    text: (_a = ACTION_ICON[entry.action]) != null ? _a : "?"
-  }), row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action }), row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path }), row.createSpan({
-    cls: "engram-sync-center-activity-time",
-    text: formatRelative(entry.timestamp.getTime())
-  }), entry.error && parent.createDiv({ cls: "engram-sync-center-activity-error" }).setText(entry.error);
-}
-function renderStats(parent, plugin) {
-  let section = parent.createDiv({ cls: "engram-sync-center-section" });
-  sectionHeading(section, "Stats");
-  let grid = section.createDiv({ cls: "engram-sync-center-section-body" }).createDiv({ cls: "engram-sync-center-stats-grid" }), allFiles = plugin.app.vault.getFiles(), noteCount = 0, attCount = 0;
-  for (let f of allFiles)
-    plugin.syncEngine.isSyncable(f) && (plugin.syncEngine.shouldIgnore(f.path) || (plugin.syncEngine.isBinaryFile(f) ? attCount++ : noteCount++));
-  let lastSync = plugin.syncEngine.getLastSync(), vaultId = plugin.settings.vaultId;
-  addStat(grid, "Local notes", String(noteCount)), addStat(grid, "Local attachments", String(attCount)), addStat(grid, "Vault", plugin.app.vault.getName()), addStat(grid, "Vault ID", vaultId ? String(vaultId) : "\u2014"), addStat(grid, "Last sync", lastSync ? formatRelative(new Date(lastSync).getTime()) : "never"), addStat(grid, "Live (WebSocket)", plugin.isLiveConnected() ? "connected" : "disconnected"), addStat(grid, "Pending in queue", String(plugin.syncEngine.queue.size)), addStat(grid, "Issues", String(plugin.syncEngine.issues.count())), addStat(grid, "Ignored", String(plugin.syncEngine.ignoredFiles.size()));
-}
-function addStat(parent, label, value) {
-  let item = parent.createDiv({ cls: "engram-sync-center-stat" });
-  item.createDiv({ cls: "engram-sync-center-stat-label", text: label }), item.createDiv({ cls: "engram-sync-center-stat-value", text: value });
-}
-function formatBytes(bytes) {
-  return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : bytes < 1024 * 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-function formatRelative(timestamp2) {
-  let seconds = Math.floor((Date.now() - timestamp2) / 1e3);
-  return seconds < 60 ? `${seconds}s ago` : seconds < 3600 ? `${Math.floor(seconds / 60)}m ago` : seconds < 86400 ? `${Math.floor(seconds / 3600)}h ago` : `${Math.floor(seconds / 86400)}d ago`;
-}
-
-// src/sync-progress-modal.ts
-function describePlannedWork(choice, plan, firstSync) {
-  let b = optionBreakdown(plan, choice), parts = [];
-  b.pushCount > 0 && parts.push(`uploading ${b.pushCount}`), b.pullCount > 0 && parts.push(`downloading ${b.pullCount}`), b.deleteLocalCount > 0 && parts.push(
-    `deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`
-  ), b.deleteRemoteCount > 0 && parts.push(`deleting ${b.deleteRemoteCount} on the cloud`);
-  let prefix = firstSync ? "First sync, this may take a moment. " : "";
-  if (parts.length === 0) return `${prefix}Checking for changes.`;
-  let sentence = parts.join(", "), capitalized = sentence.charAt(0).toUpperCase() + sentence.slice(1), noDeletes = b.deleteLocalCount === 0 && b.deleteRemoteCount === 0;
-  return `${prefix}${capitalized}.${noDeletes ? " Nothing will be deleted." : ""}`;
-}
-function renderCompletionSummary(parent, summary) {
-  let line = parent.createDiv({ cls: "engram-progress-summary-tally" });
-  if (summary.synced > 0 && line.createSpan({
-    cls: "engram-progress-tally-synced",
-    text: `\u2713 ${summary.synced} synced`
-  }), summary.skipped > 0 && line.createSpan({
-    cls: "engram-progress-tally-skipped",
-    text: `\u2933 ${summary.skipped} skipped (Free plan)`
-  }), summary.failed > 0 && line.createSpan({
-    cls: "engram-progress-tally-failed",
-    text: `\u2715 ${summary.failed} failed`
-  }), summary.skipped > 0) {
-    let note = parent.createDiv({ cls: "engram-progress-plan-note" }), noun = summary.skipped === 1 ? "attachment" : "attachments";
-    note.createSpan({
-      text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `
-    }), note.createEl("button", {
-      text: "Upgrade",
-      cls: "engram-progress-upgrade mod-cta"
-    }).addEventListener("click", () => window.open(DEFAULT_UPGRADE_URL, "_blank"));
-  }
-}
-function describeCompletion(summary) {
-  return summary.failed > 0 ? "Finished with some errors. Open the sync log to see what failed." : summary.skipped > 0 ? "Synced. Some attachments need a paid plan to sync (see below)." : summary.synced > 0 ? "All synced. Your vault and the cloud now match." : "Already up to date. Nothing needed syncing.";
-}
-function plannedPhases(choice, plan) {
-  let b = optionBreakdown(plan, choice), deleting = b.deleteLocalCount + b.deleteRemoteCount, out = [];
-  return deleting > 0 && out.push({ phase: "deleting", label: "Deleting", total: deleting }), b.pullCount > 0 && out.push({ phase: "pulling", label: "Downloading", total: b.pullCount }), b.pushCount > 0 && out.push({ phase: "pushing", label: "Uploading", total: b.pushCount }), out;
-}
-var TICK_INTERVAL_MS = 50;
-function rowCounts(planned, plannedTotal, engineCurrent, engineTotal, prevTotal) {
-  let total = planned ? Math.max(plannedTotal, engineCurrent) : engineTotal || prevTotal;
-  return { current: total > 0 ? Math.min(engineCurrent, total) : engineCurrent, total };
-}
-function settingsBarCounts(progress, planned, prevTotal) {
-  var _a;
-  let { current, total } = rowCounts(
-    !!planned,
-    (_a = planned == null ? void 0 : planned.total) != null ? _a : 0,
-    progress.current,
-    progress.total,
-    prevTotal
-  );
-  return {
-    current,
-    total,
-    pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
-  };
-}
-var SyncProgressModal = class extends import_obsidian13.Modal {
-  /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
-   *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
-   *  on completion so the user can verify their vault. All optional so callers
-   *  without a plan still get a usable modal. */
-  constructor(app, opts = {}) {
-    super(app);
-    this.opts = opts;
-    this.rows = [];
-    this.rowEls = /* @__PURE__ */ new Map();
-    /** Latest progress update from the engine, applied on the next tick. */
-    this.latest = null;
-    this.tickTimer = null;
-  }
-  onOpen() {
-    var _a;
-    let { contentEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-sync-progress-modal"), contentEl.createEl("h2", { text: "Syncing your vault" }), this.opts.intro && contentEl.createEl("p", { text: this.opts.intro, cls: "engram-progress-intro" }), this.statusEl = contentEl.createEl("p", {
-      text: "Getting started\u2026",
-      cls: "engram-progress-status"
-    }), this.rowsWrap = contentEl.createDiv({ cls: "engram-progress-rows" }), this.rows = ((_a = this.opts.phases) != null ? _a : []).map((p) => ({
-      phase: p.phase,
-      label: p.label,
-      plannedTotal: p.total,
-      planned: !0,
-      current: 0,
-      total: p.total,
-      failed: 0,
-      seen: !1,
-      done: !1
-    }));
-    for (let row of this.rows) this.createRow(row);
-    if (this.pathEl = contentEl.createEl("p", { text: "", cls: "engram-progress-path" }), this.recapEl = contentEl.createEl("p", { text: "", cls: "engram-progress-subtext" }), this.recapEl.hidden = !0, this.failedEl = contentEl.createEl("p", { text: "", cls: "engram-progress-failed" }), this.failedEl.hidden = !0, this.summaryEl = contentEl.createDiv({ cls: "engram-progress-summary" }), this.summaryEl.hidden = !0, this.verifyEl = contentEl.createEl("p", { cls: "engram-progress-verify" }), this.verifyEl.hidden = !0, this.opts.webUrl) {
-      let url = this.opts.webUrl;
-      this.verifyEl.createSpan({
-        text: "Open Engram to check your vault and confirm everything synced. "
-      });
-      let link = this.verifyEl.createEl("a", {
-        text: "Open Engram",
-        cls: "engram-progress-verify-link",
-        href: url
-      });
-      link.setAttr("target", "_blank"), link.setAttr("rel", "noopener"), link.addEventListener("click", (e) => {
-        e.preventDefault(), window.open(url, "_blank");
-      });
-    }
-    this.hintEl = contentEl.createEl("p", {
-      text: "You can close this and the sync keeps running in the background.",
-      cls: "engram-progress-hint"
-    });
-    let buttons = contentEl.createDiv({ cls: "engram-progress-buttons" });
-    this.bgBtn = buttons.createEl("button", { text: "Run in background" }), this.bgBtn.addEventListener("click", () => this.close()), this.closeBtn = buttons.createEl("button", { text: "Done", cls: "mod-cta" }), this.closeBtn.hidden = !0, this.closeBtn.addEventListener("click", () => this.close()), this.renderRows(), this.tickTimer = window.setInterval(() => this.tick(), TICK_INTERVAL_MS);
-  }
-  /** Called by the sync engine's progress callback. Buffers the update. */
-  update(progress) {
-    this.latest = progress;
-  }
-  tick() {
-    if (!this.latest) return;
-    let progress = this.latest;
-    this.latest = null, this.applyProgress(progress);
-  }
-  createRow(row) {
-    let rowEl = this.rowsWrap.createDiv({ cls: "engram-progress-row" }), statusEl = rowEl.createSpan({ cls: "engram-progress-row-status", text: "\xB7" });
-    rowEl.createSpan({ cls: "engram-progress-row-label", text: row.label });
-    let barInner = rowEl.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), countEl = rowEl.createSpan({
-      cls: "engram-progress-row-count",
-      text: `0 / ${row.plannedTotal}`
-    });
-    this.rowEls.set(row.phase, { statusEl, barInner, countEl });
-  }
-  applyProgress(progress) {
-    var _a, _b;
-    if (progress.phase === "complete") {
-      this.applyComplete(progress);
-      return;
-    }
-    let row = this.rows.find((r) => r.phase === progress.phase);
-    row || (row = {
-      phase: progress.phase,
-      label: (_a = PHASE_FALLBACK_LABEL[progress.phase]) != null ? _a : progress.phase,
-      plannedTotal: progress.total,
-      planned: !1,
-      current: 0,
-      total: progress.total,
-      failed: 0,
-      seen: !1,
-      done: !1
-    }, this.rows.push(row), this.createRow(row)), row.seen = !0;
-    let counts = rowCounts(
-      row.planned,
-      row.plannedTotal,
-      progress.current,
-      progress.total,
-      row.total
-    );
-    row.current = counts.current, row.total = counts.total, row.failed = progress.failed;
-    for (let other of this.rows)
-      other !== row && other.seen && (other.done = !0);
-    this.statusEl.setText("Syncing\u2026"), this.pathEl.setText((_b = progress.currentPath) != null ? _b : ""), this.renderRows();
-  }
-  applyComplete(progress) {
-    var _a;
-    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null);
-    for (let row of this.rows)
-      row.done = !0, row.current = row.total;
-    this.renderRows();
-    let summary = {
-      synced: progress.current,
-      skipped: (_a = progress.skipped) != null ? _a : 0,
-      failed: progress.failed
-    };
-    this.statusEl.setText("Sync complete"), this.pathEl.setText(""), this.recapEl.setText(describeCompletion(summary)), this.recapEl.hidden = !1, this.summaryEl.empty(), renderCompletionSummary(this.summaryEl, summary), this.summaryEl.hidden = !1, summary.failed > 0 ? (this.failedEl.setText(
-      `${summary.failed} failed. Run "Engram: Show sync log" for details.`
-    ), this.failedEl.hidden = !1) : this.failedEl.hidden = !0, this.verifyEl.hidden = !this.opts.webUrl, this.hintEl.hidden = !0, this.bgBtn.hidden = !0, this.closeBtn.hidden = !1;
-  }
-  renderRows() {
-    for (let row of this.rows) {
-      let els = this.rowEls.get(row.phase);
-      if (!els) continue;
-      let pct = row.total > 0 ? Math.round(row.current / row.total * 100) : row.done ? 100 : 0;
-      els.barInner.style.width = `${pct}%`, els.barInner.toggleClass("is-complete", row.done), els.countEl.setText(row.total > 0 ? `${row.current} / ${row.total}` : `${row.current}`), els.statusEl.setText(row.done ? "\u2713" : row.seen ? "\u27F3" : "\xB7");
-    }
-  }
-  onClose() {
-    this.tickTimer && (window.clearInterval(this.tickTimer), this.tickTimer = null), this.contentEl.empty();
-  }
-}, PHASE_FALLBACK_LABEL = {
-  deleting: "Deleting",
-  pushing: "Uploading",
-  pulling: "Downloading",
-  attachments: "Syncing attachments",
-  complete: "Complete"
-};
-
-// src/tabs/about-tab.ts
-var import_obsidian16 = require("obsidian");
-
-// src/email-capture-modal.ts
-var import_obsidian15 = require("obsidian");
-
-// src/waitlist.ts
-var import_obsidian14 = require("obsidian");
-var WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
-async function submitWaitlistEmail(email) {
-  let resp = await withTimeout(
-    (0, import_obsidian14.requestUrl)({
-      url: WAITLIST_ENDPOINT,
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email, source: "obsidian-plugin" }),
-      throw: !1
-    }),
-    15e3
-  );
-  if (resp.status < 200 || resp.status >= 300)
-    throw new Error(`waitlist signup failed: ${resp.status}`);
-}
-function shouldShowWaitlistPrompt(settings) {
-  return settings.waitlistPromptSeen !== !0;
-}
-
-// src/email-capture-modal.ts
-function isLikelyEmail(s) {
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s.trim());
-}
-var EmailCaptureState = class {
-  constructor() {
-    this.view = "form";
-    this.email = "";
-    this.errorText = null;
-  }
-  setEmail(v) {
-    this.email = v, this.view === "error" && (this.view = "form", this.errorText = null);
-  }
-  canSubmit() {
-    return (this.view === "form" || this.view === "error") && isLikelyEmail(this.email);
-  }
-  async submit(send) {
-    if (this.canSubmit()) {
-      this.view = "submitting", this.errorText = null;
-      try {
-        await send(this.email.trim()), this.view = "success";
-      } catch (e) {
-        this.view = "error", this.errorText = "Couldn't reach the server. Try again later.";
-      }
-    }
-  }
-};
-function renderEmailCaptureForm({
-  parent,
-  state,
-  rerender,
-  send = submitWaitlistEmail,
-  decorateFooter
-}) {
-  let input = parent.createEl("input", {
-    type: "email",
-    placeholder: "you@example.com",
-    cls: "engram-email-capture-input"
-  });
-  input.value = state.email, input.disabled = state.view === "submitting", state.errorText && parent.createEl("p", { text: state.errorText, cls: "engram-email-capture-error" });
-  let footer = parent.createDiv({ cls: "engram-email-capture-footer" }), submit = footer.createEl("button", {
-    text: state.view === "submitting" ? "Submitting\u2026" : "Notify me",
-    cls: "mod-cta"
-  });
-  submit.disabled = state.view === "submitting", decorateFooter == null || decorateFooter(footer);
-  let doSubmit = async () => {
-    if (state.setEmail(input.value), !state.canSubmit()) {
-      state.view = "error", state.errorText = "Please enter a valid email address.", rerender();
-      return;
-    }
-    await state.submit(send), rerender();
-  };
-  input.addEventListener("input", () => state.setEmail(input.value)), input.addEventListener("keydown", (e) => {
-    e.key === "Enter" && doSubmit();
-  }), submit.addEventListener("click", () => {
-    doSubmit();
-  }), input.focus();
-}
-var EmailCaptureModal = class extends import_obsidian15.Modal {
-  constructor(app, onDone) {
-    super(app);
-    this.onDone = onDone;
-    this.state = new EmailCaptureState();
-    this.done = !1;
-  }
-  onOpen() {
-    this.contentEl.addClass("engram-email-capture-modal"), this.render();
-  }
-  onClose() {
-    this.contentEl.empty(), this.finish();
-  }
-  finish() {
-    this.done || (this.done = !0, this.onDone());
-  }
-  render() {
-    let { contentEl } = this;
-    if (contentEl.empty(), this.state.view === "success") {
-      contentEl.createEl("h2", { text: "You're on the list. Thanks for your patience! \u{1F389}" });
-      let join = contentEl.createEl("p", { cls: "engram-email-capture-links" });
-      join.createSpan({ text: "In the meantime, come say hi on " }), join.createEl("a", {
-        text: "Discord",
-        href: ENGRAM_DISCORD_URL,
-        attr: { target: "_blank", rel: "noopener" }
-      }), join.createSpan({ text: "." }), contentEl.createEl("button", { text: "Close", cls: "mod-cta" }).addEventListener("click", () => this.close());
-      return;
-    }
-    contentEl.createEl("h2", { text: "You're early. Engram isn't ready yet." }), contentEl.createEl("p", {
-      text: "We're building Engram in the open, and early people like you make it better. Leave your email for beta access, an early-supporter discount, and a standing invite to give feedback and steer what comes next."
-    }), contentEl.createEl("p", {
-      cls: "engram-email-capture-contact",
-      text: "Questions or feedback? Email me directly at "
-    }).createEl("a", { text: "todd@engram.page", href: "mailto:todd@engram.page" });
-    let links = contentEl.createEl("p", { cls: "engram-email-capture-links" });
-    links.createEl("a", {
-      text: "engram.page",
-      href: ENGRAM_MARKETING_URL,
-      attr: { target: "_blank", rel: "noopener" }
-    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
-      text: "GitHub",
-      href: ENGRAM_GITHUB_URL,
-      attr: { target: "_blank", rel: "noopener" }
-    }), links.createSpan({ text: " \xB7 " }), links.createEl("a", {
-      text: "Discord",
-      href: ENGRAM_DISCORD_URL,
-      attr: { target: "_blank", rel: "noopener" }
-    }), renderEmailCaptureForm({
-      parent: contentEl,
-      state: this.state,
-      rerender: () => this.render(),
-      decorateFooter: (footer) => {
-        footer.createEl("button", { text: "Maybe later" }).addEventListener("click", () => this.close());
-      }
-    });
-  }
-};
-
-// src/tabs/about-tab.ts
-function renderWaitlistSection(containerEl) {
-  let state = new EmailCaptureState(), section = containerEl.createDiv({ cls: "engram-about-waitlist" }), render = () => {
-    if (section.empty(), state.view === "success") {
-      section.createEl("p", {
-        cls: "engram-about-waitlist-success",
-        text: "You're on the list. Thanks for your patience!"
-      });
-      return;
-    }
-    section.createEl("p", {
-      text: "Engram is still in active development. Leave your email for beta access, an early-supporter discount, and a say in what comes next."
-    }), renderEmailCaptureForm({ parent: section, state, rerender: render });
-  };
-  render();
-}
-function externalLink(parent, text2, href) {
-  parent.createEl("a", { text: text2, href, attr: { target: "_blank", rel: "noopener" } });
-}
-function heading(containerEl, name) {
-  new import_obsidian16.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
-}
-function renderAboutTab(ctx) {
-  let { containerEl, switchToTab } = ctx;
-  containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
-    "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
-  ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
-  let account = new import_obsidian16.Setting(containerEl).setName("1. Make an account");
-  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian16.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
-    "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
-  ).addButton(
-    (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
-  );
-  let ai = new import_obsidian16.Setting(containerEl).setName("3. Connect your AI");
-  ai.descEl.appendText(
-    "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
-  ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
-  let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
-    let card = plans.createEl("li", { cls: "engram-plan" });
-    card.createEl("h4", { text: name });
-    let list = card.createEl("ul", { cls: "engram-plan-features" });
-    for (let feature of features) list.createEl("li", { text: feature });
-  };
-  plan("Free", [
-    "1 vault, 1 device",
-    "Auto sync",
-    "Read-only AI access",
-    "Semantic search + MCP"
-  ]), plan("Starter", [
-    "Multiple vaults, all devices",
-    "Real-time sync",
-    "Full API + MCP",
-    "Higher daily AI limit"
-  ]), plan("Pro", ["Unlimited notes", "Unlimited AI (fair use)", "Priority support"]);
-  let pricing = containerEl.createEl("p", { cls: "engram-about-link" });
-  externalLink(pricing, "See full pricing", ENGRAM_PRICING_URL), heading(containerEl, "Learn more");
-  let links = containerEl.createEl("ul", { cls: "engram-about-links" });
-  externalLink(links.createEl("li"), "Documentation", ENGRAM_DOCS_URL), externalLink(links.createEl("li"), "AI / MCP setup guide", ENGRAM_MCP_URL), externalLink(links.createEl("li"), "Report an issue", ENGRAM_ISSUES_URL), externalLink(links.createEl("li"), "Join our Discord", ENGRAM_DISCORD_URL);
-}
-
-// src/tabs/account-tab.ts
-var import_obsidian18 = require("obsidian");
-
-// src/tabs/self-hosted-tab.ts
-var import_obsidian17 = require("obsidian");
-var PREFLIGHT_DEBOUNCE_MS = 600;
-function renderSelfHostedTab(ctx) {
-  let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
-  if (isOnCloud && hasAuth) {
-    renderCloudLockBanner(containerEl);
-    return;
-  }
-  let repoSetting = new import_obsidian17.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
-  repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
-    text: "github.com/engram-app/engram",
-    href: "https://github.com/engram-app/engram"
-  }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
-}
-function renderEngramUrlSetting(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian17.Setting(containerEl).setName("Engram URL");
-  setting.settingEl.addClass("engram-url-setting");
-  let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
-    switch (status.removeClasses(STATUS_CLASSES), result.kind) {
-      case "engram":
-        status.addClass("is-engram"), status.setText(`\u2713 Engram server reachable (v${result.version})`);
-        break;
-      case "reachable":
-        status.addClass("is-reachable"), status.setText("\u2717 server responded but isn't an Engram backend");
-        break;
-      case "unreachable":
-        status.addClass("is-unreachable"), status.setText("\u2717 couldn't reach a server at this URL");
-        break;
-    }
-  }, runPreflight = (value) => {
-    if (!completeOrigin(value)) {
-      status.removeClasses(STATUS_CLASSES), status.setText("");
-      return;
-    }
-    let seq3 = ++probeSeq;
-    status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq3 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
-    });
-  };
-  setting.addText((text2) => {
-    text2.setPlaceholder("https://engram.example.com"), text2.setValue(plugin.settings.apiUrl), text2.onChange((value) => {
-      pendingUrl = value, debounce !== null && window.clearTimeout(debounce), debounce = window.setTimeout(() => runPreflight(value), PREFLIGHT_DEBOUNCE_MS);
-    });
-  }).addButton(
-    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
-      await applyApiUrlChange(
-        {
-          settings: plugin.settings,
-          api: plugin.api,
-          noteStream: plugin.noteStream,
-          resetAuthProvider: () => {
-            plugin.authProvider = null;
-          }
-        },
-        pendingUrl.trim(),
-        () => plugin.saveSettings()
-      ) && new import_obsidian17.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
-    })
-  ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
-}
-function renderCloudLockBanner(containerEl) {
-  let banner = containerEl.createDiv({ cls: "engram-mode-lock-banner" });
-  banner.createEl("p", { text: "You're connected to Engram cloud." }), banner.createEl("p", {
-    text: "To set up a self-hosted Engram server, sign out from the cloud tab first. That will release the connection so you can point the plugin at your own server."
-  });
-}
-function renderAuthSection(ctx) {
-  var _a;
-  let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
-  if (new import_obsidian17.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
-    new import_obsidian17.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
-      (btn) => btn.setButtonText("Sign out").onClick(async () => {
-        await plugin.clearOAuthTokens(), redisplay();
-      })
-    );
-    return;
-  }
-  if (hasApiKey) {
-    new import_obsidian17.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
-      (btn) => btn.setButtonText("Clear key").setWarning().onClick(async () => {
-        plugin.settings.apiKey = "", await plugin.saveSettings(), redisplay();
-      })
-    ).addButton(
-      (btn) => btn.setButtonText("Switch to sign in").setCta().onClick(async () => {
-        plugin.settings.apiKey = "", await plugin.saveSettings(), startDeviceFlow();
-      })
-    );
-    return;
-  }
-  new import_obsidian17.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
-    (btn) => btn.setButtonText("Sign in").setCta().onClick(() => startDeviceFlow())
-  ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
-  let pendingKey = "";
-  new import_obsidian17.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
-    text2.setPlaceholder("engram_abc123...").onChange((value) => {
-      pendingKey = value;
-    }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");
-  }).addButton(
-    (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
-      let trimmed = pendingKey.trim();
-      if (!trimmed) {
-        new import_obsidian17.Notice("Enter an API key first");
-        return;
-      }
-      plugin.settings.apiKey = trimmed, await plugin.saveSettings(), redisplay();
-    })
-  ).settingEl.addClass("engram-setting-api-key");
-}
-function renderVaultSection(ctx) {
-  let { containerEl, plugin, redisplay } = ctx;
-  if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
-  new import_obsidian17.Setting(containerEl).setName("Vault").setHeading();
-  let setting = new import_obsidian17.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
-  if (currentId && storedName) {
-    setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
-      cls: "engram-vault-current-name",
-      text: storedName
-    }).setAttribute("title", `Vault id: ${currentId}`), setting.addButton(
-      (btn) => btn.setButtonText("Change").onClick(() => {
-        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
-      })
-    );
-    return;
-  }
-  let placeholderEl = setting.controlEl.createSpan({ text: "Loading vaults..." });
-  plugin.api.listVaults().then((vaults) => {
-    if (placeholderEl.remove(), vaults.length === 0) {
-      setting.controlEl.createSpan({
-        text: "No vaults found \u2014 first sync will create one"
-      });
-      return;
-    }
-    let current = currentId ? vaults.find((v) => v.id === currentId) : void 0;
-    if (!current) {
-      setting.addDropdown((dropdown) => {
-        currentId ? dropdown.addOption(
-          "",
-          storedName ? `Pick a vault (previous: '${storedName}' not found)` : `Pick a vault (previous: id ${currentId} not found)`
-        ) : dropdown.addOption("", "Pick a vault");
-        for (let v of vaults) {
-          let label = v.is_default ? `${v.name} (default)` : v.name;
-          dropdown.addOption(v.id, label);
-        }
-        dropdown.onChange(async (value) => {
-          let picked = vaults.find((v) => v.id === value);
-          await applyVaultSwitch(plugin, value, picked == null ? void 0 : picked.name) && redisplay();
-        });
-      });
-      return;
-    }
-    plugin.settings.remoteVaultName = current.name, plugin.saveSettings(), setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
-      cls: "engram-vault-current-name",
-      text: current.is_default ? `${current.name} (default)` : current.name
-    }).setAttribute("title", `Vault id: ${current.id}`), setting.addButton(
-      (btn) => btn.setButtonText("Change").onClick(() => {
-        plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: !0 });
-      })
-    );
-  }).catch((e) => {
-    placeholderEl.remove(), setting.controlEl.createSpan({ text: describeListVaultsError(e) });
-  });
-}
-function renderSupportSection(ctx) {
-  let { containerEl } = ctx;
-  new import_obsidian17.Setting(containerEl).setName("Support development").setHeading();
-  let supportSetting = new import_obsidian17.Setting(containerEl).setDesc(
-    "If this plugin saves you time, consider supporting development."
-  );
-  supportSetting.settingEl.addClass("engram-setting-support");
-  let buttonRow = supportSetting.controlEl.createDiv({ cls: "engram-support-buttons" }), sponsorLink = buttonRow.createEl("a", {
-    cls: "engram-sponsor-button",
-    href: "https://github.com/sponsors/engram-app",
-    attr: { target: "_blank", rel: "noopener" }
-  }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
-  (0, import_obsidian17.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
-  let kofiLink = buttonRow.createEl("a", {
-    cls: "engram-kofi-button",
-    href: "https://ko-fi.com/engrams_sync",
-    attr: { target: "_blank", rel: "noopener" }
-  }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
-  (0, import_obsidian17.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
-}
-function describeListVaultsError(e) {
-  let err = e, status = err == null ? void 0 : err.status;
-  return status === 401 || status === 403 ? "Sign-in required to load vaults" : status && status >= 500 ? `Server error (${status}) \u2014 check Engram logs` : status && status >= 400 ? `Request failed (${status})` : "Could not reach Engram \u2014 check connection";
-}
-async function applyVaultSwitch(plugin, value, name) {
-  return !value || value === plugin.settings.vaultId ? !1 : (plugin.settings.vaultId = value, name !== void 0 && (plugin.settings.remoteVaultName = name), plugin.api.setVaultId(value), await plugin.saveSettings(), !0);
-}
-
-// src/tabs/account-tab.ts
-async function renderAccountTab(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
-  if (action === "prompt-switch") {
-    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
-      `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
-    ).addButton(
-      (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
-        await applyApiUrlChange(
-          {
-            settings: plugin.settings,
-            api: plugin.api,
-            noteStream: plugin.noteStream,
-            resetAuthProvider: () => {
-              plugin.authProvider = null;
-            }
-          },
-          ENGRAM_CLOUD_URL,
-          () => plugin.saveSettings()
-        ), new import_obsidian18.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
-      })
-    );
-    return;
-  }
-  action === "auto-switch" && await applyApiUrlChange(
-    {
-      settings: plugin.settings,
-      api: plugin.api,
-      noteStream: plugin.noteStream,
-      resetAuthProvider: () => {
-        plugin.authProvider = null;
-      }
-    },
-    ENGRAM_CLOUD_URL,
-    () => plugin.saveSettings()
-  );
-  let aboutSetting = new import_obsidian18.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
-  aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
-    text: "engram.page",
-    href: ENGRAM_MARKETING_URL,
-    attr: { target: "_blank", rel: "noopener" }
-  }), aboutSetting.descEl.appendText("."), renderAuthSection(ctx), renderVaultSection(ctx);
-}
-
-// src/tabs/advanced-tab.ts
-var import_obsidian19 = require("obsidian"), PROBLEMATIC_DIRS = [
-  { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
-  { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
-  { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
-  { pattern: "__pycache__/", label: "__pycache__", desc: "Python bytecode cache" },
-  { pattern: "vendor/", label: "vendor", desc: "Vendored dependencies" },
-  { pattern: ".gradle/", label: ".gradle", desc: "Gradle build cache" },
-  { pattern: "target/", label: "target", desc: "Rust/Java build output" },
-  { pattern: "build/", label: "build", desc: "Build output" },
-  { pattern: ".next/", label: ".next", desc: "Next.js build output" },
-  { pattern: "dist/", label: "dist", desc: "Distribution build output" },
-  { pattern: ".cargo/", label: ".cargo", desc: "Cargo cache" },
-  { pattern: "Pods/", label: "Pods", desc: "CocoaPods dependencies" },
-  { pattern: ".dart_tool/", label: ".dart_tool", desc: "Dart tool cache" },
-  { pattern: ".cache/", label: ".cache", desc: "Generic cache directory" }
-];
-function renderAdvancedTab(ctx) {
-  let { containerEl, app, plugin, redisplay } = ctx;
-  new import_obsidian19.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian19.Setting(containerEl).setName("Conflict resolution").setDesc(
-    "How to handle conflicts. Automatic creates a conflict copy. Interactive shows a diff dialog."
-  ).addDropdown(
-    (dropdown) => dropdown.addOption("auto", "Automatic (conflict files)").addOption("modal", "Interactive (diff modal)").setValue(plugin.settings.conflictResolution).onChange(async (value) => {
-      plugin.settings.conflictResolution = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
-    (text2) => text2.setPlaceholder("2000").setValue(String(plugin.settings.debounceMs)).onChange(async (value) => {
-      let num = Number.parseInt(value, 10);
-      !Number.isNaN(num) && num >= 100 && (plugin.settings.debounceMs = num, await plugin.saveSettings());
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian19.Setting(containerEl).setName("Custom patterns").setDesc(
-    `Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`
-  ).addTextArea((text2) => {
-    text2.setPlaceholder(`drafts/
-secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
-      plugin.settings.ignorePatterns = value, await plugin.saveSettings();
-    }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
-  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
-    "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
-  ).addToggle(
-    (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
-      plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
-  let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
-  versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
-  let repoItem = aboutList.createEl("li");
-  repoItem.createSpan({ text: "Source: " }), repoItem.createEl("a", {
-    text: "github.com/engram-app/Engram-obsidian",
-    href: "https://github.com/engram-app/Engram-obsidian"
-  }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
-}
-function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
-  let currentIgnores = plugin.settings.ignorePatterns, detected = [];
-  for (let dir of PROBLEMATIC_DIRS) {
-    if (currentIgnores.includes(dir.pattern)) continue;
-    let folder = app.vault.getFolderByPath(dir.label);
-    if (folder) {
-      let count2 = 0, walk = (f) => {
-        for (let child of f.children)
-          child instanceof import_obsidian19.TFolder ? walk(child) : count2++;
-      };
-      walk(folder), detected.push({ ...dir, count: count2 });
-    }
-  }
-  if (detected.length !== 0)
-    for (let item of detected)
-      new import_obsidian19.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
-        (btn) => btn.setButtonText("Add to ignores").setCta().onClick(async () => {
-          let current = plugin.settings.ignorePatterns.trim();
-          plugin.settings.ignorePatterns = current ? `${current}
-${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian19.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
-        })
-      ).settingEl.addClass("engram-status-warning");
-}
-
-// src/tabs/start-tab.ts
-function pickInitialTab(settings) {
-  return !!settings.apiUrl && (!!settings.apiKey || !!settings.refreshToken) ? "account" : "about";
-}
-
-// src/tabs/sync-center-tab.ts
-function renderSyncCenterTab(ctx) {
-  let { containerEl, plugin } = ctx, refresh = () => renderSyncCenter(containerEl, plugin, refresh);
-  refresh();
-}
-
-// src/settings.ts
-var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
-  constructor(app, plugin) {
-    super(app, plugin);
-    this.statusContainerEl = null;
-    /** Container the UI was last drawn into. Differs by path: this.containerEl
-     *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
-     *  it so redisplay/device-flow re-renders land in the right place. */
-    this.activeContainerEl = null;
-    this.plugin = plugin, this.activeTab = pickInitialTab(plugin.settings);
-  }
-  /** Pre-select a tab before the next display() call. */
-  setInitialTab(tabId) {
-    this.activeTab = tabId;
-  }
-  /**
-   * Registers this tab with Obsidian's 1.13+ declarative settings API so it
-   * shows up in the global settings search. We do NOT decompose our settings
-   * into declarative `control` objects: this tab is a rich custom UI (tab bar,
-   * live status dot, progress bar, device-flow) with no 1:1 declarative form.
-   * Instead we expose a single `render` item that draws the existing UI, which
-   * is enough to satisfy the API and index the tab by name.
-   *
-   * On 1.13+ a non-empty return here renders INSTEAD of display(); on <1.13
-   * (minAppVersion is 1.7.2) this method doesn't exist on the base class and
-   * display() is the fallback. Both paths call renderContent(), so there's
-   * one source of truth.
-   *
-   * ponytail: one search entry (indexed by name), not per-setting search.
-   * Upgrade path = decompose each setting into a `control` definition — large,
-   * and would drop the custom tab UX on 1.13+. Not worth it to satisfy a
-   * search-indexing nudge.
-   *
-   * Return type is a local shim for Obsidian 1.13's `SettingDefinitionItem`:
-   * we hold the obsidian typings at 1.8.7 (minAppVersion is 1.7.2), so the
-   * real type isn't available. This covers exactly the `render` item we emit;
-   * swap for `SettingDefinitionItem[]` if the obsidian typings floor is ever
-   * raised to >=1.13.
-   */
-  getSettingDefinitions() {
-    return [
-      {
-        name: "Engram Sync",
-        desc: "Cloud and self-hosted sync, connection, and advanced settings.",
-        render: (setting) => {
-          setting.settingEl.addClass("engram-settings-host"), this.renderContent(setting.settingEl.createDiv());
-        }
-      }
-    ];
-  }
-  display() {
-    this.renderContent(this.containerEl);
-  }
-  /** Re-render into whatever container we last drew into. Public so external
-   *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
-   *  the deprecated display() — which on 1.13+ would draw into the tab root
-   *  instead of the render-hatch host. No-op if the tab isn't currently shown
-   *  (activeContainerEl is cleared on hide()) or if the container was detached
-   *  without hide() firing — on 1.13+ Obsidian can tear down the render-hatch
-   *  row on a settings re-render, so guard with isConnected like renderStatus()
-   *  does; it re-renders on next open. */
-  rerender() {
-    var _a;
-    (_a = this.activeContainerEl) != null && _a.isConnected && this.renderContent(this.activeContainerEl);
-  }
-  renderContent(containerEl) {
-    this.activeContainerEl = containerEl, containerEl.empty(), this.statusContainerEl = containerEl.createDiv({ cls: "engram-status-bar" }), this.statusContainerEl.addClasses(["engram-status-container"]), this.renderStatus(), this.plugin.onStatusBarChange = () => this.renderStatus();
-    let progressContainer = containerEl.createDiv({ cls: "engram-sync-progress" }), progressLabel = progressContainer.createEl("p", {
-      text: "Syncing...",
-      cls: "engram-progress-label"
-    }), progressBarInner = progressContainer.createDiv({ cls: "engram-progress-bar-outer" }).createDiv({ cls: "engram-progress-bar-inner" }), prevTotals = /* @__PURE__ */ new Map();
-    this.plugin.syncEngine.onSyncProgress = (progress) => {
-      var _a, _b;
-      if (progress.phase === "complete") {
-        progressContainer.removeClass("is-active"), prevTotals.clear();
-        return;
-      }
-      progressContainer.hasClass("is-active") || prevTotals.clear(), progressContainer.addClass("is-active");
-      let planned = (_a = this.plugin.activeSyncPhases) == null ? void 0 : _a.find((p) => p.phase === progress.phase), { current, total, pct } = settingsBarCounts(
-        progress,
-        planned,
-        (_b = prevTotals.get(progress.phase)) != null ? _b : 0
-      );
-      prevTotals.set(progress.phase, total);
-      let phaseLabel = progress.phase === "deleting" ? "Deleting local files" : progress.phase === "pushing" ? "Pushing notes" : progress.phase === "pulling" ? "Pulling notes" : "Syncing attachments", failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
-      progressLabel.setText(
-        total > 0 ? `${phaseLabel}... ${current}/${total}${failedSuffix}` : `${phaseLabel}... ${current}${failedSuffix}`
-      ), progressBarInner.style.width = `${pct}%`;
-    };
-    let tabs = [
-      { id: "about", label: "\u{1F44B} Welcome", render: renderAboutTab },
-      { id: "account", label: "\u2601\uFE0F Cloud", render: renderAccountTab },
-      { id: "self-hosted", label: "\u{1F5A5}\uFE0F Self-hosted", render: renderSelfHostedTab },
-      { id: "sync-center", label: "\u{1F504} Sync Center", render: renderSyncCenterTab },
-      { id: "advanced", label: "\u2699\uFE0F Advanced", render: renderAdvancedTab }
-    ], tabBar = containerEl.createEl("nav", { cls: "engram-tab-bar" }), contentEl = containerEl.createEl("section", { cls: "engram-tab-content" }), activateTab = (tabId) => {
-      var _a;
-      this.activeTab = tabId;
-      for (let btn2 of Array.from(tabBar.querySelectorAll(".engram-tab")))
-        btn2.removeClass("is-active");
-      contentEl.empty();
-      let tab = (_a = tabs.find((t) => t.id === tabId)) != null ? _a : tabs[0];
-      if (!tab) return;
-      let btn = tabBar.querySelector(`[data-tab="${tab.id}"]`);
-      btn == null || btn.addClass("is-active"), tab.render({ ...ctx, containerEl: contentEl });
-    }, ctx = {
-      containerEl: contentEl,
-      app: this.app,
-      plugin: this.plugin,
-      redisplay: () => this.rerender(),
-      startDeviceFlow: () => this.startDeviceFlow(),
-      openProgressModal: () => this.openProgressModal(),
-      switchToTab: (id2) => activateTab(id2)
-    };
-    for (let tab of tabs) {
-      let btn = tabBar.createEl("button", {
-        text: tab.label,
-        cls: "engram-tab"
-      });
-      btn.dataset.tab = tab.id, btn.addEventListener("click", () => activateTab(tab.id));
-    }
-    let startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "account";
-    activateTab(startTab);
-  }
-  /** Open a progress modal and wire it to the sync engine's progress callback. */
-  async openProgressModal() {
-    let modal = new SyncProgressModal(this.app), prevCallback = this.plugin.syncEngine.onSyncProgress;
-    return this.plugin.syncEngine.onSyncProgress = (progress) => {
-      modal.update(progress), prevCallback == null || prevCallback(progress);
-    }, modal.open(), await new Promise((resolve) => window.requestAnimationFrame(resolve)), modal;
-  }
-  async startDeviceFlow() {
-    let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
-    result && (await this.plugin.saveOAuthTokens(
-      result.refresh_token,
-      result.vault_id,
-      result.user_email
-    ), this.rerender());
-  }
-  /** Render (or re-render) the connection status row in place. Idempotent —
-   *  empties the container first so it can be wired to live status events. */
-  renderStatus() {
-    let statusEl = this.statusContainerEl;
-    if (!statusEl || !statusEl.isConnected) return;
-    statusEl.empty();
-    let status = this.plugin.syncEngine.getStatus(), live = this.plugin.isLiveConnected(), blocked = this.plugin.syncEngine.isSyncBlocked(), dotState, label;
-    if (status.state === "offline" ? (dotState = "is-error", label = "Disconnected") : status.state === "error" ? (dotState = "is-error", label = `Error: ${status.error || "unknown"}`) : blocked && this.plugin.settings.apiUrl && (this.plugin.settings.apiKey || this.plugin.settings.refreshToken) ? (dotState = "is-waiting", label = "Connected \u2014 waiting for first sync decision") : live ? (dotState = "is-connected", label = "Connected \u2014 live sync active") : this.plugin.settings.apiUrl && (this.plugin.settings.apiKey || this.plugin.settings.refreshToken) ? (dotState = "is-polling", label = "Connected \u2014 polling") : (dotState = "is-idle", label = "Not configured"), statusEl.createSpan({ cls: `engram-status-dot ${dotState}` }), statusEl.createSpan({ text: label }), dotState === "is-waiting" && statusEl.createEl("button", {
-      cls: "engram-status-open-sync-btn mod-cta",
-      text: "Open sync setup"
-    }).addEventListener("click", () => {
-      this.plugin.doSyncWithFirstSyncCheck();
-    }), status.lastSync) {
-      let date = new Date(status.lastSync);
-      statusEl.createDiv({ cls: "engram-status-time" }).setText(`Last sync: ${date.toLocaleString()}`);
-    }
-  }
-  hide() {
-    this.plugin.onStatusBarChange = null, this.statusContainerEl = null, this.activeContainerEl = null;
-  }
-};
-
-// src/settings-migrate.ts
-function migrateDiagnosticsEnabled(raw) {
-  return raw ? typeof raw.diagnosticsEnabled == "boolean" ? raw.diagnosticsEnabled : !!(raw.remoteLoggingEnabled || raw.diagnosticMode || raw.tracingEnabled) : !1;
-}
-
-// src/single-flight.ts
-function createSingleFlight() {
-  let inFlight = !1;
-  return async (fn) => {
-    if (!inFlight) {
-      inFlight = !0;
-      try {
-        return await fn();
-      } finally {
-        inFlight = !1;
-      }
-    }
-  };
-}
-
-// src/sync.ts
-var import_obsidian21 = require("obsidian");
-
 // src/crdt/uuid7.ts
 function uuid7() {
   var _a, _b;
@@ -17929,12 +17915,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
      *  data) and is adopted without wiping. */
     this.syncStateVaultId = null;
-    /** This user's server content_hash for EMPTY content, learned from the
-     *  first fetch that proves a hash maps to "" (the hash is a per-user HMAC —
-     *  underivable client-side but deterministic). Lets the ingress guard trust
-     *  inline-empty bodies carrying this exact hash instead of re-fetching
-     *  every genuinely empty note. Session-scoped; a stale value after a DEK
-     *  rotation or account swap stops matching and falls back to the GET. */
+    /** This user's server content_hash for EMPTY content, learned from an
+     *  authoritative op-log ROW that carries "" beside its hash (the hash is a
+     *  per-user HMAC — underivable client-side but deterministic; the old
+     *  learn-by-fetch died with the Phase E3 REST purge). Lets the ingress
+     *  guard trust inline-empty bodies carrying this exact hash. Session-
+     *  scoped; a stale value after a DEK rotation or account swap stops
+     *  matching, and the distrusted event routes to the op-log catch-up —
+     *  the failure direction is a replay round-trip, never a 0-byte write. */
     this.emptyContentHash = null;
     /** Optional base content store for 3-way merge (Step 2+). */
     this.baseStore = null;
@@ -17986,6 +17974,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  short-circuits. Null in tests/headless — the adopt transfer branch is
      *  then skipped (no live editor to preserve) and the disk-seed path runs. */
     this.crdtEditorRebind = null;
+    /** Fix wave 7 (#191 slice): reads the LIVE editor buffer currently shown
+     *  for `path` (CrdtLiveViews.boundBufferText, wired by main.ts) — used by
+     *  commitCrdtConvergence to detect a phantom binding (isLiveBound true but
+     *  the editor's Yjs binding silently detached, so its buffer never
+     *  repaints). Null in tests/headless — the phantom-binding check is then
+     *  skipped (nothing to compare). */
+    this.crdtBoundBufferText = null;
+    /** Fix wave 7: nudges the bound editor's save (CrdtLiveViews.requestSaveForBoundPath,
+     *  the same debounced call wiring.ts's onBoundUpdate uses) after a phantom
+     *  binding is rebound, so the freshly-repainted buffer actually reaches
+     *  disk instead of waiting on the next unrelated remote update. */
+    this.crdtRequestSave = null;
     /** Path -> note_id sidecar (Task 4, `src/crdt/note-id-map.ts`). Owned by
      *  main.ts (persisted in data.json); wired here so pushFile can mint/send
      *  client_id for new notes, the pull path can learn ids, and handleRename
@@ -18049,9 +18049,71 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     /** Per-note re-handshake attempt tracking for the live-bound catch-up path,
      *  keyed by note_id. `hash` is the server content_hash being retried; a new
      *  hash starts a fresh episode. Purely diagnostic now (the logged attempt
-     *  number): convergence comes from the deterministic REST delta pull, and a
-     *  failed pull retries at the 5-min poll cadence — no give-up, no storm. */
+     *  number, and cleared on commit) — convergence recording lives entirely in
+     *  `commitCrdtConvergence`; this map never gates a retry. */
     this.crdtRehandshakeAttempts = /* @__PURE__ */ new Map();
+    /** Fix wave 1 (single-path D3 review): staged convergence for a diverged
+     *  note, keyed by note_id — staged by the LIVE-BOUND leg and, since Phase
+     *  E3, the cold catch-up leg too. `socketConverge` no longer
+     *  verifies-and-records by text equality — text equality does not prove
+     *  the doc holds the server's actual Yjs ops (two independently-typed
+     *  identical bodies are a disjoint lineage; recording on that basis is the
+     *  duplication class this replaces). Instead a diverged pull entry STAGES
+     *  what it would record here, and `commitCrdtConvergence` (wired from
+     *  CrdtManager's onSynced, fired only when a real inbound frame leaves the
+     *  doc non-empty) commits it — actual op-level proof, not a text guess. A
+     *  fresh content_hash overwrites any prior stage (new episode); nothing
+     *  else prunes it — `commitCrdtConvergence` re-resolves the current path
+     *  via noteIdMap and no-ops if the id was deleted, so a stale stage can
+     *  never write syncState at a dead path.
+     *
+     *  Fix wave 5: `content` is the staged row's own plaintext, so
+     *  `commitCrdtConvergence` can CONTENT-VERIFY the commit instead of
+     *  trusting that the next `onSynced` fire is FOR this row — an unrelated
+     *  inbound frame (a different concurrent edit on the same doc) could
+     *  otherwise commit the stage a millisecond after it was staged, before
+     *  the staged row's own ops ever arrived (CI run 29920053637: committed
+     *  1ms after the re-handshake fired, fence-blinding every later row —
+     *  deaf until teardown). The diverged live-bound leg has the row's
+     *  `content` in scope and stages it; `healDivergedLiveBoundNotes` (the
+     *  manifest heal) has no plaintext — only a keyed HMAC hash it cannot
+     *  compute client-side — so it stages `content: null`, which keeps the
+     *  pre-wave-5 best-effort behavior (commit on the next non-empty frame,
+     *  unverified). */
+    this.pendingConvergence = /* @__PURE__ */ new Map();
+    /** Fix wave 1: per-note_id cooldown for `socketConverge`'s STEP1
+     *  re-handshake — bounds how often a live-bound note can re-fire reset+
+     *  enroll (open, catch-up, and manifest heal can all independently detect
+     *  the same divergence in quick succession; unconditional firing drains
+     *  the handshake budget, the #193 starvation class). Value = last-fired
+     *  `Date.now()`, set ONLY when a handshake actually fires — never on a
+     *  suppressed attempt. `healCooldownMs` is a public instance field so
+     *  tests can shrink it. */
+    this.crdtHealCooldown = /* @__PURE__ */ new Map();
+    /** Fix wave 2 (CI-found defect: `test_deaf_note_survives_handshake_rate_
+     *  limit_and_heals_on_restore`): a poke suppressed by the cooldown must
+     *  NOT be silently dropped — a deaf note's one recovery poke landing
+     *  inside the window would otherwise never retry, stranding it until the
+     *  next unrelated edit or the 5-min manifest pass. Mirrors
+     *  `scheduleSeqHeal`'s trailing-edge throttle: a suppressed poke arms ONE
+     *  trailing timer per note_id for the remaining window; further pokes for
+     *  the same note while a trailing timer is armed coalesce into it (no
+     *  second timer). Cleared in `destroy()`. */
+    this.crdtHealTrailingTimers = /* @__PURE__ */ new Map();
+    /** See `crdtHealCooldown`. 15s (fix wave 2, was 30s): long enough that
+     *  open+catch-up+heal racing on the same note collapse to one handshake,
+     *  short enough that a genuinely-still-diverged note keeps retrying
+     *  within a session. */
+    this.healCooldownMs = 15e3;
+    /** Durable-queue entries whose delivery re-handshake has been FIRED but
+     *  not yet proven (Phase E3 review): the entry stays in the durable queue
+     *  until an inbound frame for its note arrives (`commitCrdtConvergence`
+     *  fires on every frame), which proves the room round-tripped on the live
+     *  socket — the client's STEP2 reply to the server's STEP1 carried the
+     *  pending local ops on that same round-trip. A nudge lost to a socket
+     *  drop leaves the entry queued; the next flush re-fires (cooldown-
+     *  bounded). Keyed by note_id → the entry's dequeue coordinates. */
+    this.pendingQueueDeliveries = /* @__PURE__ */ new Map();
     /** Optional CRDT enrollment tracker. When set, a pull that surfaces a
      *  CRDT-managed markdown note we don't have locally enrolls it (sends a
      *  sync-step-1) so the body is pulled over the y-protocols handshake — the
@@ -18146,6 +18208,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  from here so only ops written while we were away are replayed. 0 = replay
      *  from genesis (first-ever connect / after a state wipe). */
     this.catchupSeq = 0;
+    /** The vault change_seq watermark of the last FULLY-processed manifest pass
+     *  (Phase E1 #1065). Sent as `?since_seq=` so an unchanged vault
+     *  short-circuits the manifest fetch + the manifest-driven catch-up steps.
+     *  Persisted under `manifestSeq`; wiped with the per-vault state. */
+    this.manifestSeq = 0;
+    /** Cursor value of the last validator rewind — bounds the validator to ONE
+     *  re-serve per distinct discrepancy per session (see validateFromManifest).
+     *  null = no rewind yet (a numeric sentinel would collide with the
+     *  legitimate `minBehind - 1` target domain, which includes -1 and 0). */
+    this.lastValidatorRewind = null;
+    /** A pending validator rewind, consumed atomically by the next
+     *  `runSeqReplayOnce` (`catchupViaSeqReplay` is the SOLE cursor writer —
+     *  a direct `setCatchupSeq` here would race an in-flight replay's per-page
+     *  cursor persist and be silently clobbered). */
+    this.seqRewindFloor = null;
     /** When true, vault delete events are suppressed (used during local wipe). */
     this.suppressDeletes = !1;
     /** Paths modified during a pull that need pushing once pull completes. */
@@ -18251,6 +18328,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   setCrdtEditorRebind(fn) {
     this.crdtEditorRebind = fn;
+  }
+  setCrdtBoundBufferText(fn) {
+    this.crdtBoundBufferText = fn;
+  }
+  setCrdtRequestSave(fn) {
+    this.crdtRequestSave = fn;
   }
   setNoteIdMap(map3) {
     this.noteIdMap = map3;
@@ -18622,30 +18705,34 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
       }
   }
-  /** Adopt a not-live-bound CRDT note whose local Y.Doc has NO history yet
-   *  (#234). A feed-synced note (content delivered via the cursor feed, its
+  /** Converge a not-live-bound CRDT note whose local Y.Doc has NO history yet
+   *  (#234). A feed-synced note (content delivered via the op-log rows, its
    *  IndexedDB store never populated) has an empty Y.Doc. Two coupled failures
    *  arise if we treat it like a history-full note:
    *   - DOUBLING: `captureDiskDriftBeforeRemote` → `applyLocalEdit(disk)` seeds
    *     the whole disk as a FRESH lineage; the subsequent server-lineage merge
    *     unions two independent insertions of the baseline → baseline doubles.
-   *   - INCOMPLETENESS: the fanned-out/cold delta is one INCREMENTAL update; a
-   *     delta applied to an empty doc has no causal base, so its ops buffer and
-   *     the note never reconstructs.
-   *  Both are avoided by fetching FULL server state (since="" → full) and
-   *  adopting it, so the doc becomes history-full on the server's own lineage;
-   *  any un-pushed disk drift is then reconciled against it (no seed, no
-   *  double). Returns the adopted server head, or null on failure (caller leaves
-   *  crdtHead unadvanced + retries next poll/push). Best-effort: isolates its
-   *  own failure, never throws.
-   *
-   *  `fetchFull` supplies the FULL-state bytes for the empty doc — it defaults
-   *  to REST getUpdates, the fan-out caller's (applyPushedNoteUpdate) transport.
-   *  Sending the empty-doc state vector (not an empty `since`) makes the server
-   *  return full state. */
-  async adoptHistoryLessNote(path, noteId, fetchFull = (id2, sv) => this.api.getUpdates(id2, sv)) {
-    var _a;
-    if (!this.crdt) return null;
+   *   - INCOMPLETENESS: an INCREMENTAL delta applied to an empty doc has no
+   *     causal base, so its ops pend and the note never reconstructs.
+   *  Phase E3 (storm-safe rework): NEVER seed, NEVER open a room. Apply the
+   *  fanned-out delta directly to the empty doc:
+   *   - A note created while this device is online arrives as its FIRST
+   *     delta = the entire lineage since genesis — it integrates gap-free
+   *     and the doc is history-full on the server's own lineage, room-free.
+   *   - An incremental delta for a note that predates this device PENDS —
+   *     return "deferred" with NO re-handshake: disk convergence is owned by
+   *     the op-log rows (the caller's seq is not stamped, so the row is not
+   *     fence-masked), and the doc hydrates at open/bind time via the room.
+   *     A per-note room refire here re-created the connect storm at
+   *     reconnect scale (hundreds of enrolls → server rate limit → the one
+   *     note that genuinely needed a handshake starved; CI run 29942250643).
+   *  Any un-pushed disk drift is preserved to a keep-both conflict copy
+   *  BEFORE the apply (a gap-free integrate flushes server content over
+   *  disk via the manager's remote-merge listener); copy failure aborts
+   *  without applying so the sole live copy of the edit survives.
+   *  Best-effort: isolates its own failure, never throws. */
+  async adoptHistoryLessNote(path, noteId, update, head) {
+    if (!this.crdt) return "deferred";
     let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
     if (file instanceof import_obsidian21.TFile)
       try {
@@ -18653,91 +18740,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       } catch (e) {
         disk = null;
       }
-    let hasDrift = disk !== null && !exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk), lca = hasDrift && disk !== null ? (_a = this.baseStore) == null ? void 0 : _a.get(normalized) : void 0, keepBothCopied = !1;
-    if (hasDrift && disk !== null && !lca)
+    if (disk !== null && !exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk) && disk !== null) {
       try {
         let copy2 = await this.writeDriftConflictCopy(normalized, disk);
-        keepBothCopied = !0, rlog().info(
+        rlog().info(
           "conflict",
           `history-less drift \u2192 keep-both | original=${normalized} copy=${copy2}`
         );
       } catch (e) {
         return rlog().error(
           "conflict",
-          `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting adopt to retain the local edit for retry`
-        ), null;
+          `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}. Aborting apply to retain the local edit for retry`
+        ), "deferred";
       }
-    let head;
-    try {
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), full = await fetchFull(noteId, since);
-      head = full.head, await this.crdt.applyRemoteUpdate(noteId, full.update);
-    } catch (e) {
-      return rlog().warn(
-        "crdt",
-        `adoptHistoryLessNote: full-state adopt failed for ${path}: ${errMsg(e)}`
-      ), null;
+      this.recordCrdtBaseline(normalized, disk);
     }
-    return hasDrift && disk !== null && !keepBothCopied && await this.reconcileDriftOntoServer(normalized, noteId, disk), this.syncState.get(normalized) === void 0 && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId)), head;
-  }
-  /** Reconcile an un-pushed disk edit (`localDisk`) against a note whose Y.Doc
-   *  now holds the adopted SERVER lineage (`adoptHistoryLessNote` step 3). The
-   *  doc == server content at entry; disk was just overwritten with server
-   *  content by the adopt-flush, but `localDisk` holds the pre-adopt disk.
-   *   - LCA available (BaseStore has the last-synced base): a real 3-way merge
-   *     preserves both sides. Diff the merged text onto the server lineage via
-   *     `applyLocalEdit` (doc is history-full → diffIntoYText, NO seed → NO
-   *     double), then flush the merged result and push it (the local update
-   *     emitted by applyLocalEdit).
-   *   - No LCA, or the 3-way merge conflicts: keep BOTH, never lose or double.
-   *     The original note converges to SERVER (doc == disk == server already);
-   *     the local version is preserved as a separate conflict-copy note. This is
-   *     the CRDT-consistent shape of the legacy keep-both (server→original,
-   *     local→copy), so the Y.Doc and disk never disagree.
-   *  Best-effort: isolates its own failure, never throws. */
-  async reconcileDriftOntoServer(normalized, noteId, localDisk) {
-    var _a, _b;
-    if (!this.crdt) return;
-    let serverText;
-    try {
-      serverText = await this.crdt.projectedText(noteId);
-    } catch (e) {
-      rlog().warn(
-        "crdt",
-        `reconcileDriftOntoServer: projectedText failed for ${normalized}: ${errMsg(e)}`
-      );
-      return;
-    }
-    if (serverText === localDisk) return;
-    let base = (_a = this.baseStore) == null ? void 0 : _a.get(normalized);
-    if (base) {
-      let merge2 = threeWayMerge(base.content, localDisk, serverText);
-      if (merge2.clean) {
-        try {
-          await this.crdt.applyLocalEdit(noteId, merge2.merged), await this.flushFromCrdt(normalized, await this.crdt.projectedText(noteId)), (_b = this.baseStore) == null || _b.set(normalized, merge2.merged, base.version), rlog().info(
-            "conflict",
-            `history-less drift 3-way merged | path=${normalized} | baseLen=${base.content.length} localLen=${localDisk.length} remoteLen=${serverText.length} mergedLen=${merge2.merged.length}`
-          );
-        } catch (e) {
-          rlog().error(
-            "conflict",
-            `history-less 3-way merge apply failed for ${normalized}: ${errMsg(e)}`
-          );
-        }
-        return;
-      }
-    }
-    try {
-      let conflictPath = await this.writeDriftConflictCopy(normalized, localDisk);
-      rlog().info(
-        "conflict",
-        `history-less drift \u2192 keep-both | original=${normalized} copy=${conflictPath}`
-      );
-    } catch (e) {
-      rlog().error(
-        "conflict",
-        `history-less keep-both copy failed for ${normalized}: ${errMsg(e)}`
-      );
-    }
+    return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().info("crdt", `history-less delta pends for ${normalized} \u2014 socket converge`), this.socketConverge(normalized, noteId), "deferred") : (this.setCrdtHead(normalized, head), "applied");
   }
   /** Write `localDisk` to a dated `<name> (conflict <date>).md` copy beside
    *  `normalized` and record its baseline so it isn't re-pushed as drift.
@@ -18861,6 +18879,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCatchupSeq(seq3) {
     this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
   }
+  getManifestSeq() {
+    return this.manifestSeq;
+  }
+  setManifestSeq(seq3) {
+    this.manifestSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
+  }
   /** Gap-heal decision for a live op carrying the backend's vault `seq`.
    *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
    *  commutative + idempotent, so seq never gates application; a stale seq
@@ -18898,13 +18922,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  firing a replay round-trip per op raced the live path suite-wide. The
    *  trailing throttle keeps the heal guarantee (a true miss replays within
    *  SEQ_HEAL_COOLDOWN_MS) while bounding replay rate to one per window. */
-  applyLiveOpWithSeq(noteId, seq3, apply) {
+  async applyLiveOpWithSeq(noteId, seq3, apply) {
     var _a;
-    if (apply(), Number.isInteger(seq3)) {
+    let landed = await apply();
+    if (landed === "applied" && Number.isInteger(seq3)) {
       let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId), st = path ? this.syncState.get(path) : void 0;
       path && st && (st.seq === void 0 || seq3 > st.seq) && this.syncState.set(path, { ...st, seq: seq3 });
     }
-    return !Number.isInteger(seq3) || seq3 <= this.catchupSeq ? "applied" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq3} cursor=${this.catchupSeq}`), this.scheduleSeqHeal(), "healing");
+    return !Number.isInteger(seq3) || seq3 <= this.catchupSeq ? landed === "applied" ? "applied" : "deferred" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq3} cursor=${this.catchupSeq}`), this.scheduleSeqHeal(), "healing");
   }
   /** Trailing-edge throttle for heal-triggered seq replays: the first
    *  trigger fires immediately; triggers inside the cooldown coalesce into
@@ -18926,7 +18951,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19128,7 +19153,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a vault rename event. */
   async handleRename(file, oldPath) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleRename short-circuited \u2014 gate closed");
       return;
@@ -19137,42 +19162,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
-        if (isBinary)
-          await this.api.deleteAttachment(oldPath), this.goOnline();
-        else if (oldPath.endsWith(".md")) {
-          let relocatedId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
-          if (relocatedId)
-            if (this.crdtDelete && ((_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null && _e))
-              try {
-                await this.crdtDelete(relocatedId), this.goOnline();
-              } catch (e) {
-                rlog().warn(
-                  "crdt",
-                  `rename tombstone ack failed, enqueuing durable delete for ${oldPath}: ${errMsg(e)}`
-                ), (_f = this.crdtEnqueue) == null || _f.call(this, {
-                  kind: "delete",
-                  docId: relocatedId,
-                  path: oldPath
-                });
-              }
-            else
-              (_g = this.crdtEnqueue) == null || _g.call(this, {
-                kind: "delete",
-                docId: relocatedId,
-                path: oldPath
-              });
-        } else
-          await this.api.deleteNote(oldPath), this.goOnline();
+        isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : oldPath.endsWith(".md") || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
         isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
           timestamp: Date.now(),
-          vaultId: (_h = this.settings.vaultId) != null ? _h : void 0
+          vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_i = this.baseStore) == null || _i.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(file.path)) != null ? _k : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -19715,8 +19715,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return null;
   }
   /** The single catch-up path (socket-only, no REST fallback — a wedged socket
-   *  recovers on reconnect, Todd's call). Four responsibilities a bare op-log
-   *  replay can't cover, run around it:
+   *  recovers on reconnect, Todd's call). Five responsibilities a bare op-log
+   *  replay can't cover, run around it — the four below plus
+   *  `validateFromManifest` (E1 #1065), the whole-vault seq integer-diff that
+   *  re-serves consumed-but-unrecorded rows between steps 1 and 2:
    *   1. `reconcileFromManifest` — trash server-deletes even after op-log GC, and
    *      seed LOCAL empty-folder markers to the server.
    *   2. `catchupViaSeqReplay` — replay the seq-ordered op-log for note/attachment
@@ -19732,14 +19734,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *      and propagate remote folder deletes.
    *  Returns the applied-op count (for the progress recap / poll notice). Never
    *  throws — mirrors the old pull() error boundary so a caller (fullSync/poll)
-   *  never has to guard it. The manifest is fetched once and shared by steps 1
+   *  never has to guard it. The manifest is fetched once and shared by the
+   *  validator plus steps 1
    *  and 3. */
   async catchUp() {
     try {
-      let manifest = await this.api.getManifest();
+      let manifest = await this.api.getManifest(
+        this.manifestSeq > 0 ? this.manifestSeq : void 0
+      );
+      if (manifest != null && manifest.unchanged) {
+        await this.seedEmptyFolders();
+        let { applied: applied2 } = await this.catchupViaSeqReplay();
+        return applied2;
+      }
       await this.reconcileFromManifest(manifest);
-      let { applied } = await this.catchupViaSeqReplay();
-      await this.healDivergedLiveBoundNotes(manifest);
+      let behind = this.validateFromManifest(manifest), { applied } = await this.catchupViaSeqReplay(), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
       } catch (e) {
@@ -19749,7 +19758,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           e instanceof Error ? e.stack : void 0
         );
       }
-      return applied;
+      return typeof (manifest == null ? void 0 : manifest.change_seq) == "number" && behind === 0 && poked === 0 && (this.setManifestSeq(manifest.change_seq), await this.saveData({ manifestSeq: this.manifestSeq })), applied;
     } catch (e) {
       return rlog().error(
         "pull",
@@ -19761,7 +19770,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
     var _a;
     if (!this.crdtCatchupSince || !this.crdt) return 0;
-    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0, applied = 0;
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
+    this.seqRewindFloor !== null && !fromZero && (cursor = Math.min(cursor, this.seqRewindFloor)), this.seqRewindFloor = null;
+    let applied = 0;
     for (let page = 0; page < 1e5; page++) {
       let resp;
       try {
@@ -19823,123 +19834,180 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the doc after a successful apply (hibernateIfIdle) — same reasoning as
    *  coldReceive. Best-effort: isolates its own failure, never throws. */
   async applyPushedNoteUpdate(noteId, update, head) {
-    var _a, _b;
-    if (!this.crdt) return;
-    if (this.recentlyDeleted.has(noteId)) {
-      rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`);
+    var _a, _b, _c, _d;
+    if (!this.crdt) return "deferred";
+    if (this.recentlyDeleted.has(noteId))
+      return rlog().info("crdt", `fan-out skip (recent local delete): ${noteId}`), "deferred";
+    let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
+    if (!path) {
+      if (this.ensureNoteIdMapped(noteId), await this.idMapReconcileInflight, path = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.pathForId(noteId)) != null ? _d : null, !path)
+        return rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`), "deferred";
+      rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
+    }
+    if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
+      try {
+        return await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), "applied";
+      } catch (e) {
+        return rlog().error(
+          "crdt",
+          `Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        ), "deferred";
+      }
+    try {
+      if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0) {
+        if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId))
+          return rlog().warn("crdt", `gap heal: socket re-handshake for ${path}`), this.socketConverge(path, noteId), "deferred";
+        this.setCrdtHead(path, head);
+      } else if (await this.adoptHistoryLessNote(path, noteId, update, head) !== "applied") return "deferred";
+      return this.hibernateIfIdle(path, noteId), "applied";
+    } catch (e) {
+      return devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`), "deferred";
+    }
+  }
+  /** Socket-native re-handshake for a diverged LIVE-BOUND note (single-path
+   *  D3, fix wave 1). Supersedes the original verify-by-text design: text
+   *  equality between the doc's projection and a row snapshot does NOT prove
+   *  the doc holds the server's actual Yjs ops — two independently-typed
+   *  identical bodies are a disjoint lineage, and recording convergence on
+   *  that basis let the doubling class through. Also, that design recorded
+   *  on a match WITHOUT re-registering the room subscription, so a doc that
+   *  happened to already match a DEAD room's row stayed silently deaf.
+   *
+   *  Always fires STEP1 (`reset`+`enroll`) on a diverged row — restores
+   *  main's re-registration semantics unconditionally, no text compare.
+   *  Convergence is recorded separately and ONLY on op-level proof: see
+   *  `commitCrdtConvergence`, fired from CrdtManager's `onSynced` when a
+   *  real inbound frame actually applies non-empty. Cooldown-gated per
+   *  note_id (`crdtHealCooldown`/`healCooldownMs`) so open+catch-up+heal all
+   *  independently detecting the same divergence collapses to one handshake
+   *  instead of draining the handshake budget (#193 starvation class).
+   *
+   *  Fix wave 2: a poke suppressed by the cooldown COALESCES into one
+   *  trailing fire at window end (`crdtHealTrailingTimers`) instead of being
+   *  dropped — mirrors `scheduleSeqHeal`'s trailing-edge throttle. Dropping
+   *  it silently stranded a deaf note whose single recovery poke landed
+   *  inside the window (CI: `test_deaf_note_survives_handshake_rate_limit_
+   *  and_heals_on_restore`). Never throws. */
+  socketConverge(path, noteId) {
+    if (!this.crdtEnrollment) return;
+    let last2 = this.crdtHealCooldown.get(noteId), now = Date.now();
+    if (last2 === void 0 || now - last2 >= this.healCooldownMs) {
+      this.fireCrdtReHandshake(path, noteId);
       return;
     }
-    let path = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (path) {
-      if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path))) {
+    if (this.crdtHealTrailingTimers.has(noteId)) {
+      devLog().log("crdt", `socket converge: cooldown skip for ${path} (already coalesced)`);
+      return;
+    }
+    devLog().log("crdt", `socket converge: cooldown skip for ${path} \u2014 arming trailing fire`);
+    let remaining = this.healCooldownMs - (now - last2), timer = window.setTimeout(() => {
+      this.crdtHealTrailingTimers.delete(noteId), this.fireCrdtReHandshake(path, noteId);
+    }, remaining);
+    this.crdtHealTrailingTimers.set(noteId, timer);
+  }
+  /** The actual STEP1 fire, shared by the immediate and trailing-coalesced
+   *  paths in `socketConverge`. Records the cooldown timestamp —
+   *  ONLY called on a real fire, never on a suppressed attempt. */
+  fireCrdtReHandshake(path, noteId) {
+    var _a, _b;
+    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+  }
+  /** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
+   *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
+   *  place those legs' `serverHash`/`version`/`seq` get written. Wired
+   *  from CrdtManager's `onSynced` (crdt/wiring.ts), which fires from
+   *  `CrdtChannel.handleFrame` exactly when an inbound sync frame leaves the
+   *  doc's text non-empty — real ops landed, not a guess.
+   *
+   *  Fix wave 5: "an inbound frame landed" is necessary but NOT sufficient
+   *  proof the STAGED row's ops are the ones that landed — `onSynced` fires
+   *  on every non-empty frame, including an unrelated concurrent edit on
+   *  the same doc, which could commit a stage a millisecond after staging,
+   *  before the staged row's own ops ever arrived (CI run 29920053637).
+   *  When the stage carries plaintext (`content !== null`), commit ONLY if
+   *  the doc's projection now strictly equals it — the ops that produced a
+   *  match came from the server room round-trip, so post-handshake
+   *  text-equality IS sound proof here (unlike the deleted verify-first
+   *  skip, which compared BEFORE any handshake ever fired). On a mismatch
+   *  (or a `projectedText` throw — treated as mismatch, never commit on
+   *  error) the stage is left in place; the next inbound frame re-runs this
+   *  check, so the real edit's arrival commits it. A `content: null` stage
+   *  (manifest heal — hash-only, keyed HMAC, uncomputable client-side)
+   *  keeps the pre-wave-5 best-effort behavior: commit unverified on the
+   *  next non-empty frame.
+   *
+   *  Idempotent and cheap when nothing is staged (steady-state live traffic
+   *  fires this on every frame). Re-resolves the CURRENT path via
+   *  `noteIdMap` rather than trusting the path captured at stage time, so a
+   *  rename (path moved) or delete (id unmapped) between staging and commit
+   *  can't write syncState at a stale/dead path — no separate teardown hook
+   *  needed. Never throws into the CRDT manager's synchronous callback. */
+  async commitCrdtConvergence(noteId) {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    let queued = this.pendingQueueDeliveries.get(noteId);
+    if (queued) {
+      this.pendingQueueDeliveries.delete(noteId);
+      try {
+        await this.queue.dequeue(queued.path, queued.vaultId), this.issues.clear(queued.path), rlog().info("queue", `CRDT delivery settled via socket round-trip: ${queued.path}`);
+      } catch (e) {
+        rlog().warn(
+          "queue",
+          `CRDT delivery settle failed for ${queued.path}: ${errMsg(e)}`
+        );
+      }
+    }
+    let staged = this.pendingConvergence.get(noteId);
+    if (!staged) return;
+    if (staged.content !== null) {
+      let matches = !1;
+      if (this.crdt)
         try {
-          await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head);
+          matches = await this.crdt.projectedText(noteId) === staged.content;
         } catch (e) {
-          rlog().error(
+          devLog().log(
             "crdt",
-            `Live-bound fan-out apply failed for ${path}: ${errMsg(e)}`,
-            e instanceof Error ? e.stack : void 0
+            `socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`
           );
         }
+      if (!matches) {
+        devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
         return;
       }
-      try {
-        if (typeof this.crdt.hasHistory == "function" ? await this.crdt.hasHistory(noteId) : !0)
-          if (await this.captureDiskDriftBeforeRemote(path, noteId), await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId)) {
-            let since = toB64(await this.crdt.encodeStateVector(noteId)), { update: full, head: fullHead } = await this.api.getUpdates(
-              noteId,
-              since
-            );
-            await this.crdt.applyRemoteUpdate(noteId, full), await this.crdt.hasPendingGap(noteId) || this.setCrdtHead(path, fullHead);
-          } else
-            this.setCrdtHead(path, head);
-        else {
-          let adopted = await this.adoptHistoryLessNote(path, noteId);
-          if (adopted === null) return;
-          this.setCrdtHead(path, adopted);
-        }
-        this.hibernateIfIdle(path, noteId);
-      } catch (e) {
-        devLog().log("crdt", `applyPushedNoteUpdate: ${path} failed \u2014 ${errMsg(e)}`), rlog().warn("crdt", `Vault-channel update apply failed for ${path}: ${errMsg(e)}`);
+      let boundPath = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+      if (boundPath && this.isLiveBound(boundPath)) {
+        let buffer = (_c = (_b = this.crdtBoundBufferText) == null ? void 0 : _b.call(this, boundPath)) != null ? _c : null;
+        buffer !== null && buffer !== staged.content && (rlog().warn(
+          "crdt",
+          `socket converge: phantom binding rebound for ${boundPath}`
+        ), (_d = this.crdtEditorRebind) == null || _d.call(this, boundPath), (_e = this.crdtRequestSave) == null || _e.call(this, boundPath));
       }
     }
-  }
-  /** Shared Yjs-delta converge core for both catch-up legs (live-bound and
-   *  cold/backfill): pull the delta since our real state vector over REST
-   *  and apply it into the Y.Doc. Yjs merge is monotonic — applying a delta
-   *  can only add causality, never revert — so this is safe to run even
-   *  while a live edit from another device is mid-flight on this note,
-   *  unlike writing a content snapshot. Returns the head reached on success,
-   *  or null when the doc is still gapped (retry next poll) or the REST call
-   *  failed (isolated here, logged, never throws). */
-  async restConvergeCore(path, noteId) {
-    if (!this.crdt) return null;
-    try {
-      let since = toB64(await this.crdt.encodeStateVector(noteId)), { update, head } = await this.api.getUpdates(noteId, since);
-      return await this.crdt.applyRemoteUpdate(noteId, update), typeof this.crdt.hasPendingGap == "function" && await this.crdt.hasPendingGap(noteId) ? (rlog().warn(
-        "crdt",
-        `REST converge: pending gap remains for ${path} \u2014 retrying next poll`
-      ), null) : head;
-    } catch (e) {
-      return rlog().warn("crdt", `REST converge failed for ${path}: ${errMsg(e)}`), null;
-    }
-  }
-  /** Deterministic catch-up for a diverged LIVE-BOUND note: pull the delta
-   *  since our real state vector over REST and apply it to the live Y.Doc —
-   *  the editor binding paints it, no disk write. Returns true only when the
-   *  doc verifiably reached server state (applied, no pending gap), so the
-   *  caller records convergence for delivered data ONLY. Best-effort:
-   *  isolates its own failure, never throws. */
-  async restConvergeLiveBound(path, noteId) {
-    let head = await this.restConvergeCore(path, noteId);
-    return head === null ? !1 : (this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: live-bound ${path} caught up to head=${head}`), !0);
-  }
-  /** Deterministic catch-up for a diverged NOT-live-bound (cold) CRDT note:
-   *  same Yjs-delta core as restConvergeLiveBound, but there is no editor
-   *  binding to paint the doc. Replaces the old content-snapshot
-   *  `flushFromCrdt(path, content)` backfill, which reverted a fresher live
-   *  merge when the seq gap-heal's behind-detector fires a catch-up replay
-   *  DURING active editing on this note from another device — the feed's
-   *  content snapshot is checkpoint-lagged and carries no causality, so
-   *  applying it late can stomp a merge that landed since. The Yjs delta
-   *  path cannot: it can only add causality to the doc.
-   *
-   *  Disk itself is NOT written here: `restConvergeCore`'s `applyRemoteUpdate`
-   *  already flushed it. The manager's remote-merge listener (manager.ts)
-   *  captures the projection synchronously the instant the update integrates
-   *  and writes it via `onFlushToDisk` (wiring.ts -> `flushFromCrdt`), which
-   *  `applyRemoteUpdate` awaits before returning — so by the time this
-   *  function resumes, disk already holds the converged content. A second,
-   *  separate read-then-write here would race a concurrent live delta
-   *  landing between the read and the write: that delta's own newer
-   *  auto-flush could land first, and this tail's stale captured text would
-   *  then clobber it (the exact revert family this fixes elsewhere).
-   *  `projectedText` is read once, purely so the caller can hash what
-   *  actually landed for syncState bookkeeping — never to write disk again.
-   *  Returns that text on success, or null on failure/pending-gap — mirrors
-   *  restConvergeLiveBound's retry contract (never record convergence for
-   *  data that hasn't arrived). */
-  async restConvergeAndFlush(path, noteId) {
-    let head = await this.restConvergeCore(path, noteId);
-    if (head === null || !this.crdt) return null;
-    try {
-      let text2 = await this.crdt.projectedText(noteId);
-      return this.setCrdtHead(path, head), rlog().info("crdt", `REST converge: catch-up ${path} converged to head=${head}`), text2;
-    } catch (e) {
-      return rlog().warn(
-        "crdt",
-        `REST converge (catch-up hash read) failed for ${path}: ${errMsg(e)}`
-      ), null;
-    }
+    this.pendingConvergence.delete(noteId), this.crdtRehandshakeAttempts.delete(noteId);
+    let path = (_f = this.noteIdMap) == null ? void 0 : _f.pathForId(noteId);
+    if (path)
+      try {
+        let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+        this.syncState.set(path, {
+          ...(_h = this.syncState.get(path)) != null ? _h : {},
+          hash: localHash,
+          serverHash: staged.serverHash,
+          version: staged.version,
+          seq: staged.seq
+        }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+      } catch (e) {
+        rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+      }
   }
   /** Cheap mid-session divergence heal for the just-opened note (rework #6 —
    *  restores the coverage the removed `verifyConvergenceOnOpen` had, a note
    *  that missed a live announce/STEP2 during a fan-out storm, WITHOUT its
    *  per-open synchronous manifest-hash check + forced re-handshake, the
    *  #203 false-fire that caused the open-path lag). Fire-and-forget from
-   *  file-open: a single note, one delta-since-our-real-state-vector via the
-   *  existing guarded `restConvergeLiveBound` — empty (near-no-op) when
-   *  already converged. Live-bound-only first cut (design decision iii): a
+   *  file-open: a single note, one STEP1 re-handshake via
+   *  `socketConverge` — cheap even when already converged, since
+   *  the per-note cooldown collapses a redundant fire into a no-op.
+   *  Live-bound-only first cut (design decision iii): a
    *  just-opened note is live-bound after CrdtLiveViews.refresh(), so this
    *  covers the real case without a vault-wide heads fetch on every open; an
    *  idle note is still covered by reconnect catch-up (#5). Never throws. */
@@ -19954,7 +20022,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           return;
         }
         if (!this.isLiveBound(normalized)) return;
-        await this.restConvergeLiveBound(normalized, noteId);
+        this.socketConverge(normalized, noteId);
       } catch (e) {
         rlog().warn("crdt", `healNoteOnOpen ${path}: ${errMsg(e)}`);
       }
@@ -20073,18 +20141,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pulling = !1, this.suppressDeletes = !1, this.emitStatus(), await this.flushPostPullPushes();
     }
   }
-  /** Resolve a stream event's authoritative body: the broadcast's inline
-   *  content when present, else ONE getNote fetch (hash-only broadcasts / empty
-   *  or meta-projected notes carry no body). A learned empty-hash retires the
-   *  fetch for later inline-"" upserts carrying the same hash (see the ingress
-   *  guard). Shared by the CRDT first-delivery path and the legacy fallback so
-   *  the fetch + empty-hash learn lives in exactly one place. (getNote-for-sync
-   *  removal is Phase E.) */
-  async resolveEventBody(event) {
-    if (event.content !== void 0) return event.content;
-    let body = (await this.api.getNote(event.path)).content;
-    return body === "" && event.content_hash && (this.emptyContentHash = event.content_hash), body;
-  }
   /** Reshape a live stream event + resolved body into the single `SyncOp` shape
    *  so the CRDT-managed first-delivery / rename new-leg both converge through
    *  `applyOp`. */
@@ -20114,7 +20170,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.shouldIgnore(event.path)) return;
     devLog().log("ws", `${event.event_type} ${(_a = event.kind) != null ? _a : "note"}: ${event.path}`), rlog().info("ws", `Event: ${event.event_type} ${(_b = event.kind) != null ? _b : "note"}: ${event.path}`);
     let isAttachment = event.kind === "attachment";
-    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, will fetch: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
+    if (event.event_type === "upsert" && event.content === "" && event.content_hash && event.content_hash !== this.emptyContentHash && (rlog().info("ws", `Inline-empty body distrusted, routing to catch-up: ${event.path}`), event.content = void 0), event.event_type === "upsert" && !isAttachment && event.id) {
       let wsRelocationTs = Date.parse((_c = event.updated_at) != null ? _c : "");
       await this.moveIfIdRelocated(
         event.id,
@@ -20224,11 +20280,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT-managed: skipping legacy body apply for ${event.path}`
             );
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
-            if (priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np)) {
-              let body = await this.resolveEventBody(event);
-              body !== void 0 && await this.applyOp(this.eventToOp(event, body, noteId));
-            }
-            priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
+            priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np) && event.content !== void 0 && await this.applyOp(this.eventToOp(event, event.content, noteId)), priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
           }
         } else if (event.content !== void 0)
           await this.applyChange({
@@ -20423,34 +20475,72 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Before the REST purge, fullSync's pull had a SEPARATE cursor from the
    *  socket replay, so it re-delivered the diverged note and converged it; the
    *  cursor unification removed that. This restores it: a manifest snapshot
-   *  re-detects the divergence every catch-up and re-fires the same idempotent
-   *  `restConvergeLiveBound` (a converged note's serverHash already matches and
-   *  is skipped). Only live-bound notes (the editor owns the body, so disk
-   *  writes are unsafe) need it — idle divergences heal through the normal
-   *  op-log apply. Best-effort; never throws into catchUp. */
+   *  re-detects the divergence every catch-up and re-fires the STEP1
+   *  re-handshake (cooldown-gated, so a repeat detection is cheap). Only
+   *  live-bound notes (the editor owns the body, so disk writes are unsafe)
+   *  need it — idle divergences heal through the normal op-log apply.
+   *
+   *  Recording: this leg STAGES the manifest's `content_hash` into
+   *  `pendingConvergence` (fix wave 1) rather than recording it directly —
+   *  the manifest carries hashes only (keyed HMAC, uncomputable
+   *  client-side), so this leg can never itself prove the doc holds the
+   *  server's ops. `commitCrdtConvergence` commits the stage once a real
+   *  STEP2/update frame actually applies. Best-effort; never throws into
+   *  catchUp. */
+  /** Phase E1 (#1065): whole-vault seq integer diff. Flags a manifest note row
+   *  whose seq the replay has ALREADY consumed (row.seq <= catchupSeq) but
+   *  that this path never recorded — a silent apply-loss (the test_10
+   *  "received=yes materialized=no" class) — and rewinds the cursor so the
+   *  next replay re-serves it. Rows beyond the cursor need nothing: the
+   *  imminent replay fetches them anyway. A syncState entry without `seq` is
+   *  NOT flagged (the entry's existence proves a materialize happened;
+   *  replay writes and seq-carrying live ops both record seq — an entry
+   *  without one predates the field). Returns the behind-row count.
+   *  ponytail: one rewind per distinct discrepancy per session
+   *  (lastValidatorRewind) — a re-served row whose apply still refuses to
+   *  record stays behind forever and must not rewind-loop every poll. */
+  validateFromManifest(manifest) {
+    var _a, _b;
+    if (!((_a = manifest == null ? void 0 : manifest.notes) != null && _a.length)) return 0;
+    let cursor = this.getCatchupSeq(), minBehind = Number.POSITIVE_INFINITY, behind = 0;
+    for (let entry of manifest.notes) {
+      let seq3 = entry.seq;
+      if (typeof seq3 != "number" || !Number.isFinite(seq3) || seq3 > cursor) continue;
+      let stored = this.syncState.get((0, import_obsidian21.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
+      seq3 > recorded && (behind++, seq3 < minBehind && (minBehind = seq3));
+    }
+    if (behind === 0) return 0;
+    let target = minBehind - 1;
+    return target === this.lastValidatorRewind ? (rlog().warn(
+      "pull",
+      `manifest validator: ${behind} row(s) still behind after a re-serve \u2014 not rewinding again (cursor=${cursor})`
+    ), behind) : (this.lastValidatorRewind = target, rlog().warn(
+      "pull",
+      `manifest validator: ${behind} consumed-but-unrecorded row(s) \u2014 rewinding cursor ${cursor} \u2192 ${target} to re-serve`
+    ), this.seqRewindFloor = Math.max(0, target), behind);
+  }
   async healDivergedLiveBoundNotes(manifest) {
-    var _a, _b, _c, _d, _e;
-    if (!(!manifest || !this.crdt))
-      for (let entry of manifest.notes) {
-        let path = (0, import_obsidian21.normalizePath)(entry.path);
-        if (!this.isLiveBound(path)) continue;
-        let stored = this.syncState.get(path);
-        if (entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
-        let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
-        if (noteId)
-          try {
-            if (await this.restConvergeLiveBound(path, noteId) && entry.content_hash) {
-              let boundFile = this.app.vault.getFileByPath(path), localHash = (_d = stored == null ? void 0 : stored.hash) != null ? _d : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-              this.syncState.set(path, {
-                ...(_e = this.syncState.get(path)) != null ? _e : {},
-                hash: localHash,
-                serverHash: entry.content_hash
-              });
-            }
-          } catch (e) {
-            rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
-          }
-      }
+    var _a, _b, _c;
+    if (!manifest || !this.crdt) return 0;
+    let poked = 0;
+    for (let entry of manifest.notes) {
+      let path = (0, import_obsidian21.normalizePath)(entry.path);
+      if (!this.isLiveBound(path)) continue;
+      let stored = this.syncState.get(path);
+      if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
+      let noteId = (_c = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(path)) != null ? _b : entry.id) != null ? _c : null;
+      if (noteId)
+        try {
+          entry.content_hash && this.pendingConvergence.set(noteId, {
+            path,
+            serverHash: entry.content_hash,
+            content: null
+          }), this.socketConverge(path, noteId), poked++;
+        } catch (e) {
+          rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
+        }
+    }
+    return poked;
   }
   /** Apply a single remote change to the vault, with conflict detection.
    *  Returns true when a file was actually created, modified, or trashed.
@@ -20459,6 +20549,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
+    !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
     let normalized = (0, import_obsidian21.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
@@ -20513,8 +20604,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
-    if (!forceOverwrite && change.version !== void 0) {
-      let known = (_j = this.syncState.get(normalized)) == null ? void 0 : _j.version;
+    let crdtOwnsBody = !!(this.crdt && normalized.endsWith(".md")), noteId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) != null ? _k : null;
+    if (!forceOverwrite && !(crdtOwnsBody && noteId) && change.version !== void 0) {
+      let known = (_l = this.syncState.get(normalized)) == null ? void 0 : _l.version;
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
         return rlog().info(
           "pull",
@@ -20522,14 +20614,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         ), !1;
     }
     let crdtConflictFallthrough = !1;
-    if (this.crdt && normalized.endsWith(".md")) {
-      let noteId = (_l = (_k = this.noteIdMap) == null ? void 0 : _k.get(normalized)) != null ? _l : null;
+    if (crdtOwnsBody) {
       if (!this.app.vault.getFileByPath(normalized))
         noteId && this.isLiveBound(normalized) && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
         noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId));
-        let stored = this.syncState.get(normalized);
-        if ((stored == null ? void 0 : stored.seq) !== void 0 && change.seq !== void 0 && change.seq <= stored.seq || (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
+        let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
+        if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
             `CRDT catch-up: stale row (seq ${(_o = change.seq) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.seq) != null ? _p : "-"} v${(_q = change.version) != null ? _q : "-"}/${(_r = stored == null ? void 0 : stored.version) != null ? _r : "-"}) \u2014 history, skip ${change.path}`
@@ -20537,57 +20628,64 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
             let key = noteId != null ? noteId : normalized, prevAttempt = this.crdtRehandshakeAttempts.get(key), attempts = (prevAttempt == null ? void 0 : prevAttempt.hash) === change.content_hash ? prevAttempt.attempts + 1 : 1;
-            if (rlog().warn(
+            rlog().warn(
               "pull",
-              `CRDT catch-up: diverged + live-bound, re-handshake + REST converge (attempt ${attempts}) ${change.path}`
-            ), noteId && this.crdtEnrollment && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)), noteId ? await this.restConvergeLiveBound(normalized, noteId) : !1) {
-              this.crdtRehandshakeAttempts.delete(key);
-              let boundFile = this.app.vault.getFileByPath(normalized), localHash = (_s = stored == null ? void 0 : stored.hash) != null ? _s : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-              this.syncState.set(normalized, {
-                ...(_t2 = this.syncState.get(normalized)) != null ? _t2 : {},
-                hash: localHash,
-                serverHash: change.content_hash,
-                version: change.version,
-                seq: change.seq
-              });
-            } else
-              this.crdtRehandshakeAttempts.set(key, {
-                hash: change.content_hash,
-                attempts
-              });
+              `CRDT catch-up: diverged + live-bound, socket re-handshake (attempt ${attempts}) ${change.path}`
+            ), this.crdtRehandshakeAttempts.set(key, {
+              hash: change.content_hash,
+              attempts
+            }), noteId && (this.pendingConvergence.set(noteId, {
+              path: normalized,
+              serverHash: change.content_hash,
+              content,
+              version: change.version,
+              seq: change.seq
+            }), this.socketConverge(normalized, noteId));
           } else {
             let localFile = this.app.vault.getFileByPath(normalized), localNow = localFile ? await this.app.vault.cachedRead(localFile) : null;
-            if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content)
-              rlog().warn(
+            if (noteId && stored !== void 0 && stored.hash !== void 0 && content !== void 0 && fnv1a(content) === stored.hash && // The wipe-class quiet-record below takes precedence: no
+            // CAS base ever recorded AND disk already equals the row
+            // bytes — a re-handshake per such row is the storm.
+            !(stored.serverHash === void 0 && localNow === content))
+              return rlog().info(
                 "pull",
-                `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
-              ), crdtConflictFallthrough = !0;
-            else if (noteId) {
-              rlog().warn(
-                "pull",
-                `CRDT catch-up: pull backfilling diverged note via Yjs converge ${change.path}`
-              );
-              let flushed = await this.restConvergeAndFlush(normalized, noteId);
-              flushed !== null ? this.syncState.set(normalized, {
-                ...(_u = this.syncState.get(normalized)) != null ? _u : {},
-                hash: fnv1a(flushed),
-                version: change.version,
+                `CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`
+              ), this.pendingConvergence.set(noteId, {
+                path: normalized,
                 serverHash: change.content_hash,
-                seq: change.seq
-              }) : rlog().warn(
-                "pull",
-                `CRDT catch-up: Yjs converge failed or gapped, retrying next poll ${change.path}`
-              );
-            } else
-              rlog().warn(
-                "pull",
-                `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-              ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
-                hash: fnv1a(content),
+                content: null,
                 version: change.version,
-                serverHash: change.content_hash,
                 seq: change.seq
-              });
+              }), this.socketConverge(normalized, noteId), !1;
+            localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
+              "pull",
+              `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
+            ), crdtConflictFallthrough = !0) : noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
+              "pull",
+              `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
+            ), this.syncState.set(normalized, {
+              ...(_s = this.syncState.get(normalized)) != null ? _s : {},
+              hash: fnv1a(content),
+              version: change.version,
+              serverHash: change.content_hash
+            })) : noteId ? (rlog().warn(
+              "pull",
+              `CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`
+            ), this.pendingConvergence.set(noteId, {
+              path: normalized,
+              serverHash: change.content_hash,
+              content,
+              version: change.version,
+              seq: change.seq
+            }), this.socketConverge(normalized, noteId)) : (rlog().warn(
+              "pull",
+              `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
+            ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+              hash: fnv1a(content),
+              version: change.version,
+              serverHash: change.content_hash,
+              seq: change.seq
+            }));
           }
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
@@ -20614,14 +20712,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_v = this.baseStore) == null ? void 0 : _v.get(normalized);
+        let pullBase = (_t2 = this.baseStore) == null ? void 0 : _t2.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_w = this.baseStore) == null || _w.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20672,7 +20770,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_x = this.baseStore) == null || _x.set(
+            }), change.version != null && ((_v = this.baseStore) == null || _v.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20694,7 +20792,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_y = this.baseStore) == null || _y.set(
+            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20716,12 +20814,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
           hash: localHash,
           version: change.version,
-          serverHash: change.content_hash
-        }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+          serverHash: change.content_hash,
+          // E1 (#1065): record the row's seq so the manifest validator can
+          // integer-diff this path (a legacy change without one keeps the
+          // prior value rather than erasing it).
+          seq: typeof change.seq == "number" ? change.seq : (_x = this.syncState.get(normalized)) == null ? void 0 : _x.seq
+        }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
-        serverHash: change.content_hash
+        serverHash: change.content_hash,
+        // E1 (#1065): seq recorded for the manifest validator's integer diff.
+        seq: typeof change.seq == "number" ? change.seq : (_z = this.syncState.get(normalized)) == null ? void 0 : _z.seq
       }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
@@ -20740,7 +20844,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.syncState.set(normalized, {
       hash: fnv1a(content),
       version: change.version,
-      serverHash: change.content_hash
+      serverHash: change.content_hash,
+      // E1 (#1065): seq recorded for the manifest validator's integer diff.
+      seq: typeof change.seq == "number" ? change.seq : void 0
     }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
@@ -21440,10 +21546,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.queue.enqueue(entry), this.emitStatus();
   }
   /** Record a terminal (non-retryable) flush failure in the Sync Center and
-   *  dequeue the entry so it doesn't retry forever. Shared verbatim by both
-   *  runFlushQueue terminal paths (the crdt /updates branch and the legacy
-   *  note/attachment catch) so a change to how terminal failures surface can't
-   *  drift between them. */
+   *  dequeue the entry so it doesn't retry forever. Reached only from the legacy
+   *  note/attachment catch since Phase E3 — the crdt drain branch makes no
+   *  fallible HTTP call anymore (it settles via the socket round-trip). */
   async recordTerminalIssue(entry, classified) {
     var _a, _b, _c, _d;
     let now = Date.now();
@@ -21460,7 +21565,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }), issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_b = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), await this.queue.dequeue(entry.path, (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0);
   }
   /** Decide the fate of a queue entry whose flush just failed, and act on it.
-   *  Both runFlushQueue failure paths route here so they can't drift. Terminal
+   *  runFlushQueue's legacy note/attachment catch routes here (the crdt drain
+   *  branch stopped making HTTP calls in Phase E3). Terminal
    *  errors (413, auth, plan-limit) park immediately; transient errors (network,
    *  5xx) bump a PERSISTED attempt count and park only once they exhaust
    *  RETRY_CAP — previously both paths hardcoded attempts=1, so a persistently-
@@ -21603,21 +21709,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.api.pushAttachment(entry.path, base64, mimeType, mtime);
         } else {
           if (entry.crdt && entry.noteId && this.crdt && this.crdtOpsAvailable()) {
-            try {
-              let update = await this.crdt.encodeStateAsUpdate(entry.noteId);
-              await this.api.postUpdate(entry.noteId, update), await this.queue.dequeue(
-                entry.path,
-                (_d = (_c = entry.vaultId) != null ? _c : this.settings.vaultId) != null ? _d : void 0
-              ), this.issues.clear(entry.path), flushed++;
-            } catch (e) {
-              if (isHttpStatus(e, 404) || isHttpStatus(e, 410))
-                await this.queue.dequeue(
-                  entry.path,
-                  (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
-                ), this.issues.clear(entry.path), flushed++;
-              else if (await this.handleFlushFailure(entry, e) === "retry")
-                break;
-            }
+            (_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d && (this.pendingQueueDeliveries.set(entry.noteId, {
+              path: entry.path,
+              vaultId: (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
+            }), this.socketConverge((0, import_obsidian21.normalizePath)(entry.path), entry.noteId));
             continue;
           }
           if (entry.crdt && !this.crdtOpsAvailable()) {
@@ -21705,7 +21800,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.remotelyDeleted.clear();
     for (let timer of this.recentlyDeleted.values())
       window.clearTimeout(timer);
-    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
+    for (let timer of this.crdtHealTrailingTimers.values())
+      window.clearTimeout(timer);
+    this.crdtHealTrailingTimers.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
@@ -22603,7 +22701,7 @@ var CrdtReadingView = class {
 };
 
 // src/crdt/live/live-views.ts
-var ViewerRefcount = class {
+var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   constructor(onLastRelease) {
     this.viewers = /* @__PURE__ */ new Map();
     this.onLastRelease = onLastRelease;
@@ -22632,6 +22730,8 @@ var ViewerRefcount = class {
     this.localAwareness = new Awareness(this.awarenessDoc);
     /** One EditorController per live CodeMirror EditorView. */
     this.controllers = /* @__PURE__ */ new Map();
+    /** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
+    this.saveNudgeTimers = /* @__PURE__ */ new Map();
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
       this.onLastViewerRelease(path).catch((e) => {
         var _a, _b;
@@ -22647,6 +22747,51 @@ var ViewerRefcount = class {
   }
   isBound(path) {
     return this.refcount.isBound(path);
+  }
+  /** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
+   *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
+   *  skips the disk write for a bound path (the editor owns the file) — but
+   *  headless/unfocused Obsidian (CI) doesn't promptly flush a
+   *  programmatically-updated buffer on its own, so a converged CRDT doc can
+   *  sit unsaved on disk for tens of seconds. `requestSave()` is Obsidian's
+   *  own API for this (it flushes through Obsidian's pipeline, so it cannot
+   *  fight the binding — it IS the binding-authoritative save).
+   *
+   *  Debounced per path (trailing, `SAVE_NUDGE_DEBOUNCE_MS`) so a burst of
+   *  deltas from one remote edit collapses to one save call. No-op when
+   *  `path` has no active viewer — nothing to nudge, and no burst to
+   *  coalesce (also means a note that closes mid-debounce simply never
+   *  fires, which is correct: the last-viewer-release flush below already
+   *  covers that case via `onLastViewerRelease`). Never throws. */
+  requestSaveForBoundPath(path) {
+    if (!this.isBound(path)) return;
+    let existing = this.saveNudgeTimers.get(path);
+    existing !== void 0 && window.clearTimeout(existing);
+    let timer = window.setTimeout(() => {
+      this.saveNudgeTimers.delete(path), this.doRequestSave(path);
+    }, SAVE_NUDGE_DEBOUNCE_MS);
+    this.saveNudgeTimers.set(path, timer);
+  }
+  /** Fix wave 7 (#191 slice): read the live buffer of the editor currently
+   *  showing `path`, for commitCrdtConvergence's phantom-binding check.
+   *  Returns null when nothing shows the path (nothing to compare). */
+  boundBufferText(path) {
+    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+      let view = leaf.view;
+      if (view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path)
+        return view.getViewData();
+    }
+    return null;
+  }
+  doRequestSave(path) {
+    try {
+      for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+        let view = leaf.view;
+        view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
+      }
+    } catch (e) {
+      devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
+    }
   }
   /** The last viewer of `path` left: persist the current Y.Text to disk, then
    *  free the doc so the resident set stays bounded by open notes (closeDoc was
@@ -22718,7 +22863,10 @@ var ViewerRefcount = class {
   destroy() {
     for (let [cm, ctrl] of this.controllers)
       ctrl.release(cm);
-    this.controllers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
+    this.controllers.clear();
+    for (let timer of this.saveNudgeTimers.values())
+      window.clearTimeout(timer);
+    this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
     for (let path of this.refcount.boundPaths()) {
       let noteId = this.deps.resolveId(path);
       this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
@@ -22923,12 +23071,17 @@ function createCrdtWiring(deps) {
     onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
     canSendLive: deps.canSendLive,
     onFlushToDisk: async (noteId, content) => {
+      var _a2;
       let path = noteIdMap.pathForId(noteId);
       if (!path) {
         healUnknownNoteId(noteId, content);
         return;
       }
-      if (!deps.isBound(path) && await syncEngine.flushFromCrdt(path, content) === !1)
+      if (deps.isBound(path)) {
+        (_a2 = deps.onBoundUpdate) == null || _a2.call(deps, path);
+        return;
+      }
+      if (await syncEngine.flushFromCrdt(path, content) === !1)
         throw new Error(`flushFromCrdt reported a write failure for ${path}`);
     },
     // Adopt-first seed gate: never re-encode content the server already holds.
@@ -22943,6 +23096,12 @@ function createCrdtWiring(deps) {
         "crdt",
         `IndexedDB persist error for ${path} \u2014 sync continues in-memory: ${errMsg(err)}`
       );
+    },
+    // Fix wave 1: op-level convergence proof. Fires on every non-empty
+    // inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
+    // is staged for this note_id), so fire-and-forget is safe here.
+    onSynced: (noteId) => {
+      syncEngine.commitCrdtConvergence(noteId);
     }
   }), channel = new CrdtChannel({
     manager,
@@ -22975,9 +23134,11 @@ function createCrdtWiring(deps) {
   }), onCrdtMessage = (docId, b64) => {
     channel.handleFrame(docId, b64);
   }, onNoteYjsUpdate = (noteId, b64, head, seq3) => {
-    syncEngine.applyLiveOpWithSeq(noteId, seq3, () => {
-      syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head);
-    });
+    syncEngine.applyLiveOpWithSeq(
+      noteId,
+      seq3,
+      () => syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head)
+    );
   }, onCrdtDocReady = (docId, announcedPath) => {
     if (syncEngine.isSyncBlocked()) return;
     syncEngine.ensureNoteIdMapped(docId), announcedPath !== void 0 && syncEngine.discoverAnnouncedNote(docId, announcedPath);
@@ -23389,7 +23550,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
@@ -23399,7 +23560,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     }), this.syncEngine.setCrdtEditorRebind((path) => {
       var _a2;
       return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.rebindPath(path);
-    });
+    }), this.syncEngine.setCrdtBoundBufferText(
+      (path) => {
+        var _a2, _b2;
+        return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.boundBufferText(path)) != null ? _b2 : null;
+      }
+    ), this.syncEngine.setCrdtRequestSave(
+      (path) => {
+        var _a2;
+        return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
+      }
+    );
     let basesPath = `${this.manifest.dir}/sync-bases.json`;
     this.baseStore = new BaseStore(this.app.vault.adapter, basesPath), this.syncEngine.baseStore = this.baseStore;
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
@@ -23456,7 +23627,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }
     );
     let saved = await this.loadPluginData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (saved == null ? void 0 : saved.manifestSeq) !== void 0 && this.syncEngine.setManifestSeq(saved.manifestSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -23823,6 +23994,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // reason (like deviceId) or the next saveData() wipes it; 0 = replay
       // from genesis.
       catchupSeq: this.syncEngine.getCatchupSeq(),
+      // Manifest since_seq watermark (E1 #1065) — re-listed for the same
+      // wholesale-save reason.
+      manifestSeq: this.syncEngine.getManifestSeq(),
       offlineQueue: offlineQueue != null ? offlineQueue : this.syncEngine.queue.all(),
       // Re-listed on every wholesale save (like offlineQueue) or the next
       // saveData() wipes the durable CRDT ops.
@@ -23985,6 +24159,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     } catch (e) {
       rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
     }
+    this.syncEngine.flushQueue();
   }
   /** Attempt to connect the WebSocket channel with retry on getMe() failure. */
   connectChannel(attempt = 0, epoch = this.channelEpoch) {
@@ -24065,6 +24240,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           isBound: (path) => {
             var _a2, _b2;
             return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
+          },
+          // Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
+          // flush a programmatically-updated bound editor to disk — nudge
+          // Obsidian's own save pipeline after a remote merge paints in.
+          onBoundUpdate: (path) => {
+            var _a2;
+            return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
           },
           // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
           // a brand-new note's crdt_create must land before any crdt_msg, or the

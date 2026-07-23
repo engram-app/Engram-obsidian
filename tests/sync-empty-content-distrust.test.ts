@@ -13,7 +13,7 @@
  * through to the fetch branch, so the body is verified via GET before any
  * write. A genuinely empty note costs one GET and still converges.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
@@ -80,7 +80,7 @@ beforeEach(() => {
 });
 
 describe("inline-empty content with a content_hash is fetched, not written", () => {
-	test("CRDT first-delivery: content:'' + content_hash fetches the real body", async () => {
+	test("CRDT first-delivery: content:'' + content_hash routes to the op-log catch-up — never fetches, never writes '' (Phase E3)", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
@@ -88,9 +88,11 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
 		engine.setLiveBoundCheck(() => false);
-		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
-			path: "renamed/note.md",
-			content: "# real body",
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
 		});
 
 		await engine.handleStreamEvent({
@@ -102,10 +104,12 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			version: 2,
 		} as any);
 
-		expect(mockApi.getNote).toHaveBeenCalledWith("renamed/note.md");
-		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls;
-		expect(created.length).toBeGreaterThan(0);
-		expect(created[0]![1]).toBe("# real body");
+		// Distrusted inline-"" is stripped, and the content-absent leg NEVER
+		// fetches (getNote-for-sync deleted): the replay row carries the real
+		// bytes. No 0-byte file can materialize from the fabricated "".
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(replay).toHaveBeenCalled();
 	});
 
 	test("legacy (non-CRDT) upsert: content:'' + content_hash fetches, never applies ''", async () => {
@@ -134,12 +138,11 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		}
 	});
 
-	test("a learned empty-content hash retires the extra GET for genuinely empty notes", async () => {
-		// review finding sync.ts:3460: content_hash is a per-user HMAC the
-		// client cannot derive, so the guard taxes every truly-empty note with
-		// a GET forever. But the hash is deterministic per user: once ONE fetch
-		// proves a hash maps to "", later inline-empty events carrying that
-		// exact hash are trustworthy and skip the roundtrip.
+	test("an op-log row teaches the empty-content hash; later inline-'' events with that hash apply without a roundtrip", async () => {
+		// content_hash is a per-user HMAC the client cannot derive, and the
+		// learn-by-fetch is deleted (Phase E3). But the hash IS deterministic:
+		// an authoritative op-log ROW proving a hash maps to "" teaches it, so
+		// later inline-empty EVENTS carrying that exact hash are trustworthy.
 		const engine = createEngine();
 		engine.setCrdtManager({
 			applyLocalEdit: mock().mockReturnValue("x"),
@@ -147,23 +150,19 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		} as any);
 		engine.setNoteIdMap(new NoteIdMap());
 		engine.setLiveBoundCheck(() => false);
-		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
-			path: "a.md",
-			content: "",
-		});
 
-		// First empty note: distrusted, fetched, and the empty hash is learned.
-		await engine.handleStreamEvent({
-			event_type: "upsert",
+		// An op-log row (catch-up replay) carrying a genuinely empty body
+		// teaches its hash.
+		await engine.applyChange({
 			path: "a.md",
-			id: "note-id-a",
+			action: "upsert",
 			content: "",
 			content_hash: "H-empty",
 			version: 1,
+			mtime: 1,
 		} as any);
-		expect(mockApi.getNote).toHaveBeenCalledTimes(1);
 
-		// Second empty note with the SAME hash: trusted inline, no extra GET.
+		// A later broadcast with the SAME hash: trusted inline, no fetch.
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			path: "b.md",
@@ -172,7 +171,7 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			content_hash: "H-empty",
 			version: 1,
 		} as any);
-		expect(mockApi.getNote).toHaveBeenCalledTimes(1);
+		expect(mockApi.getNote).not.toHaveBeenCalled();
 		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls;
 		expect(created.map((c: unknown[]) => c[0])).toContain("b.md");
 	});

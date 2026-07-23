@@ -1,11 +1,13 @@
 # Context Doc: Catch-up convergence (missed-delivery healing)
 
-_Last verified: 2026-07-08_
+_Last verified: 2026-07-22 (Phase E3 update)_
 
 ## Status
 Working — shipped in plugin PRs #197 (v1.11.22) + #198 (v1.11.23), backend v0.5.642; hardened by #207/#209/#211 (v1.11.31-33) after reruns=0 unmasked three holes in the original design (see "The four guards").
 
-**Superseded (2026-07, Plan B1 CRDT-authoritative rewire, Task 6):** the per-open handshake `verifyConvergenceOnOpen` described in (c) below was REMOVED. File-open is now a pure local bind (`this.crdtLiveViews?.refresh()`, no hash comparison, no REST round-trip). Convergence on missed deliveries is now owned entirely by socket vault-catchup (`SyncEngine.catchupViaSocket()`) run at connect/reconnect (`main.ts` `onStatusChange`) and at `onLayoutReady`, over `crdt_catchup_heads`/`crdt_catchup_delta`. The rest of this doc (id adoption, base_hash CAS, backfill, the four guards) is still accurate — only mechanism (c) changed.
+**Superseded (2026-07, Plan B1 CRDT-authoritative rewire, Task 6):** the per-open handshake `verifyConvergenceOnOpen` described in (c) below was REMOVED. File-open is now a pure local bind (`this.crdtLiveViews?.refresh()`, no hash comparison, no REST round-trip). Convergence on missed deliveries is now owned entirely by socket vault-catchup (`SyncEngine.catchupViaSocket()`) run at connect/reconnect (`main.ts` `onStatusChange`) and at `onLayoutReady`, over `crdt_catchup_heads`/`crdt_catchup_delta`.
+
+**Superseded again (2026-07-22, Phase E3 REST-converge purge):** every REST leg this doc's mechanisms leaned on is now DELETED — `api.getUpdates`/`api.postUpdate` and the whole restConverge family are gone. Mechanism (b)'s "backfill the pull body" is now a stage-then-fire socket re-handshake (`pendingConvergence` + `socketConverge` + content-verified `commitCrdtConvergence`) for BOTH the live-bound and cold legs; the offline-queue "REST-fallback push (channel down)" in guard 1's narrative no longer exists (a channel-down crdt entry stays durably queued and settles only when an inbound frame proves the socket round-trip). The id-adoption story, `base_hash` CAS gate, dirty-guard conflict routing, and the guards' *reasoning* remain accurate — only the transport under them changed. Current mechanism detail: `docs/context/` Phase E3 notes + `src/sync.ts` docstrings around `socketConverge`.
 
 ## What This Is
 Why a missed CRDT delivery used to be missed forever, and the healing system (PRs #197 + #198, 2026-07-07/08) that makes the plugin converge instead of silently diverging or deleting content.

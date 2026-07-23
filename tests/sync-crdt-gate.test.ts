@@ -20,7 +20,7 @@
  *     edit goes through pushNote (legacy path), not dropped.
  *   - applyChange() for markdown completes normally (writes disk) when CRDT is unset.
  */
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
@@ -341,14 +341,19 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(enroll).not.toHaveBeenCalled();
 	});
 
-	test("upsert hash-only first-delivery fetches the body once and materializes (CRDT active, markdown)", async () => {
+	test("upsert hash-only first-delivery routes to the op-log catch-up — never fetches (Phase E3)", async () => {
 		// The prod broadcast is hash-only (serialize_note drops content). A
-		// first-delivery idle note therefore has no inline body, so it fetches the
-		// AUTHORITATIVE content once (getNote) and writes it room-free. This is real
-		// server content, not an unsynced empty projection, so it does not hit the
-		// #547 premature-empty class.
+		// first-delivery idle note has no inline body; the op-log replay rows
+		// carry the REAL content, so the event routes to catchupViaSeqReplay
+		// instead of a REST getNote fetch (Phase E3: getNote-for-sync deleted).
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
+		});
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
@@ -358,8 +363,9 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			content_hash: "abc123",
 		});
 
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/test.md");
-		expect(mockApp.vault.create).toHaveBeenCalled();
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(replay).toHaveBeenCalled();
 	});
 
 	test("DELETE event for markdown still processes via legacy path when CRDT active", async () => {

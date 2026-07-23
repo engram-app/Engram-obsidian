@@ -61,6 +61,7 @@ function flushMicrotasks(): Promise<void> {
 type FakeOpts = {
 	reconcile?: () => Promise<number>;
 	lastMapReconcileAt?: number;
+	flushQueue?: () => Promise<number>;
 };
 
 function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>, opts?: FakeOpts) {
@@ -101,6 +102,7 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 		},
 		syncEngine: {
 			getStatus: () => "idle",
+			flushQueue: opts?.flushQueue ?? (() => Promise.resolve(0)),
 			clearConfirmedNoteIds: () => {},
 			reconcileNoteIdMapFromManifest: opts?.reconcile ?? (() => Promise.resolve(0)),
 			// Reconnect convergence replays the seq-ordered op-log over the socket
@@ -182,6 +184,38 @@ describe("connectChannel reconnect catch-up", () => {
 
 		expect(catchup).toHaveBeenCalled();
 		expect(pull).not.toHaveBeenCalled();
+	});
+
+	test("crdt join drains the durable queue AFTER catch-up (Phase E3 — socket is the only delivery path)", async () => {
+		// A crdt edit captured while the topic was down (e.g. held behind its
+		// create-ack) sits in the durable queue; the drain deliberately skips
+		// it until the topic is LIVE. Without this kick it waits for the next
+		// periodic flush (~20s+) — e2e test_82's push stalled past the assert
+		// window (CI 29945060029). The deleted REST /updates fallback used to
+		// deliver regardless of topic state, masking the missing kick.
+		const order: string[] = [];
+		const catchup = mock(() => {
+			order.push("catchup");
+			return Promise.resolve();
+		});
+		const pull = mock(() => Promise.resolve(0));
+		const flushQueue = mock(() => {
+			order.push("flush");
+			return Promise.resolve(0);
+		});
+		const fakeThis = makeFakeThis(catchup, pull, { flushQueue });
+
+		runConnectChannel(fakeThis);
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		fakeThis.noteStream?.onCrdtJoined?.();
+		await flushMicrotasks();
+		await flushMicrotasks();
+		await flushMicrotasks();
+
+		expect(flushQueue).toHaveBeenCalled();
+		expect(order).toEqual(["catchup", "flush"]);
 	});
 
 	test("a crdt join after the throttle window reconciles the noteIdMap before catchup", async () => {
