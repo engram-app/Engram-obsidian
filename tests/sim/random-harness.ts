@@ -17,12 +17,19 @@
 // that nothing silently wiped (#288).
 //
 // ============================================================================
-// WHY THIS IS A TOOL, NOT A GREEN TEST.
+// STATUS UPDATE (editor-enrollment landed): gap #1 below is now CLOSED — the
+// tier MODELS editor binding/enrollment (Replica.openNote → history-FULL Y.Doc),
+// so sustained CONCURRENT ONLINE editing now converges under the strict oracle
+// and is a committed gating suite: `tests/sim/random.test.ts`. THIS file stays a
+// TOOL (`.ts`, never collected by `bun test`) for exploring the STILL-gapped
+// configs the committed suite deliberately scopes out — offline-online editing,
+// create-during-edit, and delete/rename — which remain divergent for the
+// FIDELITY reason in gap #2 + the pull-only-rejoin limitation (documented in
+// random.test.ts's header). Its workload below still edits WITHOUT opening
+// (unbound, history-less), so it also preserves a live demonstration of the
+// pre-enrollment conflict-copy storm gap #1 described for comparison.
 //
-// This harness CANNOT be made deterministically green in the CURRENT sim tier
-// (measured: 5-replica ~0/12 seeds; even 2-replica no-delete ~1/10). It is kept
-// as runnable scaffolding + an executable spec of the blocker, so that when the
-// P2 fidelity work lands it can be promoted to a real suite and will pass.
+// WHY THIS WORKLOAD STILL DIVERGES (as a tool):
 //
 // It reliably DIVERGES because of TWO FOUNDATIONAL tier-fidelity limits, both of
 // which the tier's own design docs already disclose (see also

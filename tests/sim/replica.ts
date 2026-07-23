@@ -24,9 +24,19 @@
 //     (main.ts:1671-1698, connectChannel is single-shot here);
 //   - ensureDocSchema IDB-wipe (main.ts:1842-1868) — a schema-migration
 //     lifecycle step, not a convergence path;
-//   - CrdtLiveViews + editor extension (no Obsidian editor headless), so
-//     setLiveBoundCheck is left at its default (isLiveBound -> false), which is
-//     exactly correct: a headless note is never live-bound;
+//   - CrdtLiveViews + the CodeMirror editor extension (no Obsidian editor
+//     headless). The ONE convergence-relevant behaviour that binding drives —
+//     STEP1 enrollment (history-FULL Y.Doc) + the bound-note edit/flush routing
+//     it gates — is modeled DIRECTLY here (see openNote/closeNote/editNote and
+//     the boundPaths set) against the SAME real CrdtEnrollment / CrdtManager /
+//     SyncEngine seams main.ts wires (main.ts:623 enroll-on-open,
+//     :1912/:1962 isBound + setLiveBoundCheck, :1916 onBoundUpdate,
+//     reEnrollOpenCrdtNotes on rejoin). What is NOT reproduced is the
+//     per-keystroke y-codemirror.next binding: an edit to an OPEN note feeds the
+//     Y.Text via `manager.applyLocalEdit` (the same manager method routeModify
+//     drives) in ONE whole-content diff instead of keystroke deltas — end Y.Text
+//     state is identical, both emit valid Yjs updates on the shared lineage.
+//     This is the sim's one editor stand-in (T1); everything else is real-class;
 //   - the plan-state / folder-resync / vault-deleted / auth-provider / remote-
 //     logger plumbing — none of it touches the note-convergence data plane.
 //
@@ -51,13 +61,14 @@ import { EngramApi } from "../../src/api";
 import { NoteChannel } from "../../src/channel";
 import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
+import type { CrdtEnrollment } from "../../src/crdt/enrollment";
 import type { CrdtManager } from "../../src/crdt/manager";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import { createCrdtWiring } from "../../src/crdt/wiring";
 import { SyncEngine } from "../../src/sync";
 import { SyncLog } from "../../src/sync-log";
 import { DEFAULT_SETTINGS, type EngramSyncSettings } from "../../src/types";
-import { TFile, TFolder, requestUrl as baseRequestUrl } from "../__mocks__/obsidian";
+import { TFile, TFolder, requestUrl as baseRequestUrl, normalizePath } from "../__mocks__/obsidian";
 import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
@@ -181,6 +192,19 @@ export class Replica {
 
 	private readonly app: SimApp;
 	private readonly channel: NoteChannel;
+	private readonly enrollment: CrdtEnrollment;
+	/** Paths this replica has "opened" in an editor (makes isBound true + drives
+	 *  the live-editor edit/flush routing). Modeled here because there is no real
+	 *  CrdtLiveViews headless — see the file header's editor-binding note. */
+	private readonly boundPaths: Set<string>;
+	/** Opened paths whose Y.Doc has been SEEDED (history-full) — the point the
+	 *  real EditorController activates its binding and starts forwarding edits.
+	 *  Before this, `bindTo` DEFERS (`deferUntilSeeded`, editor-controller.ts:110)
+	 *  precisely so a keystroke never seeds a second lineage on top of the
+	 *  server's (the #234/#846 doubling). editNote AND the bound-disk flush honor
+	 *  this gate: until seed, the editor BUFFER (= disk) is authoritative, so the
+	 *  flush must not overwrite disk with the still-empty Y.Text (a wipe). */
+	private readonly hydrated: Set<string>;
 
 	private constructor(args: {
 		id: string;
@@ -190,6 +214,9 @@ export class Replica {
 		crdtManager: CrdtManager;
 		app: SimApp;
 		channel: NoteChannel;
+		enrollment: CrdtEnrollment;
+		boundPaths: Set<string>;
+		hydrated: Set<string>;
 	}) {
 		this.id = args.id;
 		this.engine = args.engine;
@@ -198,6 +225,9 @@ export class Replica {
 		this.crdtManager = args.crdtManager;
 		this.app = args.app;
 		this.channel = args.channel;
+		this.enrollment = args.enrollment;
+		this.boundPaths = args.boundPaths;
+		this.hydrated = args.hydrated;
 	}
 
 	/** Oracle (Task 6) accessor: the #288 wipe-detector journal — every
@@ -481,18 +511,61 @@ export class Replica {
 			channel.crdtCatchupSince(cursorSeq, limit),
 		);
 
+		// Paths this replica has an editor open on (openNote adds, closeNote
+		// removes). Backs isBound + setLiveBoundCheck below, exactly as
+		// CrdtLiveViews.isBound does in production (main.ts:1912/1962).
+		const boundPaths = new Set<string>();
+		const hydrated = new Set<string>();
+		// Forward-ref (same pattern as `noteStream` above): the onBoundUpdate flush
+		// needs `manager`, which is only assigned after the wiring is built. The
+		// closure is never invoked until a runtime remote-merge fires onFlushToDisk,
+		// well after `boundFlush` is set below.
+		let boundFlush: (path: string) => void = () => {};
+
 		// CRDT data-plane wiring (main.ts:1875-2003 → createCrdtWiring + handlers).
 		const wiring = createCrdtWiring({
 			noteIdMap,
 			syncEngine: engine,
 			sendCrdt: (docId, frame) => channel.sendCrdt(docId, frame),
-			isBound: () => false, // no live editor headless
+			isBound: (path) => boundPaths.has(normalizePath(path)), // main.ts:1912
+			onBoundUpdate: (path) => boundFlush(path), // main.ts:1916
 			canSendLive: (noteId) => engine.hasServerNote(noteId), // main.ts:1890
 			// Sim seam: namespace the IndexedDB store per replica (see file header).
 			dbPrefix: id,
 		});
 		const manager = wiring.manager;
 		engine.setCrdtEnrollment(wiring.enrollment); // main.ts:1900
+		// Tell the engine which paths have a live editor binding so handleModify
+		// skips re-feeding disk content into the Y.Text for open notes (main.ts:1962).
+		engine.setLiveBoundCheck((path) => boundPaths.has(normalizePath(path)));
+
+		// requestSaveForBoundPath analogue (main.ts:1916 onBoundUpdate): a remote
+		// merge painted into a bound note's Y.Doc, but onFlushToDisk SKIPS the disk
+		// write for a bound path (the editor owns the file). Production nudges
+		// Obsidian's own save pipeline (view.requestSave) to flush the bound buffer;
+		// headless, we flush the projected Y.Text through the SAME
+		// SyncEngine.flushFromCrdt the live-views last-release path uses. Routed
+		// through a virtual timer so drain() drives it deterministically.
+		boundFlush = (path: string): void => {
+			window.setTimeout(() => {
+				void (async () => {
+					const norm = normalizePath(path);
+					// Only a SEEDED (hydrated) doc may overwrite disk: until seed the
+					// editor buffer (= disk) is authoritative and the Y.Text is empty —
+					// flushing it would wipe the note (real requestSave writes the
+					// buffer, never an empty projection).
+					if (!boundPaths.has(norm) || !hydrated.has(norm)) return;
+					const noteId = noteIdMap.get(path);
+					if (!noteId) return;
+					const text = await manager.projectedText(noteId);
+					// Never wipe: a transiently-empty projection (doc reset/reopened
+					// between the hydrated check and this read) must not overwrite the
+					// authoritative disk content — the real editor buffer still holds it.
+					if (text.length === 0) return;
+					await engine.flushFromCrdt(path, text);
+				})();
+			}, 0);
+		};
 		channel.onCrdtMessage = wiring.onCrdtMessage; // main.ts:1937
 		channel.onCrdtDocReady = wiring.onCrdtDocReady; // main.ts:1938
 		channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound; // main.ts:1939
@@ -517,8 +590,10 @@ export class Replica {
 		};
 
 		// Mirror of main.ts's onCrdtTopicJoined (reconnect convergence): reconcile the
-		// id-map from the manifest, reset enrollments, then replay the seq op-log.
-		// reEnrollOpenCrdtNotes is a no-op headless (no open editors).
+		// id-map from the manifest, reset enrollments, re-enroll every open note, then
+		// replay the seq op-log. reEnrollOpenCrdtNotes (main.ts:1666) re-fires a fresh
+		// STEP1 for each note still open in an editor so the server re-registers this
+		// device as a room observer — headless, "open" is the boundPaths set.
 		async function onCrdtTopicJoined(): Promise<void> {
 			try {
 				await engine.reconcileNoteIdMapFromManifest();
@@ -527,6 +602,9 @@ export class Replica {
 			}
 			wiring.enrollment.resetAll();
 			wiring.clearStrandHealAttempts();
+			for (const p of boundPaths) {
+				wiring.enrollment.enroll(noteIdMap.getOrMint(p));
+			}
 			try {
 				await engine.catchupViaSeqReplay();
 			} catch {
@@ -540,7 +618,18 @@ export class Replica {
 
 		void channel.connect(); // main.ts:2013
 
-		return new Replica({ id, engine, vaultDir, noteIdMap, crdtManager: manager, app, channel });
+		return new Replica({
+			id,
+			engine,
+			vaultDir,
+			noteIdMap,
+			crdtManager: manager,
+			app,
+			channel,
+			enrollment: wiring.enrollment,
+			boundPaths,
+			hydrated,
+		});
 	}
 
 	// ------------------------------------------------------------------------
@@ -553,9 +642,98 @@ export class Replica {
 		await this.app.vault.create(path, content);
 	}
 
+	/** Open a note in an editor: makes isBound(path) true and fires the real
+	 *  STEP1 enrollment (main.ts:623 active-leaf-change → enroll(getOrMint(path))),
+	 *  so the note pulls remote CRDT history and becomes history-FULL. A real user
+	 *  must open a note before editing it; the random workload mirrors that.
+	 *
+	 *  Also arms the deferUntilSeeded gate: a doc that already carries history (a
+	 *  locally-created note) is editable at once; a history-less one (received via
+	 *  catch-up, disk-only) becomes editable only once STEP2 seeds it — matching
+	 *  EditorController.bindTo, which defers its binding until the doc is seeded. */
+	async openNote(path: string): Promise<void> {
+		const norm = normalizePath(path);
+		this.boundPaths.add(norm);
+		const id = this.noteIdMap.getOrMint(path);
+		this.enrollment.enroll(id);
+		// Fire-and-forget (scheduler-driven, like every CRDT op here): mark the
+		// note hydrated now if the Y.Text already has content, else once its first
+		// non-empty seed lands. Deterministic — the seed arrives via a scheduled
+		// STEP2 frame that drain() delivers in seed order.
+		void (async () => {
+			const text = (await this.crdtManager.getDoc(id)).getText("content");
+			if (text.length > 0) {
+				this.hydrated.add(norm);
+				return;
+			}
+			const onSeed = (): void => {
+				if (text.length > 0) {
+					this.hydrated.add(norm);
+					text.unobserve(onSeed);
+				}
+			};
+			text.observe(onSeed);
+		})().catch(() => {});
+	}
+
+	/** Close the editor: flush the projected Y.Text to disk and free the doc
+	 *  (mirrors CrdtLiveViews.onLastViewerRelease), then drop the binding. The
+	 *  flush awaits IndexedDB, which only the scheduler drives, so — like every
+	 *  other CRDT op in this tier — it is FIRED and the caller's drain() completes
+	 *  it (awaiting it here without a drain would deadlock the virtual clock). */
+	async closeNote(path: string): Promise<void> {
+		const norm = normalizePath(path);
+		if (!this.boundPaths.has(norm)) return;
+		this.boundPaths.delete(norm);
+		const wasHydrated = this.hydrated.delete(norm);
+		const noteId = this.noteIdMap.get(path);
+		if (!noteId) return;
+		void (async () => {
+			// Only flush a seeded doc (see boundFlush), and NEVER write an empty
+			// projection over disk (a transient reset would otherwise wipe the note —
+			// the real editor buffer still holds the content across a close).
+			if (wasHydrated) {
+				const text = await this.crdtManager.projectedText(noteId);
+				if (text.length > 0) await this.engine.flushFromCrdt(path, text);
+			}
+			this.crdtManager.closeDoc(noteId);
+		})().catch(() => {});
+	}
+
 	async editNote(path: string, content: string): Promise<void> {
 		const file = this.app.vault.getFileByPath(path);
 		if (!file) throw new Error(`editNote: no file at ${path}`);
+		if (this.boundPaths.has(normalizePath(path))) {
+			// deferUntilSeeded: the real editor does NOT forward a keystroke into a
+			// history-less doc (it would seed a second lineage → doubling). Until the
+			// server seeds this note's Y.Doc, the edit is buffered in the editor, not
+			// yet on the wire. Model that by dropping the edit here — a later edit
+			// (after hydration) forwards convergently. NEVER touch disk without the
+			// Y.Text, or the bound path would drift from its authoritative doc.
+			if (!this.hydrated.has(normalizePath(path))) return;
+			// Live-editor edit: the y-codemirror.next binding would stream keystrokes
+			// into the Y.Text; headless, feed the whole content through the SAME
+			// manager method routeModify drives (the one editor stand-in, see header).
+			// handleModify short-circuits the disk-driven CRDT route for a bound path
+			// (sync.ts:1982), so the Y.Text is the ONLY inbound edit channel here.
+			// FIRED not awaited: applyLocalEdit awaits IndexedDB (scheduler-driven);
+			// awaiting it before the caller drains would freeze the virtual clock. The
+			// real binding applies to Y.Text synchronously too — only persistence is
+			// async, and drain() completes it deterministically.
+			// Surface (don't swallow) an apply/persist failure: a systemically
+			// dropped edit would otherwise read as trivial oracle AGREEMENT (both
+			// replicas never see it), the one blind spot the convergence check
+			// can't catch on its own. Fires only on the error path — silent green.
+			void this.crdtManager
+				.applyLocalEdit(this.noteIdMap.getOrMint(path), content)
+				.catch((err) =>
+					console.warn(`SIM editNote applyLocalEdit failed for ${path}:`, err),
+				);
+			// Obsidian's autosave still writes the editor buffer to disk (~2s); that
+			// modify event hits the bound short-circuit above and never re-pushes.
+			await this.app.vault.modify(file, content);
+			return;
+		}
 		await this.app.vault.modify(file, content);
 	}
 
