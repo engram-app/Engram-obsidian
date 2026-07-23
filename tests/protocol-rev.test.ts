@@ -10,7 +10,6 @@ import { DEFAULT_SETTINGS } from "../src/types";
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockResolvedValue({ results: [] }),
-	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -37,9 +36,6 @@ const mockApi = {
 		updated_at: "2026-03-01T12:00:00Z",
 	}),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getAttachmentChanges: jest
-		.fn()
-		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: jest
@@ -116,9 +112,6 @@ beforeEach(() => {
 	mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
 	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockResolvedValue({ results: [] });
-	(mockApi.getChanges as jest.Mock)
-		.mockReset()
-		.mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" });
 	(mockApi.getNote as jest.Mock).mockReset().mockResolvedValue({
 		path: "Notes/Remote.md",
 		title: "Remote Note",

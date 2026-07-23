@@ -8,8 +8,7 @@
  *   - Attachment upsert event STILL processes via the legacy path.
  *   - applyChange() returns false (no disk write) for markdown when CRDT is active.
  *   - applyChange() delete path still deletes when CRDT is active.
- *   - Cold-start pull (getChanges/pullViaCursor) skips markdown body write when CRDT
- *     is active.
+ *   - Cold-start catch-up skips markdown body write when CRDT is active.
  *
  * I1 — CrdtManager leak on re-setup:
  *   - Calling the teardown sequence (destroy + null) before re-wiring a new manager
@@ -59,7 +58,6 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
-	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	getNote: mock().mockResolvedValue({
 		path: "Notes/Remote.md",
@@ -82,10 +80,6 @@ const mockApi = {
 		updated_at: "2026-03-01T12:00:00Z",
 	}),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getAttachmentChanges: mock().mockResolvedValue({
-		changes: [],
-		server_time: "2026-01-01T00:00:00Z",
-	}),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	registerVault: mock().mockResolvedValue({ id: "v1", name: "Test", slug: "test" }),

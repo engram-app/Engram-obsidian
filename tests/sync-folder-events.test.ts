@@ -22,11 +22,6 @@ const mockApi = {
 	deleteFolder: mock().mockResolvedValue(undefined),
 	listExplicitFolders: mock().mockResolvedValue([]),
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
-	getChanges: mock().mockResolvedValue({ changes: [], server_time: "2026-01-01T00:00:00Z" }),
-	getAttachmentChanges: mock().mockResolvedValue({
-		changes: [],
-		server_time: "2026-01-01T00:00:00Z",
-	}),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
 	ping: mock().mockResolvedValue({ ok: true }),

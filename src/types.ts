@@ -145,15 +145,6 @@ export interface NoteChange {
 	seq?: number;
 }
 
-/** Response from GET /notes/changes */
-export interface ChangesResponse {
-	changes: NoteChange[];
-	server_time: string;
-	/** Protocol rev pagination — absent on pre-rev backends. */
-	has_more?: boolean;
-	next_cursor?: string | null;
-}
-
 /** A note entry from the MERGED ordered feed GET /sync/changes (PR B2).
  *  `content` is absent on meta-only pages; `content_hash` is the server's
  *  opaque hash. `seq` is the per-vault monotonic change sequence. */
@@ -405,12 +396,6 @@ export interface AttachmentChange {
 	mtime: number;
 	updated_at: string;
 	deleted: boolean;
-}
-
-/** Response from GET /attachments/changes */
-export interface AttachmentChangesResponse {
-	changes: AttachmentChange[];
-	server_time: string;
 }
 
 /** A single entry in the sync manifest (path + content hash). */
