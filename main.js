@@ -24275,7 +24275,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           )));
         };
       } else
-        rlog().info("crdt", "vaultId is null \u2014 CRDT disabled; legacy pushNote path active");
+        rlog().info(
+          "crdt",
+          "vaultId is null \u2014 CRDT disabled; legacy pushNote path active"
+        );
       channel.connect();
     }).catch((e) => {
       console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`), epoch === this.channelEpoch && window.setTimeout(
