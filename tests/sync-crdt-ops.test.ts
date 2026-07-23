@@ -6,7 +6,6 @@
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
-import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
@@ -297,21 +296,15 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 // noteId-keyed /updates ops (Task 2). The tests below exercise that full
 // pushFile -> durable queue -> runFlushQueue chain in place of the old
 // in-memory-timer tests.
-describe("channel-down CRDT edit routes through the durable queue via REST /updates", () => {
-	test("pushFile durably queues the edit, then the auto-triggered flush posts the encoded Y.Doc state and never sends plaintext", async () => {
-		const posted: Array<{ noteId: string; update: Uint8Array }> = [];
+describe("channel-down CRDT edit routes through the durable queue, delivered over the socket (Phase E3)", () => {
+	test("pushFile durably queues the edit; channel still down → entry STAYS queued (the socket is the only delivery path)", async () => {
 		const api = {
-			postUpdate: async (noteId: string, update: Uint8Array) => {
-				posted.push({ noteId, update });
-				return { head: "h" };
-			},
 			pushNote: async () => {
 				throw new Error("must not whole-doc push a channel-down CRDT note");
 			},
 		};
 		const crdt = {
 			applyLocalEdit: async () => true,
-			encodeStateAsUpdate: async () => new Uint8Array([9, 9, 9]),
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
@@ -330,43 +323,50 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 		expect(queued?.crdt).toBe(true);
 		expect(queued?.noteId).toBe("id-1");
 
-		// pushFile also fires an immediate flush attempt; give it a tick.
+		// pushFile fires an immediate flush attempt — with the channel down the
+		// entry must SURVIVE it (no REST side-channel exists to deliver it).
 		await new Promise((r) => setTimeout(r, 20));
-		expect(posted).toEqual([{ noteId: "id-1", update: new Uint8Array([9, 9, 9]) }]);
-		expect(e.queue.size).toBe(0);
+		expect(e.queue.size).toBe(1);
 	});
 
-	test("a per-note 404 on the auto-triggered flush drops the entry as note-gone, without latching capability off", async () => {
+	test("channel back up: the flush fires the re-handshake, and the entry settles only when an inbound frame proves the round-trip", async () => {
 		const api = {
-			postUpdate: async () => {
-				const err: any = new Error("not found");
-				err.status = 404;
-				throw err;
-			},
 			pushNote: async () => {
 				throw new Error("must not legacy-push a crdt entry when ops are available");
 			},
 		};
-		const crdt = {
-			applyLocalEdit: async () => true,
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
-		};
+		const crdt = { applyLocalEdit: async () => true };
+		const enroll = mock();
+		const reset = mock();
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
-		const noteIdMap = new NoteIdMap();
-		noteIdMap.set("p.md", "id-1");
-		e.setNoteIdMap(noteIdMap);
-		markConfirmed(e, "id-1");
-		e.setCrdtLiveCheck(() => false); // channel down
+		e.setCrdtEnrollment({ enroll, reset } as any);
+		e.setCrdtLiveCheck(() => true); // channel live now
 
-		await (e as any).pushFile(new TFile("p.md"));
-		await new Promise((r) => setTimeout(r, 20));
+		await e.queue.enqueue({
+			path: "T.md",
+			action: "upsert",
+			noteId: "id-1",
+			crdt: true,
+			timestamp: 1,
+			vaultId: "v",
+		});
+		const flushed = await e.flushQueue();
 
-		// Global Constraint: a per-note postUpdate 404 means "that note is gone",
-		// NEVER a capability signal — only the getVaultHeads probe may latch
-		// crdtOpsUnsupported.
+		// The sv-exchange is bidirectional: the server answers the client STEP1
+		// with [STEP2, server-STEP1], and the client's reply to the server's
+		// STEP1 carries the pending local ops.
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		// Firing is NOT proof: the entry survives until an inbound frame for
+		// the note arrives (a nudge lost to a socket drop re-fires next flush).
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1);
+
+		// An inbound frame fires commitCrdtConvergence — the round-trip is
+		// proven and the entry settles out of the durable queue.
+		await e.commitCrdtConvergence("id-1");
 		expect(e.queue.size).toBe(0);
-		expect((e as any).crdtOpsAvailable()).toBe(true);
 	});
 
 	// Probe-race stranding (final review Minor-1, carried over from the retired
@@ -395,14 +395,8 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 				pushNoteArgs = args;
 				return { note: {}, chunks_indexed: 1 };
 			},
-			// The auto-triggered first attempt fails transiently (no HTTP status)
-			// — leaves the entry queued without touching capability at all.
-			postUpdate: async () => {
-				throw new Error("network down");
-			},
 		};
 		const crdt = {
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
 			applyLocalEdit: async () => true,
 		};
 		const e = new SyncEngine(
@@ -422,7 +416,7 @@ describe("channel-down CRDT edit routes through the durable queue via REST /upda
 
 		const result = await (e as any).pushFile(testFile);
 		expect(result).toBe(true);
-		await new Promise((r) => setTimeout(r, 20)); // let the auto-triggered flush fail transiently
+		await new Promise((r) => setTimeout(r, 20)); // auto-flush: channel down → stays queued
 
 		expect(pushNoteCalled).toBe(false); // still queued, not stranded to legacy yet
 		expect(e.queue.size).toBe(1);
@@ -452,7 +446,6 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 	test("a channel drop DURING routeModify routes the edit to the durable queue, not the dead live path", async () => {
 		let live = true;
 		const api = {
-			postUpdate: async () => ({ head: "h" }),
 			pushNote: async () => {
 				throw new Error("must not whole-doc push a CRDT note");
 			},
@@ -465,7 +458,6 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 				live = false;
 				return true;
 			},
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
@@ -489,28 +481,22 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 
 // ---------------------------------------------------------------------------
 // Task 5: CRDT-managed notes never whole-doc push. A channel-down edit with ops
-// available is durably queued (Task 3) and delivered via REST /updates — pushNote
-// is never called. (The old base_hash/CAS whole-doc fallback for md is gone: an
-// in-cap md note that reaches neither CRDT path stays on disk and re-pushes on
-// reconnect, so there is no REST-md path left to assert.)
+// available is durably queued (Task 3) and delivered over the socket once the
+// channel returns — pushNote is never called. (The old base_hash/CAS whole-doc
+// fallback for md is gone: an in-cap md note that reaches neither CRDT path
+// stays on disk and re-pushes on reconnect, so there is no REST-md path left.)
 // ---------------------------------------------------------------------------
 
 describe("CRDT notes never whole-doc push (channel down → durable queue)", () => {
 	test("a CRDT-managed note with ops available never calls pushNote (channel down → durably queued)", async () => {
 		let pushNoteCalled = false;
-		let flushedNoteId: string | null = null;
 		const api = {
 			pushNote: async () => {
 				pushNoteCalled = true;
 				return { note: {}, chunks_indexed: 1 };
 			},
-			postUpdate: async (noteId: string) => {
-				flushedNoteId = noteId;
-				return { head: "h" };
-			},
 		};
 		const crdt = {
-			encodeStateAsUpdate: async () => new Uint8Array([1]),
 			applyLocalEdit: async () => true,
 		};
 		const e = engine({ enableCrdt: true, api, crdt });
@@ -526,30 +512,22 @@ describe("CRDT notes never whole-doc push (channel down → durable queue)", () 
 		expect(result).toBe(true);
 		expect(pushNoteCalled).toBe(false); // routed to the durable crdt queue, not whole-doc push
 
-		// The durable entry is delivered by the auto-triggered flush — give it a
-		// tick and confirm it actually posts the encoded Y.Doc state via REST
-		// /updates.
+		// The entry waits for the channel — never delivered over REST.
 		await new Promise((r) => setTimeout(r, 20));
-		expect(flushedNoteId).toBe("id-1");
+		expect(e.queue.all().find((q) => q.path === "p.md")?.crdt).toBe(true);
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Task 2: runFlushQueue delivers a durable `crdt`-tagged queue entry via
-// noteId-keyed /updates ops. The original bug encoded the Y.Doc by PATH while
-// docs are keyed by NOTEID, posting an empty doc — hidden previously because
-// delivery tests mocked encodeStateAsUpdate. The round-trip test below uses a
-// REAL CrdtManager end to end: no mocked encode.
+// runFlushQueue delivers a durable `crdt`-tagged queue entry over the SOCKET
+// (Phase E3 — REST /updates deleted): the Y.Doc (keyed by noteId, durable in
+// IndexedDB) holds the ops; a fresh re-handshake ships them (the client's
+// reply to the server's STEP1 carries the local diff).
 // ---------------------------------------------------------------------------
 
-describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => {
-	test("durable crdt queue entry delivers the SEEDED note content via postUpdate (noteId-keyed, real CrdtManager)", async () => {
-		const posted: { noteId: string; update: Uint8Array }[] = [];
+describe("runFlushQueue: durable crdt queue entry delivery over the socket", () => {
+	test("live channel: fires reset+enroll, keeps the entry until proof, and the durable doc carries the ops (real CrdtManager)", async () => {
 		const api = {
-			postUpdate: async (noteId: string, update: Uint8Array) => {
-				posted.push({ noteId, update });
-				return { head: "h" };
-			},
 			pushNote: async () => {
 				throw new Error("must not legacy-push a crdt entry when ops are available");
 			},
@@ -561,9 +539,13 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		});
 		const e = engine({ enableCrdt: true, api, crdt: realCrdt });
 		markProbed(e);
+		const enroll = mock();
+		const reset = mock();
+		e.setCrdtEnrollment({ enroll, reset } as any);
+		e.setCrdtLiveCheck(() => true);
 
-		// Seed the note's Y.Doc BY NOTEID (never by path) — this is exactly what
-		// a path/noteId key mismatch would fail to reproduce.
+		// Seed the note's Y.Doc BY NOTEID (never by path) — the doc, not the
+		// queue entry, is the durable carrier of the edit.
 		await realCrdt.applyLocalEdit("id-1", "# T\n\nseeded body");
 
 		await e.queue.enqueue({
@@ -574,58 +556,33 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 			timestamp: 1,
 			vaultId: "v",
 		});
-		const flushed = await e.flushQueue();
+		await e.flushQueue();
 
-		expect(flushed).toBe(1);
+		expect(reset).toHaveBeenCalledWith("id-1");
+		expect(enroll).toHaveBeenCalledWith("id-1");
+		expect(e.queue.size).toBe(1); // not settled until an inbound frame proves it
+		// The seeded content survives in the durable doc for the handshake to ship.
+		expect(await realCrdt.getText("id-1")).toContain("seeded body");
+
+		// Inbound frame → settle.
+		await e.commitCrdtConvergence("id-1");
 		expect(e.queue.size).toBe(0);
-		expect(posted.length).toBe(1);
-		expect(posted[0].noteId).toBe("id-1");
-
-		// Apply the delivered update to a FRESH doc: it must reproduce the
-		// seeded body. A path/noteId key bug or an unseeded doc fails this.
-		const reader = new Y.Doc();
-		Y.applyUpdate(reader, posted[0].update);
-		expect(reader.getText("content").toString()).toContain("seeded body");
 
 		await realCrdt.destroy();
 	});
 
-	test("a per-note 404 from postUpdate drops the entry as note-gone, without latching capability off", async () => {
-		let postUpdateCalled = false;
+	test("channel down: the entry stays queued (no REST side-channel) and no re-handshake fires", async () => {
 		const api = {
-			postUpdate: async () => {
-				postUpdateCalled = true;
-				const err: any = new Error("not found");
-				err.status = 404;
-				throw err;
-			},
-			// The file is present on disk, so a bug that skipped the crdt branch
-			// and fell through to the legacy path would call pushNote instead of
-			// hitting the "file missing" shortcut — fail loudly if that happens.
 			pushNote: async () => {
 				throw new Error("must not legacy-push a crdt entry when ops are available");
 			},
 		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
-		const testFile = new TFile("T.md");
-		const localApp = {
-			...mockApp,
-			vault: {
-				...mockApp.vault,
-				getFileByPath: mock().mockImplementation((p: string) =>
-					p === "T.md" ? testFile : null,
-				),
-			},
-		};
-		const e = new SyncEngine(
-			localApp as any,
-			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setCrdtManager(crdt as unknown as CrdtManager);
-		e.setReady();
+		const crdt = { applyLocalEdit: async () => true };
+		const enroll = mock();
+		const e = engine({ enableCrdt: true, api, crdt });
 		markProbed(e);
+		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
+		e.setCrdtLiveCheck(() => false);
 
 		await e.queue.enqueue({
 			path: "T.md",
@@ -637,11 +594,9 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		});
 		const flushed = await e.flushQueue();
 
-		expect(postUpdateCalled).toBe(true);
-		expect(flushed).toBe(1);
-		expect(e.queue.size).toBe(0);
-		// A per-note 404 is NOT a capability signal — only probeCrdtOps latches.
-		expect((e as any).crdtOpsAvailable()).toBe(true);
+		expect(flushed).toBe(0);
+		expect(e.queue.size).toBe(1); // waits for the channel — not dropped, not parked
+		expect(enroll).not.toHaveBeenCalled();
 	});
 
 	test("crdt entry with ops unavailable clears the stale serverHash then falls through to the legacy push", async () => {
@@ -661,9 +616,6 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 			pushNote: async (...args: any[]) => {
 				pushNoteArgs = args;
 				return { note: {}, chunks_indexed: 1 };
-			},
-			postUpdate: async () => {
-				throw new Error("must not call postUpdate when ops are unavailable");
 			},
 		};
 		const e = new SyncEngine(
@@ -693,143 +645,10 @@ describe("runFlushQueue: durable crdt queue entry delivery via /updates", () => 
 		expect(pushNoteArgs[1]).toBe("legacy content");
 	});
 
-	test("a TERMINAL postUpdate error (413 too-large) records a Sync Center issue and dequeues, instead of retrying forever", async () => {
-		const api = {
-			postUpdate: async () => {
-				const err: any = new Error("too large");
-				err.status = 413;
-				throw err;
-			},
-			pushNote: async () => {
-				throw new Error("must not legacy-push a crdt entry when ops are available");
-			},
-		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
-
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-			vaultId: "v",
-		});
-		await e.flushQueue();
-
-		// Dequeued — must not silently retry forever on every future flush.
-		expect(e.queue.size).toBe(0);
-		// Recorded as a Sync Center issue instead of vanishing silently.
-		const issue = e.issues.all().find((i) => i.path === "T.md");
-		expect(issue).toBeDefined();
-		expect(issue?.category).toBe("too_large");
-	});
-
-	test("a TRANSIENT postUpdate error (network) leaves the entry queued for retry", async () => {
-		const api = {
-			postUpdate: async () => {
-				throw new Error("network down"); // no .status → categorized as network/transient
-			},
-			pushNote: async () => {
-				throw new Error("must not legacy-push a crdt entry when ops are available");
-			},
-		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
-
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-			vaultId: "v",
-		});
-		await e.flushQueue();
-
-		// Still queued — transient failures must retry, not vanish.
-		expect(e.queue.size).toBe(1);
-		expect(e.issues.all().find((i) => i.path === "T.md")).toBeUndefined();
-	});
-
-	test("a persistently transient postUpdate error is parked after RETRY_CAP attempts, not retried forever", async () => {
-		const api = {
-			postUpdate: async () => {
-				throw new Error("network down"); // transient, no .status
-			},
-			pushNote: async () => {
-				throw new Error("must not legacy-push a crdt entry when ops are available");
-			},
-		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-			vaultId: "v",
-		});
-
-		// RETRY_CAP is 5: the first 4 passes re-queue the entry (silent) with a
-		// persisted, bumped attempt count; the 5th exhausts the cap and parks it.
-		for (let i = 0; i < 4; i++) {
-			await (e as any).runFlushQueue();
-			expect(e.queue.size).toBe(1); // still queued for retry
-			expect(e.issues.all()).toHaveLength(0); // silent while retrying
-			expect(e.queue.all()[0].attempts).toBe(i + 1); // count persisted on the entry
-		}
-		await (e as any).runFlushQueue();
-		expect(e.queue.size).toBe(0); // parked: no longer retried
-		expect(e.issues.all().find((i) => i.path === "T.md")).toBeDefined();
-	});
-
-	test("a TERMINAL postUpdate error (413) re-enrolls the note so the CRDT channel can still converge, then parks", async () => {
-		const api = {
-			postUpdate: async () => {
-				const err: any = new Error("too large");
-				err.status = 413;
-				throw err;
-			},
-			pushNote: async () => {
-				throw new Error("must not legacy-push a crdt entry when ops are available");
-			},
-		};
-		const crdt = { encodeStateAsUpdate: async () => new Uint8Array([1]) };
-		const enroll = mock();
-		const e = engine({ enableCrdt: true, api, crdt });
-		markProbed(e);
-		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
-		await e.queue.enqueue({
-			path: "T.md",
-			action: "upsert",
-			noteId: "id-1",
-			crdt: true,
-			timestamp: 1,
-			vaultId: "v",
-		});
-		await e.flushQueue();
-
-		// The Y.Doc (keyed by noteId) still holds the edit, so re-enrolling
-		// re-drives delivery over the CRDT channel: a too-large /updates is not a
-		// silent loss.
-		expect(enroll).toHaveBeenCalledWith("id-1");
-		expect(e.queue.size).toBe(0); // parked (dequeued)
-		const issue = e.issues.all().find((i) => i.path === "T.md");
-		expect(issue?.category).toBe("too_large");
-	});
-
 	test("a crdt entry whose file was renamed away (ops unavailable, legacy fallback) re-enrolls for channel convergence instead of silently dropping", async () => {
 		const api = {
 			pushNote: async () => {
 				throw new Error("must not legacy-push a vanished file");
-			},
-			postUpdate: async () => {
-				throw new Error("ops unavailable, must not postUpdate");
 			},
 		};
 		const localApp = {

@@ -579,7 +579,8 @@ describe("applyOp", () => {
 // unifying fullSync's pull cursor and the socket replay's catchupSeq onto ONE
 // watermark removed a live-bound note's second delivery chance. catchUp now
 // re-detects a diverged live-bound note from the manifest and re-converges it
-// via restConvergeLiveBound, independent of the seq cursor.
+// via the socket-native socketConverge primitive (single-path D3),
+// independent of the seq cursor.
 describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)", () => {
 	function manifestOf(notes: Array<{ id: string; path: string; content_hash: string }>) {
 		return {
@@ -591,11 +592,11 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		};
 	}
 
-	test("re-converges a diverged live-bound note independent of the seq cursor", async () => {
+	test("re-fires the socket re-handshake for a diverged live-bound note independent of the seq cursor", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
@@ -603,7 +604,31 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 
 		expect(converge).toHaveBeenCalledTimes(1);
 		expect(converge.mock.calls[0]).toEqual(["Notes/a.md", "id-a"]);
-		// Convergence recorded (serverHash advanced) so the next catch-up skips it.
+		// The manifest carries hashes only (keyed HMAC — uncomputable
+		// client-side), so this leg cannot verify convergence — serverHash
+		// stays unrecorded until a real STEP2/update commit lands (fix wave 1).
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
+	});
+
+	test("fix wave 1 (e) / fix wave 5 (3): stages the manifest's content_hash (content:null — hash-only, uncomputable client-side) and commits UNVERIFIED on the next real STEP2/update, preserving the pre-wave-5 best-effort manifest-heal behavior", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
+
+		await (engine as any).healDivergedLiveBoundNotes(
+			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
+		);
+		// Staged, not recorded — the manifest heal alone cannot prove the doc
+		// holds the server's ops.
+		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H1");
+
+		// Simulates CrdtManager's onSynced firing after a real inbound frame
+		// applies non-empty. content:null means commitCrdtConvergence has no
+		// plaintext to content-verify against — it commits unverified, exactly
+		// like before fix wave 5 (the manifest heal's recording stays
+		// best-effort).
+		await engine.commitCrdtConvergence("id-a");
+
 		expect(engine.exportSyncState()["Notes/a.md"].serverHash).toBe("H2");
 	});
 
@@ -611,7 +636,7 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => true);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H2" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
@@ -624,12 +649,237 @@ describe("healDivergedLiveBoundNotes (cursor-independent live-bound re-converge)
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		engine.setLiveBoundCheck(() => false);
 		engine.importSyncState({ "Notes/a.md": { hash: 1, serverHash: "H1" } });
-		const converge = spyOn(engine as any, "restConvergeLiveBound").mockResolvedValue(true);
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
 
 		await (engine as any).healDivergedLiveBoundNotes(
 			manifestOf([{ id: "id-a", path: "Notes/a.md", content_hash: "H2" }]),
 		);
 
 		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("E1: skips when the manifest crdt_head equals the recorded crdtHead — op-level converged, no STEP1 refire", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		// serverHash is stale (a fan-out recorded crdtHead but not serverHash),
+		// yet the head matches — the doc provably holds the server state.
+		engine.importSyncState({
+			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
+		});
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).healDivergedLiveBoundNotes({
+			...manifestOf([
+				{ id: "id-a", path: "Notes/a.md", content_hash: "H2", crdt_head: "HEAD-X" } as any,
+			]),
+		});
+
+		expect(converge).not.toHaveBeenCalled();
+	});
+
+	test("E1: fires STEP1 when the manifest crdt_head DIFFERS from the recorded crdtHead", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setLiveBoundCheck((p) => p === "Notes/a.md");
+		engine.importSyncState({
+			"Notes/a.md": { hash: 1, serverHash: "H1", crdtHead: "HEAD-X" },
+		});
+		const converge = spyOn(engine as any, "socketConverge").mockImplementation(() => {});
+
+		await (engine as any).healDivergedLiveBoundNotes({
+			...manifestOf([
+				{ id: "id-a", path: "Notes/a.md", content_hash: "H2", crdt_head: "HEAD-Y" } as any,
+			]),
+		});
+
+		expect(converge).toHaveBeenCalledTimes(1);
+	});
+});
+
+// Phase E1 (#1065): the whole-vault seq-diff validator. A manifest row whose
+// seq the replay has ALREADY consumed (row.seq <= cursor) but this path never
+// recorded is a silent apply-loss (the test_10 "received=yes materialized=no"
+// class) — rewind the cursor so the next replay re-serves it. Rows with
+// seq > cursor need nothing: the imminent replay fetches them anyway.
+describe("validateFromManifest (Phase E1 seq integer diff)", () => {
+	function manifest(notes: Array<Record<string, unknown>>) {
+		return {
+			notes,
+			attachments: [],
+			total_notes: notes.length,
+			total_attachments: 0,
+			change_seq: 100,
+		} as any;
+	}
+
+	test("consumed-but-unrecorded row (no syncState entry) floors the next replay at seq-1", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const behind = (engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect(behind).toBe(1);
+		// The validator never writes the cursor directly (an in-flight replay's
+		// per-page persist would clobber it) — it hands a floor to the sole
+		// cursor writer, runSeqReplayOnce.
+		expect((engine as any).seqRewindFloor).toBe(13);
+		expect(engine.getCatchupSeq()).toBe(20);
+	});
+
+	test("the next replay consumes the floor: crdt_catchup_since is called from the rewound cursor", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const catchupSince = mock(async () => ({ changes: [], has_more: false, next_seq: null }));
+		engine.setCrdtCatchupSince(catchupSince as any);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		await engine.catchupViaSeqReplay();
+		expect(catchupSince.mock.calls[0]?.[0]).toBe(13);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+
+	test("consumed row newer than the path's recorded seq floors the replay", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		engine.importSyncState({ "Notes/a.md": { hash: 1, seq: 10 } });
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect((engine as any).seqRewindFloor).toBe(13);
+	});
+
+	test("row beyond the cursor does NOT rewind — the next replay fetches it anyway", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 25 }]),
+		);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+
+	test("legacy syncState entry without seq is NOT flagged (entry exists = it materialized)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		engine.importSyncState({ "Notes/a.md": { hash: 1 } });
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]),
+		);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+
+	test("row without seq (old backend) is skipped — never NaN-rewinds", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		(engine as any).validateFromManifest(
+			manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H" }]),
+		);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+
+	test("the SAME discrepancy does not rewind twice (bounded retry, no rewind loop)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(20);
+		const m = manifest([{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 14 }]);
+		(engine as any).validateFromManifest(m);
+		expect((engine as any).seqRewindFloor).toBe(13);
+		// replay consumed the floor, apply still failed, same row still behind
+		(engine as any).seqRewindFloor = null;
+		(engine as any).validateFromManifest(m);
+		expect((engine as any).seqRewindFloor).toBeNull();
+	});
+});
+
+describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
+	function stubCatchUpInternals(engine: SyncEngine) {
+		const reconcile = spyOn(engine as any, "reconcileFromManifest").mockResolvedValue(
+			undefined,
+		);
+		const heal = spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(0);
+		const validate = spyOn(engine as any, "validateFromManifest").mockReturnValue(0);
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
+		});
+		const folders = spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
+		return { reconcile, heal, validate, replay, folders };
+	}
+
+	test("unchanged response skips the server→local manifest steps but still replays AND still seeds local empty folders", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).manifestSeq = 42;
+		const { reconcile, heal, validate, replay } = stubCatchUpInternals(engine);
+		// seedEmptyFolders is LOCAL→SERVER (retry backstop for a failed folder
+		// push) — the server watermark says nothing about local state, so the
+		// unchanged fast path must NOT skip it (review finding, agent #3).
+		const seed = spyOn(engine as any, "seedEmptyFolders").mockResolvedValue(undefined);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			unchanged: true,
+			change_seq: 42,
+		});
+
+		await engine.catchUp();
+
+		expect((mockApi.getManifest as ReturnType<typeof mock>).mock.calls.at(-1)).toEqual([42]);
+		expect(reconcile).not.toHaveBeenCalled();
+		expect(heal).not.toHaveBeenCalled();
+		expect(validate).not.toHaveBeenCalled();
+		expect(seed).toHaveBeenCalledTimes(1);
+		expect(replay).toHaveBeenCalledTimes(1);
+	});
+
+	test("a seq-0 behind row floors at genesis (sentinel does not mask target -1)", () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.setCatchupSeq(5);
+		(engine as any).validateFromManifest({
+			notes: [{ id: "id-a", path: "Notes/a.md", content_hash: "H", seq: 0 }],
+			attachments: [],
+			total_notes: 1,
+			total_attachments: 0,
+			change_seq: 5,
+		} as any);
+		// target = -1, clamped to 0 — replay from genesis.
+		expect((engine as any).seqRewindFloor).toBe(0);
+	});
+
+	test("a full manifest pass runs all steps and records change_seq as the new watermark", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const { reconcile, heal, validate, replay } = stubCatchUpInternals(engine);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			notes: [],
+			attachments: [],
+			total_notes: 0,
+			total_attachments: 0,
+			change_seq: 7,
+		});
+
+		await engine.catchUp();
+
+		expect(reconcile).toHaveBeenCalledTimes(1);
+		expect(validate).toHaveBeenCalledTimes(1);
+		expect(heal).toHaveBeenCalledTimes(1);
+		expect(replay).toHaveBeenCalledTimes(1);
+		expect((engine as any).manifestSeq).toBe(7);
+	});
+
+	test("an UNCLEAN pass (heal poked / validator behind) does NOT record the watermark — the retry net stays live", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		const { heal, validate } = stubCatchUpInternals(engine);
+		heal.mockResolvedValue(1); // one diverged live-bound note was poked
+		validate.mockReturnValue(0);
+		(mockApi.getManifest as ReturnType<typeof mock>).mockResolvedValueOnce({
+			notes: [],
+			attachments: [],
+			total_notes: 0,
+			total_attachments: 0,
+			change_seq: 7,
+		});
+
+		await engine.catchUp();
+
+		// Fire-and-forget heal hasn't proven convergence — recording now would
+		// let every later poll short-circuit and never re-check an idle vault.
+		expect((engine as any).manifestSeq).toBe(0);
 	});
 });

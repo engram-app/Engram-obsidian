@@ -6,7 +6,6 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { type PreflightResult, interpretHealthProbe } from "./auth-state";
-import { fromB64, toB64 } from "./crdt/channel";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
@@ -507,34 +506,8 @@ export class EngramApi {
 		return resp.json as DeleteResponse;
 	}
 
-	// --- CRDT ops transport (Phase 2 REST fallback for the `crdt:` channel) ---
-
-	/** Flush a note's encoded Y.Doc update to the server (idempotent, lossless
-	 *  merge). Used when the realtime `crdt:` channel is down. */
-	async postUpdate(noteId: string, update: Uint8Array): Promise<{ head: string }> {
-		const resp = await this.request("POST", `/notes/${encodeURIComponent(noteId)}/updates`, {
-			update: toB64(update),
-		});
-		return { head: (resp.json as { head: string }).head };
-	}
-
-	/** Pull the delta since `since` (a base64 state vector), or the full state
-	 *  if omitted. Phase 3 (cold-note head-index pull). Intentionally unconsumed
-	 *  in Phase 2/2b. */
-	async getUpdates(
-		noteId: string,
-		since?: string,
-	): Promise<{ update: Uint8Array; head: string }> {
-		const params = new URLSearchParams();
-		if (since !== undefined) params.set("since", since);
-		const qs = params.toString();
-		const resp = await this.request(
-			"GET",
-			`/notes/${encodeURIComponent(noteId)}/updates${qs ? `?${qs}` : ""}`,
-		);
-		const body = resp.json as { update: string; head: string };
-		return { update: fromB64(body.update), head: body.head };
-	}
+	// --- CRDT ops transport: REST /updates DELETED (Phase E3) — the socket
+	// (crdt: channel sv-exchange) is the only Yjs delta path. ---
 
 	/** Capability probe + convergence check: current head per note across the
 	 *  whole vault. */
@@ -592,9 +565,13 @@ export class EngramApi {
 
 	/** Fetch sync manifest for reconciliation.
 	 *  Returns null if the server doesn't support this endpoint (404). */
-	async getManifest(): Promise<ManifestResponse | null> {
+	async getManifest(sinceSeq?: number): Promise<ManifestResponse | null> {
+		const qs =
+			typeof sinceSeq === "number" && Number.isFinite(sinceSeq) && sinceSeq >= 0
+				? `?since_seq=${sinceSeq}`
+				: "";
 		try {
-			const resp = await this.request("GET", "/sync/manifest");
+			const resp = await this.request("GET", `/sync/manifest${qs}`);
 			return resp.json as ManifestResponse;
 		} catch (e) {
 			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 404) {
