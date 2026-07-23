@@ -399,13 +399,26 @@ export class NoteChannel {
 	async crdtCatchupSince(
 		cursorSeq: number,
 		limit?: number,
-	): Promise<{ changes: SyncChange[]; has_more: boolean; next_seq: number | null }> {
-		const payload: { cursor_seq: number; limit?: number } = { cursor_seq: cursorSeq };
+		cursorId?: string | null,
+	): Promise<{
+		changes: SyncChange[];
+		has_more: boolean;
+		next_seq: number | null;
+		// Composite keyset id paired with next_seq (#312). Absent from a pre-#312
+		// backend — callers fall back to the seq-only cursor when it's undefined.
+		next_id?: string | null;
+	}> {
+		const payload: { cursor_seq: number; limit?: number; cursor_id?: string } = {
+			cursor_seq: cursorSeq,
+		};
 		if (limit !== undefined) payload.limit = limit;
+		// Only send a real id; omit for the seq-only first page / pre-#312 fallback.
+		if (cursorId) payload.cursor_id = cursorId;
 		return (await this.sendRequest("crdt_catchup_since", payload)) as {
 			changes: SyncChange[];
 			has_more: boolean;
 			next_seq: number | null;
+			next_id?: string | null;
 		};
 	}
 

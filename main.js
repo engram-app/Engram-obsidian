@@ -1697,9 +1697,11 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
    *  merged notes+attachments feed), so it is causally complete and can
    *  never pend the way a state-vector delta can — this is what a
    *  reconnecting device replays to converge (deaf-note fix, e2e test_85). */
-  async crdtCatchupSince(cursorSeq, limit) {
-    let payload = { cursor_seq: cursorSeq };
-    return limit !== void 0 && (payload.limit = limit), await this.sendRequest("crdt_catchup_since", payload);
+  async crdtCatchupSince(cursorSeq, limit, cursorId) {
+    let payload = {
+      cursor_seq: cursorSeq
+    };
+    return limit !== void 0 && (payload.limit = limit), cursorId && (payload.cursor_id = cursorId), await this.sendRequest("crdt_catchup_since", payload);
   }
   async connect() {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
@@ -18214,6 +18216,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  from here so only ops written while we were away are replayed. 0 = replay
      *  from genesis (first-ever connect / after a state wipe). */
     this.catchupSeq = 0;
+    /** Composite-cursor id paired with `catchupSeq` (#312). An attachment move
+     *  writes two rows at one seq; the id lets a resumed replay continue at
+     *  `(seq, id) > (catchupSeq, catchupId)` instead of the seq-only `seq >`,
+     *  which would skip the second row. Only feeds the catch-up fetch — NOT the
+     *  gap-heal fence (that stays seq-only + hash-aware). Null = no id yet
+     *  (seq-only, e.g. a genesis replay or a pre-#312 backend). */
+    this.catchupId = null;
     /** The vault change_seq watermark of the last FULLY-processed manifest pass
      *  (Phase E1 #1065). Sent as `?since_seq=` so an unchanged vault
      *  short-circuits the manifest fetch + the manifest-driven catch-up steps.
@@ -18859,6 +18868,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setCatchupSeq(seq3) {
     this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
   }
+  getCatchupId() {
+    return this.catchupId;
+  }
+  setCatchupId(id2) {
+    this.catchupId = typeof id2 == "string" && id2.length > 0 ? id2 : null;
+  }
   getManifestSeq() {
     return this.manifestSeq;
   }
@@ -18931,7 +18946,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  point; a wipe that exists on only one path re-opens #200. */
   async wipePerVaultState() {
     var _a;
-    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
+    this.syncState.clear(), this.lastSync = "", this.catchupSeq = 0, this.catchupId = null, this.manifestSeq = 0, this.lastValidatorRewind = null, (_a = this.noteIdMap) == null || _a.clear(), this.clearConfirmedNoteIds(), this.lastRelocationTs.clear(), await this.saveData({ lastSync: "" });
   }
   /** Reset all per-vault sync bookkeeping. Used when the user switches the
    *  active server vault inside the SyncPreviewModal so the next sync starts
@@ -19650,20 +19665,29 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  as `computeSyncPlan`'s inventory (#304, REST-purge Bucket C — the
    *  preview was their last caller). Throws when the channel is not live: the
    *  preview must error visibly, never render a wrong empty plan. */
+  /** Strict forward comparison of the composite `(seq, id)` catch-up cursor.
+   *  Returns true iff `(nextSeq, nextId)` is strictly greater than
+   *  `(curSeq, curId)` — the same keyset ordering the backend queries with. The
+   *  equal-seq case (`nextSeq === curSeq`, `nextId > curId`) is what pages
+   *  correctly across an attachment-move pair (#312). Ids compare as strings:
+   *  canonical UUIDs sort identically byte-wise (Postgres uuid) and lexically. */
+  cursorAdvances(nextSeq, nextId, curSeq, curId) {
+    return typeof nextSeq != "number" ? !1 : nextSeq > curSeq ? !0 : nextSeq < curSeq ? !1 : (nextId != null ? nextId : "") > (curId != null ? curId : "");
+  }
   async enumerateServerState() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     let deadline = Date.now() + this.enumerateWaitMs;
     for (; (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b)) && Date.now() < deadline; )
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await new Promise((resolve) => window.setTimeout(resolve, 100));
     if (!this.crdtCatchupSince || !this.crdt || !((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d))
       throw new Error("Sync preview needs the live socket (op-log enumeration)");
-    let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0;
+    let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0, cursorId = null;
     for (let page = 0; page < 1e5; page++) {
-      let resp = await this.crdtCatchupSince(cursor, 500);
+      let resp = await this.crdtCatchupSince(cursor, 500, cursorId);
       for (let c of resp.changes)
-        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.path && attachments.set(c.path, { deleted: c.deleted }) : c.id && c.path && byId.set(c.id, c);
-      if (!resp.has_more) break;
-      typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
+        c.type === "attachment" ? c.path && attachments.set(c.path, { deleted: c.deleted }) : c.id && c.path && byId.set(c.id, c);
+      if (!resp.has_more || !this.cursorAdvances(resp.next_seq, (_e = resp.next_id) != null ? _e : null, cursor, cursorId)) break;
+      cursor = resp.next_seq, cursorId = (_f = resp.next_id) != null ? _f : null;
     }
     let notes = /* @__PURE__ */ new Map();
     for (let c of byId.values())
@@ -19767,15 +19791,19 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
   }
   async runSeqReplayOnce(fromZero, serverIds, serverAttachmentPaths, enumerateOnly = !1) {
-    var _a;
+    var _a, _b, _c;
     if (!this.crdtCatchupSince || !this.crdt) return 0;
-    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, cursor = fromZero ? 0 : this.syncStateVaultId === activeVault ? this.getCatchupSeq() : 0;
-    this.seqRewindFloor !== null && !fromZero && (cursor = Math.min(cursor, this.seqRewindFloor)), this.seqRewindFloor = null;
+    let activeVault = (_a = this.settings.vaultId) != null ? _a : null, resumable = !fromZero && this.syncStateVaultId === activeVault, cursor = resumable ? this.getCatchupSeq() : 0, cursorId = resumable ? this.getCatchupId() : null;
+    if (this.seqRewindFloor !== null && !fromZero) {
+      let floored = Math.min(cursor, this.seqRewindFloor);
+      floored !== cursor && (cursorId = null), cursor = floored;
+    }
+    this.seqRewindFloor = null;
     let applied = 0;
     for (let page = 0; page < 1e5; page++) {
-      let resp;
+      let pageStartSeq = cursor, pageStartId = cursorId, resp;
       try {
-        resp = await this.crdtCatchupSince(cursor, 500);
+        resp = await this.crdtCatchupSince(cursor, 500, cursorId);
       } catch (e) {
         return rlog().warn("crdt", `seq-replay: fetch failed at cursor=${cursor} \u2014 ${errMsg(e)}`), applied;
       }
@@ -19786,10 +19814,17 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           } catch (e) {
             rlog().error("crdt", `seq-replay: skipped ${c.path} \u2014 ${errMsg(e)}`);
           }
-        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
+        this.cursorAdvances(
+          typeof c.seq == "number" ? c.seq : null,
+          (_b = c.id) != null ? _b : null,
+          cursor,
+          cursorId
+        ) && (cursor = c.seq, cursorId = (_c = c.id) != null ? _c : null), c.type === "attachment" ? c.deleted || serverAttachmentPaths.add(c.path) : c.id && !c.deleted && serverIds.add(c.id);
       }
-      if (enumerateOnly || (this.setCatchupSeq(cursor), await this.saveData({ catchupSeq: this.getCatchupSeq() })), !resp.has_more) break;
-      typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
+      if (enumerateOnly || (this.setCatchupSeq(cursor), this.setCatchupId(cursorId), await this.saveData({
+        catchupSeq: this.getCatchupSeq(),
+        catchupId: this.getCatchupId()
+      })), !resp.has_more || !this.cursorAdvances(cursor, cursorId, pageStartSeq, pageStartId)) break;
     }
     return applied;
   }
@@ -23589,7 +23624,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       "lifecycle",
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
+      data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
@@ -23666,7 +23701,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }
     );
     let saved = await this.loadPluginData();
-    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (saved == null ? void 0 : saved.manifestSeq) !== void 0 && this.syncEngine.setManifestSeq(saved.manifestSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
+    saved != null && saved.lastSync && this.syncEngine.setLastSync(saved.lastSync), (saved == null ? void 0 : saved.catchupSeq) !== void 0 && this.syncEngine.setCatchupSeq(saved.catchupSeq), (saved == null ? void 0 : saved.catchupId) !== void 0 && this.syncEngine.setCatchupId(saved.catchupId), (saved == null ? void 0 : saved.manifestSeq) !== void 0 && this.syncEngine.setManifestSeq(saved.manifestSeq), (_a = saved == null ? void 0 : saved.offlineQueue) != null && _a.length && this.syncEngine.queue.load(saved.offlineQueue), (_b = saved == null ? void 0 : saved.crdtOpQueue) != null && _b.length && ((_c = this.crdtOpQueue) == null || _c.load(saved.crdtOpQueue)), (saved == null ? void 0 : saved.syncStateVaultId) !== void 0 && this.syncEngine.setSyncStateVaultId(saved.syncStateVaultId), saved != null && saved.syncState ? this.syncEngine.importSyncState(saved.syncState) : saved != null && saved.syncedHashes && (this.syncEngine.importHashes(saved.syncedHashes), devLog().log("lifecycle", "Migrated legacy syncedHashes \u2192 syncState")), this.syncEngine.issues.hydrate(saved == null ? void 0 : saved.syncIssues), this.syncEngine.ignoredFiles.hydrate(saved == null ? void 0 : saved.ignoredFiles), this.settings.planState && this.syncEngine.hydratePlanState(this.settings.planState), this.settingTab = new EngramSyncSettingTab(this.app, this), this.addSettingTab(this.settingTab), this.registerEvent(
       this.app.vault.on("modify", (file) => {
         this.syncEngine.handleModify(file);
       })
@@ -24038,6 +24073,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       // reason (like deviceId) or the next saveData() wipes it; 0 = replay
       // from genesis.
       catchupSeq: this.syncEngine.getCatchupSeq(),
+      // Composite-cursor id paired with catchupSeq (#312) — re-listed for the
+      // wholesale-save reason.
+      catchupId: this.syncEngine.getCatchupId(),
       // Manifest since_seq watermark (E1 #1065) — re-listed for the same
       // wholesale-save reason.
       manifestSeq: this.syncEngine.getManifestSeq(),

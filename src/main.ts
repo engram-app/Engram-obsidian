@@ -104,6 +104,9 @@ interface PluginData {
 	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
 	crdtOpQueue?: CrdtOp[];
 	catchupSeq?: number;
+	/** Composite-cursor id paired with `catchupSeq` (#312) so an interrupted
+	 *  replay resumes at `(seq, id)` and can't skip an equal-seq move sibling. */
+	catchupId?: string | null;
 	/** Manifest change_seq watermark of the last fully-processed catch-up pass
 	 *  (Phase E1 #1065) — sent as ?since_seq= to short-circuit an unchanged vault. */
 	manifestSeq?: number;
@@ -399,6 +402,9 @@ export default class EngramSyncPlugin extends Plugin {
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
 			}
+			if (data.catchupId !== undefined) {
+				this.syncEngine.setCatchupId(data.catchupId);
+			}
 			if (data.manifestSeq !== undefined) {
 				this.syncEngine.setManifestSeq(data.manifestSeq);
 			}
@@ -552,6 +558,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.catchupSeq !== undefined) {
 			this.syncEngine.setCatchupSeq(saved.catchupSeq);
+		}
+		if (saved?.catchupId !== undefined) {
+			this.syncEngine.setCatchupId(saved.catchupId);
 		}
 		if (saved?.manifestSeq !== undefined) {
 			this.syncEngine.setManifestSeq(saved.manifestSeq);
@@ -1310,6 +1319,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// reason (like deviceId) or the next saveData() wipes it; 0 = replay
 			// from genesis.
 			catchupSeq: this.syncEngine.getCatchupSeq(),
+			// Composite-cursor id paired with catchupSeq (#312) — re-listed for the
+			// wholesale-save reason.
+			catchupId: this.syncEngine.getCatchupId(),
 			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
 			// wholesale-save reason.
 			manifestSeq: this.syncEngine.getManifestSeq(),

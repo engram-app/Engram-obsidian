@@ -278,6 +278,47 @@ describe("catchupViaSeqReplay", () => {
 		expect(engine.getCatchupSeq()).toBe(7);
 	});
 
+	test("threads + persists the composite {seq,id} cursor across an equal-seq pair (#312)", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		(engine as any).applySyncChange = mock(async () => true);
+		const seen: Array<{ seq: number; id: string | null }> = [];
+		const pages = [
+			{
+				changes: [attachmentOp(5, "id-new", "new.png")],
+				has_more: true,
+				next_seq: 5,
+				next_id: "id-new",
+			},
+			{
+				changes: [attachmentOp(5, "id-old", "old.png", true)],
+				has_more: false,
+				next_seq: null,
+				next_id: null,
+			},
+		];
+		let i = 0;
+		engine.setCrdtCatchupSince(
+			async (cursor: number, _limit?: number, cursorId?: string | null) => {
+				seen.push({ seq: cursor, id: cursorId ?? null });
+				return pages[i++];
+			},
+		);
+
+		await engine.catchupViaSeqReplay();
+
+		// Page 2 was fetched with the composite cursor from page 1's next_id. A
+		// seq-only cursor would send {5, null}, and the backend's `seq > 5` would
+		// drop the sibling old.png.
+		expect(seen).toEqual([
+			{ seq: 0, id: null },
+			{ seq: 5, id: "id-new" },
+		]);
+		// The persisted resume point is the last row's {seq, id} — an interrupted
+		// replay resumes at (5, id-old), not seq-only.
+		expect(engine.getCatchupSeq()).toBe(5);
+		expect(engine.getCatchupId()).toBe("id-old");
+	});
+
 	test("paginates while has_more, resuming each page from next_seq", async () => {
 		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
 		(engine as any).applySyncChange = mock(async () => true);
