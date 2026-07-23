@@ -3760,7 +3760,13 @@ export class SyncEngine {
 			}
 		}
 		const staged = this.pendingConvergence.get(noteId);
-		if (!staged) return;
+		if (!staged) {
+			// A settled queue nudge with no staged convergence: the nudge's
+			// transient room is done — release it. A frame with NOTHING pending
+			// stays a pure no-op (commit fires on every inbound frame).
+			if (queued) this.releaseHealRoom(noteId, queued.path);
+			return;
+		}
 		if (staged.content !== null) {
 			let matches = false;
 			if (this.crdt) {
@@ -3805,7 +3811,12 @@ export class SyncEngine {
 		this.pendingConvergence.delete(noteId);
 		this.crdtRehandshakeAttempts.delete(noteId);
 		const path = this.noteIdMap?.pathForId(noteId);
-		if (!path) return; // id unmapped since staging (deleted) — nothing to record
+		if (!path) {
+			// Id unmapped since staging (deleted) — nothing to record, and a
+			// deleted note must not keep holding a room.
+			this.releaseHealRoom(noteId, null);
+			return;
+		}
 		try {
 			const boundFile = this.app.vault.getFileByPath(path);
 			const stored = this.syncState.get(path);
@@ -3821,6 +3832,38 @@ export class SyncEngine {
 			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
 		} catch (e) {
 			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+		}
+		this.releaseHealRoom(noteId, path);
+	}
+
+	/** Release the TRANSIENT heal room once its job is done (fan-out idle
+	 *  invariant: an idle note holds NO CRDT room). The diverged-cold-note heal
+	 *  and the queued-delivery nudge open a room via reset+enroll; without this
+	 *  release the once-per-session `enrolled` mark keeps that room (client doc
+	 *  + server SharedDoc) alive for the rest of the session — on mass
+	 *  divergence that recreates the connect-storm resource shape the fan-out
+	 *  model exists to prevent (e2e canary:
+	 *  test_cold_send_over_fanout_opens_no_room). `reset` also clears the
+	 *  channel's once-per-doc STEP1 gate so a FUTURE heal can re-handshake.
+	 *  A live-bound note keeps its room — the editor owns its lifecycle. */
+	private releaseHealRoom(noteId: string, path: string | null): void {
+		// Re-resolve the CURRENT path — `path` may be the enqueue/staging-time
+		// path, and a rename in between would otherwise check liveness (and
+		// hibernate) against the stale path and closeDoc a doc the editor still
+		// owns at its NEW path (silent data loss, the bind-race class).
+		const current = this.noteIdMap?.pathForId(noteId) ?? path;
+		if (current && this.isLiveBound(normalizePath(current))) return;
+		this.crdtEnrollment?.reset(noteId);
+		if (current) {
+			this.hibernateIfIdle(current, noteId);
+		} else if (this.crdt) {
+			// Id unmapped (deleted since staging) — cannot be live-bound; free the
+			// doc directly. Best-effort, mirrors hibernateIfIdle.
+			try {
+				this.crdt.closeDoc(noteId);
+			} catch (e) {
+				devLog().log("crdt", `releaseHealRoom: closeDoc ${noteId} failed — ${errMsg(e)}`);
+			}
 		}
 	}
 

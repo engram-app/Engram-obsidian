@@ -135,12 +135,14 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 				await engine.flushFromCrdt(path, await projectedText());
 			}
 		});
+		const closeDoc = mock();
 		engine.setCrdtManager({
 			applyLocalEdit: mock().mockImplementation(async (_id: string, c: string) => c),
 			applyRemoteUpdate,
 			encodeStateVector,
 			hasPendingGap,
 			projectedText,
+			closeDoc,
 		} as any);
 		const enroll = mock();
 		const reset = mock();
@@ -154,6 +156,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			encodeStateVector,
 			hasPendingGap,
 			projectedText,
+			closeDoc,
 		};
 	}
 
@@ -526,6 +529,160 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// staged anymore) — does not throw, does not touch syncState again.
 		await engine.commitCrdtConvergence("note-id-1");
 		expect(engine.exportSyncState()["owned.md"]).toEqual(state);
+	});
+
+	// -----------------------------------------------------------------------
+	// Heal-room release (fan-out idle invariant): the diverged-cold-note heal
+	// and the queued-delivery nudge open a TRANSIENT room via reset+enroll.
+	// Once the convergence commits (or the delivery settles), the room must be
+	// RELEASED — enrollment un-marked (so a future heal can re-handshake) and
+	// the doc hibernated. Without the release every healed idle note holds a
+	// room for the rest of the session (the e2e fan-out precondition flake,
+	// test_cold_send_over_fanout_opens_no_room).
+	// -----------------------------------------------------------------------
+
+	test("heal-room release: verified commit for an IDLE note resets enrollment and hibernates the doc", async () => {
+		const { engine, enroll, reset, closeDoc, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("old base");
+		engine.setLiveBoundCheck(() => false);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("old base"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "new server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+		// The cold heal opened the transient room (reset+enroll once).
+		expect(enroll).toHaveBeenCalledTimes(1);
+		expect(reset).toHaveBeenCalledTimes(1);
+
+		projectedText.mockResolvedValue("new server body");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		// Release: a SECOND reset (un-mark, so a future heal re-handshakes) and
+		// the doc hibernated — the idle note holds no room after convergence.
+		expect(reset).toHaveBeenCalledTimes(2);
+		expect(reset.mock.calls[1]?.[0]).toBe("note-id-1");
+		expect(closeDoc).toHaveBeenCalledWith("note-id-1");
+		// No re-enroll — released, not re-opened.
+		expect(enroll).toHaveBeenCalledTimes(1);
+	});
+
+	test("heal-room release: LIVE-BOUND note keeps its room after commit (editor owns it)", async () => {
+		const { engine, reset, closeDoc, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({
+			"owned.md": { hash: 1, version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "diverged body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+		expect(reset).toHaveBeenCalledTimes(1); // the heal's own reset+enroll
+
+		projectedText.mockResolvedValue("diverged body");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		// Live-bound: the room stays — no release reset, no hibernate.
+		expect(reset).toHaveBeenCalledTimes(1);
+		expect(closeDoc).not.toHaveBeenCalled();
+	});
+
+	test("heal-room release: queued-delivery settle releases the nudge room for an idle note", async () => {
+		const { engine, reset, closeDoc } = crdtEngine();
+		engine.setLiveBoundCheck(() => false);
+		await (engine as any).queue.enqueue({
+			path: "owned.md",
+			action: "upsert",
+			timestamp: 1,
+			crdt: true,
+			noteId: "note-id-1",
+		});
+		(engine as any).pendingQueueDeliveries.set("note-id-1", { path: "owned.md" });
+
+		await engine.commitCrdtConvergence("note-id-1");
+
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(closeDoc).toHaveBeenCalledWith("note-id-1");
+		expect((engine as any).queue.size).toBe(0); // the settle still dequeues
+	});
+
+	test("heal-room release: settle after a RENAME re-resolves the path — never closes the doc live-bound at its NEW path", async () => {
+		const { engine, reset, closeDoc, map } = crdtEngine();
+		// Entry enqueued under the OLD path; the note was renamed and is now
+		// OPEN in the editor at the NEW path.
+		map.set("renamed.md", "note-id-1"); // NoteIdMap: note-id-1 now lives at renamed.md
+		engine.setLiveBoundCheck((p: string) => p === "renamed.md");
+		await (engine as any).queue.enqueue({
+			path: "owned.md",
+			action: "upsert",
+			timestamp: 1,
+			crdt: true,
+			noteId: "note-id-1",
+		});
+		(engine as any).pendingQueueDeliveries.set("note-id-1", { path: "owned.md" });
+
+		await engine.commitCrdtConvergence("note-id-1");
+
+		// Live-bound at the CURRENT path: the room must survive — releasing on
+		// the stale enqueue-time path would closeDoc the editor's live doc.
+		expect(reset).not.toHaveBeenCalled();
+		expect(closeDoc).not.toHaveBeenCalled();
+	});
+
+	test("heal-room release: a DEFERRED commit (doc not at staged row) does NOT release the in-flight heal", async () => {
+		const { engine, enroll, reset, closeDoc, projectedText } = crdtEngine();
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		mockApp.vault.cachedRead.mockResolvedValue("old base");
+		engine.setLiveBoundCheck(() => false);
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("old base"), version: 1, serverHash: "old-hash" },
+		});
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "new server body",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+		expect(enroll).toHaveBeenCalledTimes(1);
+
+		// Doc has NOT integrated the staged row yet — commit must defer AND
+		// leave the room alone (the next frame re-runs the check).
+		projectedText.mockResolvedValue("stale partial");
+		await engine.commitCrdtConvergence("note-id-1");
+
+		expect(reset).toHaveBeenCalledTimes(1); // only the heal's own reset
+		expect(closeDoc).not.toHaveBeenCalled();
+	});
+
+	test("heal-room release: a frame with nothing staged and nothing queued stays a pure no-op", async () => {
+		const { engine, reset, closeDoc } = crdtEngine();
+		engine.setLiveBoundCheck(() => false);
+
+		await engine.commitCrdtConvergence("note-id-1");
+
+		expect(reset).not.toHaveBeenCalled();
+		expect(closeDoc).not.toHaveBeenCalled();
 	});
 
 	test("fix wave 1 (c): commit with nothing staged for the id is a no-op", async () => {

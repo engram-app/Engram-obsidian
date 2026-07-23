@@ -19933,7 +19933,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     let staged = this.pendingConvergence.get(noteId);
-    if (!staged) return;
+    if (!staged) {
+      queued && this.releaseHealRoom(noteId, queued.path);
+      return;
+    }
     if (staged.content !== null) {
       let matches = !1;
       if (this.crdt)
@@ -19960,19 +19963,47 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     this.pendingConvergence.delete(noteId), this.crdtRehandshakeAttempts.delete(noteId);
     let path = (_f = this.noteIdMap) == null ? void 0 : _f.pathForId(noteId);
-    if (path)
-      try {
-        let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-        this.syncState.set(path, {
-          ...(_h = this.syncState.get(path)) != null ? _h : {},
-          hash: localHash,
-          serverHash: staged.serverHash,
-          version: staged.version,
-          seq: staged.seq
-        }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
-      } catch (e) {
-        rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
-      }
+    if (!path) {
+      this.releaseHealRoom(noteId, null);
+      return;
+    }
+    try {
+      let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+      this.syncState.set(path, {
+        ...(_h = this.syncState.get(path)) != null ? _h : {},
+        hash: localHash,
+        serverHash: staged.serverHash,
+        version: staged.version,
+        seq: staged.seq
+      }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+    } catch (e) {
+      rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
+    }
+    this.releaseHealRoom(noteId, path);
+  }
+  /** Release the TRANSIENT heal room once its job is done (fan-out idle
+   *  invariant: an idle note holds NO CRDT room). The diverged-cold-note heal
+   *  and the queued-delivery nudge open a room via reset+enroll; without this
+   *  release the once-per-session `enrolled` mark keeps that room (client doc
+   *  + server SharedDoc) alive for the rest of the session — on mass
+   *  divergence that recreates the connect-storm resource shape the fan-out
+   *  model exists to prevent (e2e canary:
+   *  test_cold_send_over_fanout_opens_no_room). `reset` also clears the
+   *  channel's once-per-doc STEP1 gate so a FUTURE heal can re-handshake.
+   *  A live-bound note keeps its room — the editor owns its lifecycle. */
+  releaseHealRoom(noteId, path) {
+    var _a, _b, _c;
+    let current = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : path;
+    if (!(current && this.isLiveBound((0, import_obsidian21.normalizePath)(current)))) {
+      if ((_c = this.crdtEnrollment) == null || _c.reset(noteId), current)
+        this.hibernateIfIdle(current, noteId);
+      else if (this.crdt)
+        try {
+          this.crdt.closeDoc(noteId);
+        } catch (e) {
+          devLog().log("crdt", `releaseHealRoom: closeDoc ${noteId} failed \u2014 ${errMsg(e)}`);
+        }
+    }
   }
   /** Cheap mid-session divergence heal for the just-opened note (rework #6 —
    *  restores the coverage the removed `verifyConvergenceOnOpen` had, a note
