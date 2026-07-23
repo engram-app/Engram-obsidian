@@ -236,8 +236,39 @@ describe("SyncEngine.enumerateServerState", () => {
 		expect([...s.notes.keys()].sort()).toEqual(["a.md", "b.md"]);
 	});
 
-	test("throws when the channel is not live — a wrong empty plan is worse than an error", async () => {
+	test("waits for the socket to become live, then enumerates (startup join race)", async () => {
+		// On startup the preview can be computed before the crdt: join lands
+		// (onCrdtJoined). Rather than fail the preview outright, enumerate waits
+		// briefly for the socket to become enumerable.
 		const engine = createEngine();
+		engine.setCrdtManager({} as any);
+		let live = false;
+		engine.setCrdtLiveCheck(() => live);
+		engine.setCrdtCatchupSince(async () => ({
+			changes: [
+				{
+					type: "note",
+					id: "n1",
+					seq: 1,
+					path: "a.md",
+					content: "v",
+					content_hash: "H",
+					deleted: false,
+				},
+			] as any,
+			has_more: false,
+			next_seq: 1,
+		}));
+		setTimeout(() => {
+			live = true;
+		}, 120);
+		const s = await (engine as any).enumerateServerState();
+		expect(s.notes.get("a.md")).toEqual({ deleted: false, content: "v", contentHash: "H" });
+	});
+
+	test("throws after the wait budget when the socket never becomes live", async () => {
+		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 150;
 		engine.setCrdtManager({} as any);
 		engine.setCrdtLiveCheck(() => false);
 		engine.setCrdtCatchupSince(async () => ({ changes: [], has_more: false, next_seq: null }));
@@ -299,6 +330,7 @@ describe("SyncEngine.computeSyncPlan", () => {
 
 	test("channel down: the plan REJECTS instead of rendering a wrong empty preview", async () => {
 		const engine = createEngine();
+		(engine as any).enumerateWaitMs = 150;
 		mockApp.vault.getFiles.mockReturnValue([]);
 		engine.setCrdtManager({} as any);
 		engine.setCrdtLiveCheck(() => false);

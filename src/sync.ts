@@ -1062,6 +1062,12 @@ export class SyncEngine {
 		this.isLiveBound = fn;
 	}
 
+	/** How long enumerateServerState waits for the op-log socket to become
+	 *  enumerable (catch-up wired + manager set + channel live) before failing
+	 *  the preview. Covers the startup join race and the vault-switch rebuild.
+	 *  A field so tests can shrink it. */
+	private enumerateWaitMs = 8000;
+
 	/** Adopt-first seed gate input (CrdtManager.isUnchangedSynced): true when
 	 *  `content` hashes to exactly what this engine last synced for `path` —
 	 *  i.e. the server already holds this content, so a history-less Y.Doc must
@@ -3226,6 +3232,20 @@ export class SyncEngine {
 		notes: Map<string, { deleted: boolean; content?: string; contentHash?: string }>;
 		attachments: Map<string, { deleted: boolean }>;
 	}> {
+		// The preview reads server state off the live op-log socket. On startup
+		// the plan is computed the moment the user channel joins — often before
+		// the crdt: topic join lands (onCrdtJoined) — and on a vault switch the
+		// stream is torn down and rebuilt underneath us. Both leave the socket
+		// briefly non-enumerable; wait for it rather than failing the preview
+		// outright (a vault-switch/startup false-negative is worse than a short
+		// spinner). Falls through to the offline error only after the budget.
+		const deadline = Date.now() + this.enumerateWaitMs;
+		while (
+			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
+			Date.now() < deadline
+		) {
+			await new Promise((resolve) => setTimeout(resolve, 100));
+		}
 		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
 			throw new Error("Sync preview needs the live socket (op-log enumeration)");
 		}

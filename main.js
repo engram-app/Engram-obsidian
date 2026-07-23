@@ -18176,6 +18176,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  binding. Set from the plugin layer; defaults to "never bound" so non-CRDT
      *  and headless contexts behave exactly as before. */
     this.isLiveBound = () => !1;
+    /** How long enumerateServerState waits for the op-log socket to become
+     *  enumerable (catch-up wired + manager set + channel live) before failing
+     *  the preview. Covers the startup join race and the vault-switch rebuild.
+     *  A field so tests can shrink it. */
+    this.enumerateWaitMs = 8e3;
     /** Persistent record of files that failed to sync, with reason. Surfaced
      *  in the Sync Center "Issues" panel and used to short-circuit the offline
      *  queue for terminal failures (e.g. 413 Payload Too Large). */
@@ -19646,8 +19651,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  preview was their last caller). Throws when the channel is not live: the
    *  preview must error visibly, never render a wrong empty plan. */
   async enumerateServerState() {
-    var _a, _b;
-    if (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b))
+    var _a, _b, _c, _d;
+    let deadline = Date.now() + this.enumerateWaitMs;
+    for (; (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b)) && Date.now() < deadline; )
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    if (!this.crdtCatchupSince || !this.crdt || !((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d))
       throw new Error("Sync preview needs the live socket (op-log enumeration)");
     let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0;
     for (let page = 0; page < 1e5; page++) {
@@ -24474,7 +24482,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           createVault: (name) => this.api.createVault(name),
           applyVaultChange: async (id2, name) => {
             var _a2, _b2;
-            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.syncEngine.computeSyncPlan("full");
+            return this.settings.vaultId = id2, this.settings.remoteVaultName = name, this.api.setVaultId(id2), this.syncEngine.updateSettings(this.settings), await this.syncEngine.resetForVaultChange(), this.syncGateAcceptedFor = null, this.lastMapReconcileAt = 0, (_a2 = this.crdtWiring) == null || _a2.clearStrandHealAttempts(), this.syncEngine.setSyncBlocked(!0), await this.savePluginData(this.syncEngine.getLastSync()), (_b2 = this.settingTab) == null || _b2.rerender(), this.setupNoteStream(), this.syncEngine.computeSyncPlan("full");
           }
         });
         this.syncEngine.computeSyncPlan("full").then((plan) => modal.setPlan(plan)).catch((e) => {
