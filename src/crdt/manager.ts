@@ -110,6 +110,17 @@ export interface CrdtManagerOptions {
 	 * (matches pre-gate behavior — every existing test is unaffected).
 	 */
 	canSendLive?: (docId: string) => boolean;
+	/**
+	 * Fix wave 1 (single-path D3 review): called from `markSynced` — i.e. every
+	 * time `CrdtChannel.handleFrame` applies an inbound sync frame that leaves
+	 * the doc's text non-empty. This is op-level proof the doc actually holds
+	 * server content, unlike a text-equality guess. Wired to
+	 * `SyncEngine.commitCrdtConvergence`, which commits any staged
+	 * `pendingConvergence` entry for this note_id. Fires on every non-empty
+	 * frame (STEP2 or a later live update), not just the first — the commit
+	 * side is idempotent (no-op when nothing is staged), so this is cheap.
+	 */
+	onSynced?: (noteId: string) => void;
 }
 
 interface Entry {
@@ -203,10 +214,13 @@ export class CrdtManager {
 	/**
 	 * Mark `noteId` as having completed its server handshake (STEP2 received).
 	 * Called by `CrdtChannel.handleFrame` after any inbound sync frame is applied
-	 * to the doc. Idempotent — safe to call on every inbound frame.
+	 * to the doc. Idempotent — safe to call on every inbound frame. Also fires
+	 * `opts.onSynced` (fix wave 1) — this is the op-level "real ops landed"
+	 * signal SyncEngine commits a staged live-bound convergence on.
 	 */
 	markSynced(noteId: string): void {
 		this.synced.add(this.docId(noteId));
+		this.opts.onSynced?.(noteId);
 	}
 
 	/**

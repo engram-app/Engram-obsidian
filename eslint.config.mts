@@ -43,24 +43,17 @@ export default tseslint.config(
 	{
 		files: ["src/**/*.ts"],
 		rules: {
-			// Deferred, tracked in #270. This rule is a pure syntactic presence
-			// check: it only asks whether a `getSettingDefinitions` member exists
-			// and never inspects the return value, so `return []` would satisfy
-			// both it and the community scanner while changing nothing. That is
-			// suppression wearing adoption's clothes.
-			//
-			// Real adoption is a full settings-UI rewrite, not an additive
-			// change: per obsidian.d.ts, a non-empty return means Obsidian 1.13+
-			// renders the tab itself and `display()` is NEVER called. Our tab
-			// bar, status bar, device-flow auth, network-sourced vault dropdown
-			// and waitlist form all live in `display()`. It also has a
-			// brick-the-plugin hazard (SettingPage is a runtime class; touching
-			// it at module scope throws on Obsidian < 1.13, and our
-			// minAppVersion is 1.7.2).
-			//
-			// Turning it off rather than stubbing it keeps the scanner honest:
-			// it will keep reporting the warning until #270 actually lands.
-			"obsidianmd/settings-tab/prefer-setting-definitions": "off",
+			// Adopted (#270). `EngramSyncSettingTab.getSettingDefinitions()`
+			// returns a single `render`-hatch item that hosts the existing
+			// custom UI (tab bar, status, device-flow) via renderContent(), so
+			// on 1.13+ the tab renders identically while being registered in
+			// settings search — additive, not the full-UI rewrite this comment
+			// previously assumed. `display()` is kept as the <1.13 fallback
+			// (minAppVersion 1.7.2). No module-scope runtime touch (type-only
+			// imports; the hatch body only runs on 1.13+), so no brick hazard.
+			// Ceiling: indexed as one entry, not per-setting. Enforced now so a
+			// future settings tab can't regress the search registration.
+			"obsidianmd/settings-tab/prefer-setting-definitions": "error",
 			"obsidianmd/ui/sentence-case": [
 				"error",
 				{

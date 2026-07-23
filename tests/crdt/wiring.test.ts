@@ -75,6 +75,10 @@ function makeDevice(id: string, reconcile: () => number): Device {
 		// the manifest reconcile explicitly, so the coalesced trigger is a no-op.
 		ensureNoteIdMapped: () => {},
 		discoverAnnouncedNote: async () => {},
+		// Fix wave 1: CrdtManager's onSynced fires this on every non-empty
+		// inbound frame. These device-pair scenarios don't exercise the D3
+		// live-bound staging path, so a no-op is enough.
+		commitCrdtConvergence: async () => {},
 	};
 
 	const wiring = createCrdtWiring({

@@ -1,7 +1,7 @@
 /**
  * Settings tab for Engram Sync plugin.
  */
-import { type App, PluginSettingTab } from "obsidian";
+import { type App, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import type EngramSyncPlugin from "./main";
 import { SyncProgressModal, settingsBarCounts } from "./sync-progress-modal";
@@ -17,6 +17,10 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	plugin: EngramSyncPlugin;
 	private activeTab: string;
 	private statusContainerEl: HTMLElement | null = null;
+	/** Container the UI was last drawn into. Differs by path: this.containerEl
+	 *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
+	 *  it so redisplay/device-flow re-renders land in the right place. */
+	private activeContainerEl: HTMLElement | null = null;
 
 	constructor(app: App, plugin: EngramSyncPlugin) {
 		super(app, plugin);
@@ -29,8 +33,69 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		this.activeTab = tabId;
 	}
 
+	/**
+	 * Registers this tab with Obsidian's 1.13+ declarative settings API so it
+	 * shows up in the global settings search. We do NOT decompose our settings
+	 * into declarative `control` objects: this tab is a rich custom UI (tab bar,
+	 * live status dot, progress bar, device-flow) with no 1:1 declarative form.
+	 * Instead we expose a single `render` item that draws the existing UI, which
+	 * is enough to satisfy the API and index the tab by name.
+	 *
+	 * On 1.13+ a non-empty return here renders INSTEAD of display(); on <1.13
+	 * (minAppVersion is 1.7.2) this method doesn't exist on the base class and
+	 * display() is the fallback. Both paths call renderContent(), so there's
+	 * one source of truth.
+	 *
+	 * ponytail: one search entry (indexed by name), not per-setting search.
+	 * Upgrade path = decompose each setting into a `control` definition — large,
+	 * and would drop the custom tab UX on 1.13+. Not worth it to satisfy a
+	 * search-indexing nudge.
+	 *
+	 * Return type is a local shim for Obsidian 1.13's `SettingDefinitionItem`:
+	 * we hold the obsidian typings at 1.8.7 (minAppVersion is 1.7.2), so the
+	 * real type isn't available. This covers exactly the `render` item we emit;
+	 * swap for `SettingDefinitionItem[]` if the obsidian typings floor is ever
+	 * raised to >=1.13.
+	 */
+	getSettingDefinitions(): Array<{
+		name: string;
+		desc: string;
+		render: (setting: Setting) => void;
+	}> {
+		return [
+			{
+				name: "Engram Sync",
+				desc: "Cloud and self-hosted sync, connection, and advanced settings.",
+				render: (setting: Setting) => {
+					// Host the full UI in the row element Obsidian hands us
+					// (setting.settingEl — a plain HTMLElement, no version gate).
+					// engram-settings-host strips the default .setting-item flex row
+					// so our tabbed UI lays out edge-to-edge.
+					setting.settingEl.addClass("engram-settings-host");
+					this.renderContent(setting.settingEl.createDiv());
+				},
+			},
+		];
+	}
+
 	display(): void {
-		const { containerEl } = this;
+		this.renderContent(this.containerEl);
+	}
+
+	/** Re-render into whatever container we last drew into. Public so external
+	 *  callers (e.g. a vault switch in main.ts) refresh the tab without calling
+	 *  the deprecated display() — which on 1.13+ would draw into the tab root
+	 *  instead of the render-hatch host. No-op if the tab isn't currently shown
+	 *  (activeContainerEl is cleared on hide()) or if the container was detached
+	 *  without hide() firing — on 1.13+ Obsidian can tear down the render-hatch
+	 *  row on a settings re-render, so guard with isConnected like renderStatus()
+	 *  does; it re-renders on next open. */
+	rerender(): void {
+		if (this.activeContainerEl?.isConnected) this.renderContent(this.activeContainerEl);
+	}
+
+	private renderContent(containerEl: HTMLElement): void {
+		this.activeContainerEl = containerEl;
 		containerEl.empty();
 
 		// ── Status indicator (persists across tabs, live-updates via plugin hook) ──
@@ -122,7 +187,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			containerEl: contentEl,
 			app: this.app,
 			plugin: this.plugin,
-			redisplay: () => this.display(),
+			redisplay: () => this.rerender(),
 			startDeviceFlow: () => this.startDeviceFlow(),
 			openProgressModal: () => this.openProgressModal(),
 			switchToTab: (id) => activateTab(id),
@@ -165,7 +230,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 				result.vault_id,
 				result.user_email,
 			);
-			this.display();
+			this.rerender();
 		}
 	}
 
@@ -233,5 +298,6 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	hide(): void {
 		this.plugin.onStatusBarChange = null;
 		this.statusContainerEl = null;
+		this.activeContainerEl = null;
 	}
 }

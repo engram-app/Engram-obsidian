@@ -337,16 +337,22 @@ describe("SyncEngine.handleRename", () => {
 		);
 	});
 
-	test("md rename tombstones the old path over the socket, never REST", async () => {
-		// A .md rename relocates via ordered tombstone->resurrect: an AWAITED direct
-		// crdt_delete for the (stable, shared) id, then pushFile's crdt_create
-		// resurrects it at the new path. It must NOT hit REST deleteNote/pushNote,
-		// and must NOT enqueue a coalescing durable delete (which would race the
-		// resurrect create on the docId-keyed queue — the test_10 regression).
+	test("md rename never emits a delete op — one create with the SAME id at the new path (Phase E2)", async () => {
+		// Rename-as-move: the backend relocates a LIVE id arriving via
+		// crdt_create at a new free path (genesis_relocate_live), so the plugin
+		// sends NO tombstone at all. Killing the delete also removes the #970
+		// delete-wins window from renames and the delete/create coalescing
+		// hazard on the docId-keyed op queue (the old test_10 class).
 		const engine = createEngine();
 		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-md-move" });
+		const crdtCreate = mock().mockResolvedValue("id-md-move");
 		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		} as any);
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# body");
 		engine.setCrdtDelete(crdtDelete);
+		engine.setCrdtCreate(crdtCreate);
 		engine.setCrdtLiveCheck(() => true);
 		engine.setCrdtEnqueue((op) => enqueued.push(op));
 
@@ -358,17 +364,21 @@ describe("SyncEngine.handleRename", () => {
 		const file = new TFile("Notes/New.md", Date.now());
 		await engine.handleRename(file, "Notes/Old.md");
 
-		expect(crdtDelete).toHaveBeenCalledWith("id-md-move");
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
+		expect(crdtCreate).toHaveBeenCalledWith("id-md-move", "Notes/New.md");
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
-		// The id moved onto the new path; no delete should be durably queued.
-		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
 	});
 
-	test("md rename falls back to a durable delete when the channel is down", async () => {
+	test("md rename with the channel down durably enqueues the create, never a delete (Phase E2)", async () => {
 		const engine = createEngine();
 		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-md-off" });
 		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		} as any);
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue("# body");
 		engine.setCrdtDelete(crdtDelete);
 		engine.setCrdtLiveCheck(() => false); // channel not joined
 		engine.setCrdtEnqueue((op) => enqueued.push(op));
@@ -383,8 +393,11 @@ describe("SyncEngine.handleRename", () => {
 
 		expect(crdtDelete).not.toHaveBeenCalled();
 		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
+		// The reconnect drain replays the create; the backend relocation makes
+		// it the whole move.
 		expect(enqueued).toContainEqual(
-			expect.objectContaining({ kind: "delete", docId: "id-md-off" }),
+			expect.objectContaining({ kind: "create", docId: "id-md-off" }),
 		);
 	});
 });

@@ -104,6 +104,9 @@ interface PluginData {
 	 *  offlineQueue: flat pending list, restored on startup, pruned past TTL. */
 	crdtOpQueue?: CrdtOp[];
 	catchupSeq?: number;
+	/** Manifest change_seq watermark of the last fully-processed catch-up pass
+	 *  (Phase E1 #1065) — sent as ?since_seq= to short-circuit an unchanged vault. */
+	manifestSeq?: number;
 	/** New unified sync state (hash + version per file). */
 	syncState?: Record<string, FileSyncState>;
 	/** The server vaultId that `syncState` was recorded under. Used to
@@ -385,7 +388,7 @@ export default class EngramSyncPlugin extends Plugin {
 		);
 
 		this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
-			// Merge whichever of {lastSync, catchupSeq} the engine handed us into
+			// Merge whichever of {lastSync, catchupSeq, manifestSeq} the engine handed us into
 			// the in-memory engine state, then persist the WHOLE PluginData via
 			// savePluginData (saveData overwrites data.json wholesale). Each field
 			// the payload omits falls through to the engine's current value, so a
@@ -395,6 +398,9 @@ export default class EngramSyncPlugin extends Plugin {
 			}
 			if (data.catchupSeq !== undefined) {
 				this.syncEngine.setCatchupSeq(data.catchupSeq);
+			}
+			if (data.manifestSeq !== undefined) {
+				this.syncEngine.setManifestSeq(data.manifestSeq);
 			}
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
@@ -432,6 +438,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// mint doc onto the server's authoritative id (the serverId doc is
 		// pre-seeded with the editor's content, so no in-flight edit is lost).
 		this.syncEngine.setCrdtEditorRebind((path) => this.crdtLiveViews?.rebindPath(path));
+
+		// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
+		// check reads the bound editor's live buffer, and (on a rebind)
+		// nudges its save the same way wiring.ts's onBoundUpdate does.
+		this.syncEngine.setCrdtBoundBufferText(
+			(path) => this.crdtLiveViews?.boundBufferText(path) ?? null,
+		);
+		this.syncEngine.setCrdtRequestSave((path) =>
+			this.crdtLiveViews?.requestSaveForBoundPath(path),
+		);
 
 		// Base content store for 3-way merge (lazy-loaded after layout ready)
 		const basesPath = `${this.manifest.dir}/sync-bases.json`;
@@ -536,6 +552,9 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 		if (saved?.catchupSeq !== undefined) {
 			this.syncEngine.setCatchupSeq(saved.catchupSeq);
+		}
+		if (saved?.manifestSeq !== undefined) {
+			this.syncEngine.setManifestSeq(saved.manifestSeq);
 		}
 		if (saved?.offlineQueue?.length) {
 			this.syncEngine.queue.load(saved.offlineQueue);
@@ -1284,6 +1303,9 @@ export default class EngramSyncPlugin extends Plugin {
 			// reason (like deviceId) or the next saveData() wipes it; 0 = replay
 			// from genesis.
 			catchupSeq: this.syncEngine.getCatchupSeq(),
+			// Manifest since_seq watermark (E1 #1065) — re-listed for the same
+			// wholesale-save reason.
+			manifestSeq: this.syncEngine.getManifestSeq(),
 			offlineQueue: offlineQueue ?? this.syncEngine.queue.all(),
 			// Re-listed on every wholesale save (like offlineQueue) or the next
 			// saveData() wipes the durable CRDT ops.
@@ -1654,6 +1676,15 @@ export default class EngramSyncPlugin extends Plugin {
 		} catch (e) {
 			rlog().warn("crdt", `socket seq-replay on reconnect failed: ${errMsg(e)}`);
 		}
+		// Drain the durable queue now that the crdt topic is LIVE (Phase E3):
+		// the socket is the ONLY delivery path for queued crdt edits, and the
+		// drain deliberately skips them while the topic is down — without this
+		// kick, an edit captured during the pre-join window (e.g. held behind
+		// its create-ack) waits for the next periodic flush (~20s+), which
+		// stalled e2e test_82's push past the assert window (CI 29945060029).
+		// The old REST /updates fallback delivered regardless of topic state,
+		// masking the missing kick.
+		void this.syncEngine.flushQueue();
 	}
 
 	/** Attempt to connect the WebSocket channel with retry on getMe() failure. */
@@ -1879,6 +1910,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// Backed lazily: crdtLiveViews is constructed just below, so this
 						// closure must read the field at call time, not capture a value.
 						isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+						// Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
+						// flush a programmatically-updated bound editor to disk — nudge
+						// Obsidian's own save pipeline after a remote merge paints in.
+						onBoundUpdate: (path) => this.crdtLiveViews?.requestSaveForBoundPath(path),
 						// Gate live crdt_msg sends on the note's create-ack (create-before-edit):
 						// a brand-new note's crdt_create must land before any crdt_msg, or the
 						// server drops the edit (note_not_found) — see manager.ts canSendLive.
@@ -2236,7 +2271,7 @@ export default class EngramSyncPlugin extends Plugin {
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
 						// any other vault-derived UI pick up the switch.
-						this.settingTab?.display();
+						this.settingTab?.rerender();
 						return this.syncEngine.computeSyncPlan("full");
 					},
 				});

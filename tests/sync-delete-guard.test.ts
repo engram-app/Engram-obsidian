@@ -20,7 +20,6 @@ import { DEFAULT_SETTINGS } from "../src/types";
 const mockApi = {
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
 	deleteAttachment: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getUpdates: mock().mockRejectedValue(new Error("getUpdates must not be called")),
 } as unknown as EngramApi;
 
 const mockApp = {

@@ -314,4 +314,3 @@ Normalizes slashes, removes leading/trailing slashes, replaces non-breaking spac
 - Submission Requirements: https://docs.obsidian.md/Plugins/Releasing/Submission+requirements+for+plugins
 - TypeScript API Reference: https://docs.obsidian.md/Reference/TypeScript+API
 - obsidian.d.ts source: https://github.com/obsidianmd/obsidian-api
-- Audit findings: `docs/context/obsidian-api-audit.md`
