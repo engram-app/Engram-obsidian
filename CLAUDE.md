@@ -110,6 +110,8 @@ bun install
 bun run build
 ```
 
+**Before opening a PR** run the CI-only lints locally (they only run in CI, so a miss = a red round-trip): `bun test`, `./node_modules/.bin/biome ci` (NOT `check`, and not `bunx biome` — wrong version), `bun run lint:obsidian`, `bun run lint:css`, `bun run build`.
+
 ## Release Process
 
 Releases are automated via GitHub Actions. Tags use `x.y.z` format (no `v` prefix) for BRAT/Obsidian compatibility.
