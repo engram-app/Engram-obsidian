@@ -1858,9 +1858,21 @@ export default class EngramSyncPlugin extends Plugin {
 				// Delete (and durable create genesis) now route through the plugin-
 				// lifetime crdtOpQueue, wired once in onload, not per-channel here.
 				// Single-path convergence: seq-ordered op-log replayed over the socket.
-				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) =>
-					channel.crdtCatchupSince(cursorSeq, limit),
-				);
+				this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
+					// The op-log feed is vault-scoped. applyVaultChange rebuilds the
+					// stream for the new vault before computing the plan, so this
+					// closure normally captures the current vault's channel. This
+					// guard is defense against any future path that flips
+					// settings.vaultId without rebuilding: a stale channel would
+					// enumerate the OLD vault and render it as the new vault's plan.
+					// Refuse rather than mislead (enumerateServerState waits for the
+					// rebuilt channel to go live, so this fires only on a true stale
+					// mismatch, not the rebuild window).
+					if (channel.getVaultId() !== this.settings.vaultId) {
+						throw new Error("Sync preview needs the live socket (vault switching)");
+					}
+					return channel.crdtCatchupSince(cursorSeq, limit);
+				});
 
 				// Wire CRDT transport through this channel.
 				// Only wire when vaultId is known: the crdt: topic is keyed by
@@ -2267,15 +2279,23 @@ export default class EngramSyncPlugin extends Plugin {
 						// Strand-heal retry counts are scoped to the previous vault's
 						// note_ids (final review MINOR-6) — stale counts here could
 						// prematurely give up on a note_id that happens to be reused
-						// in the new vault. (The wiring is also rebuilt on the next
-						// setupNoteStream, but clear defensively — the rebuild is not
-						// this handler's contract.)
+						// in the new vault.
 						this.crdtWiring?.clearStrandHealAttempts();
 						this.syncEngine.setSyncBlocked(true);
 						await this.savePluginData(this.syncEngine.getLastSync());
 						// Re-render the settings tab so the vault name span and
 						// any other vault-derived UI pick up the switch.
 						this.settingTab?.rerender();
+						// Rebuild the stream for the NEW vault before computing the
+						// plan: the preview enumerates server state off the crdt:
+						// op-log socket, which is vault-scoped. The connection key
+						// includes the vault, so this tears down the old vault's
+						// channel and rejoins crdt: for the new one. setupNoteStream
+						// (unlike saveSettings) does NOT re-fire doSyncWithFirstSyncCheck,
+						// so it won't stack a second modal. computeSyncPlan's
+						// enumerateServerState waits for the new join to land before
+						// enumerating (SyncEngine.enumerateWaitMs).
+						this.setupNoteStream();
 						return this.syncEngine.computeSyncPlan("full");
 					},
 				});

@@ -21,11 +21,9 @@ const hang = () => new Promise<never>(() => {});
 const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
-	getChanges: mock().mockImplementation(hang),
 	getManifest: mock().mockImplementation(hang),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
-	getAttachmentChanges: mock().mockImplementation(hang),
 	getRateLimit: mock().mockResolvedValue(0),
 } as unknown as EngramApi;
 
