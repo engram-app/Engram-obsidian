@@ -23009,7 +23009,7 @@ var CrdtEnrollment = class {
         var _a;
         return (_a = this.onAfterEnroll) == null ? void 0 : _a.call(this, noteId);
       }).catch((e) => {
-        this.enrolled.delete(noteId), rlog().warn(
+        this.enrolled.delete(noteId), this.resetSync(noteId), rlog().warn(
           "crdt",
           `enroll startSync failed for ${noteId}: ${errMsg(e)} \u2014 will retry on next open`
         );
@@ -23082,7 +23082,10 @@ function createCrdtWiring(deps) {
       ), healUnknownNoteId(id2, content);
     for (let { path, content } of toFlush)
       deps.isBound(path) || syncEngine.flushFromCrdt(path, content).then((ok) => {
-        ok || rlog().warn("crdt", `strand-heal flush refused for ${path} \u2014 retained in Y.Doc`);
+        ok || rlog().warn(
+          "crdt",
+          `strand-heal flush refused for ${path} \u2014 retained in Y.Doc`
+        );
       }).catch(
         (e) => rlog().warn(
           "crdt",
@@ -23162,7 +23165,10 @@ function createCrdtWiring(deps) {
     }
   }), onCrdtMessage = (docId, b64) => {
     channel.handleFrame(docId, b64).catch((e) => {
-      rlog().warn("crdt", `handleFrame failed for note_id=${docId}: ${errMsg(e)} \u2014 frame dropped`);
+      rlog().warn(
+        "crdt",
+        `handleFrame failed for note_id=${docId}: ${errMsg(e)} \u2014 frame dropped`
+      );
     });
   }, onNoteYjsUpdate = (noteId, b64, head, seq3) => {
     syncEngine.applyLiveOpWithSeq(

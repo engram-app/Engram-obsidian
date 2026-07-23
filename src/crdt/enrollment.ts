@@ -92,7 +92,11 @@ export class CrdtEnrollment {
 					// Failed handshake: un-mark so a later enroll() retries — a
 					// permanent `enrolled` latch would leave the note deaf to remote
 					// CRDT state for the whole session, with nothing logged.
+					// resetSync clears the channel's once-per-doc `initiated` latch
+					// too (set BEFORE startSync's first await) — without it the
+					// retry's startSync early-returns and never sends a STEP1.
 					this.enrolled.delete(noteId);
+					this.resetSync(noteId);
 					rlog().warn(
 						"crdt",
 						`enroll startSync failed for ${noteId}: ${errMsg(e)} — will retry on next open`,

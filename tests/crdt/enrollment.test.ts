@@ -175,12 +175,15 @@ describe("CrdtEnrollment bounded concurrency", () => {
 describe("CrdtEnrollment failed handshake", () => {
 	test("a rejected startSync logs a warn and un-marks enrollment so a later enroll retries", async () => {
 		let calls = 0;
+		const resetSyncCalls: string[] = [];
 		const e = new CrdtEnrollment({
 			startSync: async () => {
 				calls++;
 				if (calls === 1) throw new Error("transport down");
 			},
-			resetSync: () => {},
+			resetSync: (id) => {
+				resetSyncCalls.push(id);
+			},
 		});
 		const warnSpy = spyOn(rlog(), "warn");
 
@@ -191,6 +194,11 @@ describe("CrdtEnrollment failed handshake", () => {
 		const [category, message] = warnSpy.mock.calls[0] as unknown as [string, string];
 		expect(category).toBe("crdt");
 		expect(message).toContain("id-1");
+
+		// The channel's once-per-doc `initiated` latch is set BEFORE startSync's
+		// first await (channel.ts) — without resetSync the "retry" would early
+		// return there and never send a STEP1. The catch must clear BOTH latches.
+		expect(resetSyncCalls).toEqual(["id-1"]);
 
 		// The failed handshake must be retryable — a permanent `enrolled` latch
 		// leaves the note deaf to remote CRDT state for the whole session.
