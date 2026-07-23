@@ -997,9 +997,6 @@ var EngramApi = class _EngramApi {
      *  a slow link legitimately outlives the note deadline. */
     this.requestTimeoutMs = 15e3;
     this.attachmentTimeoutMs = 12e4;
-    /** Bulk pages (batch push, change feeds) can carry many full note bodies —
-     *  15s starves a slow link, 120s is a transfer budget they don't need. */
-    this.bulkTimeoutMs = 6e4;
     /** In-flight sendRequest calls, so a channel-disconnect signal can probe
      *  for wedged connections and fail them early (see failWedgedRequests). */
     this.inflight = /* @__PURE__ */ new Set();
@@ -1101,7 +1098,7 @@ var EngramApi = class _EngramApi {
       ...extraHeaders
     }, activeVaultId = this.getActiveVaultId();
     activeVaultId && (headers["X-Vault-ID"] = activeVaultId), this.deviceId && (headers["X-Device-Id"] = this.deviceId), body !== void 0 && (headers["Content-Type"] = "application/json");
-    let attachmentMeta = path === "/attachments/changes" || path.startsWith("/attachments/changes?"), attachmentTransfer = path.startsWith("/attachments") && !attachmentMeta && (method === "POST" || method === "GET"), bulk = path === "/notes/batch" || path.startsWith("/notes/changes?") || path === "/sync/changes" || path.startsWith("/sync/changes?"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : bulk ? this.bulkTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
+    let attachmentTransfer = path.startsWith("/attachments") && (method === "POST" || method === "GET"), timeoutMs = attachmentTransfer ? this.attachmentTimeoutMs : this.requestTimeoutMs, raw = (0, import_obsidian.requestUrl)({
       url: `${this.baseUrl}${path}`,
       method,
       headers,
@@ -1237,14 +1234,6 @@ var EngramApi = class _EngramApi {
       throw e;
     }
   }
-  /** Get changes since a timestamp.
-   *  Protocol rev: pass limit/cursor to page through large vaults and
-   *  fields:"meta" to receive content_hash instead of content. Pre-rev
-   *  backends ignore the extra params and return the legacy full response. */
-  async getChanges(since, opts) {
-    let params2 = new URLSearchParams({ since });
-    return (opts == null ? void 0 : opts.limit) !== void 0 && params2.set("limit", String(opts.limit)), opts != null && opts.cursor && params2.set("cursor", opts.cursor), opts != null && opts.fields && params2.set("fields", opts.fields), (await this.request("GET", `/notes/changes?${params2.toString()}`)).json;
-  }
   /** Get full note by path. */
   async getNote(path) {
     let encoded = encodePath(path);
@@ -1298,11 +1287,6 @@ var EngramApi = class _EngramApi {
   /** Push batched log entries to the server for remote debugging. */
   async pushLogs(entries) {
     await this.request("POST", "/logs", { logs: entries });
-  }
-  /** Get attachment changes since a timestamp. */
-  async getAttachmentChanges(since) {
-    let encoded = encodeURIComponent(since);
-    return (await this.request("GET", `/attachments/changes?since=${encoded}`)).json;
   }
   // --- Explicit folder markers (kind='folder' rows) ---
   /** Create an explicit empty folder marker. Server is idempotent — repeated
@@ -1648,6 +1632,13 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
   }
   get userTopic() {
     return `user:${this.userId}`;
+  }
+  /** The server vault this channel is joined to (`crdt:{userId}:{vaultId}`),
+   *  or null before a vault is bound. Callers reading vault-scoped state off
+   *  the socket must confirm this matches their intended vault — a vault
+   *  switch that skips setupNoteStream leaves this channel on the old vault. */
+  getVaultId() {
+    return this.vaultId;
   }
   get crdtTopic() {
     return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
@@ -19608,19 +19599,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(path));
   }
   // --- Pull: Engram → local vault ---
-  /** Pull remote changes and apply to vault. */
-  /** Page through GET /notes/changes until has_more=false (protocol rev).
-   *  Pre-rev backends return no has_more — the loop exits after one page,
-   *  preserving legacy behavior. fields:"meta" requests hash-only pages. */
-  async fetchAllNoteChanges(since, fields) {
-    let all2 = [], cursor, serverTime = "";
-    for (let page = 0; page < 1e4; page++) {
-      let resp = await this.api.getChanges(since, { limit: 500, cursor, fields });
-      if (all2.push(...resp.changes), serverTime = resp.server_time, !resp.has_more || !resp.next_cursor) break;
-      cursor = resp.next_cursor;
-    }
-    return { changes: all2, server_time: serverTime };
-  }
   /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
    *  durably recorded (P3, plugin #232-series). Idle notes are not
    *  channel-enrolled under the fan-out model (P2 removed lazyEnrollment) —
@@ -19657,6 +19635,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  cursor — a "replace remote with local" must download nothing (that would
    *  materialize remote extras as local orphans, which then resurrect on the
    *  next sync), and mustn't steal seq progress from a later genuine catch-up. */
+  /** Enumerate the FULL current server state from the seq-ordered op-log
+   *  (`crdt_catchup_since` from seq 0). Nothing is applied and the real
+   *  catch-up cursor is untouched — this is a pure read. Ops fold per note_id
+   *  with last-seq-wins, so a rename collapses to its FINAL path (no ghost
+   *  old-path row — better than the retired REST delta, which listed both)
+   *  and a tombstone folds to `deleted: true`. Attachments ride the same feed
+   *  and fold by path. Replaced GET /notes/changes + GET /attachments/changes
+   *  as `computeSyncPlan`'s inventory (#304, REST-purge Bucket C — the
+   *  preview was their last caller). Throws when the channel is not live: the
+   *  preview must error visibly, never render a wrong empty plan. */
+  async enumerateServerState() {
+    var _a, _b;
+    if (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b))
+      throw new Error("Sync preview needs the live socket (op-log enumeration)");
+    let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0;
+    for (let page = 0; page < 1e5; page++) {
+      let resp = await this.crdtCatchupSince(cursor, 500);
+      for (let c of resp.changes)
+        typeof c.seq == "number" && c.seq > cursor && (cursor = c.seq), c.type === "attachment" ? c.path && attachments.set(c.path, { deleted: c.deleted }) : c.id && c.path && byId.set(c.id, c);
+      if (!resp.has_more) break;
+      typeof resp.next_seq == "number" && resp.next_seq > cursor && (cursor = resp.next_seq);
+    }
+    let notes = /* @__PURE__ */ new Map();
+    for (let c of byId.values())
+      notes.set(c.path, {
+        deleted: c.deleted,
+        content: c.content,
+        contentHash: c.content_hash
+      });
+    return { notes, attachments };
+  }
   async catchupViaSeqReplay(opts = {}) {
     var _a, _b, _c;
     let serverIds = /* @__PURE__ */ new Set(), serverAttachmentPaths = /* @__PURE__ */ new Set();
@@ -21281,44 +21290,43 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  - "full"     — bidirectional: compute toPush, toPull, conflicts, deletions
    *  - "push-all" — push only: compute toPush, skip toPull
    *  - "pull-all" — pull only: compute toPull, skip toPush
+   *
+   *  Server state comes from ONE from-genesis op-log enumeration
+   *  (`enumerateServerState`) — delta and inventory in a single walk. The
+   *  REST-era split (manifest for inventory, GET /notes/changes for the
+   *  delta, epoch-widening when the manifest was missing) died with those
+   *  endpoints (#304). Per-path classification:
+   *  - identical bytes (row carries content)            → clean, skip
+   *  - server unchanged (row hash == recorded serverHash):
+   *      local unchanged → clean · local changed → toPush
+   *  - server changed: local unchanged → toPull · both changed → conflict
    */
   async computeSyncPlan(mode) {
-    let epoch = "1970-01-01T00:00:00Z", manifestNotePaths = null, manifestAttachPaths = null, manifestNoteCount = null, manifestAttachCount = null;
-    if (mode === "full" && this.lastSync) {
-      let manifest = await this.api.getManifest();
-      manifest && (manifestNotePaths = new Set(manifest.notes.map((n) => n.path)), manifestAttachPaths = new Set(manifest.attachments.map((a) => a.path)), manifestNoteCount = manifest.notes.length, manifestAttachCount = manifest.attachments.length);
-    }
-    let needsDeltaAsInventory = mode === "full" && this.lastSync !== "" && manifestNotePaths === null, since = mode !== "full" || needsDeltaAsInventory ? epoch : this.lastSync || epoch, [noteResp, attachResp] = await Promise.all([
-      this.fetchAllNoteChanges(since),
-      this.api.getAttachmentChanges(since)
-    ]), serverNotes = /* @__PURE__ */ new Map();
-    for (let c of noteResp.changes)
-      serverNotes.set(c.path, { deleted: c.deleted });
-    let serverAttachments = /* @__PURE__ */ new Map();
-    for (let c of attachResp.changes)
-      serverAttachments.set(c.path, { deleted: c.deleted });
-    let serverHasNote = (path) => manifestNotePaths ? manifestNotePaths.has(path) : serverNotes.has(path), serverHasAttach = (path) => manifestAttachPaths ? manifestAttachPaths.has(path) : serverAttachments.has(path), syncable = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), localNotes = [], localAttachments = [];
+    let server = await this.enumerateServerState(), serverNotes = server.notes, serverAttachments = server.attachments, syncable = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)), localNotes = [], localAttachments = [];
     for (let f of syncable)
       this.isBinaryFile(f) ? localAttachments.push(f.path) : localNotes.push(f.path);
-    let localNoteSet = new Set(localNotes), localAttachSet = new Set(localAttachments), toPullNotes = [], conflictNotes = [], toDeleteLocal = [];
-    for (let [path, { deleted }] of serverNotes) {
-      if (deleted) {
+    let localNoteSet = new Set(localNotes), localAttachSet = new Set(localAttachments), toPullNotes = [], conflictNotes = [], toDeleteLocal = [], toPushNotes = [];
+    for (let [path, row] of serverNotes) {
+      if (row.deleted) {
         localNoteSet.has(path) && toDeleteLocal.push(path);
         continue;
       }
-      if (localNoteSet.has(path)) {
-        let file = this.app.vault.getFileByPath(path);
-        if (file) {
-          let content = await this.app.vault.cachedRead(file), localHash = fnv1a(content), serverChange = noteResp.changes.find((c) => c.path === path), serverHash = (serverChange == null ? void 0 : serverChange.content) !== void 0 ? fnv1a(serverChange.content) : void 0;
-          if (serverHash !== void 0 && localHash === serverHash)
-            continue;
-          let synced = this.syncState.get(path);
-          (synced == null ? void 0 : synced.hash) !== void 0 && localHash !== synced.hash ? conflictNotes.push(path) : toPullNotes.push(path);
-        } else
-          toPullNotes.push(path);
-      } else
+      if (!localNoteSet.has(path)) {
         toPullNotes.push(path);
+        continue;
+      }
+      let file = this.app.vault.getFileByPath(path);
+      if (!file) {
+        toPullNotes.push(path);
+        continue;
+      }
+      let content = await this.app.vault.cachedRead(file), localHash = fnv1a(content);
+      if (row.content !== void 0 && localHash === fnv1a(row.content)) continue;
+      let synced = this.syncState.get(path), localChanged = (synced == null ? void 0 : synced.hash) !== void 0 && localHash !== synced.hash;
+      row.contentHash !== void 0 && (synced == null ? void 0 : synced.serverHash) !== void 0 && row.contentHash === synced.serverHash ? localChanged && toPushNotes.push(path) : localChanged ? conflictNotes.push(path) : toPullNotes.push(path);
     }
+    for (let path of localNotes)
+      serverNotes.has(path) || toPushNotes.push(path);
     let toPullAttachments = [], toDeleteLocalAttach = [];
     for (let [path, { deleted }] of serverAttachments) {
       if (deleted) {
@@ -21327,29 +21335,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       localAttachSet.has(path) || toPullAttachments.push(path);
     }
-    let toPushNotes = [];
-    for (let path of localNotes) {
-      if (!serverHasNote(path)) {
-        toPushNotes.push(path);
-        continue;
-      }
-      if (serverNotes.has(path)) continue;
-      let file = this.app.vault.getFileByPath(path);
-      if (!file) continue;
-      let content = await this.app.vault.cachedRead(file), localHash = fnv1a(content), synced = this.syncState.get(path);
-      (synced == null ? void 0 : synced.hash) !== void 0 && synced.hash !== localHash && toPushNotes.push(path);
-    }
     let toPushAttachments = [];
     for (let path of localAttachments)
-      serverHasAttach(path) || toPushAttachments.push(path);
-    let localFolderCount = countFolders([...localNotes, ...localAttachments]), serverPaths = manifestNotePaths ? [...manifestNotePaths, ...manifestAttachPaths != null ? manifestAttachPaths : /* @__PURE__ */ new Set()] : [
-      ...[...serverNotes.entries()].filter(([, v]) => !v.deleted).map(([k]) => k),
-      ...[...serverAttachments.entries()].filter(([, v]) => !v.deleted).map(([k]) => k)
-    ], serverFolderCount = countFolders(serverPaths);
+      serverAttachments.has(path) || toPushAttachments.push(path);
+    let liveNotePaths = [...serverNotes.entries()].filter(([, v]) => !v.deleted).map(([k]) => k), liveAttachPaths = [...serverAttachments.entries()].filter(([, v]) => !v.deleted).map(([k]) => k), serverPaths = [...liveNotePaths, ...liveAttachPaths], localFolderCount = countFolders([...localNotes, ...localAttachments]), serverFolderCount = countFolders(serverPaths);
     return {
       vaultName: this.app.vault.getName(),
-      serverNoteCount: manifestNoteCount != null ? manifestNoteCount : [...serverNotes.values()].filter((v) => !v.deleted).length,
-      serverAttachmentCount: manifestAttachCount != null ? manifestAttachCount : [...serverAttachments.values()].filter((v) => !v.deleted).length,
+      serverNoteCount: liveNotePaths.length,
+      serverAttachmentCount: liveAttachPaths.length,
       serverFolderCount,
       localNoteCount: localNotes.length,
       localAttachmentCount: localAttachments.length,
@@ -24253,9 +24246,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       }, channel.onPlanState = (raw) => {
         let parsed = parsePlanState(raw, Date.now());
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
-      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
-        (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
-      ), this.settings.vaultId) {
+      }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince((cursorSeq, limit) => {
+        if (channel.getVaultId() !== this.settings.vaultId)
+          throw new Error("Sync preview needs the live socket (vault switching)");
+        return channel.crdtCatchupSince(cursorSeq, limit);
+      }), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),
