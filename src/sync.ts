@@ -3244,7 +3244,7 @@ export class SyncEngine {
 			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
 			Date.now() < deadline
 		) {
-			await new Promise((resolve) => setTimeout(resolve, 100));
+			await new Promise((resolve) => window.setTimeout(resolve, 100));
 		}
 		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
 			throw new Error("Sync preview needs the live socket (op-log enumeration)");
