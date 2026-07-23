@@ -57,7 +57,7 @@ function makeGenesisEngine(dbPrefix: string) {
 	const e = new SyncEngine(
 		app,
 		api,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	e.setCrdtManager(mgr as unknown as CrdtManager);

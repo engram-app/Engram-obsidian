@@ -3535,7 +3535,6 @@ var DEFAULT_SETTINGS = {
   conflictViewMode: "unified",
   diagnosticsEnabled: !1,
   conflictResolution: "auto",
-  enableCrdt: !0,
   vaultId: null,
   clientId: "",
   planState: null,
@@ -17432,23 +17431,31 @@ var _CrdtManager = class _CrdtManager {
     if (cached)
       return await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), text2 = doc2.getText(CONTENT_KEY), ready = persistence.whenSynced.then(() => {
-    }), entry = { doc: doc2, persistence, text: text2, ready, remoteSeq: 0 };
+    }), entry = { doc: doc2, persistence, text: text2, ready, remoteSeq: 0, hadContent: !1 };
     return persistence.on("error", (err) => {
       var _a, _b;
       return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, noteId, err);
     }), doc2.on("update", (update, origin) => {
-      origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
+      text2.length > 0 && (entry.hadContent = !0), origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
     }), doc2.on("update", (_u, origin) => {
-      if (origin !== REMOTE_ORIGIN) return;
+      if (text2.length > 0 && (entry.hadContent = !0), origin !== REMOTE_ORIGIN) return;
       entry.remoteSeq += 1;
-      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON(), flush = Promise.resolve(
+      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON();
+      if (body.length === 0 && !entry.hadContent) {
+        rlog().warn(
+          "crdt",
+          `remote-merge flush SKIPPED for ${noteId}: empty body on never-seeded doc (#288 genesis guard)`
+        );
+        return;
+      }
+      let flush = Promise.resolve(
         this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
       );
       this.pendingFlush.set(id2, flush), flush.catch(() => {
       }).finally(() => {
         this.pendingFlush.get(id2) === flush && this.pendingFlush.delete(id2);
       });
-    }), this.docs.set(id2, entry), await ready, entry;
+    }), this.docs.set(id2, entry), await ready, text2.length > 0 && (entry.hadContent = !0), entry;
   }
   /**
    * Returns true when the Y.Text already carries CRDT history (content
@@ -18478,7 +18485,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -18853,13 +18860,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** One-shot capability probe: a pre-Phase-1 backend 404s /vault/heads, so we
    *  latch ops off before the first edit and stay on the legacy whole-doc path. */
   async probeCrdtOps() {
-    if (this.settings.enableCrdt)
-      try {
-        await this.api.getVaultHeads(), this.crdtOpsProbed = !0;
-      } catch (e) {
-        let status = e == null ? void 0 : e.status;
-        (status === 404 || status === 405) && (this.markCrdtOpsUnsupported(status), this.crdtOpsProbed = !0);
-      }
+    try {
+      await this.api.getVaultHeads(), this.crdtOpsProbed = !0;
+    } catch (e) {
+      let status = e == null ? void 0 : e.status;
+      (status === 404 || status === 405) && (this.markCrdtOpsUnsupported(status), this.crdtOpsProbed = !0);
+    }
   }
   setSyncBlocked(blocked) {
     this.syncBlocked = blocked, devLog().log("lifecycle", `setSyncBlocked(${blocked})`);
@@ -19340,9 +19346,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           ), rlog().info(
             "push",
             `CRDT edit queued durably (channel down): ${file.path}`
-          ), !0)) : (file.extension === "md" && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), !0);
+          ), !0)) : (file.extension === "md" && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_k = this.crdtEnrollment) == null || _k.enroll(noteId)), !0);
         }
-        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_m = (_l = this.crdtLive) == null ? void 0 : _l.call(this)) == null || _m) && new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES)
+        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_m = (_l = this.crdtLive) == null ? void 0 : _l.call(this)) == null || _m) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
@@ -20013,7 +20019,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  idle note is still covered by reconnect catch-up (#5). Never throws. */
   async healNoteOnOpen(path) {
     var _a, _b;
-    if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
+    if (!this.crdt || !this.crdtOpsAvailable()) return;
     let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
     if (noteId)
       try {
@@ -21013,7 +21019,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }), pushed > 0 && await this.saveData({ lastSync: this.lastSync }), devLog().log("lifecycle", `fullSync done \u2014 pulled=${pulled} pushed=${pushed}`), rlog().info("lifecycle", `FullSync done \u2014 pulled=${pulled} pushed=${pushed}`), { pulled, pushed };
   }
   crdtOpsAvailable() {
-    return this.settings.enableCrdt === !0 && this.crdtOpsProbed && !this.crdtOpsUnsupported;
+    return this.crdtOpsProbed && !this.crdtOpsUnsupported;
   }
   markCrdtOpsUnsupported(status) {
     (status === 404 || status === 405) && (this.crdtOpsUnsupported = !0);
@@ -21164,7 +21170,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         continue;
       }
       let content = await this.app.vault.read(file);
-      if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) {
+      if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
@@ -24187,7 +24193,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.settings.apiKey,
         user.id,
         this.settings.vaultId,
-        this.settings.enableCrdt,
+        !0,
+        // CRDT topic join — always on (the enableCrdt setting is gone; false survives only as a test seam)
         this.deviceId
       );
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
@@ -24213,7 +24220,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         parsed && queueMicrotask(() => this.syncEngine.applyPlanState(parsed));
       }, this.noteStream = channel, this.authProvider && this.noteStream.setAuthProvider(this.authProvider), this.syncEngine.setCrdtCreate((id2, path) => channel.crdtCreate(id2, path)), this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates)), this.syncEngine.setCrdtDelete((id2) => channel.crdtDeleteAcked(id2)), this.syncEngine.setCrdtCatchupSince(
         (cursorSeq, limit) => channel.crdtCatchupSince(cursorSeq, limit)
-      ), this.settings.enableCrdt && this.settings.vaultId) {
+      ), this.settings.vaultId) {
         let dbPrefix = this.settings.vaultId;
         if (typeof indexedDB.databases == "function" ? await ensureDocSchema(dbPrefix, window.localStorage, {
           list: () => indexedDB.databases(),
@@ -24305,10 +24312,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           )));
         };
       } else
-        rlog().info(
-          "crdt",
-          this.settings.enableCrdt ? "vaultId is null \u2014 CRDT disabled; legacy pushNote path active" : "CRDT opt-in disabled \u2014 legacy pushNote path active"
-        );
+        rlog().info("crdt", "vaultId is null \u2014 CRDT disabled; legacy pushNote path active");
       channel.connect();
     }).catch((e) => {
       console.error("Engram Sync: failed to fetch user id for channel", e), rlog().error("channel", `getMe() failed (attempt ${attempt + 1}): ${errMsg(e)}`), epoch === this.channelEpoch && window.setTimeout(

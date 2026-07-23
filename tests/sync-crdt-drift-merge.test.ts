@@ -80,7 +80,7 @@ async function scenario(dbPrefix: string) {
 	const e = new SyncEngine(
 		mockApp,
 		{} as unknown as EngramApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	e.setCrdtManager(mgr as unknown as CrdtManager);
@@ -159,7 +159,7 @@ async function historyLessScenario(opts: {
 	const e = new SyncEngine(
 		mockApp,
 		api,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	box.e = e;

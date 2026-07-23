@@ -57,7 +57,7 @@ function makeEngine(
 	const e = new SyncEngine(
 		mockApp,
 		mockApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	(e as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
@@ -151,7 +151,7 @@ describe("healNoteOnOpen", () => {
 		const e = new SyncEngine(
 			mockApp,
 			{ getUpdates: mock() } as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		(e as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
@@ -187,20 +187,6 @@ describe("healNoteOnOpen", () => {
 		expect(replayed).toBe(true); // seq-replay catch-up ran
 		expect(getUpdates).not.toHaveBeenCalled(); // NOT the REST heal path
 		expect(reset).not.toHaveBeenCalled(); // NOT the socket re-handshake path
-	});
-
-	test("crdt disabled: no-op", async () => {
-		const applyRemoteUpdate = mock().mockResolvedValue(undefined);
-		const e = new SyncEngine(
-			mockApp,
-			{ getUpdates: mock() } as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: false },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setCrdtManager({ applyRemoteUpdate } as unknown as CrdtManager);
-		e.setReady();
-		await e.healNoteOnOpen("Notes/a.md");
-		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 	});
 
 	test("never throws — a failure inside the socket re-handshake is caught and swallowed", async () => {

@@ -1,7 +1,7 @@
 /**
  * Tests: crdtOpsAvailable capability latch on SyncEngine (mirrors
  * batchPushUnsupported). Latches OFF on a 404/405 from an /updates call;
- * stays on for other statuses; requires settings.enableCrdt.
+ * stays on for other statuses.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -103,14 +103,14 @@ const mockApp = {
 } as any;
 
 function engine(opts?: {
-	enableCrdt?: boolean;
+
 	api?: Partial<EngramApi>;
 	crdt?: Partial<CrdtManager>;
 }): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		(opts?.api ?? mockApi) as unknown as EngramApi,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: opts?.enableCrdt ?? true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	if (opts?.crdt) e.setCrdtManager(opts.crdt as unknown as CrdtManager);
@@ -145,7 +145,7 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 		const e = new SyncEngine(
 			localApp as any,
 			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);
@@ -195,7 +195,7 @@ describe("applyCrdtCreateAck seeds the body on peers (not a 0-byte row)", () => 
 });
 
 describe("crdtOpsAvailable latch", () => {
-	test("is available when enableCrdt, probed, and not latched", () => {
+	test("is available when probed and not latched", () => {
 		const e = engine();
 		markProbed(e);
 		expect((e as any).crdtOpsAvailable()).toBe(true);
@@ -222,17 +222,6 @@ describe("crdtOpsAvailable latch", () => {
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 
-	test("unavailable when enableCrdt is false, even unlatched and probed", () => {
-		const e = new SyncEngine(
-			mockApp,
-			mockApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: false },
-			mock().mockResolvedValue(undefined),
-		);
-		e.setReady();
-		markProbed(e);
-		expect((e as any).crdtOpsAvailable()).toBe(false);
-	});
 });
 
 describe("probeCrdtOps — one-shot capability probe", () => {
@@ -244,29 +233,16 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 				throw err;
 			},
 		};
-		const e = engine({ enableCrdt: true, api });
+		const e = engine({ api });
 		await (e as any).probeCrdtOps();
 		expect((e as any).crdtOpsAvailable()).toBe(false);
 	});
 
 	test("a getVaultHeads success leaves ops available", async () => {
 		const api = { getVaultHeads: async () => ({ heads: {} }) };
-		const e = engine({ enableCrdt: true, api });
+		const e = engine({ api });
 		await (e as any).probeCrdtOps();
 		expect((e as any).crdtOpsAvailable()).toBe(true);
-	});
-
-	test("no-op when enableCrdt is false", async () => {
-		let called = false;
-		const api = {
-			getVaultHeads: async () => {
-				called = true;
-				return { heads: {} };
-			},
-		};
-		const e = engine({ enableCrdt: false, api });
-		await (e as any).probeCrdtOps();
-		expect(called).toBe(false);
 	});
 
 	// Phase 2b remediation: capability comes SOLELY from the probe. Ops must
@@ -279,7 +255,7 @@ describe("probeCrdtOps — one-shot capability probe", () => {
 					resolveHeads = r;
 				}),
 		};
-		const e = engine({ enableCrdt: true, api });
+		const e = engine({ api });
 		expect((e as any).crdtOpsAvailable()).toBe(false); // not probed yet
 		const p = e.probeCrdtOps();
 		resolveHeads({ heads: {} });
@@ -306,7 +282,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		const crdt = {
 			applyLocalEdit: async () => true,
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ api, crdt });
 		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
@@ -338,7 +314,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		const crdt = { applyLocalEdit: async () => true };
 		const enroll = mock();
 		const reset = mock();
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ api, crdt });
 		markProbed(e);
 		e.setCrdtEnrollment({ enroll, reset } as any);
 		e.setCrdtLiveCheck(() => true); // channel live now
@@ -402,7 +378,7 @@ describe("channel-down CRDT edit routes through the durable queue, delivered ove
 		const e = new SyncEngine(
 			localApp as any,
 			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setCrdtManager(crdt as unknown as CrdtManager);
@@ -459,7 +435,7 @@ describe("Task 5: crdtLive is re-checked AFTER the awaited seed (TOCTOU)", () =>
 				return true;
 			},
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ api, crdt });
 		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("T.md", "id-1");
@@ -499,7 +475,7 @@ describe("CRDT notes never whole-doc push (channel down → durable queue)", () 
 		const crdt = {
 			applyLocalEdit: async () => true,
 		};
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ api, crdt });
 		markProbed(e);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("p.md", "id-1");
@@ -537,7 +513,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 			onUpdate: () => {},
 			onFlushToDisk: async () => {},
 		});
-		const e = engine({ enableCrdt: true, api, crdt: realCrdt });
+		const e = engine({ api, crdt: realCrdt });
 		markProbed(e);
 		const enroll = mock();
 		const reset = mock();
@@ -579,7 +555,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		};
 		const crdt = { applyLocalEdit: async () => true };
 		const enroll = mock();
-		const e = engine({ enableCrdt: true, api, crdt });
+		const e = engine({ api, crdt });
 		markProbed(e);
 		e.setCrdtEnrollment({ enroll, reset: mock() } as any);
 		e.setCrdtLiveCheck(() => false);
@@ -621,7 +597,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		const e = new SyncEngine(
 			localApp as any,
 			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setReady();
@@ -659,7 +635,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		const e = new SyncEngine(
 			localApp as any,
 			api as unknown as EngramApi,
-			{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
 		e.setReady();

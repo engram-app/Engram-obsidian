@@ -826,7 +826,7 @@ export class SyncEngine {
 		if (!noteId || !this.crdtEnrollment) return;
 		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
 		if (!path.endsWith(".md")) return;
-		if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) return;
+		if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) return;
 		// Vault-channel fan-out: a cold (not-open-in-editor) send stays room-free —
 		// its edits ship over /updates and it RECEIVES future updates over the
 		// note_yjs_update broadcast, no room needed. Enroll (STEP1) only for a
@@ -1535,7 +1535,6 @@ export class SyncEngine {
 	/** One-shot capability probe: a pre-Phase-1 backend 404s /vault/heads, so we
 	 *  latch ops off before the first edit and stay on the legacy whole-doc path. */
 	async probeCrdtOps(): Promise<void> {
-		if (!this.settings.enableCrdt) return;
 		try {
 			await this.api.getVaultHeads();
 			// Conclusive: the route answered, ops are supported.
@@ -2598,7 +2597,7 @@ export class SyncEngine {
 					// gone); acceptable because the gate makes this path unreachable.
 					if (
 						file.extension === "md" &&
-						new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES &&
+						!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
 						this.isLiveBound(normalizePath(file.path))
 					) {
 						this.crdtEnrollment?.enroll(noteId);
@@ -2627,7 +2626,7 @@ export class SyncEngine {
 					file.extension === "md" &&
 					!this.hasServerNote(noteId) &&
 					(this.crdtLive?.() ?? true) &&
-					new TextEncoder().encode(content).length <= MAX_CRDT_NOTE_BYTES
+					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
 				) {
 					try {
 						// Only the crdtCreate call itself is covered by this catch — once
@@ -3047,12 +3046,12 @@ export class SyncEngine {
 
 	/** Test hook: how many attachments were marked needs_pro since the last
 	 *  flush. Drained when the toast fires. */
-	getAttachmentLimitedCount(): number {
+	private getAttachmentLimitedCount(): number {
 		return this.attachmentLimitedThisBatch;
 	}
 
 	/** Test hook: whether the session has already shown the batched toast. */
-	hasShownAttachmentLimitToast(): boolean {
+	private hasShownAttachmentLimitToast(): boolean {
 		return this.attachmentLimitToastShown;
 	}
 
@@ -3131,7 +3130,7 @@ export class SyncEngine {
 	}
 
 	/** Check if a path was recently pushed (for echo suppression). */
-	isRecentlyPushed(path: string): boolean {
+	private isRecentlyPushed(path: string): boolean {
 		return this.recentlyPushed.has(path);
 	}
 
@@ -3878,7 +3877,7 @@ export class SyncEngine {
 	 *  covers the real case without a vault-wide heads fetch on every open; an
 	 *  idle note is still covered by reconnect catch-up (#5). Never throws. */
 	async healNoteOnOpen(path: string): Promise<void> {
-		if (!this.settings.enableCrdt || !this.crdt || !this.crdtOpsAvailable()) return;
+		if (!this.crdt || !this.crdtOpsAvailable()) return;
 		const normalized = normalizePath(path);
 		const noteId = this.noteIdMap?.get(normalized) ?? null;
 		if (!noteId) return; // truly unknown — reconnect catch-up discovers it (#5)
@@ -6059,7 +6058,7 @@ export class SyncEngine {
 	private crdtOpsProbed = false;
 
 	private crdtOpsAvailable(): boolean {
-		return this.settings.enableCrdt === true && this.crdtOpsProbed && !this.crdtOpsUnsupported;
+		return this.crdtOpsProbed && !this.crdtOpsUnsupported;
 	}
 
 	private markCrdtOpsUnsupported(status: number): void {
@@ -6296,7 +6295,7 @@ export class SyncEngine {
 			// L739, sync.ts L2475/L2504/L2680), leaving a server-held CRDT room
 			// that the client's own edits then bypass via legacy REST: split-brain.
 			// Gate on content BEFORE minting/encoding so it never gets a doc_id.
-			if (new TextEncoder().encode(content).length > MAX_CRDT_NOTE_BYTES) {
+			if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) {
 				if (await this.pushFile(file, true)) pushed++;
 				else failed++;
 				continue;

@@ -240,6 +240,9 @@ export class NoteChannel {
 		apiKey: string,
 		userId: string,
 		vaultId: string | null = null,
+		// Production always passes true (the enableCrdt SETTING was removed —
+		// CRDT is the sole md path). The param survives as a test seam: protocol
+		// tests pass false to isolate the note-topic frames from the crdt join.
 		enableCrdt = false,
 		deviceId: string | null = null,
 	) {

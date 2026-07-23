@@ -1733,7 +1733,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.apiKey,
 					user.id,
 					this.settings.vaultId,
-					this.settings.enableCrdt,
+					true, // CRDT topic join — always on (the enableCrdt setting is gone; false survives only as a test seam)
 					this.deviceId,
 				);
 				channel.setAuthProbe(() => this.api.getMe());
@@ -1841,8 +1841,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 				// Plan B1 Task 6: wire the socket-native create/delete/catchup senders
 				// into the engine. Harmless to wire unconditionally — each sender is
-				// only consulted once the engine's own crdt manager is set (enableCrdt
-				// && vaultId), so this is a no-op on a legacy/non-CRDT connection.
+				// only consulted once the engine's own crdt manager is set (vaultId
+				// bound), so this is a no-op on a legacy/non-CRDT connection.
 				this.syncEngine.setCrdtCreate((id, path) => channel.crdtCreate(id, path));
 				this.syncEngine.setCrdtCreateBatch((creates) => channel.crdtCreateBatch(creates));
 				// Direct AWAITED delete for handleRename's ordered tombstone->resurrect
@@ -1870,7 +1870,7 @@ export default class EngramSyncPlugin extends Plugin {
 				// server acknowledges the `crdt:` topic join. Against a non-CRDT
 				// backend the join errors out, onCrdtJoined never fires, and the
 				// SyncEngine's `this.crdt` stays null → legacy pushNote path active.
-				if (this.settings.enableCrdt && this.settings.vaultId) {
+				if (this.settings.vaultId) {
 					const dbPrefix = this.settings.vaultId;
 					// One-time schema upgrade: wipe v1 CRDT stores if needed.
 					if (typeof indexedDB.databases === "function") {
@@ -2037,12 +2037,7 @@ export default class EngramSyncPlugin extends Plugin {
 						}
 					};
 				} else {
-					rlog().info(
-						"crdt",
-						this.settings.enableCrdt
-							? "vaultId is null — CRDT disabled; legacy pushNote path active"
-							: "CRDT opt-in disabled — legacy pushNote path active",
-					);
+					rlog().info("crdt", "vaultId is null — CRDT disabled; legacy pushNote path active");
 				}
 
 				void channel.connect();

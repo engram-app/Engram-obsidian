@@ -72,30 +72,6 @@ export async function ensureDocSchema(
 	return true;
 }
 
-/**
- * Wire into main.ts before constructing CrdtManager:
- *
- * ```typescript
- * if (this.settings.enableCrdt && this.settings.vaultId) {
- *   const dbPrefix = this.settings.vaultId;
- *   if (typeof indexedDB.databases === "function") {
- *     await ensureDocSchema(dbPrefix, window.localStorage, {
- *       list: () => indexedDB.databases(),
- *       drop: (name) =>
- *         new Promise<void>((resolve) => {
- *           const req = indexedDB.deleteDatabase(name);
- *           req.onsuccess = req.onerror = req.onblocked = () => resolve();
- *         }),
- *     });
- *   } else {
- *     rlog().warn(
- *       "crdt",
- *       "indexedDB.databases() not available — skipping v1 schema wipe"
- *     );
- *   }
- *   this.crdtManager = new CrdtManager({
- *     // ...
- *   });
- * }
- * ```
- */
+// Wired in main.ts (connectChannel) before constructing CrdtManager — see the
+// ensureDocSchema call there for the real adapter. (A full code sample lived
+// here once and drifted from the real wiring; the call site is the reference.)

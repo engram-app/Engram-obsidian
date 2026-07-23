@@ -98,7 +98,7 @@ function makeEngine(
 	const engine = new SyncEngine(
 		app,
 		api,
-		{ ...DEFAULT_SETTINGS, debounceMs: 1, enableCrdt: true },
+		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
 	engine.setCrdtManager(crdt as unknown as CrdtManagerType);

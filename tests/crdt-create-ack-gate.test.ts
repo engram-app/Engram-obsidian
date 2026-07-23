@@ -22,7 +22,7 @@ function makeEngine(): SyncEngine {
 	return new SyncEngine(
 		{} as any,
 		{} as any,
-		{ ...DEFAULT_SETTINGS, enableCrdt: false },
+		{ ...DEFAULT_SETTINGS },
 		mock().mockResolvedValue(undefined),
 	);
 }

@@ -407,7 +407,7 @@ export class Replica {
 			apiUrl: "http://sim.local/api",
 			apiKey: `token-${id}`,
 			vaultId: VAULT_ID,
-			enableCrdt: true,
+
 			userEmail: "sim@example.com",
 			// Small but non-zero: keeps handleModify's debounce a real (virtual) timer
 			// that drain() fires after the network settles, mirroring production timing.
@@ -484,7 +484,7 @@ export class Replica {
 			settings.apiKey,
 			SIM_USER_ID,
 			settings.vaultId,
-			settings.enableCrdt,
+			true, // CRDT topic join — always on (setting removed; ctor param is a test seam)
 			id, // deviceId -> the WebSocket adapter's routing key (device_id param)
 		);
 		noteStream = channel;
