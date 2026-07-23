@@ -201,7 +201,24 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		}
 		for (const { path, content } of toFlush) {
 			if (deps.isBound(path)) continue; // live editor owns disk
-			void syncEngine.flushFromCrdt(path, content);
+			// The primary onFlushToDisk path throws on a refused write; this healed
+			// path can't await (fire-and-forget batch), so surface refusal/failure
+			// via rlog instead of discarding it — content stays safe in the Y.Doc.
+			syncEngine
+				.flushFromCrdt(path, content)
+				.then((ok) => {
+					if (!ok)
+						rlog().warn(
+							"crdt",
+							`strand-heal flush refused for ${path} — retained in Y.Doc`,
+						);
+				})
+				.catch((e) =>
+					rlog().warn(
+						"crdt",
+						`strand-heal flush failed for ${path}: ${errMsg(e)} — retained in Y.Doc`,
+					),
+				);
 		}
 	}
 
@@ -308,7 +325,14 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 
 	// docId is the bare note_id (Task 6) — forwarded to handleFrame directly.
 	const onCrdtMessage = (docId: string, b64: string): void => {
-		void channel.handleFrame(docId, b64);
+		channel.handleFrame(docId, b64).catch((e) => {
+			// Malformed frame / doc-open failure: log + drop — never leak an
+			// unhandled rejection from the inbound hot path.
+			rlog().warn(
+				"crdt",
+				`handleFrame failed for note_id=${docId}: ${errMsg(e)} — frame dropped`,
+			);
+		});
 	};
 
 	// Vault-channel fan-out (P1): applies a server-pushed Yjs update to an IDLE

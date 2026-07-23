@@ -7357,6 +7357,19 @@ export class SyncEngine {
 					const replayNp = normalizePath(entry.path);
 					let replayId = this.noteIdMap?.get(replayNp) ?? null;
 					if (!replayId && this.noteIdMap) {
+						// MINT REFUSAL (#972/#217 parity) — see shouldDeferMint. Live
+						// pushes and batch genesis refuse to mint for an engine-flushed
+						// path whose id relocated away; the replay path must too, or a
+						// stale queued entry mints a FRESH id and duplicates the note
+						// server-side. Leave it queued — the next flush (after the echo
+						// window) re-resolves against the settled map.
+						if (this.shouldDeferMint(replayNp)) {
+							rlog().info(
+								"queue",
+								`Replay mint refused (engine-flushed, id relocated away): ${entry.path}`,
+							);
+							continue;
+						}
 						replayId = uuid7();
 						this.noteIdMap.set(replayNp, replayId);
 					}
