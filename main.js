@@ -20995,7 +20995,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  mtime comparison short-circuits. */
   /** Persist a content-free, crdt-tagged upsert to the durable queue. Both of
    *  pushFile's channel-down seams must produce an IDENTICAL entry so
-   *  runFlushQueue's noteId-keyed /updates branch delivers them the same way —
+   *  runFlushQueue's socket-converge branch delivers them the same way —
    *  keep the producers in lockstep here rather than duplicating the object
    *  literal, so a new field can't be added to one seam and forgotten on the
    *  other. */

@@ -60,7 +60,6 @@ function makeEngine(
 		{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 		mock().mockResolvedValue(undefined),
 	);
-	(e as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
 	e.setCrdtManager(crdt as unknown as CrdtManager);
 	e.setReady();
 	e.setLiveBoundCheck(() => opts?.liveBound ?? true);
@@ -154,7 +153,6 @@ describe("healNoteOnOpen", () => {
 			{ ...DEFAULT_SETTINGS, debounceMs: 1 },
 			mock().mockResolvedValue(undefined),
 		);
-		(e as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
 		e.setCrdtManager({ applyRemoteUpdate } as unknown as CrdtManager);
 		e.setReady();
 		e.setLiveBoundCheck(() => true);
