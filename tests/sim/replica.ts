@@ -484,7 +484,7 @@ export class Replica {
 			settings.apiKey,
 			SIM_USER_ID,
 			settings.vaultId,
-			true, // CRDT topic join — always on (setting removed; ctor param is a test seam)
+
 			id, // deviceId -> the WebSocket adapter's routing key (device_id param)
 		);
 		noteStream = channel;

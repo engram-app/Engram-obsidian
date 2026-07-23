@@ -22,7 +22,7 @@ beforeAll(() => {
 });
 
 test("mints a fresh conn_id per openSocket and puts it in the URL", async () => {
-	const ch = new NoteChannel("http://x", "key-123", "user-1", "vault-9", false, "dev-1");
+	const ch = new NoteChannel("http://x", "key-123", "user-1", "vault-9", "dev-1");
 	await ch.connect();
 	const first = ch.getConnId();
 	expect(first).toBeTruthy();

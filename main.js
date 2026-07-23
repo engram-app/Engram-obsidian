@@ -1504,7 +1504,7 @@ function topicUserIdIsStale(currentUserId, authenticatedUserId) {
   return authenticatedUserId ? currentUserId !== authenticatedUserId : !1;
 }
 var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
-  constructor(baseUrl, apiKey, userId, vaultId = null, enableCrdt = !1, deviceId = null) {
+  constructor(baseUrl, apiKey, userId, vaultId = null, deviceId = null) {
     this.ws = null;
     this.ref = 0;
     /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
@@ -1626,7 +1626,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     // ---------------------------------------------------------------------------
     /** Guards openSocket against re-entry across its async token fetch. */
     this.opening = !1;
-    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.enableCrdt = enableCrdt, this.deviceId = deviceId, rlog().info(
+    this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
     );
@@ -1654,7 +1654,7 @@ var LARGE_FRAME_WARN_BYTES = 1e6, NoteChannel = class {
     return `user:${this.userId}`;
   }
   get crdtTopic() {
-    return this.enableCrdt && this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
+    return this.vaultId ? `crdt:${this.userId}:${this.vaultId}` : null;
   }
   /** Send a CRDT update frame on the crdt topic.
    *  Returns false without sending until the crdt: join is server-acked —
@@ -24193,8 +24193,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         this.settings.apiKey,
         user.id,
         this.settings.vaultId,
-        !0,
-        // CRDT topic join — always on (the enableCrdt setting is gone; false survives only as a test seam)
         this.deviceId
       );
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {

@@ -113,7 +113,7 @@ function failCycle(channel: NoteChannel, reason: string, topic = "crdt:u1:v1"): 
 
 describe("NoteChannel join-failure reconnect backoff", () => {
 	test("a graceful drop with NO join failure keeps the flat full-jitter delay", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		lastWsInstance.onopen?.();
 		const ref = crdtJoinRef(lastWsInstance);
@@ -128,7 +128,7 @@ describe("NoteChannel join-failure reconnect backoff", () => {
 	});
 
 	test("a rejected crdt join backs off (non-zero delay) instead of the flat jitter", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 		const delay = failCycle(channel, "some_error");
 		expect(delay).toBeGreaterThan(0);
@@ -136,7 +136,7 @@ describe("NoteChannel join-failure reconnect backoff", () => {
 	});
 
 	test("consecutive join rejections grow the backoff, capped at 60s", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 
 		const delays: number[] = [];
@@ -160,12 +160,12 @@ describe("NoteChannel join-failure reconnect backoff", () => {
 	});
 
 	test("an explicit rate_limited reason gets a higher floor than a generic join error", async () => {
-		const channelA = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channelA = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channelA.connect();
 		const genericDelay = failCycle(channelA, "some_error");
 		channelA.disconnect();
 
-		const channelB = new NoteChannel("http://localhost:4000", "key", "u2", "v1", true);
+		const channelB = new NoteChannel("http://localhost:4000", "key", "u2", "v1");
 		await channelB.connect();
 		const rateLimitedDelay = failCycle(channelB, "rate_limited", "crdt:u2:v1");
 		channelB.disconnect();
@@ -174,7 +174,7 @@ describe("NoteChannel join-failure reconnect backoff", () => {
 	});
 
 	test("a successful crdt join resets the backoff back to the floor", async () => {
-		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1", true);
+		const channel = new NoteChannel("http://localhost:4000", "key", "u1", "v1");
 		await channel.connect();
 
 		// First failure grows the backoff.

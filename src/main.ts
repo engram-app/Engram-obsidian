@@ -1733,7 +1733,6 @@ export default class EngramSyncPlugin extends Plugin {
 					this.settings.apiKey,
 					user.id,
 					this.settings.vaultId,
-					true, // CRDT topic join — always on (the enableCrdt setting is gone; false survives only as a test seam)
 					this.deviceId,
 				);
 				channel.setAuthProbe(() => this.api.getMe());
