@@ -9,6 +9,7 @@
  */
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
@@ -917,5 +918,51 @@ describe("catchUp manifestSeq short-circuit (Phase E1)", () => {
 		// Fire-and-forget heal hasn't proven convergence — recording now would
 		// let every later poll short-circuit and never re-check an idle vault.
 		expect((engine as any).manifestSeq).toBe(0);
+	});
+});
+
+describe("catchUp identity-swap delete guard (#283)", () => {
+	// The production wiring: catchUp captures the auth generation BEFORE fetching
+	// the manifest and threads it into reconcileFromManifest. If an OAuth swap
+	// lands while that fetch is in flight, the manifest can be a stale snapshot
+	// missing a live note — trashing it as "server-deleted" is the #283 data loss.
+	// This guards the THREADING specifically: drop the authGenAtFetch argument at
+	// the reconcileFromManifest call and this test goes red (reconcile would then
+	// capture the post-swap generation and run the destructive pass).
+	test("does NOT trash a live note when an OAuth swap races catchUp's manifest fetch", async () => {
+		const engine = makeEngineWithCrdt({ closeDoc: () => {} });
+		engine.importSyncState({ "Notes/gone.md": { hash: 123 } });
+		const gone = new TFile("Notes/gone.md");
+		(mockApp.vault.getFiles as ReturnType<typeof mock>).mockReturnValueOnce([gone]);
+		const trashFile = mockApp.fileManager.trashFile as ReturnType<typeof mock>;
+		trashFile.mockClear();
+		// Stub the non-reconcile downstream steps so catchUp runs to completion.
+		spyOn(engine as any, "validateFromManifest").mockReturnValue(0);
+		spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+			serverIds: new Set(),
+			serverAttachmentPaths: new Set(),
+			ran: true,
+		});
+		spyOn(engine as any, "healDivergedLiveBoundNotes").mockResolvedValue(0);
+		spyOn(engine as any, "syncExplicitFolders").mockResolvedValue(undefined);
+		spyOn(engine as any, "seedEmptyFolders").mockResolvedValue(undefined);
+		// Manifest resolves AFTER an identity swap bumped the generation, and omits
+		// the still-live note (stale snapshot from the racing swap).
+		(mockApi.getManifest as ReturnType<typeof mock>).mockImplementationOnce(async () => {
+			engine.bumpAuthGeneration();
+			return {
+				notes: [],
+				attachments: [],
+				total_notes: 0,
+				total_attachments: 0,
+				change_seq: 99,
+			};
+		});
+
+		await engine.catchUp();
+
+		expect(trashFile).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["Notes/gone.md"]).toBeDefined();
 	});
 });
