@@ -720,9 +720,15 @@ export class Replica {
 			// awaiting it before the caller drains would freeze the virtual clock. The
 			// real binding applies to Y.Text synchronously too — only persistence is
 			// async, and drain() completes it deterministically.
+			// Surface (don't swallow) an apply/persist failure: a systemically
+			// dropped edit would otherwise read as trivial oracle AGREEMENT (both
+			// replicas never see it), the one blind spot the convergence check
+			// can't catch on its own. Fires only on the error path — silent green.
 			void this.crdtManager
 				.applyLocalEdit(this.noteIdMap.getOrMint(path), content)
-				.catch(() => {});
+				.catch((err) =>
+					console.warn(`SIM editNote applyLocalEdit failed for ${path}:`, err),
+				);
 			// Obsidian's autosave still writes the editor buffer to disk (~2s); that
 			// modify event hits the bound short-circuit above and never re-pushes.
 			await this.app.vault.modify(file, content);
