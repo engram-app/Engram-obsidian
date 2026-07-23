@@ -23849,7 +23849,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data == null ? void 0 : data.settings);
     let rawSettings = data == null ? void 0 : data.settings;
     this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-    for (let legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"])
+    for (let legacy of [
+      "remoteLoggingEnabled",
+      "diagnosticMode",
+      "tracingEnabled",
+      "enableCrdt"
+    ])
       delete this.settings[legacy];
     this.syncGateAcceptedFor = (_a = data == null ? void 0 : data.syncGateAcceptedFor) != null ? _a : null, this.noteIdMap = NoteIdMap.fromJSON(data == null ? void 0 : data.noteIds);
     let dirty = !1, migratedUrl = migrateCloudApiUrl(this.settings.apiUrl, ENGRAM_CLOUD_URL);

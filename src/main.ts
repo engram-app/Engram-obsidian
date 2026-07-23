@@ -1079,7 +1079,14 @@ export default class EngramSyncPlugin extends Plugin {
 		// then drop the stale keys so the next save persists only the new shape.
 		const rawSettings = data?.settings as Record<string, unknown> | undefined;
 		this.settings.diagnosticsEnabled = migrateDiagnosticsEnabled(rawSettings);
-		for (const legacy of ["remoteLoggingEnabled", "diagnosticMode", "tracingEnabled"]) {
+		// enableCrdt: the setting was deleted (CRDT is the sole md path) — drop
+		// the stale key from persisted data.json on next save.
+		for (const legacy of [
+			"remoteLoggingEnabled",
+			"diagnosticMode",
+			"tracingEnabled",
+			"enableCrdt",
+		]) {
 			delete (this.settings as unknown as Record<string, unknown>)[legacy];
 		}
 		this.syncGateAcceptedFor = data?.syncGateAcceptedFor ?? null;
