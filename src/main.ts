@@ -2036,7 +2036,10 @@ export default class EngramSyncPlugin extends Plugin {
 						}
 					};
 				} else {
-					rlog().info("crdt", "vaultId is null — CRDT disabled; legacy pushNote path active");
+					rlog().info(
+						"crdt",
+						"vaultId is null — CRDT disabled; legacy pushNote path active",
+					);
 				}
 
 				void channel.connect();

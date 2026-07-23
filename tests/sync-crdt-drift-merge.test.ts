@@ -32,10 +32,6 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
 	const p = e.noteIdMap?.pathForId(noteId);
 	if (p) e.setCrdtHead(p, "server-head");
 }
-function markProbed(engine: SyncEngine): void {
-	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
-}
-
 /** Build a shared-base local doc + a remote delta that adds " REMOTE" on that
  *  same base, plus the disk drift "BASE local" and its recorded baseline. */
 async function scenario(dbPrefix: string) {
@@ -152,9 +148,7 @@ async function historyLessScenario(opts: {
 		workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 	} as any;
 
-	const api = {
-		getVaultHeads: async () => ({ heads: { "id-a": "SRV" } }),
-	} as unknown as EngramApi;
+	const api = {} as unknown as EngramApi;
 
 	const e = new SyncEngine(
 		mockApp,
@@ -165,7 +159,6 @@ async function historyLessScenario(opts: {
 	box.e = e;
 	e.setCrdtManager(mgr as unknown as CrdtManager);
 	e.setReady();
-	markProbed(e);
 	const map = new NoteIdMap();
 	map.set("a.md", "id-a");
 	e.setNoteIdMap(map);

@@ -262,14 +262,6 @@ function markServerKnown(engine: SyncEngine, path: string, noteId: string): void
 	e.setCrdtHead(path, "server-head");
 }
 
-/** Mark the one-shot capability probe as already complete, for tests that
- *  exercise post-probe latch behavior directly without driving a real
- *  getVaultHeads round-trip (Phase 2b: crdtOpsAvailable() now requires
- *  crdtOpsProbed, not just an unlatched crdtOpsUnsupported). */
-function markProbed(engine: SyncEngine): void {
-	(engine as unknown as { crdtOpsProbed: boolean }).crdtOpsProbed = true;
-}
-
 beforeEach(() => {
 	(mockApi.pushNote as ReturnType<typeof mock>)
 		.mockReset()

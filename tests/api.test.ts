@@ -943,20 +943,6 @@ describe("EngramApi", () => {
 			expect(invalidate).toHaveBeenCalledTimes(1);
 		});
 	});
-
-	describe("crdt ops transport (socket-only after Phase E3 — only the heads probe remains)", () => {
-		test("getVaultHeads returns the note->head map", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 200,
-				json: { heads: { a: "h1", b: "h2" } },
-			} as any);
-			const res = await api.getVaultHeads();
-			expect(res.heads).toEqual({ a: "h1", b: "h2" });
-			const opts = mockRequestUrl.mock.calls[0]![0] as any;
-			expect(opts.method).toBe("GET");
-			expect(opts.url).toContain("/vault/heads");
-		});
-	});
 });
 
 // ---------------------------------------------------------------------------
