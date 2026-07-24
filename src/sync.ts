@@ -26,11 +26,8 @@ import { OfflineQueue } from "./offline-queue";
 import { type PlanState, attachmentCapabilityGained } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
-import { threeWayMerge } from "./three-way-merge";
 import type {
 	AttachmentChange,
-	ConflictInfo,
-	ConflictResolution,
 	EngramSyncSettings,
 	FileSyncState,
 	ManifestResponse,
@@ -126,15 +123,15 @@ export async function routeModify(
 /** At startup, the on-disk file may have changed while the app was closed
  *  (external editor, another sync app, OS). For a synced note this is NOT a
  *  3-way merge: diff the disk content into the Y.Doc as a local edit. The CRDT
- *  converges it with any remote history once the handshake runs. The conflict
- *  modal is only a last resort if the doc itself cannot be opened/decoded.
+ *  converges it with any remote history once the handshake runs. `onCorruption`
+ *  is only a last resort if the doc itself cannot be opened/decoded.
  *
  *  The try/catch is split into two distinct error categories:
- *  - `getText` (decode) failure → `onCorruption` — the Y.Doc state is unreadable
- *    and the user must intervene via the conflict modal.
+ *  - `getText` (decode) failure → `onCorruption` — the Y.Doc state is unreadable,
+ *    so we surface a notice and fall back to the on-disk content.
  *  - `applyLocalEdit` (write) failure → swallowed — a transient storage write error
- *    must not masquerade as CRDT corruption and trigger the conflict modal. The CRDT
- *    handshake will converge the state once connectivity is restored. */
+ *    must not masquerade as CRDT corruption. The CRDT handshake will converge the
+ *    state once connectivity is restored. */
 export async function reconcileColdStart(
 	// `path` is retained purely for log messages (a note_id is meaningless to a
 	// human reading the console); every CRDT call below routes on `noteId`.
@@ -176,7 +173,7 @@ export async function reconcileColdStart(
 	try {
 		current = await crdt.projectedText(file.noteId);
 	} catch {
-		onCorruption(); // surface the existing ConflictModal only on decode failure
+		onCorruption(); // notice + disk-content fallback, only on decode failure
 		return;
 	}
 	if (current === file.diskContent) return; // already in sync
@@ -242,13 +239,6 @@ const DEGRADED_NOTICE_DURATION_MS = 10_000;
  *  Note: Obsidian's config dir defaults to `.obsidian` but can be customized;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
 const ALWAYS_IGNORED = [".trash/", ".git/"];
-
-/** If we have no sync hash and the local file's mtime is older than the remote
- *  mtime by at least this many seconds, treat the file as stale (not locally
- *  modified) and skip conflict detection. 1 hour is conservative — if a user
- *  edited a file, its mtime will be within seconds/minutes of the remote push,
- *  not hours behind. */
-const STALE_THRESHOLD_S = 3600;
 
 /** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content change detection. */
 export function fnv1a(s: string): number {
@@ -402,10 +392,6 @@ export class SyncEngine {
 
 	/** Called whenever sync status changes (for status bar updates). */
 	onStatusChange: ((status: SyncStatus) => void) | null = null;
-
-	/** Called when a conflict is detected. Return the user's resolution.
-	 *  If null, conflicts are auto-resolved as keep-remote (legacy behavior). */
-	onConflict: ((info: ConflictInfo) => Promise<ConflictResolution>) | null = null;
 
 	/** Called after each batch during pushAll/pullAll to report progress. */
 	onSyncProgress: ((progress: SyncProgress) => void) | null = null;
@@ -4523,9 +4509,9 @@ export class SyncEngine {
 				) {
 					// C1: CRDT owns markdown content for this session — the crdt: topic
 					// delivers updates via CrdtChannel/flushFromCrdt. The legacy
-					// note_changed/upsert path must not double-write the body or run
-					// threeWayMerge/ConflictModal, which would create a feedback loop
-					// (disk write re-enters handleModify → applyLocalEdit).
+					// note_changed/upsert path must not double-write the body, which
+					// would create a feedback loop (disk write re-enters handleModify →
+					// applyLocalEdit).
 					// Vault-channel fan-out: an IDLE note received here converges
 					// room-free over the note_yjs_update broadcast
 					// (applyPushedNoteUpdate) or the pull backstop — enrolling a room
@@ -5172,9 +5158,10 @@ export class SyncEngine {
 		return poked;
 	}
 
-	/** Apply a single remote change to the vault, with conflict detection.
+	/** Apply a single remote change to the vault (last-write-wins for the
+	 *  legacy/oversized REST-note path; CRDT notes converge earlier and return).
 	 *  Returns true when a file was actually created, modified, or trashed.
-	 *  When forceOverwrite is true, skip conflict detection and always apply. */
+	 *  When forceOverwrite is true, bypass the anti-stale version guard. */
 	async applyChange(change: NoteChange, forceOverwrite = false): Promise<boolean> {
 		if (this.shouldIgnore(change.path)) {
 			devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`);
@@ -5362,14 +5349,13 @@ export class SyncEngine {
 		}
 
 		// C1: CRDT-managed markdown — the crdt: topic owns the body. Skip the
-		// legacy disk-write, threeWayMerge, and ConflictModal for markdown notes
-		// when CRDT is active. This prevents the dual-write hazard where a
-		// note_changed broadcast and the crdt: update both try to write the same
-		// file. Deletes (handled above) and attachments (routed via
-		// applyAttachmentChange) are unaffected. One exception: when LOCAL and
-		// REMOTE both diverged from the last-synced state (a real conflict),
-		// the block falls through to the legacy conflict flow below instead of
-		// silently backfilling over the local edit.
+		// legacy disk-write for markdown notes when CRDT is active. This prevents
+		// the dual-write hazard where a note_changed broadcast and the crdt: update
+		// both try to write the same file. Deletes (handled above) and attachments
+		// (routed via applyAttachmentChange) are unaffected. One exception: when
+		// LOCAL and REMOTE both diverged from the last-synced state (a real
+		// conflict), the drift-copy below preserves the local edit instead of
+		// silently backfilling over it.
 		if (crdtOwnsBody) {
 			// Canvas converges via the Yjs handshake ONLY. Its authoritative content
 			// lives in the Yjs doc; the seq-feed `content` is vestigial for canvas
@@ -5550,9 +5536,9 @@ export class SyncEngine {
 						// sides diverged — that is a conflict, and overwriting here
 						// silently destroys the local edit with the conflict flow
 						// never consulted (e2e test_14 skip regression, 2026-07-08).
-						// Route it to the legacy conflict machinery below (3-way
-						// merge → resolveConflict → skip/keep-local/keep-both/merge),
-						// which every non-CRDT note already uses.
+						// Route it to the drift-copy below (#306 Phase A): capture
+						// the local drift as a "(conflict)" copy, then converge the
+						// main file to the server via the room.
 						const localFile = this.app.vault.getFileByPath(normalized);
 						const localNow = localFile
 							? await this.app.vault.cachedRead(localFile)
@@ -5727,10 +5713,9 @@ export class SyncEngine {
 					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 				}
 			}
-			// A CRDT-managed note (markdown OR canvas since #306) never falls through
-			// to the legacy conflict tail: markdown double-divergence is handled inline
-			// by the drift-copy (#306 Phase A), and canvas converges over the Yjs
-			// handshake in the early branch above. The tail below serves only the
+			// A CRDT-managed note (markdown OR canvas since #306) is fully handled
+			// above: markdown double-divergence by the drift-copy (#306 Phase A),
+			// canvas by the Yjs handshake. The LWW write below serves only the
 			// legacy/oversized REST notes that remain outside the CRDT domain.
 			return false;
 		}
@@ -5738,184 +5723,11 @@ export class SyncEngine {
 		// Create or update the file
 		const existing = this.app.vault.getFileByPath(normalized);
 		if (existing) {
-			// Conflict detection — content-hash based.
-			// Mtime is unreliable because Obsidian sets it to "now" on every
-			// vault.modify(), so we track hashes of content we last wrote.
+			// Legacy/oversized REST notes only (CRDT notes returned above): last
+			// write wins — skip if the disk already matches, otherwise overwrite.
 			const localContent = await this.app.vault.cachedRead(existing);
 			const localHash = fnv1a(localContent);
-			const lastSynced = this.syncState.get(normalized);
-			const lastSyncedHash = lastSynced?.hash;
-
-			// Local was modified by the user if its content hash differs from
-			// what we last wrote during sync (or if we never wrote it).
-			let localModified: boolean;
-			if (lastSyncedHash !== undefined) {
-				localModified = localHash !== lastSyncedHash;
-			} else {
-				// No sync hash — first sync for this file. Use a staleness
-				// heuristic: if the local mtime is well before the remote mtime,
-				// the user almost certainly didn't edit locally — the file is
-				// just stale and the remote is newer.
-				const localMtimeS = existing.stat.mtime / 1000;
-				const stale = change.mtime - localMtimeS > STALE_THRESHOLD_S;
-				localModified = stale ? false : localContent !== content;
-			}
-
-			if (!forceOverwrite && localModified && localContent !== content) {
-				// Both sides differ — real conflict
-				const localMtime = existing.stat.mtime / 1000;
-
-				devLog().log(
-					"pull",
-					`conflict: ${change.path} (localHash=${localHash} syncedHash=${lastSyncedHash})`,
-				);
-				const firstSync = lastSyncedHash === undefined;
-				rlog().warn(
-					"conflict",
-					`Detected: ${change.path} | firstSync=${firstSync}` +
-						` | localHash=${localHash} | syncedHash=${lastSyncedHash ?? "none"}` +
-						` | localMtime=${new Date(localMtime * 1000).toISOString()}` +
-						` | remoteMtime=${new Date(change.mtime * 1000).toISOString()}` +
-						` | localLen=${localContent.length} | remoteLen=${content.length}`,
-				);
-
-				// Attempt 3-way auto-merge if we have a base
-				const pullBase = this.baseStore?.get(normalized);
-				if (pullBase) {
-					const merge = threeWayMerge(pullBase.content, localContent, content);
-					if (merge.clean) {
-						await this.modifyFile(existing, merge.merged);
-						this.syncState.set(normalized, {
-							hash: fnv1a(merge.merged),
-							version: change.version,
-						});
-						if (change.version != null) {
-							this.baseStore?.set(normalized, merge.merged, change.version);
-						}
-						// Push merged result to server (force=true to bypass echo suppression,
-						// since syncState.hash was just updated to match merged content)
-						try {
-							await this.pushFile(existing, true);
-						} catch (e) {
-							rlog().error(
-								"conflict",
-								`Auto-merge push failed: ${change.path} | err=${errMsg(e)}`,
-							);
-						}
-						rlog().info(
-							"conflict",
-							`Auto-merged (pull): ${change.path}` +
-								` | baseLen=${pullBase.content.length} | localLen=${localContent.length}` +
-								` | remoteLen=${content.length} | mergedLen=${merge.merged.length}`,
-						);
-						return true;
-					}
-					rlog().info(
-						"conflict",
-						`Auto-merge failed (pull): ${change.path}` +
-							` | conflicts=${merge.conflicts.length}` +
-							` | baseLen=${pullBase.content.length} | localLen=${localContent.length}` +
-							` | remoteLen=${content.length}`,
-					);
-				}
-
-				// Fall back to interactive conflict resolution
-				const resolution = await this.resolveConflict({
-					path: change.path,
-					localContent,
-					localMtime,
-					remoteContent: content,
-					remoteMtime: change.mtime,
-					baseContent: pullBase?.content,
-					vaultName: this.app.vault.getName(),
-				});
-
-				if (resolution.choice === "skip") {
-					rlog().info("conflict", `Resolved: ${change.path} → skip`);
-					return false;
-				}
-				if (resolution.choice === "keep-local") {
-					// Push local version to server. pushFile records the fresh
-					// syncState (hash/version/serverHash) from the response — do
-					// NOT overwrite it with the stale pre-conflict version here.
-					try {
-						await this.pushFile(existing);
-						rlog().info(
-							"conflict",
-							`Resolved: ${change.path} → keep-local | pushOk=true`,
-						);
-					} catch (e) {
-						rlog().error(
-							"conflict",
-							`Resolved: ${change.path} → keep-local | pushOk=false | err=${errMsg(e)}`,
-							e instanceof Error ? e.stack : undefined,
-						);
-					}
-					return false;
-				}
-				if (resolution.choice === "keep-both") {
-					// Save remote as a conflict copy, keep local as-is
-					const date = new Date().toISOString().slice(0, 10);
-					const baseName = normalized.replace(/\.md$/, "");
-					const conflictPath = `${baseName} (conflict ${date}).md`;
-					try {
-						await this.createFileWithFolders(conflictPath, content);
-						this.syncState.set(normalizePath(conflictPath), {
-							hash: fnv1a(content),
-							version: change.version,
-						});
-						if (change.version != null) {
-							this.baseStore?.set(
-								normalizePath(conflictPath),
-								content,
-								change.version,
-							);
-						}
-						rlog().info(
-							"conflict",
-							`Resolved: ${change.path} → keep-both | copyPath=${conflictPath}`,
-						);
-					} catch (e) {
-						rlog().error(
-							"conflict",
-							`Resolved: ${change.path} → keep-both | copyFailed=true | err=${errMsg(e)}`,
-							e instanceof Error ? e.stack : undefined,
-						);
-					}
-					return true;
-				}
-				if (resolution.choice === "merge" && resolution.mergedContent != null) {
-					// Apply user-merged content locally and push to server
-					try {
-						await this.modifyFile(existing, resolution.mergedContent);
-						this.syncState.set(normalized, {
-							hash: fnv1a(resolution.mergedContent),
-							version: change.version,
-						});
-						if (change.version != null) {
-							this.baseStore?.set(
-								normalized,
-								resolution.mergedContent,
-								change.version,
-							);
-						}
-						await this.pushFile(existing, true);
-						rlog().info(
-							"conflict",
-							`Resolved: ${change.path} → merge | mergedLen=${resolution.mergedContent.length} | pushOk=true`,
-						);
-					} catch (e) {
-						rlog().error(
-							"conflict",
-							`Resolved: ${change.path} → merge | pushOk=false | err=${errMsg(e)}`,
-							e instanceof Error ? e.stack : undefined,
-						);
-					}
-					return true;
-				}
-				// "keep-remote" falls through to overwrite below
-				rlog().info("conflict", `Resolved: ${change.path} → keep-remote`);
-			} else if (localContent === content) {
+			if (localContent === content) {
 				// Content identical — nothing to do
 				devLog().log("pull", `applyChange SKIP (identical): ${change.path}`);
 				this.syncState.set(normalized, {
@@ -6039,51 +5851,6 @@ export class SyncEngine {
 		this.syncState.set(normalized, { hash });
 		rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`);
 		return true;
-	}
-
-	/** Resolve a conflict via callback or auto-resolve as keep-remote. */
-	private async resolveConflict(info: ConflictInfo): Promise<ConflictResolution> {
-		// Auto mode: create conflict copy file instead of blocking modal
-		if (this.settings.conflictResolution === "auto") {
-			const ts = new Date().toISOString().replace(/[:.]/g, "").slice(0, 15); // YYYYMMDDTHHmmss
-			const normalized = normalizePath(info.path);
-			const baseName = normalized.replace(/\.md$/, "");
-			const conflictPath = `${baseName} (conflict ${ts}).md`;
-			try {
-				await this.createFileWithFolders(conflictPath, info.remoteContent);
-				this.syncState.set(normalizePath(conflictPath), {
-					hash: fnv1a(info.remoteContent),
-					version: undefined,
-				});
-				rlog().info(
-					"conflict",
-					`Auto-resolved: ${info.path} → conflict file ${conflictPath}` +
-						` | localLen=${info.localContent.length} | remoteLen=${info.remoteContent.length}` +
-						` | hasBase=${info.baseContent != null}`,
-				);
-				new Notice(
-					`Engram Sync: conflict — saved copy as "${conflictPath.split("/").pop()}"`,
-					8000,
-				);
-			} catch (e) {
-				rlog().error(
-					"conflict",
-					`Failed to create conflict file: ${conflictPath} | err=${errMsg(e)}`,
-				);
-			}
-			// Keep local as-is, remote saved as conflict copy
-			return { choice: "keep-local" };
-		}
-
-		if (this.onConflict) {
-			return this.onConflict(info);
-		}
-		// No handler — default to keep-remote (legacy behavior)
-		rlog().warn(
-			"conflict",
-			`Auto-resolved: ${info.path} → keep-remote (no handler) | localLen=${info.localContent.length} | remoteLen=${info.remoteContent.length}`,
-		);
-		return { choice: "keep-remote" };
 	}
 
 	/** Create a text file, ensuring parent folders exist. */

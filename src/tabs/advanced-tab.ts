@@ -26,22 +26,6 @@ export function renderAdvancedTab(ctx: TabContext): void {
 	new Setting(containerEl).setName("Sync behavior").setHeading();
 
 	new Setting(containerEl)
-		.setName("Conflict resolution")
-		.setDesc(
-			"How to handle conflicts. Automatic creates a conflict copy. Interactive shows a diff dialog.",
-		)
-		.addDropdown((dropdown) =>
-			dropdown
-				.addOption("auto", "Automatic (conflict files)")
-				.addOption("modal", "Interactive (diff modal)")
-				.setValue(plugin.settings.conflictResolution)
-				.onChange(async (value) => {
-					plugin.settings.conflictResolution = value as "auto" | "modal";
-					await plugin.saveSettings();
-				}),
-		);
-
-	new Setting(containerEl)
 		.setName("Debounce (ms)")
 		.setDesc("Delay after editing before pushing. Prevents flooding during typing.")
 		.addText((text) =>

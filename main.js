@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch4 = function() {
+    var diff_match_patch3 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch4.Diff = function(op, text2) {
+    diff_match_patch3.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch3.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch3.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch3.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch3.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch3.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch4.Diff(
+          new diff_match_patch3.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch3.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch3.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch4.Diff(DIFF_DELETE, text1),
-          new diff_match_patch4.Diff(DIFF_INSERT, text2)
+          new diff_match_patch3.Diff(DIFF_DELETE, text1),
+          new diff_match_patch3.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch3.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch3.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch3.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch4.Diff(DIFF_DELETE, text1),
-        new diff_match_patch4.Diff(DIFF_INSERT, text2)
+        new diff_match_patch3.Diff(DIFF_DELETE, text1),
+        new diff_match_patch3.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch3.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch3.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch3.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch3.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch3.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch3.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,19 +224,19 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch3.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
       if (longtext.length < 4 || shorttext.length * 2 < longtext.length)
         return null;
-      var dmp4 = this;
+      var dmp3 = this;
       function diff_halfMatchI_(longtext2, shorttext2, i) {
         for (var seed = longtext2.substring(i, i + Math.floor(longtext2.length / 4)), j = -1, best_common = "", best_longtext_a, best_longtext_b, best_shorttext_a, best_shorttext_b; (j = shorttext2.indexOf(seed, j + 1)) != -1; ) {
-          var prefixLength = dmp4.diff_commonPrefix(
+          var prefixLength = dmp3.diff_commonPrefix(
             longtext2.substring(i),
             shorttext2.substring(j)
-          ), suffixLength = dmp4.diff_commonSuffix(
+          ), suffixLength = dmp3.diff_commonSuffix(
             longtext2.substring(0, i),
             shorttext2.substring(0, j)
           );
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch3.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch3.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch3.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch3.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch3.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch3.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch3.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch3.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch3.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch3.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch4.whitespaceRegex_ = /\s/;
-    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch3.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch3.whitespaceRegex_ = /\s/;
+    diff_match_patch3.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch3.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch3.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch3.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+    diff_match_patch3.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch3.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch3.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch3.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch3.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch3.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch4.prototype.diff_text1 = function(diffs) {
+    diff_match_patch3.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_text2 = function(diffs) {
+    diff_match_patch3.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch3.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch3.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch3.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,18 +454,18 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch3.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch3.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
-      var s = this.match_alphabet_(pattern), dmp4 = this;
+      var s = this.match_alphabet_(pattern), dmp3 = this;
       function match_bitapScore_(e, x) {
         var accuracy = e / pattern.length, proximity = Math.abs(loc - x);
-        return dmp4.Match_Distance ? accuracy + proximity / dmp4.Match_Distance : proximity ? 1 : accuracy;
+        return dmp3.Match_Distance ? accuracy + proximity / dmp3.Match_Distance : proximity ? 1 : accuracy;
       }
       var score_threshold = this.Match_Threshold, best_loc = text2.indexOf(pattern, loc);
       best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold), best_loc = text2.lastIndexOf(pattern, loc + pattern.length), best_loc != -1 && (score_threshold = Math.min(match_bitapScore_(0, best_loc), score_threshold)));
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch3.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch3.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch3.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch3.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch3.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch3.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch3.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch4.prototype.patch_addPadding = function(patches) {
+    diff_match_patch3.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch4.prototype.patch_splitMax = function(patches) {
+    diff_match_patch3.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch4.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch3.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch4.prototype.patch_toText = function(patches) {
+    diff_match_patch3.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch4.prototype.patch_fromText = function(textline) {
+    diff_match_patch3.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch4.patch_obj();
+        var patch = new diff_match_patch3.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch3.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch3.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch4.patch_obj = function() {
+    diff_match_patch3.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch4.patch_obj.prototype.toString = function() {
+    diff_match_patch3.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch4;
-    module2.exports.diff_match_patch = diff_match_patch4;
+    module2.exports = diff_match_patch3;
+    module2.exports.diff_match_patch = diff_match_patch3;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -733,7 +733,7 @@ __export(main_exports, {
   shouldReuseLiveStream: () => shouldReuseLiveStream
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian26 = require("obsidian");
+var import_obsidian25 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
@@ -2046,314 +2046,6 @@ var NoteChannel = class {
   }
 };
 
-// src/conflict-modal.ts
-var import_obsidian2 = require("obsidian");
-
-// src/diff.ts
-function computeDiff(oldText, newText) {
-  let oldLines = oldText.split(`
-`), newLines = newText.split(`
-`);
-  return myersDiff(oldLines, newLines);
-}
-function myersDiff(a, b) {
-  let n = a.length, m = b.length, max2 = n + m, v = new Int32Array(2 * max2 + 1);
-  v.fill(-1), v[max2 + 1] = 0;
-  let trace = [];
-  outer: for (let d = 0; d <= max2; d++) {
-    let vCopy = new Int32Array(v);
-    trace.push(vCopy);
-    for (let k = -d; k <= d; k += 2) {
-      let idx = k + max2, x;
-      k === -d || k !== d && v[idx - 1] < v[idx + 1] ? x = v[idx + 1] : x = v[idx - 1] + 1;
-      let y = x - k;
-      for (; x < n && y < m && a[x] === b[y]; )
-        x++, y++;
-      if (v[idx] = x, x >= n && y >= m)
-        break outer;
-    }
-  }
-  return backtrack(trace, a, b, max2);
-}
-function backtrack(trace, a, b, max2) {
-  let x = a.length, y = b.length, ops = [];
-  for (let d = trace.length - 1; d >= 0; d--) {
-    let v = trace[d], k = x - y, idx = k + max2, prevK;
-    k === -d || k !== d && v[idx - 1] < v[idx + 1] ? prevK = k + 1 : prevK = k - 1;
-    let prevX = v[prevK + max2], prevY = prevX - prevK;
-    for (; x > prevX && y > prevY; )
-      x--, y--, ops.push({
-        type: "equal",
-        content: a[x],
-        oldLineNo: x + 1,
-        newLineNo: y + 1
-      });
-    d > 0 && (x === prevX ? (y--, ops.push({
-      type: "add",
-      content: b[y],
-      newLineNo: y + 1
-    })) : (x--, ops.push({
-      type: "remove",
-      content: a[x],
-      oldLineNo: x + 1
-    })));
-  }
-  return ops.reverse(), ops;
-}
-function groupIntoHunks(diffLines, contextLines = 3) {
-  if (diffLines.length === 0) return [];
-  let changeIndices = [];
-  for (let i = 0; i < diffLines.length; i++)
-    diffLines[i].type !== "equal" && changeIndices.push(i);
-  if (changeIndices.length === 0) return [];
-  let ranges = [], rangeStart = Math.max(0, changeIndices[0] - contextLines), rangeEnd = Math.min(diffLines.length - 1, changeIndices[0] + contextLines);
-  for (let i = 1; i < changeIndices.length; i++) {
-    let newStart = Math.max(0, changeIndices[i] - contextLines), newEnd = Math.min(diffLines.length - 1, changeIndices[i] + contextLines);
-    newStart <= rangeEnd + 1 || (ranges.push([rangeStart, rangeEnd]), rangeStart = newStart), rangeEnd = newEnd;
-  }
-  return ranges.push([rangeStart, rangeEnd]), ranges.map(([start, end], id2) => ({
-    id: id2,
-    lines: diffLines.slice(start, end + 1),
-    choice: "remote"
-  }));
-}
-function buildMergedContent(allDiffLines, hunks) {
-  var _a;
-  let hunkRanges = [], searchFrom = 0;
-  for (let hunk of hunks) {
-    let firstLine = hunk.lines[0];
-    if (firstLine)
-      for (let i = searchFrom; i < allDiffLines.length; i++) {
-        let cur = allDiffLines[i];
-        if (cur.type === firstLine.type && cur.content === firstLine.content && cur.oldLineNo === firstLine.oldLineNo && cur.newLineNo === firstLine.newLineNo) {
-          hunkRanges.push({
-            start: i,
-            end: i + hunk.lines.length - 1,
-            choice: hunk.choice
-          }), searchFrom = i + hunk.lines.length;
-          break;
-        }
-      }
-  }
-  let result = [], hunkIdx = 0;
-  for (let i = 0; i < allDiffLines.length; i++) {
-    let line = allDiffLines[i], activeHunk = hunkRanges[hunkIdx], currentHunk = activeHunk && i >= activeHunk.start && i <= activeHunk.end ? activeHunk : null;
-    activeHunk && i > activeHunk.end && hunkIdx++;
-    let choice = (_a = currentHunk == null ? void 0 : currentHunk.choice) != null ? _a : "remote";
-    line.type === "equal" ? result.push(line.content) : line.type === "remove" ? choice === "local" && result.push(line.content) : line.type === "add" && choice === "remote" && result.push(line.content);
-  }
-  return result.join(`
-`);
-}
-
-// src/conflict-modal.ts
-var ConflictModal = class extends import_obsidian2.Modal {
-  constructor(app, info, settings, onViewModeChange) {
-    super(app);
-    this.resolvePromise = () => {
-    };
-    this.diffLines = [];
-    this.hunks = [];
-    this.mergeEditor = null;
-    this.diffContainer = null;
-    this.info = info, this.settings = settings, this.viewMode = settings.conflictViewMode, this.onViewModeChange = onViewModeChange;
-  }
-  onOpen() {
-    let { contentEl, modalEl } = this;
-    contentEl.empty(), contentEl.addClass("engram-conflict"), modalEl.addClass("engram-conflict-modal"), this.diffLines = computeDiff(this.info.localContent, this.info.remoteContent), this.hunks = groupIntoHunks(this.diffLines), this.renderHeader(contentEl), this.renderToolbar(contentEl), this.diffContainer = contentEl.createEl("section", { cls: "engram-conflict-diff" }), this.renderDiff(), this.renderMergeEditor(contentEl), this.renderActions(contentEl);
-  }
-  onClose() {
-    this.contentEl.empty(), this.resolvePromise({ choice: "skip" });
-  }
-  waitForChoice() {
-    return new Promise((resolve) => {
-      this.resolvePromise = (result) => {
-        this.resolvePromise = () => {
-        }, resolve(result);
-      }, this.open();
-    });
-  }
-  // ── Header ──────────────────────────────────────────────────────
-  renderHeader(root) {
-    let header = root.createEl("header", { cls: "engram-conflict-header" }), title = this.info.vaultName ? `Sync Conflict \u2014 ${this.info.vaultName}` : "Sync Conflict";
-    header.createEl("h2", { text: title }), header.createEl("code", { text: this.info.path, cls: "engram-conflict-path" });
-    let meta = header.createEl("aside", { cls: "engram-conflict-meta" });
-    meta.createSpan({
-      text: `Local: ${this.fmtDate(this.info.localMtime)} \xB7 ${this.info.localContent.length} chars`
-    }), meta.createSpan({
-      text: `Remote: ${this.fmtDate(this.info.remoteMtime)} \xB7 ${this.info.remoteContent.length} chars`
-    });
-  }
-  // ── Toolbar (view toggle) ───────────────────────────────────────
-  renderToolbar(root) {
-    let bar = root.createEl("nav", { cls: "engram-conflict-toolbar" }), toggle = bar.createEl("fieldset", { cls: "engram-conflict-view-toggle" });
-    toggle.createEl("legend", { text: "View" });
-    let unifiedBtn = toggle.createEl("button", {
-      text: "Unified",
-      cls: this.viewMode === "unified" ? "is-active" : ""
-    }), sideBySideBtn = toggle.createEl("button", {
-      text: "Side-by-side",
-      cls: this.viewMode === "side-by-side" ? "is-active" : ""
-    });
-    if (unifiedBtn.addEventListener("click", () => {
-      this.viewMode = "unified", unifiedBtn.addClass("is-active"), sideBySideBtn.removeClass("is-active"), this.onViewModeChange("unified"), this.renderDiff();
-    }), sideBySideBtn.addEventListener("click", () => {
-      this.viewMode = "side-by-side", sideBySideBtn.addClass("is-active"), unifiedBtn.removeClass("is-active"), this.onViewModeChange("side-by-side"), this.renderDiff();
-    }), this.hunks.length > 0) {
-      let bulkGroup = bar.createSpan({ cls: "engram-conflict-bulk" }), allLocalBtn = bulkGroup.createEl("button", {
-        text: "All local",
-        cls: "mod-warning"
-      }), allRemoteBtn = bulkGroup.createEl("button", { text: "All remote" });
-      allLocalBtn.addEventListener("click", () => {
-        for (let h of this.hunks)
-          h.choice = "local";
-        this.renderDiff(), this.updateMergeEditor();
-      }), allRemoteBtn.addEventListener("click", () => {
-        for (let h of this.hunks)
-          h.choice = "remote";
-        this.renderDiff(), this.updateMergeEditor();
-      });
-    }
-  }
-  // ── Diff view ───────────────────────────────────────────────────
-  renderDiff() {
-    let container = this.diffContainer;
-    if (container.empty(), this.hunks.length === 0) {
-      container.createEl("p", {
-        text: "No differences found.",
-        cls: "engram-conflict-no-diff"
-      });
-      return;
-    }
-    this.viewMode === "unified" ? this.renderUnified(container) : this.renderSideBySide(container);
-  }
-  renderUnified(container) {
-    var _a, _b, _c, _d;
-    for (let hunk of this.hunks) {
-      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
-      this.renderHunkControls(hunkEl, hunk);
-      let tbody = hunkEl.createEl("table", {
-        cls: "engram-diff-table engram-diff-unified"
-      }).createEl("tbody");
-      for (let line of hunk.lines) {
-        let tr = tbody.createEl("tr", {
-          cls: `engram-diff-line engram-diff-${line.type}`
-        });
-        tr.createEl("td", {
-          text: (_b = (_a = line.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
-          cls: "engram-diff-linenum"
-        }), tr.createEl("td", {
-          text: (_d = (_c = line.newLineNo) == null ? void 0 : _c.toString()) != null ? _d : "",
-          cls: "engram-diff-linenum"
-        }), tr.createEl("td", {
-          text: line.type === "add" ? "+" : line.type === "remove" ? "-" : " ",
-          cls: "engram-diff-marker"
-        }), tr.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: line.content });
-      }
-    }
-  }
-  renderSideBySide(container) {
-    var _a, _b, _c, _d, _e, _f;
-    for (let hunk of this.hunks) {
-      let hunkEl = container.createEl("article", { cls: "engram-conflict-hunk" });
-      this.renderHunkControls(hunkEl, hunk);
-      let wrapper = hunkEl.createEl("section", { cls: "engram-diff-sbs-wrapper" }), leftTable = wrapper.createEl("table", {
-        cls: "engram-diff-table engram-diff-sbs"
-      }), rightTable = wrapper.createEl("table", {
-        cls: "engram-diff-table engram-diff-sbs"
-      }), leftBody = leftTable.createEl("tbody"), rightBody = rightTable.createEl("tbody"), leftLines = [], rightLines = [], i = 0, lines = hunk.lines;
-      for (; i < lines.length; ) {
-        let cur = lines[i];
-        if (cur.type === "equal")
-          leftLines.push(cur), rightLines.push(cur), i++;
-        else {
-          let removes = [], adds = [];
-          for (; i < lines.length && lines[i].type === "remove"; )
-            removes.push(lines[i]), i++;
-          for (; i < lines.length && lines[i].type === "add"; )
-            adds.push(lines[i]), i++;
-          let maxLen = Math.max(removes.length, adds.length);
-          for (let j = 0; j < maxLen; j++)
-            leftLines.push(j < removes.length ? removes[j] : null), rightLines.push(j < adds.length ? adds[j] : null);
-        }
-      }
-      for (let r = 0; r < leftLines.length; r++) {
-        let left = leftLines[r], right = rightLines[r], trLeft = leftBody.createEl("tr", {
-          cls: `engram-diff-line ${left ? `engram-diff-${left.type}` : "engram-diff-empty"}`
-        });
-        trLeft.createEl("td", {
-          text: (_b = (_a = left == null ? void 0 : left.oldLineNo) == null ? void 0 : _a.toString()) != null ? _b : "",
-          cls: "engram-diff-linenum"
-        }), trLeft.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_c = left == null ? void 0 : left.content) != null ? _c : "" });
-        let trRight = rightBody.createEl("tr", {
-          cls: `engram-diff-line ${right ? `engram-diff-${right.type}` : "engram-diff-empty"}`
-        });
-        trRight.createEl("td", {
-          text: (_e = (_d = right == null ? void 0 : right.newLineNo) == null ? void 0 : _d.toString()) != null ? _e : "",
-          cls: "engram-diff-linenum"
-        }), trRight.createEl("td", { cls: "engram-diff-content" }).createEl("code", { text: (_f = right == null ? void 0 : right.content) != null ? _f : "" });
-      }
-    }
-  }
-  renderHunkControls(parent, hunk) {
-    let controls = parent.createEl("nav", { cls: "engram-conflict-hunk-controls" });
-    controls.createSpan({
-      text: `Hunk ${hunk.id + 1}`,
-      cls: "engram-conflict-hunk-label"
-    });
-    let localBtn = controls.createEl("button", {
-      text: "Use local",
-      cls: hunk.choice === "local" ? "is-active mod-warning" : ""
-    }), remoteBtn = controls.createEl("button", {
-      text: "Use remote",
-      cls: hunk.choice === "remote" ? "is-active" : ""
-    }), updateButtons = () => {
-      localBtn.className = hunk.choice === "local" ? "is-active mod-warning" : "", remoteBtn.className = hunk.choice === "remote" ? "is-active" : "";
-    };
-    localBtn.addEventListener("click", () => {
-      hunk.choice = "local", updateButtons(), this.updateMergeEditor();
-    }), remoteBtn.addEventListener("click", () => {
-      hunk.choice = "remote", updateButtons(), this.updateMergeEditor();
-    });
-  }
-  // ── Merge editor ────────────────────────────────────────────────
-  renderMergeEditor(root) {
-    let section = root.createEl("section", { cls: "engram-conflict-merge" }), header = section.createEl("header", { cls: "engram-conflict-merge-header" });
-    header.createEl("h3", { text: "Merge result" }), header.createSpan({
-      text: "Edit the merged content below, or use hunk controls above",
-      cls: "engram-conflict-merge-hint"
-    }), this.mergeEditor = section.createEl("textarea", {
-      cls: "engram-conflict-merge-editor"
-    }), this.updateMergeEditor();
-  }
-  updateMergeEditor() {
-    this.mergeEditor && (this.mergeEditor.value = buildMergedContent(this.diffLines, this.hunks));
-  }
-  // ── Action buttons ──────────────────────────────────────────────
-  renderActions(root) {
-    let bar = root.createEl("footer", { cls: "engram-conflict-actions" });
-    bar.createEl("button", { text: "Apply merge", cls: "mod-cta" }).addEventListener("click", () => {
-      var _a, _b;
-      this.resolvePromise({
-        choice: "merge",
-        mergedContent: (_b = (_a = this.mergeEditor) == null ? void 0 : _a.value) != null ? _b : ""
-      }), this.close();
-    }), bar.createEl("button", { text: "Keep local", cls: "mod-warning" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-local" }), this.close();
-    }), bar.createEl("button", { text: "Keep remote" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-remote" }), this.close();
-    }), bar.createEl("button", { text: "Keep both" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "keep-both" }), this.close();
-    }), bar.createEl("button", { text: "Skip" }).addEventListener("click", () => {
-      this.resolvePromise({ choice: "skip" }), this.close();
-    });
-  }
-  // ── Helpers ──────────────────────────────────────────────────────
-  fmtDate(epoch) {
-    return new Date(epoch * 1e3).toLocaleString();
-  }
-};
-
 // src/crdt-op-dispatch.ts
 var TERMINAL_REASONS = /* @__PURE__ */ new Set([
   "id_conflict",
@@ -2539,7 +2231,7 @@ var DEFAULT_OPTIONS = {
 };
 
 // src/limit-toast.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/limit-copy.ts
 var TABLE = {
@@ -2568,7 +2260,7 @@ function toastFor(reason) {
 // src/limit-toast.ts
 var TOAST_DURATION_MS = 1e4;
 function notifyLimitExceeded(err) {
-  let msg = toastFor(err.reason), notice = new import_obsidian3.Notice(msg, TOAST_DURATION_MS);
+  let msg = toastFor(err.reason), notice = new import_obsidian2.Notice(msg, TOAST_DURATION_MS);
   if (err.upgradeUrl) {
     let url = err.upgradeUrl, noticeEl = notice.noticeEl;
     if (!noticeEl) return;
@@ -2600,16 +2292,16 @@ function attachmentCapabilityGained(prev, next) {
 }
 
 // src/search-modal.ts
-var import_obsidian8 = require("obsidian");
-
-// src/search-ui.ts
 var import_obsidian7 = require("obsidian");
 
+// src/search-ui.ts
+var import_obsidian6 = require("obsidian");
+
 // src/folder-suggest.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/input-suggest-base.ts
-var import_obsidian4 = require("obsidian"), WidthMatchedInputSuggest = class extends import_obsidian4.AbstractInputSuggest {
+var import_obsidian3 = require("obsidian"), WidthMatchedInputSuggest = class extends import_obsidian3.AbstractInputSuggest {
   constructor(app, inputEl) {
     super(app, inputEl), this.inputEl = inputEl;
   }
@@ -2638,7 +2330,7 @@ var FolderInputSuggest = class extends WidthMatchedInputSuggest {
   renderSuggestion(value, el) {
     el.addClass("engram-folder-suggest-item");
     let icon = el.createSpan({ cls: "engram-folder-suggest-icon" });
-    (0, import_obsidian5.setIcon)(icon, "folder"), el.createSpan({ text: value });
+    (0, import_obsidian4.setIcon)(icon, "folder"), el.createSpan({ text: value });
   }
   selectSuggestion(value, _evt) {
     this.setValue(value), this.onPick(value), this.close();
@@ -2646,7 +2338,7 @@ var FolderInputSuggest = class extends WidthMatchedInputSuggest {
 };
 
 // src/search-engine.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/search-highlight.ts
 function buildSegments(text2, ranges) {
@@ -2722,7 +2414,7 @@ async function searchSemantic(query, ctx, opts) {
 async function searchEngram(mode, query, ctx, opts = {}, deps = {}) {
   var _a;
   if (!query.trim()) return { results: [], degraded: !1 };
-  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian6.prepareSimpleSearch;
+  let fuzzy = (_a = deps.fuzzy) != null ? _a : import_obsidian5.prepareSimpleSearch;
   return mode === "semantic" ? { results: await searchSemantic(query, ctx, opts), degraded: !1 } : mode === "keyword" ? { results: await searchKeyword(query, ctx, opts, fuzzy), degraded: !1 } : searchHybrid(query, ctx, opts, fuzzy);
 }
 function basename(path) {
@@ -2739,7 +2431,7 @@ function noteTags(app, file) {
   var _a;
   let cache = app.metadataCache.getFileCache(file);
   if (!cache) return /* @__PURE__ */ new Set();
-  let all2 = (_a = (0, import_obsidian6.getAllTags)(cache)) != null ? _a : [];
+  let all2 = (_a = (0, import_obsidian5.getAllTags)(cache)) != null ? _a : [];
   return new Set(all2.map((t) => t.replace(/^#/, "")));
 }
 function matchesTags(app, file, tags) {
@@ -2869,15 +2561,15 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
   build(parent) {
     parent.addClass("engram-search-panel");
     let searchRow = parent.createDiv({ cls: "engram-search-row" }), inputWrap = searchRow.createDiv({ cls: "engram-search-input-wrap" }), iconEl = inputWrap.createSpan({ cls: "engram-search-input-icon" });
-    (0, import_obsidian7.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
+    (0, import_obsidian6.setIcon)(iconEl, "search"), this.inputEl = inputWrap.createEl("input", {
       type: "search",
       placeholder: "Search your vault\u2026",
       cls: "engram-search-input"
-    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian7.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearHandler = () => {
+    }), this.clearEl = inputWrap.createSpan({ cls: "engram-search-clear clickable-icon" }), (0, import_obsidian6.setIcon)(this.clearEl, "x"), this.clearEl.setAttribute("aria-label", "Clear search"), this.clearHandler = () => {
       this.inputEl.value = "", this.inputEl.focus(), this.run(), this.reflectInputState();
     }, this.clearEl.addEventListener("click", this.clearHandler), this.filterToggleEl = searchRow.createSpan({
       cls: "engram-search-filter-toggle clickable-icon"
-    }), (0, import_obsidian7.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleHandler = () => this.toggleFilters(), this.filterToggleEl.addEventListener("click", this.filterToggleHandler), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian7.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
+    }), (0, import_obsidian6.setIcon)(this.filterToggleEl, "sliders-horizontal"), this.filterToggleEl.setAttribute("aria-label", "Search settings"), this.filterToggleHandler = () => this.toggleFilters(), this.filterToggleEl.addEventListener("click", this.filterToggleHandler), this.filtersEl = parent.createDiv({ cls: "engram-search-filters is-hidden" }), new import_obsidian6.Setting(this.filtersEl).setName("Blend keyword + meaning").setDesc(
       "Rank results by both exact words and semantic meaning. Off uses meaning only."
     ).addToggle(
       (t) => t.setValue(this.mode === "hybrid").onChange((v) => this.setMode(v ? "hybrid" : "semantic"))
@@ -2970,7 +2662,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     for (let file of this.ctx.app.vault.getMarkdownFiles()) {
       let cache = this.ctx.app.metadataCache.getFileCache(file);
       if (cache)
-        for (let t of (_a = (0, import_obsidian7.getAllTags)(cache)) != null ? _a : []) set2.add(t.replace(/^#/, ""));
+        for (let t of (_a = (0, import_obsidian6.getAllTags)(cache)) != null ? _a : []) set2.add(t.replace(/^#/, ""));
     }
     return [...set2].sort((a, b) => a.localeCompare(b));
   }
@@ -3005,7 +2697,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
         tags: this.parseTags()
       });
       if (gen !== this.runGeneration) return;
-      outcome.degraded && new import_obsidian7.Notice("Semantic offline \u2014 keyword results only"), this.results = outcome.results, this.selectedIndex = this.results.length ? 0 : -1, this.renderResults(query);
+      outcome.degraded && new import_obsidian6.Notice("Semantic offline \u2014 keyword results only"), this.results = outcome.results, this.selectedIndex = this.results.length ? 0 : -1, this.renderResults(query);
     } catch (e) {
       if (gen !== this.runGeneration) return;
       console.error("Engram search failed", e), this.resultsEl.empty(), this.resultsEl.createEl("p", {
@@ -3044,7 +2736,7 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
         let pill = meta.createSpan({
           cls: `engram-search-match engram-search-match-${result.matchType}`
         }), icon = pill.createSpan({ cls: "engram-search-match-icon" });
-        (0, import_obsidian7.setIcon)(
+        (0, import_obsidian6.setIcon)(
           icon,
           result.matchType === "keyword" ? "case-sensitive" : result.matchType === "both" ? "layers" : "sparkles"
         ), pill.createSpan({
@@ -3101,12 +2793,12 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
   async openResult(result) {
     var _a, _b;
     if (!result.source_path) {
-      new import_obsidian7.Notice("No source path for this result");
+      new import_obsidian6.Notice("No source path for this result");
       return;
     }
     let file = this.ctx.app.vault.getFileByPath(result.source_path);
     if (!file) {
-      new import_obsidian7.Notice("Note not synced locally");
+      new import_obsidian6.Notice("Note not synced locally");
       return;
     }
     let match2 = await this.buildMatchState(file);
@@ -3129,13 +2821,13 @@ var SEARCH_DEBOUNCE_MS = 550, SELECTABLE_MODES = ["hybrid", "semantic"], SearchP
     } catch (e) {
       return console.warn("Engram search: could not read note for match highlight", file.path, e), null;
     }
-    let res = (0, import_obsidian7.prepareSimpleSearch)(query)(content);
+    let res = (0, import_obsidian6.prepareSimpleSearch)(query)(content);
     return !res || !res.matches.length ? null : { content, matches: res.matches };
   }
 };
 
 // src/search-modal.ts
-var SearchModal = class extends import_obsidian8.Modal {
+var SearchModal = class extends import_obsidian7.Modal {
   constructor(app, api, defaultMode, onModeChange) {
     super(app);
     this.panel = null;
@@ -3160,8 +2852,8 @@ var SearchModal = class extends import_obsidian8.Modal {
 };
 
 // src/search-view.ts
-var import_obsidian9 = require("obsidian");
-var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_obsidian9.ItemView {
+var import_obsidian8 = require("obsidian");
+var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_obsidian8.ItemView {
   constructor(leaf, api, defaultMode, onModeChange) {
     super(leaf);
     this.panel = null;
@@ -3193,11 +2885,11 @@ var SEARCH_VIEW_TYPE = "engram-search-view", SearchView = class extends import_o
 };
 
 // src/settings.ts
-var import_obsidian20 = require("obsidian");
+var import_obsidian19 = require("obsidian");
 
 // src/device-flow-modal.ts
-var import_obsidian10 = require("obsidian");
-var DeviceFlowModal = class extends import_obsidian10.Modal {
+var import_obsidian9 = require("obsidian");
+var DeviceFlowModal = class extends import_obsidian9.Modal {
   constructor(app, plugin) {
     super(app);
     this.resolve = () => {
@@ -3234,7 +2926,7 @@ var DeviceFlowModal = class extends import_obsidian10.Modal {
     };
     vaultName && (body.vault_name = vaultName);
     let resp = await withTimeout(
-      (0, import_obsidian10.requestUrl)({
+      (0, import_obsidian9.requestUrl)({
         url: `${apiUrl}/auth/device`,
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -3254,7 +2946,7 @@ var DeviceFlowModal = class extends import_obsidian10.Modal {
       cls: "engram-device-code"
     });
     codeEl.title = "Click to copy", codeEl.addEventListener("click", () => {
-      navigator.clipboard.writeText(resp.user_code), new import_obsidian10.Notice("Code copied!");
+      navigator.clipboard.writeText(resp.user_code), new import_obsidian9.Notice("Code copied!");
     }), contentEl.createEl("p", {
       text: "A browser window has opened. Sign in and enter this code to link your vault."
     }), contentEl.createEl("p", {
@@ -3271,7 +2963,7 @@ var DeviceFlowModal = class extends import_obsidian10.Modal {
         }
         try {
           let resp = await withTimeout(
-            (0, import_obsidian10.requestUrl)({
+            (0, import_obsidian9.requestUrl)({
               url: `${apiUrl}/auth/device/token`,
               method: "POST",
               headers: { "Content-Type": "application/json" },
@@ -3311,10 +3003,10 @@ var DeviceFlowModal = class extends import_obsidian10.Modal {
 };
 
 // src/sync-progress-modal.ts
-var import_obsidian13 = require("obsidian");
+var import_obsidian12 = require("obsidian");
 
 // src/sync-center-render.ts
-var import_obsidian12 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/issue-store.ts
 var IssueStore = class {
@@ -3515,7 +3207,7 @@ function isPersistedIssue(value) {
 }
 
 // src/sync-preview-modal.ts
-var import_obsidian11 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 
 // src/mime.ts
 var TEXT_ATTACHMENT_EXTS = /* @__PURE__ */ new Set(["txt", "md", "css", "html"]);
@@ -3529,9 +3221,7 @@ var DEFAULT_SETTINGS = {
   apiKey: "",
   ignorePatterns: "",
   debounceMs: 2e3,
-  conflictViewMode: "unified",
   diagnosticsEnabled: !1,
-  conflictResolution: "auto",
   vaultId: null,
   clientId: "",
   planState: null,
@@ -3797,7 +3487,7 @@ var MERGE_CARD = {
   "first-time": "Set up sync for this vault",
   "vault-switch": "You are now pointing at a different cloud vault",
   review: "Sync preview"
-}, SyncPreviewModal = class extends import_obsidian11.Modal {
+}, SyncPreviewModal = class extends import_obsidian10.Modal {
   constructor(app, plan, opts) {
     super(app);
     this.opts = opts;
@@ -3903,8 +3593,8 @@ var MERGE_CARD = {
     });
     summary.createSpan({ text: "Advanced sync options" });
     let chevron = summary.createSpan({ cls: "engram-sync-preview-advanced-chevron" });
-    (0, import_obsidian11.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
-      this.state.advancedOpen = details.open, (0, import_obsidian11.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
+    (0, import_obsidian10.setIcon)(chevron, this.state.advancedOpen ? "chevron-down" : "chevron-right"), details.addEventListener("toggle", () => {
+      this.state.advancedOpen = details.open, (0, import_obsidian10.setIcon)(chevron, details.open ? "chevron-down" : "chevron-right");
     });
     let grid = details.createDiv({ cls: "engram-sync-preview-options-grid" });
     for (let card of [...PUSH_CARDS, ...PULL_CARDS])
@@ -4190,7 +3880,7 @@ var MERGE_CARD = {
 // src/sync-center-render.ts
 var DEFAULT_UPGRADE_URL = "https://app.engram.page/settings/billing";
 function sectionHeading(parent, title) {
-  return new import_obsidian12.Setting(parent).setName(title).setHeading();
+  return new import_obsidian11.Setting(parent).setName(title).setHeading();
 }
 var CATEGORY_ORDER = [
   "needs_pro",
@@ -4250,7 +3940,7 @@ function renderActions(parent, plugin, refresh) {
         throw new Error("Sync Center received change-vault choice, caller missing");
       await plugin.runSyncWithProgress(choice, { plan: modal.getPlan() });
     } catch (e) {
-      new import_obsidian12.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
+      new import_obsidian11.Notice(`Engram Sync: ${e instanceof Error ? e.message : "sync failed"}`);
     }
     refresh();
   }), makeActionButton(strip, "Refresh", () => refresh());
@@ -4396,17 +4086,17 @@ function renderIgnoredRow(parent, plugin, refresh, path) {
   });
 }
 function openFile(plugin, path) {
-  if (!plugin.app.vault.getFileByPath((0, import_obsidian12.normalizePath)(path))) {
-    new import_obsidian12.Notice(`File not found locally: ${path}`);
+  if (!plugin.app.vault.getFileByPath((0, import_obsidian11.normalizePath)(path))) {
+    new import_obsidian11.Notice(`File not found locally: ${path}`);
     return;
   }
   plugin.app.workspace.openLinkText(path, "");
 }
 async function ignoreFilePermanently(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
+  plugin.syncEngine.ignoredFiles.add(path), plugin.syncEngine.issues.clear(path), await plugin.persistEngineState(), new import_obsidian11.Notice(`Ignored ${path} \u2014 won't sync until restored from Sync Center.`), refresh();
 }
 async function restoreFile(plugin, path, refresh) {
-  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian12.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
+  plugin.syncEngine.ignoredFiles.remove(path), await plugin.persistEngineState(), new import_obsidian11.Notice(`Restored ${path} \u2014 will sync on next push.`), refresh();
 }
 var ACTIVITY_LIMIT = 50, ACTION_ICON = {
   push: "\u2191",
@@ -4532,7 +4222,7 @@ function settingsBarCounts(progress, planned, prevTotal) {
     pct: total > 0 ? Math.min(100, Math.round(current / total * 100)) : 0
   };
 }
-var SyncProgressModal = class extends import_obsidian13.Modal {
+var SyncProgressModal = class extends import_obsidian12.Modal {
   /** `intro`: plan-derived summary (see describePlannedWork). `phases`: the
    *  rows to seed (see plannedPhases). `webUrl`: the Engram web app to link to
    *  on completion so the user can verify their vault. All optional so callers
@@ -4668,17 +4358,17 @@ var SyncProgressModal = class extends import_obsidian13.Modal {
 };
 
 // src/tabs/about-tab.ts
-var import_obsidian16 = require("obsidian");
-
-// src/email-capture-modal.ts
 var import_obsidian15 = require("obsidian");
 
-// src/waitlist.ts
+// src/email-capture-modal.ts
 var import_obsidian14 = require("obsidian");
+
+// src/waitlist.ts
+var import_obsidian13 = require("obsidian");
 var WAITLIST_ENDPOINT = "https://engram.page/api/waitlist";
 async function submitWaitlistEmail(email) {
   let resp = await withTimeout(
-    (0, import_obsidian14.requestUrl)({
+    (0, import_obsidian13.requestUrl)({
       url: WAITLIST_ENDPOINT,
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -4752,7 +4442,7 @@ function renderEmailCaptureForm({
     doSubmit();
   }), input.focus();
 }
-var EmailCaptureModal = class extends import_obsidian15.Modal {
+var EmailCaptureModal = class extends import_obsidian14.Modal {
   constructor(app, onDone) {
     super(app);
     this.onDone = onDone;
@@ -4830,20 +4520,20 @@ function externalLink(parent, text2, href) {
   parent.createEl("a", { text: text2, href, attr: { target: "_blank", rel: "noopener" } });
 }
 function heading(containerEl, name) {
-  new import_obsidian16.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
+  new import_obsidian15.Setting(containerEl).setName(name).setHeading().settingEl.addClass("engram-about-heading");
 }
 function renderAboutTab(ctx) {
   let { containerEl, switchToTab } = ctx;
   containerEl.createEl("p", { cls: "engram-about-intro" }).setText(
     "Engram vault sync keeps your Obsidian vault in sync with Engram and lets your AI assistants read and write the same notes. You edit on any device; your AI works from notes you actually wrote."
   ), heading(containerEl, "Stay in the loop"), renderWaitlistSection(containerEl), heading(containerEl, "Getting set up");
-  let account = new import_obsidian16.Setting(containerEl).setName("1. Make an account");
-  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian16.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
+  let account = new import_obsidian15.Setting(containerEl).setName("1. Make an account");
+  account.descEl.appendText("Create a hosted account at "), externalLink(account.descEl, "engram.page", ENGRAM_MARKETING_URL), account.descEl.appendText(", or self-host the backend ("), externalLink(account.descEl, "setup guide", ENGRAM_SELFHOST_URL), account.descEl.appendText(")."), new import_obsidian15.Setting(containerEl).setName("2. Connect your vault to Engram").setDesc(
     "Sign in (or enter your server URL and key) on the cloud tab, then run your first sync."
   ).addButton(
     (btn) => btn.setButtonText("Open cloud tab").setCta().onClick(() => switchToTab("account"))
   );
-  let ai = new import_obsidian16.Setting(containerEl).setName("3. Connect your AI");
+  let ai = new import_obsidian15.Setting(containerEl).setName("3. Connect your AI");
   ai.descEl.appendText(
     "Link Claude, Cursor, ChatGPT, or any MCP app so it can read and write your notes. "
   ), externalLink(ai.descEl, "See the AI setup guide", ENGRAM_MCP_URL), heading(containerEl, "Plans");
@@ -4871,10 +4561,10 @@ function renderAboutTab(ctx) {
 }
 
 // src/tabs/account-tab.ts
-var import_obsidian18 = require("obsidian");
+var import_obsidian17 = require("obsidian");
 
 // src/tabs/self-hosted-tab.ts
-var import_obsidian17 = require("obsidian");
+var import_obsidian16 = require("obsidian");
 var PREFLIGHT_DEBOUNCE_MS = 600;
 function renderSelfHostedTab(ctx) {
   let { containerEl, plugin } = ctx, isOnCloud = plugin.settings.apiUrl === ENGRAM_CLOUD_URL, hasAuth = !!plugin.settings.apiKey || !!plugin.settings.refreshToken;
@@ -4882,14 +4572,14 @@ function renderSelfHostedTab(ctx) {
     renderCloudLockBanner(containerEl);
     return;
   }
-  let repoSetting = new import_obsidian17.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
+  let repoSetting = new import_obsidian16.Setting(containerEl).setName("Run your own Engram server").setDesc("Engram is the backend that powers sync and semantic search.");
   repoSetting.settingEl.addClass("engram-setup-cta"), repoSetting.descEl.addClass("engram-server-cta-desc"), repoSetting.descEl.createEl("a", {
     text: "github.com/engram-app/engram",
     href: "https://github.com/engram-app/engram"
   }), renderEngramUrlSetting(ctx), renderAuthSection(ctx), renderVaultSection(ctx), renderSupportSection(ctx);
 }
 function renderEngramUrlSetting(ctx) {
-  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian17.Setting(containerEl).setName("Engram URL");
+  let { containerEl, plugin, redisplay } = ctx, setting = new import_obsidian16.Setting(containerEl).setName("Engram URL");
   setting.settingEl.addClass("engram-url-setting");
   let status = setting.descEl.createDiv({ cls: "engram-url-preflight" }), STATUS_CLASSES = ["is-checking", "is-engram", "is-reachable", "is-unreachable"], pendingUrl = plugin.settings.apiUrl, debounce = null, probeSeq = 0, renderStatus = (result) => {
     switch (status.removeClasses(STATUS_CLASSES), result.kind) {
@@ -4930,7 +4620,7 @@ function renderEngramUrlSetting(ctx) {
         },
         pendingUrl.trim(),
         () => plugin.saveSettings()
-      ) && new import_obsidian17.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
+      ) && new import_obsidian16.Notice("Engram backend changed \u2014 sign in again to continue."), redisplay();
     })
   ), completeOrigin(plugin.settings.apiUrl) && runPreflight(plugin.settings.apiUrl);
 }
@@ -4943,8 +4633,8 @@ function renderCloudLockBanner(containerEl) {
 function renderAuthSection(ctx) {
   var _a;
   let { containerEl, plugin, redisplay, startDeviceFlow } = ctx, isOAuth = !!plugin.settings.refreshToken, hasApiKey = !!plugin.settings.apiKey;
-  if (new import_obsidian17.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
-    new import_obsidian17.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
+  if (new import_obsidian16.Setting(containerEl).setName("Authentication").setHeading(), isOAuth) {
+    new import_obsidian16.Setting(containerEl).setName(`Signed in as ${(_a = plugin.settings.userEmail) != null ? _a : "unknown"}`).setDesc("Authenticated via Engram account (OAuth).").addButton(
       (btn) => btn.setButtonText("Sign out").onClick(async () => {
         await plugin.clearOAuthTokens(), redisplay();
       })
@@ -4952,7 +4642,7 @@ function renderAuthSection(ctx) {
     return;
   }
   if (hasApiKey) {
-    new import_obsidian17.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
+    new import_obsidian16.Setting(containerEl).setName("Using API key").setDesc("Authenticated via manual API key.").addButton(
       (btn) => btn.setButtonText("Clear key").setWarning().onClick(async () => {
         plugin.settings.apiKey = "", await plugin.saveSettings(), redisplay();
       })
@@ -4963,11 +4653,11 @@ function renderAuthSection(ctx) {
     );
     return;
   }
-  new import_obsidian17.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
+  new import_obsidian16.Setting(containerEl).setName("Sign in with Engram").setDesc("Links your Obsidian vault to your Engram account. Opens a browser window.").addButton(
     (btn) => btn.setButtonText("Sign in").setCta().onClick(() => startDeviceFlow())
   ), containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
   let pendingKey = "";
-  new import_obsidian17.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
+  new import_obsidian16.Setting(containerEl).setName("API key").setDesc("Bearer token from Engram (starts with Engram_).").addText((text2) => {
     text2.setPlaceholder("engram_abc123...").onChange((value) => {
       pendingKey = value;
     }), text2.inputEl.type = "password", text2.inputEl.addClass("engram-api-key-input");
@@ -4975,7 +4665,7 @@ function renderAuthSection(ctx) {
     (btn) => btn.setButtonText("Save").setCta().onClick(async () => {
       let trimmed = pendingKey.trim();
       if (!trimmed) {
-        new import_obsidian17.Notice("Enter an API key first");
+        new import_obsidian16.Notice("Enter an API key first");
         return;
       }
       plugin.settings.apiKey = trimmed, await plugin.saveSettings(), redisplay();
@@ -4985,8 +4675,8 @@ function renderAuthSection(ctx) {
 function renderVaultSection(ctx) {
   let { containerEl, plugin, redisplay } = ctx;
   if (!plugin.settings.apiKey && !plugin.settings.refreshToken) return;
-  new import_obsidian17.Setting(containerEl).setName("Vault").setHeading();
-  let setting = new import_obsidian17.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
+  new import_obsidian16.Setting(containerEl).setName("Vault").setHeading();
+  let setting = new import_obsidian16.Setting(containerEl).setName("Vault selection").setDesc("Select which vault this plugin syncs with."), currentId = plugin.settings.vaultId, storedName = plugin.settings.remoteVaultName;
   if (currentId && storedName) {
     setting.settingEl.addClass("engram-setting-vault-name"), setting.controlEl.createSpan({
       cls: "engram-vault-current-name",
@@ -5038,8 +4728,8 @@ function renderVaultSection(ctx) {
 }
 function renderSupportSection(ctx) {
   let { containerEl } = ctx;
-  new import_obsidian17.Setting(containerEl).setName("Support development").setHeading();
-  let supportSetting = new import_obsidian17.Setting(containerEl).setDesc(
+  new import_obsidian16.Setting(containerEl).setName("Support development").setHeading();
+  let supportSetting = new import_obsidian16.Setting(containerEl).setDesc(
     "If this plugin saves you time, consider supporting development."
   );
   supportSetting.settingEl.addClass("engram-setting-support");
@@ -5048,13 +4738,13 @@ function renderSupportSection(ctx) {
     href: "https://github.com/sponsors/engram-app",
     attr: { target: "_blank", rel: "noopener" }
   }), sponsorIcon = sponsorLink.createSpan({ cls: "engram-sponsor-icon" });
-  (0, import_obsidian17.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
+  (0, import_obsidian16.setIcon)(sponsorIcon, "heart"), sponsorLink.createSpan({ text: "GitHub Sponsors" });
   let kofiLink = buttonRow.createEl("a", {
     cls: "engram-kofi-button",
     href: "https://ko-fi.com/engrams_sync",
     attr: { target: "_blank", rel: "noopener" }
   }), kofiIcon = kofiLink.createSpan({ cls: "engram-kofi-icon" });
-  (0, import_obsidian17.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
+  (0, import_obsidian16.setIcon)(kofiIcon, "coffee"), kofiLink.createSpan({ text: "Ko-fi" });
 }
 function describeListVaultsError(e) {
   let err = e, status = err == null ? void 0 : err.status;
@@ -5068,7 +4758,7 @@ async function applyVaultSwitch(plugin, value, name) {
 async function renderAccountTab(ctx) {
   let { containerEl, plugin, redisplay } = ctx, action = cloudTabAction(plugin.settings, ENGRAM_CLOUD_URL);
   if (action === "prompt-switch") {
-    new import_obsidian18.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
+    new import_obsidian17.Setting(containerEl).setName("Currently set to a self-hosted instance").setDesc(
       `Self-hosted URL: ${plugin.settings.apiUrl}. Switching to Engram cloud replaces it and clears any stored credentials for that instance.`
     ).addButton(
       (btn) => btn.setButtonText("Switch to Engram cloud").setWarning().onClick(async () => {
@@ -5083,7 +4773,7 @@ async function renderAccountTab(ctx) {
           },
           ENGRAM_CLOUD_URL,
           () => plugin.saveSettings()
-        ), new import_obsidian18.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
+        ), new import_obsidian17.Notice("Switched to Engram cloud \u2014 sign in to continue."), redisplay();
       })
     );
     return;
@@ -5100,7 +4790,7 @@ async function renderAccountTab(ctx) {
     ENGRAM_CLOUD_URL,
     () => plugin.saveSettings()
   );
-  let aboutSetting = new import_obsidian18.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
+  let aboutSetting = new import_obsidian17.Setting(containerEl).setName("New to Engram?").setDesc("Create an account, read the docs, and learn more at ");
   aboutSetting.settingEl.addClass("engram-setup-cta"), aboutSetting.descEl.createEl("a", {
     text: "engram.page",
     href: ENGRAM_MARKETING_URL,
@@ -5109,7 +4799,7 @@ async function renderAccountTab(ctx) {
 }
 
 // src/tabs/advanced-tab.ts
-var import_obsidian19 = require("obsidian"), PROBLEMATIC_DIRS = [
+var import_obsidian18 = require("obsidian"), PROBLEMATIC_DIRS = [
   { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
   { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
   { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
@@ -5127,31 +4817,25 @@ var import_obsidian19 = require("obsidian"), PROBLEMATIC_DIRS = [
 ];
 function renderAdvancedTab(ctx) {
   let { containerEl, app, plugin, redisplay } = ctx;
-  new import_obsidian19.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian19.Setting(containerEl).setName("Conflict resolution").setDesc(
-    "How to handle conflicts. Automatic creates a conflict copy. Interactive shows a diff dialog."
-  ).addDropdown(
-    (dropdown) => dropdown.addOption("auto", "Automatic (conflict files)").addOption("modal", "Interactive (diff modal)").setValue(plugin.settings.conflictResolution).onChange(async (value) => {
-      plugin.settings.conflictResolution = value, await plugin.saveSettings();
-    })
-  ), new import_obsidian19.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
+  new import_obsidian18.Setting(containerEl).setName("Sync behavior").setHeading(), new import_obsidian18.Setting(containerEl).setName("Debounce (ms)").setDesc("Delay after editing before pushing. Prevents flooding during typing.").addText(
     (text2) => text2.setPlaceholder("2000").setValue(String(plugin.settings.debounceMs)).onChange(async (value) => {
       let num = Number.parseInt(value, 10);
       !Number.isNaN(num) && num >= 100 && (plugin.settings.debounceMs = num, await plugin.saveSettings());
     })
-  ), new import_obsidian19.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian19.Setting(containerEl).setName("Custom patterns").setDesc(
+  ), new import_obsidian18.Setting(containerEl).setName("Ignore patterns").setHeading(), renderIgnoreWarnings(containerEl, app, plugin, redisplay), new import_obsidian18.Setting(containerEl).setName("Custom patterns").setDesc(
     `Paths to skip (one per line). Folder patterns end with /. Built-in: ${app.vault.configDir}/, .trash/, .git/`
   ).addTextArea((text2) => {
     text2.setPlaceholder(`drafts/
 secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
       plugin.settings.ignorePatterns = value, await plugin.saveSettings();
     }), text2.inputEl.rows = 6, text2.inputEl.addClass("engram-ignore-textarea");
-  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian19.Setting(containerEl).setName("Diagnostics").setDesc(
+  }).settingEl.addClass("engram-ignore-setting"), new import_obsidian18.Setting(containerEl).setName("Diagnostics").setHeading(), new import_obsidian18.Setting(containerEl).setName("Diagnostics").setDesc(
     "Send detailed sync, vault, and connection activity to the server for troubleshooting, with distributed tracing on requests. Metadata only, never note content. Leave off for normal use."
   ).addToggle(
     (toggle) => toggle.setValue(plugin.settings.diagnosticsEnabled).onChange(async (value) => {
       plugin.settings.diagnosticsEnabled = value, await plugin.saveSettings();
     })
-  ), new import_obsidian19.Setting(containerEl).setName("About").setHeading();
+  ), new import_obsidian18.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
   let repoItem = aboutList.createEl("li");
@@ -5168,18 +4852,18 @@ function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
     if (folder) {
       let count2 = 0, walk = (f) => {
         for (let child of f.children)
-          child instanceof import_obsidian19.TFolder ? walk(child) : count2++;
+          child instanceof import_obsidian18.TFolder ? walk(child) : count2++;
       };
       walk(folder), detected.push({ ...dir, count: count2 });
     }
   }
   if (detected.length !== 0)
     for (let item of detected)
-      new import_obsidian19.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
+      new import_obsidian18.Setting(containerEl).setName(`\u26A0 Detected: ${item.label}/ (${item.count.toLocaleString()} files)`).setDesc(`${item.desc} \u2014 should not be synced`).addButton(
         (btn) => btn.setButtonText("Add to ignores").setCta().onClick(async () => {
           let current = plugin.settings.ignorePatterns.trim();
           plugin.settings.ignorePatterns = current ? `${current}
-${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian19.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
+${item.pattern}` : item.pattern, await plugin.saveSettings(), new import_obsidian18.Notice(`Added ${item.pattern} to ignore patterns`), redisplay();
         })
       ).settingEl.addClass("engram-status-warning");
 }
@@ -5196,7 +4880,7 @@ function renderSyncCenterTab(ctx) {
 }
 
 // src/settings.ts
-var EngramSyncSettingTab = class extends import_obsidian20.PluginSettingTab {
+var EngramSyncSettingTab = class extends import_obsidian19.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.statusContainerEl = null;
@@ -5377,7 +5061,7 @@ function createSingleFlight() {
 }
 
 // src/sync.ts
-var import_obsidian21 = require("obsidian");
+var import_obsidian20 = require("obsidian");
 
 // node_modules/lib0/math.js
 var floor = Math.floor;
@@ -17802,58 +17486,6 @@ var OfflineQueue = class {
   }
 };
 
-// src/three-way-merge.ts
-var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
-function diffToRanges(diffs) {
-  let ranges = [], baseOffset = 0;
-  for (let [op, text2] of diffs)
-    op === 0 ? baseOffset += text2.length : op === -1 ? (ranges.push({
-      start: baseOffset,
-      end: baseOffset + text2.length,
-      replacement: ""
-    }), baseOffset += text2.length) : op === 1 && ranges.push({
-      start: baseOffset,
-      end: baseOffset,
-      replacement: text2
-    });
-  let merged = [];
-  for (let range of ranges) {
-    let prev = merged[merged.length - 1];
-    prev && prev.end === range.start && range.start === range.end ? prev.replacement += range.replacement : prev && prev.start === prev.end && prev.start === range.start ? (prev.end = range.end, prev.replacement += range.replacement) : merged.push({ ...range });
-  }
-  return merged;
-}
-function rangesOverlap(a, b) {
-  return a.start === a.end && b.start === b.end && a.start === b.start ? !0 : a.start === a.end ? a.start > b.start && a.start < b.end : b.start === b.end ? b.start > a.start && b.start < a.end : a.start < b.end && b.start < a.end;
-}
-function threeWayMerge(base, local, remote) {
-  if (base === local) return { merged: remote, clean: !0, conflicts: [] };
-  if (base === remote) return { merged: local, clean: !0, conflicts: [] };
-  if (local === remote) return { merged: local, clean: !0, conflicts: [] };
-  let localDiffs = dmp2.diff_main(base, local), remoteDiffs = dmp2.diff_main(base, remote);
-  dmp2.diff_cleanupSemantic(localDiffs), dmp2.diff_cleanupSemantic(remoteDiffs);
-  let localRanges = diffToRanges(localDiffs), remoteRanges = diffToRanges(remoteDiffs), conflicts = [];
-  for (let lr of localRanges)
-    for (let rr of remoteRanges)
-      rangesOverlap(lr, rr) && conflicts.push({
-        baseStart: Math.min(lr.start, rr.start),
-        baseEnd: Math.max(lr.end, rr.end),
-        localText: lr.replacement,
-        remoteText: rr.replacement
-      });
-  if (conflicts.length > 0)
-    return { merged: remote, clean: !1, conflicts };
-  let allRanges = [
-    ...localRanges.map((r) => ({ ...r, source: "local" })),
-    ...remoteRanges.map((r) => ({ ...r, source: "remote" }))
-  ];
-  allRanges.sort((a, b) => a.start !== b.start ? b.start - a.start : b.end - a.end);
-  let result = base;
-  for (let range of allRanges)
-    result = result.slice(0, range.start) + range.replacement + result.slice(range.end);
-  return { merged: result, clean: !0, conflicts: [] };
-}
-
 // src/sync.ts
 var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
@@ -17903,7 +17535,7 @@ function countFolders(paths) {
   }
   return set2.size;
 }
-var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"], STALE_THRESHOLD_S = 3600;
+var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"];
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -18041,9 +17673,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.explicitFolders = null;
     /** Called whenever sync status changes (for status bar updates). */
     this.onStatusChange = null;
-    /** Called when a conflict is detected. Return the user's resolution.
-     *  If null, conflicts are auto-resolved as keep-remote (legacy behavior). */
-    this.onConflict = null;
     /** Called after each batch during pushAll/pullAll to report progress. */
     this.onSyncProgress = null;
     /** Last-known plan/entitlement state, fed by the channel's `onPlanState`
@@ -18466,7 +18095,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   cacheManifestOwners(manifest) {
     this.manifestPathOwners = new Map(
-      manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian21.normalizePath)(n.path), n.id])
+      manifest.notes.filter((n) => n.id).map((n) => [(0, import_obsidian20.normalizePath)(n.path), n.id])
     ), this.manifestOwnersFetchedAt = Date.now();
   }
   /** Trash files whose refused id-keyed-move turned out to be a genuine
@@ -18584,7 +18213,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || this.isCrdtEligiblePath(path) && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || this.isCrdtEligiblePath(path) && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian20.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -18649,7 +18278,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the server, so REMOTE_ORIGIN suppression is untouched. */
   async applyCrdtCreateAck(localId, serverId, path) {
     var _a, _b, _c, _d;
-    let normalized = (0, import_obsidian21.normalizePath)(path), effectiveId = localId;
+    let normalized = (0, import_obsidian20.normalizePath)(path), effectiveId = localId;
     if (serverId && serverId !== localId) {
       (_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
         "crdt",
@@ -18666,7 +18295,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       (_c = this.crdtEnrollment) == null || _c.reset(localId);
     }
     let file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
-    if (this.crdt && file instanceof import_obsidian21.TFile && this.isCrdtEligible(file))
+    if (this.crdt && file instanceof import_obsidian20.TFile && this.isCrdtEligible(file))
       try {
         let consumed = await routeModify(
           {
@@ -18702,7 +18331,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  adopt the server lineage instead of re-encoding it (backend #846
    *  lineage doubling). Unknown paths return false (authored notes seed). */
   isUnchangedSynced(path, content) {
-    let state = this.syncState.get((0, import_obsidian21.normalizePath)(path));
+    let state = this.syncState.get((0, import_obsidian20.normalizePath)(path));
     return state !== void 0 && state.hash === fnv1a(content);
   }
   /** True only when this path has a recorded CRDT baseline that disagrees
@@ -18712,7 +18341,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  cold-start does NOT open a Y.Doc per note (the reconnect-storm amplifier).
    *  Inverse of isUnchangedSynced except it also requires a baseline to exist. */
   needsColdReconcile(path, content) {
-    let state = this.syncState.get((0, import_obsidian21.normalizePath)(path));
+    let state = this.syncState.get((0, import_obsidian20.normalizePath)(path));
     return state !== void 0 && state.hash !== fnv1a(content);
   }
   /** Write a remote-merged CRDT result to disk.
@@ -18726,10 +18355,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", `flushFromCrdt short-circuited \u2014 gate closed: ${path}`), !0;
-    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (file instanceof import_obsidian21.TFile && await this.app.vault.cachedRead(file) === content)
+    let normalized = (0, import_obsidian20.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    if (file instanceof import_obsidian20.TFile && await this.app.vault.cachedRead(file) === content)
       return this.recordCrdtBaseline(normalized, content), !0;
-    if (file instanceof import_obsidian21.TFile && content.trim() === "") {
+    if (file instanceof import_obsidian20.TFile && content.trim() === "") {
       let prev = "";
       try {
         prev = await this.app.vault.cachedRead(file);
@@ -18751,7 +18380,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     this.markRecentlyFlushed(normalized);
     try {
-      return file instanceof import_obsidian21.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
+      return file instanceof import_obsidian20.TFile ? await this.app.vault.modify(file, content) : await this.createFileWithFolders(normalized, content), this.recordCrdtBaseline(normalized, content), !0;
     } catch (e) {
       return rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`), !1;
     }
@@ -18788,8 +18417,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async captureDiskDriftBeforeRemote(path, noteId) {
     var _a, _b;
     if (!this.crdt) return;
-    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
-    if (!(file instanceof import_obsidian21.TFile)) return;
+    let normalized = (0, import_obsidian20.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized);
+    if (!(file instanceof import_obsidian20.TFile)) return;
     let disk;
     try {
       disk = await this.app.vault.cachedRead(file);
@@ -18839,8 +18468,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Best-effort: isolates its own failure, never throws. */
   async adoptHistoryLessNote(path, noteId, update, head) {
     if (!this.crdt) return "deferred";
-    let normalized = (0, import_obsidian21.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
-    if (file instanceof import_obsidian21.TFile)
+    let normalized = (0, import_obsidian20.normalizePath)(path), file = this.app.vault.getAbstractFileByPath(normalized), disk = null;
+    if (file instanceof import_obsidian20.TFile)
       try {
         disk = await this.app.vault.cachedRead(file);
       } catch (e) {
@@ -18871,7 +18500,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  conflict path written. */
   async writeDriftConflictCopy(normalized, localDisk) {
     let stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"), ext = normalized.endsWith(".canvas") ? "canvas" : "md", conflictPath = `${normalized.replace(/\.(md|canvas)$/, "")} (conflict ${stamp}).${ext}`;
-    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
+    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian20.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -18901,7 +18530,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (!this.isCrdtEligiblePath(path)) return;
-    let normalized = (0, import_obsidian21.normalizePath)(path);
+    let normalized = (0, import_obsidian20.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
     await this.flushFromCrdt(path, text2);
@@ -18925,9 +18554,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  null), where the isSynced gate is the backstop. */
   async materializeRelocated(path, noteId) {
     var _a, _b;
-    if (!this.crdt || !this.isCrdtEligiblePath(path) || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
+    if (!this.crdt || !this.isCrdtEligiblePath(path) || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian20.normalizePath)(path))) return;
     let text2 = await this.crdt.projectedText(noteId), canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
-    if (canonical !== null && (0, import_obsidian21.normalizePath)(canonical) !== (0, import_obsidian21.normalizePath)(path)) {
+    if (canonical !== null && (0, import_obsidian20.normalizePath)(canonical) !== (0, import_obsidian20.normalizePath)(path)) {
       rlog().info(
         "ws",
         `Stale materialize skipped for ${noteId}: canonical=${canonical} captured=${path}`
@@ -19105,10 +18734,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   getCrdtHead(path) {
     var _a;
-    return (_a = this.syncState.get((0, import_obsidian21.normalizePath)(path))) == null ? void 0 : _a.crdtHead;
+    return (_a = this.syncState.get((0, import_obsidian20.normalizePath)(path))) == null ? void 0 : _a.crdtHead;
   }
   setCrdtHead(path, head) {
-    let key = (0, import_obsidian21.normalizePath)(path), existing = this.syncState.get(key);
+    let key = (0, import_obsidian20.normalizePath)(path), existing = this.syncState.get(key);
     this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
   }
   /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
@@ -19175,13 +18804,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     return this.ignoredFiles.has(path) ? !0 : this.ignorePatterns.some((pattern) => pattern.endsWith("/") ? path.startsWith(pattern) || path.includes(`/${pattern}`) : path === pattern || path.endsWith(`/${pattern}`));
   }
   isMarkdown(file) {
-    return file instanceof import_obsidian21.TFile && file.extension === "md";
+    return file instanceof import_obsidian20.TFile && file.extension === "md";
   }
   /** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
    *  (the manager's docKind picks the per-type schema). Binary/attachment
    *  types are NOT eligible and stay on the REST/attachment path. */
   isCrdtEligible(file) {
-    return file instanceof import_obsidian21.TFile && (file.extension === "md" || file.extension === "canvas");
+    return file instanceof import_obsidian20.TFile && (file.extension === "md" || file.extension === "canvas");
   }
   /** Path-string variant of isCrdtEligible for the pull/apply path, which works
    *  with normalized paths (from a NoteChange), not TFile handles. */
@@ -19197,11 +18826,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Check if a file should be synced (markdown, canvas, or binary attachment). */
   isSyncable(file) {
-    return file instanceof import_obsidian21.TFile ? TEXT_EXTENSIONS.has(file.extension) || BINARY_EXTENSIONS.has(file.extension) : !1;
+    return file instanceof import_obsidian20.TFile ? TEXT_EXTENSIONS.has(file.extension) || BINARY_EXTENSIONS.has(file.extension) : !1;
   }
   /** Check if a file is a binary attachment (not text). */
   isBinaryFile(file) {
-    return file instanceof import_obsidian21.TFile ? BINARY_EXTENSIONS.has(file.extension) : !1;
+    return file instanceof import_obsidian20.TFile ? BINARY_EXTENSIONS.has(file.extension) : !1;
   }
   /** Get MIME type for a file. */
   getMimeType(file) {
@@ -19244,7 +18873,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
+    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian20.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
       this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
       return;
     }
@@ -19285,7 +18914,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian21.normalizePath)(oldPath), (0, import_obsidian21.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian21.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian20.normalizePath)(oldPath), (0, import_obsidian20.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian20.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -19330,8 +18959,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.explicitFolders) return;
     let loaded = (_c = (_b = (_a = this.app.vault).getAllLoadedFiles) == null ? void 0 : _b.call(_a)) != null ? _c : [];
     for (let f of loaded) {
-      if (!(f instanceof import_obsidian21.TFolder)) continue;
-      let path = (0, import_obsidian21.normalizePath)(f.path);
+      if (!(f instanceof import_obsidian20.TFolder)) continue;
+      let path = (0, import_obsidian20.normalizePath)(f.path);
       if (!(!path || path === "/") && !this.shouldIgnore(path) && !this.explicitFolders.has(path) && !this.subtreeHasSyncableFile(f))
         try {
           await this.api.createFolder(path), await this.explicitFolders.add(path);
@@ -19343,9 +18972,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** True if any descendant file (at any depth) is syncable and not ignored. */
   subtreeHasSyncableFile(folder) {
     for (let child of folder.children)
-      if (child instanceof import_obsidian21.TFolder) {
+      if (child instanceof import_obsidian20.TFolder) {
         if (this.subtreeHasSyncableFile(child)) return !0;
-      } else if (child instanceof import_obsidian21.TFile && this.isSyncable(child) && !this.shouldIgnore(child.path))
+      } else if (child instanceof import_obsidian20.TFile && this.isSyncable(child) && !this.shouldIgnore(child.path))
         return !0;
     return !1;
   }
@@ -19408,13 +19037,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     try {
       let mtime = file.stat.mtime / 1e3;
       if (isBinary) {
-        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
+        let buffer = await this.app.vault.readBinary(file), base64 = arrayBufferToBase64(buffer), hash = fnv1a(base64), existing = this.syncState.get((0, import_obsidian20.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`), !1;
         let mimeType = this.getMimeType(file);
-        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash });
+        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian20.normalizePath)(file.path), { hash });
       } else {
-        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian21.normalizePath)(file.path));
+        let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian20.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip: ${file.path} | hash=${hash}`), !1;
         let noteId = (_c = (_b = this.noteIdMap) == null ? void 0 : _b.get(file.path)) != null ? _c : null;
@@ -19442,24 +19071,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           );
-          return consumed !== null ? (this.syncState.set((0, import_obsidian21.normalizePath)(file.path), {
+          return consumed !== null ? (this.syncState.set((0, import_obsidian20.normalizePath)(file.path), {
             ...existing,
             hash: fnv1a(consumed)
-          }), this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          }), this.isLiveBound((0, import_obsidian20.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
             "push",
             `crdt edit queued durably (channel down): ${file.path}`
           ), rlog().info(
             "push",
             `CRDT edit queued durably (channel down): ${file.path}`
-          ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
+          ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian20.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
         }
         if (this.crdtCreate && this.crdt && noteId && this.isCrdtEligible(file) && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
               let consumed;
-              if (serverId && serverId !== noteId && this.crdtEditorRebind && this.isLiveBound((0, import_obsidian21.normalizePath)(pushedPath))) {
-                (_l = this.noteIdMap) == null || _l.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), effectiveId = serverId;
+              if (serverId && serverId !== noteId && this.crdtEditorRebind && this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath))) {
+                (_l = this.noteIdMap) == null || _l.set((0, import_obsidian20.normalizePath)(pushedPath), serverId), effectiveId = serverId;
                 let mintText = await this.crdt.projectedText(noteId), serverHadContent = typeof this.crdt.hasHistory == "function" && await this.crdt.hasHistory(serverId);
                 consumed = await this.crdt.applyLocalEdit(serverId, mintText), mintText.length > 0 && serverHadContent && rlog().warn(
                   "crdt",
@@ -19469,7 +19098,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   `crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`
                 ), this.crdtEditorRebind(pushedPath), await this.crdt.removeDoc(noteId), (_m = this.crdtEnrollment) == null || _m.reset(noteId);
               } else
-                serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian21.normalizePath)(pushedPath), serverId), rlog().info(
+                serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian20.normalizePath)(pushedPath), serverId), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
@@ -19481,14 +19110,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? this.syncState.set((0, import_obsidian21.normalizePath)(pushedPath), {
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? this.syncState.set((0, import_obsidian20.normalizePath)(pushedPath), {
                 ...existing,
                 hash: fnv1a(consumed),
                 crdtHead: CRDT_HEAD_CREATED
               }) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
-              ), this.isLiveBound((0, import_obsidian21.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
+              ), this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
                 "push",
                 `crdt_create ok: ${pushedPath} (id=${effectiveId})`
               ), rlog().info(
@@ -19520,11 +19149,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         else if (serverPath && serverPath !== pushedPath) {
           let localFile = this.app.vault.getFileByPath(pushedPath);
-          localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian21.Notice(
+          localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian20.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian21.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian21.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian21.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian21.normalizePath)(serverPath), resp.note.id);
+          )), this.syncState.delete((0, import_obsidian20.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian20.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian20.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian20.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian21.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian21.normalizePath)(file.path), resp.note.id);
+          this.syncState.set((0, import_obsidian20.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian20.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
           path: (_s = resp.note.path) != null ? _s : pushedPath,
           parseStatus: resp.note.parse_status,
@@ -19612,7 +19241,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let { count: count2, firstMessage } = this.drainFailureSummary();
     if (count2 <= 0) return;
     let noun = count2 === 1 ? "file" : "files", detail = firstMessage ? ` (${firstMessage})` : "";
-    new import_obsidian21.Notice(`Engram: ${count2} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count2} ${noun} failed to sync${detail}`);
+    new import_obsidian20.Notice(`Engram: ${count2} ${noun} failed to sync${detail} \u2014 open Sync Center`, 1e4), rlog().warn("push", `${count2} ${noun} failed to sync${detail}`);
   }
   /** Emit a single batched toast covering all attachments skipped this batch
    *  with `needs_pro`. Called once at the end of pushModifiedFiles / pushAll.
@@ -19624,7 +19253,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (this.attachmentLimitedThisBatch = 0, this.lastBatchSkipped = count2, count2 <= 0 || this.attachmentLimitToastShown) return;
     this.attachmentLimitToastShown = !0;
     let noun = count2 === 1 ? "attachment" : "attachments";
-    new import_obsidian21.Notice(`Engram: ${count2} ${noun} skipped \u2014 upgrade to sync images & PDFs.`, 1e4), rlog().info(
+    new import_obsidian20.Notice(`Engram: ${count2} ${noun} skipped \u2014 upgrade to sync images & PDFs.`, 1e4), rlog().info(
       "push",
       `Skipped ${count2} ${noun} (attachments_disabled) \u2014 batched toast emitted`
     );
@@ -19667,8 +19296,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let skipped = this.issues.all().filter((i) => issueDisposition(i.category) === "informational");
     if (skipped.length !== 0) {
       for (let issue of skipped) {
-        let file = this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(issue.path));
-        file instanceof import_obsidian21.TFile && await this.pushFile(
+        let file = this.app.vault.getAbstractFileByPath((0, import_obsidian20.normalizePath)(issue.path));
+        file instanceof import_obsidian20.TFile && await this.pushFile(
           file,
           /* force */
           !0,
@@ -19676,7 +19305,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           !0
         );
       }
-      new import_obsidian21.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
+      new import_obsidian20.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
     }
   }
   /** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
@@ -19734,7 +19363,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
    *  delayed past it escapes; debounce is 500ms, fine. */
   shouldDeferMint(path) {
-    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian21.normalizePath)(path));
+    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian20.normalizePath)(path));
   }
   // --- Pull: Engram → local vault ---
   /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
@@ -19750,7 +19379,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  which case that room now owns the doc's lifecycle and it must stay
    *  resident. */
   hibernateIfIdle(path, noteId) {
-    if (this.crdt && !this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
+    if (this.crdt && !this.isLiveBound((0, import_obsidian20.normalizePath)(path)))
       try {
         this.crdt.closeDoc(noteId);
       } catch (e) {
@@ -19966,8 +19595,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async discoverAnnouncedNote(noteId, path) {
     var _a;
     if (!this.crdt || !this.crdtCatchupSince || this.isSyncBlocked()) return;
-    let normalized = (0, import_obsidian21.normalizePath)(path);
-    if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian21.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
+    let normalized = (0, import_obsidian20.normalizePath)(path);
+    if (!this.shouldIgnore(normalized) && !this.isLiveBound(normalized) && !(this.app.vault.getAbstractFileByPath(normalized) instanceof import_obsidian20.TFile) && !this.recentlyDeleted.has(noteId) && !this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0))
       try {
         this.noteIdMap && this.noteIdMap.pathForId(noteId) !== normalized && (this.noteIdMap.set(normalized, noteId), await this.saveData({ noteIds: this.noteIdMap.toJSON() })), this.confirmNoteId(noteId), await this.catchupViaSeqReplay();
       } catch (e) {
@@ -19996,7 +19625,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         return rlog().info("crdt", `fan-out drop: id unmapped after reconcile note=${noteId}`), "deferred";
       rlog().info("crdt", `fan-out for unmapped id healed via manifest: ${path}`);
     }
-    if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(path)))
+    if (this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian20.normalizePath)(path)))
       try {
         return await this.crdt.applyRemoteUpdate(noteId, update), this.setCrdtHead(path, head), "applied";
       } catch (e) {
@@ -20171,7 +19800,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   releaseHealRoom(noteId, path) {
     var _a, _b, _c;
     let current = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : path;
-    if (!(current && this.isLiveBound((0, import_obsidian21.normalizePath)(current)))) {
+    if (!(current && this.isLiveBound((0, import_obsidian20.normalizePath)(current)))) {
       if ((_c = this.crdtEnrollment) == null || _c.reset(noteId), current)
         this.hibernateIfIdle(current, noteId);
       else if (this.crdt)
@@ -20197,7 +19826,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async healNoteOnOpen(path) {
     var _a, _b;
     if (!this.crdt) return;
-    let normalized = (0, import_obsidian21.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
+    let normalized = (0, import_obsidian20.normalizePath)(path), noteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null;
     if (noteId)
       try {
         if (!this.isNoteConfirmed(noteId)) {
@@ -20372,9 +20001,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
-      let stored = this.syncState.get((0, import_obsidian21.normalizePath)(event.path));
+      let stored = this.syncState.get((0, import_obsidian20.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
-        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian21.normalizePath)(event.path), {
+        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian20.normalizePath)(event.path), {
           ...stored,
           version: event.version
         }), rlog().info("ws", `Hash skip: ${event.path}`);
@@ -20382,13 +20011,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
     }
     if (event.event_type === "delete") {
-      let normalized = (0, import_obsidian21.normalizePath)(event.path);
+      let normalized = (0, import_obsidian20.normalizePath)(event.path);
       if (this.deviceId && event.device_id === this.deviceId) {
         rlog().info("ws", `Echo skip (own device): ${event.path}`);
         return;
       }
       let currentId = (_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(normalized)) != null ? _e : null, targetId = (_f = event.id) != null ? _f : currentId, roomId = targetId != null ? targetId : currentId, relocatedPath = roomId && (_h = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(roomId)) != null ? _h : null;
-      if (relocatedPath !== null && (0, import_obsidian21.normalizePath)(relocatedPath) !== normalized) {
+      if (relocatedPath !== null && (0, import_obsidian20.normalizePath)(relocatedPath) !== normalized) {
         let existing2 = this.app.vault.getFileByPath(normalized);
         existing2 && (await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_i = this.baseStore) == null || _i.delete(normalized)), ((_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) === roomId && this.noteIdMap.delete(normalized), rlog().info(
           "ws",
@@ -20446,14 +20075,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         } else if (this.crdt && this.isCrdtEligiblePath(event.path) && ((_p = event.id) != null ? _p : (_o = this.noteIdMap) != null && _o.get(event.path))) {
           let noteId = (_r = event.id) != null ? _r : (_q = this.noteIdMap) == null ? void 0 : _q.get(event.path), canonicalPath = (_t2 = (_s = this.noteIdMap) == null ? void 0 : _s.pathForId(noteId)) != null ? _t2 : null;
-          if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
+          if (canonicalPath !== null && (0, import_obsidian20.normalizePath)(canonicalPath) !== (0, import_obsidian20.normalizePath)(event.path))
             rlog().info(
               "ws",
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            (_u = this.noteIdMap) == null || _u.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian21.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian21.normalizePath)(event.path))) && ((_v = this.crdtEnrollment) == null || _v.enroll(noteId));
-            let np = (0, import_obsidian21.normalizePath)(event.path), priorState = this.syncState.get(np);
+            (_u = this.noteIdMap) == null || _u.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian20.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian20.normalizePath)(event.path))) && ((_v = this.crdtEnrollment) == null || _v.enroll(noteId));
+            let np = (0, import_obsidian20.normalizePath)(event.path), priorState = this.syncState.get(np);
             event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
               hash: (_w = priorState == null ? void 0 : priorState.hash) != null ? _w : fnv1a(""),
               version: (_x = event.version) != null ? _x : priorState == null ? void 0 : priorState.version,
@@ -20500,7 +20129,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   async moveIfIdRelocated(id2, newPath, eventTs) {
     var _a, _b, _c, _d, _e;
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
-    if (!priorPath || (0, import_obsidian21.normalizePath)(priorPath) === (0, import_obsidian21.normalizePath)(newPath)) return;
+    if (!priorPath || (0, import_obsidian20.normalizePath)(priorPath) === (0, import_obsidian20.normalizePath)(newPath)) return;
     if (eventTs !== void 0) {
       let lastTs = this.lastRelocationTs.get(id2);
       if (lastTs !== void 0 && eventTs < lastTs) {
@@ -20512,16 +20141,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
       this.lastRelocationTs.set(id2, eventTs);
     }
-    let owner = await this.manifestOwnerOf((0, import_obsidian21.normalizePath)(priorPath));
+    let owner = await this.manifestOwnerOf((0, import_obsidian20.normalizePath)(priorPath));
     if (owner !== null && owner !== id2) {
       rlog().warn(
         "pull",
         `Id-keyed move REFUSED (${owner === void 0 ? "ownership unknown" : "cross-wire"}): ${priorPath} not confirmed as ${id2}'s old path \u2014 rebinding to ${newPath}, no trash`
-      ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian21.normalizePath)(priorPath));
+      ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian20.normalizePath)(priorPath));
       return;
     }
-    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian21.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian21.normalizePath)(priorPath));
-    let oldFile = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(priorPath));
+    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian20.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian20.normalizePath)(priorPath));
+    let oldFile = this.app.vault.getFileByPath((0, import_obsidian20.normalizePath)(priorPath));
     if (oldFile)
       try {
         let content = await this.app.vault.cachedRead(oldFile);
@@ -20529,7 +20158,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           await this.trashRemotelyDeleted(oldFile);
         } catch (e) {
         }
-        this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(newPath)) ? rlog().info(
+        this.app.vault.getAbstractFileByPath((0, import_obsidian20.normalizePath)(newPath)) ? rlog().info(
           "pull",
           `Id-keyed move: skipping stale disk flush for ${newPath} \u2014 already exists (a concurrent flush won the race)`
         ) : await this.flushFromCrdt(newPath, content), rlog().info("pull", `Id-keyed move: ${priorPath} -> ${newPath} (id=${id2})`);
@@ -20581,7 +20210,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c;
     if (!op.path) return !1;
     if (op.kind === "upsert" && (this.recentlyDeleted.has(op.id) || this.queue.hasPendingDelete(
-      (0, import_obsidian21.normalizePath)(op.path),
+      (0, import_obsidian20.normalizePath)(op.path),
       (_a = this.settings.vaultId) != null ? _a : void 0
     )))
       return rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`), !1;
@@ -20629,12 +20258,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (m) {
       if (this.authGeneration === authGen) {
         let serverPaths = /* @__PURE__ */ new Set([
-          ...m.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
-          ...m.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
+          ...m.notes.map((n) => (0, import_obsidian20.normalizePath)(n.path)),
+          ...m.attachments.map((a) => (0, import_obsidian20.normalizePath)(a.path))
         ]);
         for (let file of this.app.vault.getFiles()) {
           if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
-          let np = (0, import_obsidian21.normalizePath)(file.path);
+          let np = (0, import_obsidian20.normalizePath)(file.path);
           if (!serverPaths.has(np) && this.syncState.has(np))
             try {
               await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
@@ -20696,7 +20325,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let entry of manifest.notes) {
       let seq3 = entry.seq;
       if (typeof seq3 != "number" || !Number.isFinite(seq3) || seq3 > cursor) continue;
-      let stored = this.syncState.get((0, import_obsidian21.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
+      let stored = this.syncState.get((0, import_obsidian20.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
       seq3 > recorded && (behind++, seq3 < minBehind && (minBehind = seq3));
     }
     if (behind === 0) return 0;
@@ -20714,7 +20343,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!manifest || !this.crdt) return 0;
     let poked = 0;
     for (let entry of manifest.notes) {
-      let path = (0, import_obsidian21.normalizePath)(entry.path);
+      let path = (0, import_obsidian20.normalizePath)(entry.path);
       if (!this.isLiveBound(path)) continue;
       let stored = this.syncState.get(path);
       if (entry.crdt_head && (stored == null ? void 0 : stored.crdtHead) === entry.crdt_head || entry.content_hash && (stored == null ? void 0 : stored.serverHash) === entry.content_hash) continue;
@@ -20732,15 +20361,16 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return poked;
   }
-  /** Apply a single remote change to the vault, with conflict detection.
+  /** Apply a single remote change to the vault (last-write-wins for the
+   *  legacy/oversized REST-note path; CRDT notes converge earlier and return).
    *  Returns true when a file was actually created, modified, or trashed.
-   *  When forceOverwrite is true, skip conflict detection and always apply. */
+   *  When forceOverwrite is true, bypass the anti-stale version guard. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
-    let normalized = (0, import_obsidian21.normalizePath)(change.path);
+    let normalized = (0, import_obsidian20.normalizePath)(change.path);
     if (change.deleted) {
       devLog().log("pull", `applyChange DELETE: ${change.path}`);
       let crdtNoteId = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(normalized)) != null ? _b : null, crdtManaged = !!this.crdt && crdtNoteId !== null, existing2 = this.app.vault.getFileByPath(normalized);
@@ -20865,7 +20495,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return copy2 === null ? (rlog().warn(
                 "conflict",
                 `drift-copy failed \u2014 leaving ${normalized} intact, deferring convergence to next catch-up`
-              ), !1) : (new import_obsidian21.Notice(
+              ), !1) : (new import_obsidian20.Notice(
                 `Engram: sync conflict on ${normalized} \u2014 your local edit was saved as ${copy2}`
               ), noteId && (this.pendingConvergence.set(noteId, {
                 path: normalized,
@@ -20909,142 +20539,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
-      let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent), lastSynced = this.syncState.get(normalized), lastSyncedHash = lastSynced == null ? void 0 : lastSynced.hash, localModified;
-      if (lastSyncedHash !== void 0)
-        localModified = localHash !== lastSyncedHash;
-      else {
-        let localMtimeS = existing.stat.mtime / 1e3;
-        localModified = change.mtime - localMtimeS > STALE_THRESHOLD_S ? !1 : localContent !== content;
-      }
-      if (!forceOverwrite && localModified && localContent !== content) {
-        let localMtime = existing.stat.mtime / 1e3;
-        devLog().log(
-          "pull",
-          `conflict: ${change.path} (localHash=${localHash} syncedHash=${lastSyncedHash})`
-        );
-        let firstSync = lastSyncedHash === void 0;
-        rlog().warn(
-          "conflict",
-          `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
-        );
-        let pullBase = (_u = this.baseStore) == null ? void 0 : _u.get(normalized);
-        if (pullBase) {
-          let merge2 = threeWayMerge(pullBase.content, localContent, content);
-          if (merge2.clean) {
-            await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
-              hash: fnv1a(merge2.merged),
-              version: change.version
-            }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, merge2.merged, change.version));
-            try {
-              await this.pushFile(existing, !0);
-            } catch (e) {
-              rlog().error(
-                "conflict",
-                `Auto-merge push failed: ${change.path} | err=${errMsg(e)}`
-              );
-            }
-            return rlog().info(
-              "conflict",
-              `Auto-merged (pull): ${change.path} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${content.length} | mergedLen=${merge2.merged.length}`
-            ), !0;
-          }
-          rlog().info(
-            "conflict",
-            `Auto-merge failed (pull): ${change.path} | conflicts=${merge2.conflicts.length} | baseLen=${pullBase.content.length} | localLen=${localContent.length} | remoteLen=${content.length}`
-          );
-        }
-        let resolution = await this.resolveConflict({
-          path: change.path,
-          localContent,
-          localMtime,
-          remoteContent: content,
-          remoteMtime: change.mtime,
-          baseContent: pullBase == null ? void 0 : pullBase.content,
-          vaultName: this.app.vault.getName()
-        });
-        if (resolution.choice === "skip")
-          return rlog().info("conflict", `Resolved: ${change.path} \u2192 skip`), !1;
-        if (resolution.choice === "keep-local") {
-          try {
-            await this.pushFile(existing), rlog().info(
-              "conflict",
-              `Resolved: ${change.path} \u2192 keep-local | pushOk=true`
-            );
-          } catch (e) {
-            rlog().error(
-              "conflict",
-              `Resolved: ${change.path} \u2192 keep-local | pushOk=false | err=${errMsg(e)}`,
-              e instanceof Error ? e.stack : void 0
-            );
-          }
-          return !1;
-        }
-        if (resolution.choice === "keep-both") {
-          let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
-          try {
-            await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
-              hash: fnv1a(content),
-              version: change.version
-            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
-              (0, import_obsidian21.normalizePath)(conflictPath),
-              content,
-              change.version
-            )), rlog().info(
-              "conflict",
-              `Resolved: ${change.path} \u2192 keep-both | copyPath=${conflictPath}`
-            );
-          } catch (e) {
-            rlog().error(
-              "conflict",
-              `Resolved: ${change.path} \u2192 keep-both | copyFailed=true | err=${errMsg(e)}`,
-              e instanceof Error ? e.stack : void 0
-            );
-          }
-          return !0;
-        }
-        if (resolution.choice === "merge" && resolution.mergedContent != null) {
-          try {
-            await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
-              hash: fnv1a(resolution.mergedContent),
-              version: change.version
-            }), change.version != null && ((_x = this.baseStore) == null || _x.set(
-              normalized,
-              resolution.mergedContent,
-              change.version
-            )), await this.pushFile(existing, !0), rlog().info(
-              "conflict",
-              `Resolved: ${change.path} \u2192 merge | mergedLen=${resolution.mergedContent.length} | pushOk=true`
-            );
-          } catch (e) {
-            rlog().error(
-              "conflict",
-              `Resolved: ${change.path} \u2192 merge | pushOk=false | err=${errMsg(e)}`,
-              e instanceof Error ? e.stack : void 0
-            );
-          }
-          return !0;
-        }
-        rlog().info("conflict", `Resolved: ${change.path} \u2192 keep-remote`);
-      } else if (localContent === content)
-        return devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
-          hash: localHash,
-          version: change.version,
-          serverHash: change.content_hash,
-          // E1 (#1065): record the row's seq so the manifest validator can
-          // integer-diff this path (a legacy change without one keeps the
-          // prior value rather than erasing it).
-          seq: typeof change.seq == "number" ? change.seq : (_y = this.syncState.get(normalized)) == null ? void 0 : _y.seq
-        }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
-      return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
+      let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent);
+      return localContent === content ? (devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
+        hash: localHash,
+        version: change.version,
+        serverHash: change.content_hash,
+        // E1 (#1065): record the row's seq so the manifest validator can
+        // integer-diff this path (a legacy change without one keeps the
+        // prior value rather than erasing it).
+        seq: typeof change.seq == "number" ? change.seq : (_u = this.syncState.get(normalized)) == null ? void 0 : _u.seq
+      }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): seq recorded for the manifest validator's integer diff.
-        seq: typeof change.seq == "number" ? change.seq : (_A = this.syncState.get(normalized)) == null ? void 0 : _A.seq
-      }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info(
+        seq: typeof change.seq == "number" ? change.seq : (_w = this.syncState.get(normalized)) == null ? void 0 : _w.seq
+      }), change.version != null && ((_x = this.baseStore) == null || _x.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
-      ), !0;
+      ), !0);
     }
     devLog().log("pull", `applyChange CREATE: ${normalized} (len=${content.length})`);
     try {
@@ -21062,14 +20575,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_C = this.baseStore) == null || _C.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
    *  Returns true when a file was actually created, modified, or trashed. */
   async applyAttachmentChange(change, contentBase64) {
     if (this.shouldIgnore(change.path)) return !1;
-    let normalized = (0, import_obsidian21.normalizePath)(change.path);
+    let normalized = (0, import_obsidian20.normalizePath)(change.path);
     if (change.deleted) {
       let existing2 = this.app.vault.getFileByPath(normalized);
       return existing2 ? (await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), rlog().info("pull", `Attachment deleted: ${change.path}`), !0) : !1;
@@ -21088,34 +20601,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return await this.createBinaryFileWithFolders(normalized, buffer), this.syncState.set(normalized, { hash }), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
   }
-  /** Resolve a conflict via callback or auto-resolve as keep-remote. */
-  async resolveConflict(info) {
-    if (this.settings.conflictResolution === "auto") {
-      let ts = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "").slice(0, 15), conflictPath = `${(0, import_obsidian21.normalizePath)(info.path).replace(/\.md$/, "")} (conflict ${ts}).md`;
-      try {
-        await this.createFileWithFolders(conflictPath, info.remoteContent), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
-          hash: fnv1a(info.remoteContent),
-          version: void 0
-        }), rlog().info(
-          "conflict",
-          `Auto-resolved: ${info.path} \u2192 conflict file ${conflictPath} | localLen=${info.localContent.length} | remoteLen=${info.remoteContent.length} | hasBase=${info.baseContent != null}`
-        ), new import_obsidian21.Notice(
-          `Engram Sync: conflict \u2014 saved copy as "${conflictPath.split("/").pop()}"`,
-          8e3
-        );
-      } catch (e) {
-        rlog().error(
-          "conflict",
-          `Failed to create conflict file: ${conflictPath} | err=${errMsg(e)}`
-        );
-      }
-      return { choice: "keep-local" };
-    }
-    return this.onConflict ? this.onConflict(info) : (rlog().warn(
-      "conflict",
-      `Auto-resolved: ${info.path} \u2192 keep-remote (no handler) | localLen=${info.localContent.length} | remoteLen=${info.remoteContent.length}`
-    ), { choice: "keep-remote" });
-  }
   /** Create a text file, ensuring parent folders exist. */
   /** Modify a file using vault.process() when available (scroll-safe),
    *  falling back to vault.modify() for older Obsidian versions. */
@@ -21129,7 +20614,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       await this.app.vault.create(normalized, content);
     } catch (e) {
       let raced = this.app.vault.getAbstractFileByPath(normalized);
-      if (raced instanceof import_obsidian21.TFile) {
+      if (raced instanceof import_obsidian20.TFile) {
         await this.modifyFile(raced, content);
         return;
       }
@@ -21180,7 +20665,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     await this.explicitFolders.replaceAll(names);
     for (let prev of removed) {
       let existing = this.app.vault.getAbstractFileByPath(prev);
-      if (existing instanceof import_obsidian21.TFolder && !(existing.children.length > 0))
+      if (existing instanceof import_obsidian20.TFolder && !(existing.children.length > 0))
         try {
           await this.app.fileManager.trashFile(existing);
         } catch (e) {
@@ -21203,7 +20688,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let folder = filePath.includes("/") ? filePath.substring(0, filePath.lastIndexOf("/")) : "";
     for (; folder; ) {
       let existing = this.app.vault.getAbstractFileByPath(folder);
-      if (!(existing instanceof import_obsidian21.TFolder) || existing.children.length > 0 || (_a = this.explicitFolders) != null && _a.has(folder)) break;
+      if (!(existing instanceof import_obsidian20.TFolder) || existing.children.length > 0 || (_a = this.explicitFolders) != null && _a.has(folder)) break;
       await this.app.fileManager.trashFile(existing), folder = folder.includes("/") ? folder.substring(0, folder.lastIndexOf("/")) : "";
     }
   }
@@ -21262,7 +20747,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.crdtCreateBatch || !this.crdt) return { genesis: [], known: noteFiles };
     let genesis = [], known = [];
     for (let f of noteFiles) {
-      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian21.normalizePath)(f.path))) != null ? _b : null;
+      let id2 = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get((0, import_obsidian20.normalizePath)(f.path))) != null ? _b : null;
       this.hasServerNote(id2) ? known.push(f) : genesis.push(f);
     }
     return { genesis, known };
@@ -21287,7 +20772,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  that already carries a local CRDT lineage to `pushFile` instead. */
   recordCrdtGenesisPushed(file, content, serverId) {
     var _a, _b;
-    let np = (0, import_obsidian21.normalizePath)(file.path);
+    let np = (0, import_obsidian20.normalizePath)(file.path);
     (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
     let existing = (_b = this.syncState.get(np)) != null ? _b : { hash: 0 };
     this.syncState.set(np, {
@@ -21361,7 +20846,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       onProgress == null || onProgress(pushed, failed);
     };
     for (let file of files) {
-      let np = (0, import_obsidian21.normalizePath)(file.path);
+      let np = (0, import_obsidian20.normalizePath)(file.path);
       if (this.shouldDeferMint(np)) {
         rlog().info(
           "push",
@@ -21383,7 +20868,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
-      let b64 = this.encodeGenesisFrame(content, file.extension === "canvas" ? "canvas" : "note"), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
+      let b64 = this.encodeGenesisFrame(
+        content,
+        file.extension === "canvas" ? "canvas" : "note"
+      ), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
       if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
@@ -21434,7 +20922,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let paths = [...this.pendingDegraded];
     if (this.pendingDegraded.clear(), paths.length !== 0)
       if (paths.length === 1) {
-        let [path] = paths, noticeEl = new import_obsidian21.Notice(
+        let [path] = paths, noticeEl = new import_obsidian20.Notice(
           `Engram: frontmatter problem in "${path.split("/").pop()}"`,
           DEGRADED_NOTICE_DURATION_MS
         ).noticeEl, link = noticeEl == null ? void 0 : noticeEl.createEl("a", { text: "Open note" });
@@ -21442,7 +20930,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.app.workspace.openLinkText(path, "");
         });
       } else
-        new import_obsidian21.Notice(
+        new import_obsidian20.Notice(
           `Engram: ${paths.length} notes have frontmatter problems. Open Sync Center to fix.`,
           DEGRADED_NOTICE_DURATION_MS
         );
@@ -21572,7 +21060,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  can't shield a remote extra from the wipe (test_86). */
   snapshotLocalPaths() {
     return new Set(
-      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian21.normalizePath)(f.path))
+      this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path)).map((f) => (0, import_obsidian20.normalizePath)(f.path))
     );
   }
   async pushAll(opts = {}) {
@@ -21604,7 +21092,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         replaceExtras = {
           ids: [...serverIds].filter((id2) => !localIds.has(id2)),
           attachments: [...serverAttachmentPaths].filter(
-            (p) => !snap.has((0, import_obsidian21.normalizePath)(p))
+            (p) => !snap.has((0, import_obsidian20.normalizePath)(p))
           )
         };
       }
@@ -21612,7 +21100,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let toSync = this.app.vault.getFiles().filter((f) => this.isSyncable(f) && !this.shouldIgnore(f.path));
     if (opts.localSnapshot) {
       let snap = opts.localSnapshot;
-      toSync = toSync.filter((f) => snap.has((0, import_obsidian21.normalizePath)(f.path)));
+      toSync = toSync.filter((f) => snap.has((0, import_obsidian20.normalizePath)(f.path)));
     }
     let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
@@ -21692,9 +21180,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         );
         let snap = opts.localSnapshot;
         for (let path of toFix) {
-          if (snap && !snap.has((0, import_obsidian21.normalizePath)(path)))
+          if (snap && !snap.has((0, import_obsidian20.normalizePath)(path)))
             continue;
-          let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(path));
+          let file = this.app.vault.getFileByPath((0, import_obsidian20.normalizePath)(path));
           file && await this.pushFile(file, !0);
         }
       }
@@ -21726,7 +21214,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         missing.push(file.path);
       else {
         serverNotes.delete(file.path);
-        let stored = this.syncState.get((0, import_obsidian21.normalizePath)(file.path)), content = await this.app.vault.cachedRead(file), locallyModified = stored === void 0 || stored.hash !== fnv1a(content), serverDrifted = (stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash !== serverHash;
+        let stored = this.syncState.get((0, import_obsidian20.normalizePath)(file.path)), content = await this.app.vault.cachedRead(file), locallyModified = stored === void 0 || stored.hash !== fnv1a(content), serverDrifted = (stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash !== serverHash;
         (locallyModified || serverDrifted) && diverged.push(file.path);
       }
     }
@@ -21829,7 +21317,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     for (let issue of this.issues.all()) {
       if (issueDisposition(issue.category, issue.parseReason) !== "transient") continue;
-      let file = this.app.vault.getFileByPath((0, import_obsidian21.normalizePath)(issue.path));
+      let file = this.app.vault.getFileByPath((0, import_obsidian20.normalizePath)(issue.path));
       if (!file) {
         this.issues.clear(issue.path);
         continue;
@@ -21911,7 +21399,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt && ((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d) && (this.pendingQueueDeliveries.set(entry.noteId, {
               path: entry.path,
               vaultId: (_f = (_e = entry.vaultId) != null ? _e : this.settings.vaultId) != null ? _f : void 0
-            }), this.socketConverge((0, import_obsidian21.normalizePath)(entry.path), entry.noteId));
+            }), this.socketConverge((0, import_obsidian20.normalizePath)(entry.path), entry.noteId));
             continue;
           }
           let content = entry.content, mtime = entry.mtime;
@@ -21926,7 +21414,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
           }
-          let replayNp = (0, import_obsidian21.normalizePath)(entry.path), replayId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(replayNp)) != null ? _k : null;
+          let replayNp = (0, import_obsidian20.normalizePath)(entry.path), replayId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(replayNp)) != null ? _k : null;
           if (!replayId && this.noteIdMap) {
             if (this.shouldDeferMint(replayNp)) {
               rlog().info(
@@ -21956,7 +21444,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             conflicted && await this.pushFile(conflicted, !0);
           }
           if (!("conflict" in resp) && content !== void 0) {
-            let np = (0, import_obsidian21.normalizePath)(entry.path);
+            let np = (0, import_obsidian20.normalizePath)(entry.path);
             this.syncState.set(np, {
               hash: fnv1a(content),
               version: resp.note.version,
@@ -22014,7 +21502,7 @@ _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3
 var SyncEngine = _SyncEngine;
 
 // src/update-check.ts
-var import_obsidian22 = require("obsidian");
+var import_obsidian21 = require("obsidian");
 var MANIFEST_URL = "https://raw.githubusercontent.com/engram-app/Engram-obsidian/master/manifest.json";
 function isNewerVersion(latest, current) {
   var _a, _b;
@@ -22029,7 +21517,7 @@ async function checkForPluginUpdate(currentVersion) {
   var _a;
   try {
     let resp = await withTimeout(
-      (0, import_obsidian22.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 }),
+      (0, import_obsidian21.requestUrl)({ url: MANIFEST_URL, method: "GET", throw: !1 }),
       1e4
     );
     if (resp.status !== 200) return null;
@@ -22100,7 +21588,7 @@ var BaseStore = class {
 };
 
 // src/crdt/live/live-views.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian22 = require("obsidian");
 
 // node_modules/y-protocols/awareness.js
 var outdatedTimeout = 3e4, Awareness = class extends Observable {
@@ -22618,11 +22106,11 @@ var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) 
 };
 
 // src/crdt/live/cm-yjs-bridge.ts
-var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp3 = new import_diff_match_patch3.diff_match_patch();
+var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
 function textDiffToChangeSpec(before, after) {
   if (before === after) return [];
-  let diffs = dmp3.diff_main(before, after);
-  dmp3.diff_cleanupSemantic(diffs);
+  let diffs = dmp2.diff_main(before, after);
+  dmp2.diff_cleanupSemantic(diffs);
   let changes = [], cursor = 0;
   for (let [op, data] of diffs)
     op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
@@ -22946,7 +22434,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       getYText: (path) => this.getYText(path)
     }), this.reading = new CrdtReadingView({
       getYText: (path) => this.getYText(path),
-      isReadingMode: (v) => v instanceof import_obsidian23.MarkdownView && v.getMode() === "preview"
+      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
     });
   }
   isBound(path) {
@@ -22982,7 +22470,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   boundBufferText(path) {
     for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path)
+      if (view instanceof import_obsidian22.MarkdownView && getMarkdownFilePath(view) === path)
         return view.getViewData();
     }
     return null;
@@ -22991,7 +22479,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     try {
       for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
         let view = leaf.view;
-        view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
+        view instanceof import_obsidian22.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
       }
     } catch (e) {
       devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
@@ -23022,7 +22510,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (!(view instanceof import_obsidian23.MarkdownView)) continue;
+      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
       let path = getMarkdownFilePath(view);
       if (!path || !path.endsWith(".md")) continue;
       let cm = getEditorViewForLeaf(view);
@@ -23050,10 +22538,10 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *  caller pre-seeds the serverId doc from the mint content, so the rebind's
    *  reconcile is a no-op and no in-flight edit is lost. */
   rebindPath(path) {
-    let norm = (0, import_obsidian23.normalizePath)(path);
+    let norm = (0, import_obsidian22.normalizePath)(path);
     for (let [cm, ctrl] of this.controllers) {
       let cur = ctrl.currentPath();
-      cur !== null && (0, import_obsidian23.normalizePath)(cur) === norm && ctrl.forceRebind(cm, path);
+      cur !== null && (0, import_obsidian22.normalizePath)(cur) === norm && ctrl.forceRebind(cm, path);
     }
   }
   /** Release + drop every editor controller WITHOUT tearing down awareness or
@@ -23397,7 +22885,7 @@ function createCrdtWiring(deps) {
 }
 
 // src/diagnostics.ts
-var import_obsidian24 = require("obsidian");
+var import_obsidian23 = require("obsidian");
 function formatVaultEvent(kind, path, extra) {
   let parts = [`${kind}`, `path=${path}`];
   if (extra)
@@ -23410,15 +22898,15 @@ function registerDiagnostics(plugin) {
   };
   plugin.registerEvent(
     plugin.app.vault.on("modify", (file) => {
-      file instanceof import_obsidian24.TFile && emit("modify", file.path, { bytes: file.stat.size });
+      file instanceof import_obsidian23.TFile && emit("modify", file.path, { bytes: file.stat.size });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("create", (file) => {
-      file instanceof import_obsidian24.TFile && emit("create", file.path, { bytes: file.stat.size });
+      file instanceof import_obsidian23.TFile && emit("create", file.path, { bytes: file.stat.size });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("delete", (file) => {
-      emit("delete", file.path, { kind: file instanceof import_obsidian24.TFolder ? "folder" : "file" });
+      emit("delete", file.path, { kind: file instanceof import_obsidian23.TFolder ? "folder" : "file" });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("rename", (file, oldPath) => {
@@ -23426,12 +22914,12 @@ function registerDiagnostics(plugin) {
     })
   ), plugin.registerEvent(
     plugin.app.workspace.on("file-open", (file) => {
-      file instanceof import_obsidian24.TFile && emit("file-open", file.path);
+      file instanceof import_obsidian23.TFile && emit("file-open", file.path);
     })
   ), plugin.registerEvent(
     plugin.app.workspace.on("active-leaf-change", () => {
       let file = plugin.app.workspace.getActiveFile();
-      file instanceof import_obsidian24.TFile && emit("leaf-change", file.path);
+      file instanceof import_obsidian23.TFile && emit("leaf-change", file.path);
     })
   );
 }
@@ -23573,14 +23061,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian25 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian24 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian25.Modal {
+}, SyncLogModal = class extends import_obsidian24.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -23617,7 +23105,7 @@ var import_obsidian25 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian26.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian25.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChannelKey) {
@@ -23626,7 +23114,7 @@ function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChan
 function channelIdentityMatches(expectedEmail, authenticatedEmail) {
   return !expectedEmail || !authenticatedEmail ? !0 : expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -23747,7 +23235,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     frag.append(`Engram Vault Sync ${latest} is available. `);
     let link = frag.createEl("a", { text: "Update in settings", href: "#" });
     frag.append(".");
-    let notice = new import_obsidian26.Notice(frag, 15e3);
+    let notice = new import_obsidian25.Notice(frag, 15e3);
     link.addEventListener("click", (e) => {
       e.preventDefault(), this.openCommunityPluginsUpdate(), notice.hide();
     });
@@ -23777,10 +23265,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian26.Platform.isMobile ? "mobile" : "desktop"
+      import_obsidian25.Platform.isMobile ? "mobile" : "desktop"
     ), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian25.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
@@ -23808,9 +23296,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let explicitFoldersPath = `${this.manifest.dir}/explicit-folders.json`;
     this.explicitFolders = new ExplicitFolders(this.app.vault.adapter, explicitFoldersPath), this.syncEngine.explicitFolders = this.explicitFolders, this.syncEngine.onStatusChange = (status) => {
       this.updateStatusBar(status);
-    }, this.syncEngine.onConflict = async (info) => new ConflictModal(this.app, info, this.settings, (mode) => {
-      this.settings.conflictViewMode = mode, this.saveSettings();
-    }).waitForChoice(), this.syncEngine.onPlanStatePersist = (p) => {
+    }, this.syncEngine.onPlanStatePersist = (p) => {
       this.settings.planState = p, this.savePluginData(this.syncEngine.getLastSync());
     }, this.syncEngine.queue.onPersist(async (entries) => {
       await this.savePluginData(this.syncEngine.getLastSync(), entries);
@@ -23868,11 +23354,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         var _a2;
         if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian26.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
+        file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian26.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -23886,50 +23372,50 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: syncing...");
+        new import_obsidian25.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "disconnect",
       name: "Disconnect (clear login)",
       callback: async () => {
-        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian26.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian25.Notice("Engram: disconnected. Open Engram settings to reconnect.");
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian25.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: checking...");
+        new import_obsidian25.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian26.Notice(
+          new import_obsidian25.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian26.Notice("Engram sync: everything in sync");
+          new import_obsidian25.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian25.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: pulling all from server...");
+        new import_obsidian25.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian25.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -23988,8 +23474,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian26.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian25.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -24002,7 +23488,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian26.Notice("Engram sync: sync failed");
+          ), new import_obsidian25.Notice("Engram sync: sync failed");
         });
       }
     }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file))), this.registerEvent(
@@ -24019,7 +23505,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       var _a2, _b2, _c2;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian26.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b2 = this.explicitFolders) == null ? void 0 : _b2.load());
       let registered = !1, gateOpen = !1;
@@ -24069,6 +23555,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
                     rlog().warn(
                       "crdt",
                       `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
+                    ), new import_obsidian25.Notice(
+                      `Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable \u2014 using the on-disk copy.`,
+                      8e3
                     );
                   }
                 );
@@ -24084,7 +23573,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           try {
             (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSeqReplay();
             let pushed = await this.syncEngine.pushModifiedFiles();
-            pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
+            pushed > 0 && new import_obsidian25.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -24135,7 +23624,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -24175,7 +23664,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   /** Absolute (vault-relative) path of the plugin's data.json. Matches the
    *  path Obsidian's own loadData()/saveData() use. */
   pluginDataPath() {
-    return (0, import_obsidian26.normalizePath)(`${this.manifest.dir}/data.json`);
+    return (0, import_obsidian25.normalizePath)(`${this.manifest.dir}/data.json`);
   }
   /** Resilient replacement for this.loadData(). Reads data.json, falling back
    *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
@@ -24202,13 +23691,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             `Failed to heal data.json after recovery: ${errMsg(e)}`
           );
         }
-      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian26.Notice(
+      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
         "Engram: recovered plugin settings from a backup after a corrupted save."
       ));
     } else source === "corrupt" && (rlog().error(
       "lifecycle",
       "data.json and its backups were all unreadable; falling back to defaults"
-    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian26.Notice(
+    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
       "Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings."
     )));
     return data;
@@ -24259,7 +23748,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian26.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian25.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -24287,7 +23776,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
         let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await withTimeout(
-          (0, import_obsidian26.requestUrl)({
+          (0, import_obsidian25.requestUrl)({
             url: `${apiUrl}/auth/token/refresh`,
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -24359,9 +23848,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (!(view instanceof import_obsidian26.MarkdownView)) continue;
+      if (!(view instanceof import_obsidian25.MarkdownView)) continue;
       let file = view.file;
-      if (!(file instanceof import_obsidian26.TFile) || file.extension !== "md" || seen.has(file.path)) continue;
+      if (!(file instanceof import_obsidian25.TFile) || file.extension !== "md" || seen.has(file.path)) continue;
       seen.add(file.path);
       let noteId = this.noteIdMap.getOrMint(file.path);
       enrollment.reset(noteId), enrollment.enroll(noteId);
@@ -24442,7 +23931,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         )), (_a2 = this.crdtManager) == null || _a2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian26.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
       }, channel.onFoldersChanged = () => {
         this.syncEngine.resyncFolders().catch((e) => {
           rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
@@ -24535,7 +24024,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian25.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(
@@ -24568,17 +24057,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         let localSnapshot = this.syncEngine.snapshotLocalPaths();
@@ -24587,12 +24076,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           replaceRemote: !0,
           localSnapshot
         });
-        return new import_obsidian26.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
-        return new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian25.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -24690,7 +24179,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync preview failed", e), new import_obsidian26.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian25.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }
     });
   }
@@ -24726,7 +24215,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.catchUp();
-          pulled > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic catch-up failed", e);
         }
