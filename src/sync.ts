@@ -1373,8 +1373,12 @@ export class SyncEngine {
 	 *  real errors (disk full, permission, illegal path) propagate. Returns the
 	 *  conflict path written. */
 	private async writeDriftConflictCopy(normalized: string, localDisk: string): Promise<string> {
-		const date = new Date().toISOString().slice(0, 10);
-		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+		// Millisecond-precision stamp (not date-only): two double-divergence
+		// resolutions on the SAME note within one day would otherwise produce an
+		// identical path, and createFileWithFolders degrades that collision to an
+		// in-place modify — silently clobbering the first preserved copy.
+		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${stamp}).md`;
 		await this.createFileWithFolders(conflictPath, localDisk);
 		this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
 		return conflictPath;
@@ -5326,7 +5330,6 @@ export class SyncEngine {
 		// REMOTE both diverged from the last-synced state (a real conflict),
 		// the block falls through to the legacy conflict flow below instead of
 		// silently backfilling over the local edit.
-		let crdtConflictFallthrough = false;
 		if (crdtOwnsBody) {
 			// noteId resolved above (shared with the anti-stale guard). This is
 			// populated for the merged-feed caller (applySyncChange learns `id`
@@ -5543,13 +5546,56 @@ export class SyncEngine {
 							stored?.hash !== undefined &&
 							fnv1a(localNow) !== stored.hash &&
 							localNow !== content;
-						if (localDiverged) {
+						if (localDiverged && localNow !== null) {
+							// Both the on-disk file AND the authoritative doc moved off
+							// the last-synced baseline. Preserve the local drift as a
+							// "(conflict)" copy (existing convention, shared with the
+							// tombstone/foreign-delete sites) and converge the main file
+							// to the server via the room — no three-way merge, no modal
+							// (#306 Phase A: the drift-copy replaces the legacy tail for
+							// the CRDT double-divergence case).
 							rlog().warn(
 								"pull",
-								`CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`,
+								`CRDT catch-up: local+remote both diverged, drift-copy + converge ${change.path}`,
 							);
-							crdtConflictFallthrough = true;
-						} else if (
+							let copy: string | null = null;
+							try {
+								copy = await this.writeDriftConflictCopy(normalized, localNow);
+							} catch (e) {
+								rlog().warn(
+									"conflict",
+									`drift-copy capture failed for ${normalized}: ${errMsg(e)}`,
+								);
+							}
+							if (copy === null) {
+								// The local edit could NOT be backed up. Do NOT converge:
+								// socketConverge would overwrite the main file with the
+								// server version, destroying the only remaining copy of
+								// the local edit. Leave disk untouched; the next catch-up
+								// re-attempts the copy for this still-diverged row.
+								rlog().warn(
+									"conflict",
+									`drift-copy failed — leaving ${normalized} intact, deferring convergence to next catch-up`,
+								);
+								return false;
+							}
+							new Notice(
+								`Engram: sync conflict on ${normalized} — your local edit was saved as ${copy}`,
+							);
+							if (noteId) {
+								this.pendingConvergence.set(noteId, {
+									path: normalized,
+									serverHash: change.content_hash,
+									content,
+									version: change.version,
+									seq: change.seq,
+								});
+								this.socketConverge(normalized, noteId);
+							}
+							return false;
+						}
+
+						if (
 							noteId &&
 							stored?.serverHash === undefined &&
 							localNow !== null &&
@@ -5625,7 +5671,11 @@ export class SyncEngine {
 					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 				}
 			}
-			if (!crdtConflictFallthrough) return false;
+			// CRDT-managed markdown never falls through to the legacy conflict
+			// tail: the double-divergence case is handled inline above by the
+			// drift-copy (#306 Phase A). The tail below serves canvas + other
+			// non-CRDT notes only.
+			return false;
 		}
 
 		// Create or update the file

@@ -385,15 +385,16 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(state?.seq).toBeUndefined();
 	});
 
-	test("local edit + remote edit diverged: routes to conflict flow — skip preserves local (test_14 regression)", async () => {
-		const { engine } = crdtEngine({ conflictResolution: "modal" });
+	test("local edit + remote edit diverged: drift-copy preserves local + converges main, no modal (test_14 regression)", async () => {
+		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		// Local content NO LONGER matches the last-synced hash — the user
-		// edited it. The server ALSO moved. That is a conflict, not a catch-up:
-		// backfilling would silently overwrite the local edit (2026-07-08
-		// e2e test_14: "skip" was never consulted).
+		// Local content NO LONGER matches the last-synced hash (user edited it)
+		// and the server ALSO moved: a real double-divergence. #306 Phase A
+		// resolves it modal-free — the local edit is preserved as a "(conflict)"
+		// copy (never silently overwritten, the test_14 invariant) and the main
+		// file converges to the server via the room re-handshake.
 		mockApp.vault.cachedRead.mockResolvedValue("Edited by B");
 		engine.importSyncState({
 			"owned.md": { hash: fnv1a("Base content"), version: 1, serverHash: "old-hash" },
@@ -410,10 +411,51 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// The conflict flow was consulted and skip left everything untouched.
-		expect(onConflict).toHaveBeenCalledTimes(1);
-		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		expect(mockApp.vault.process).not.toHaveBeenCalled();
+		// No modal; the local edit is saved as a "(conflict)" copy (never lost).
+		expect(onConflict).not.toHaveBeenCalled();
+		const conflictCreate = (mockApp.vault.create as any).mock.calls.find((c: unknown[]) =>
+			/\(conflict .*\)\.md$/.test(c[0] as string),
+		);
+		expect(conflictCreate).toBeDefined();
+		expect(conflictCreate?.[1]).toBe("Edited by B");
+		// Main converges via the room re-handshake; nothing recorded until STEP2.
+		expect(reset).toHaveBeenCalledWith("note-id-1");
+		expect(enroll).toHaveBeenCalledWith("note-id-1");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+	});
+
+	test("drift-copy: if the conflict-copy write FAILS, do NOT converge (local edit not silently lost)", async () => {
+		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		// Only the main file exists; the "(conflict …)" path does NOT — so a failed
+		// vault.create is a genuine write failure, not the already-exists degrade.
+		mockApp.vault.getAbstractFileByPath.mockImplementation((p: string) =>
+			p === "owned.md" ? localFile : null,
+		);
+		mockApp.vault.cachedRead.mockResolvedValue("Edited by B");
+		// The conflict-copy write fails (disk full / permission). The local edit
+		// could NOT be preserved, so convergence must be SKIPPED — otherwise the
+		// room re-handshake would overwrite the main file and the local edit would
+		// exist in neither the copy nor the file.
+		mockApp.vault.create.mockRejectedValue(new Error("disk full"));
+		engine.importSyncState({
+			"owned.md": { hash: fnv1a("Base content"), version: 1, serverHash: "old-hash" },
+		});
+
+		await engine.applyChange({
+			path: "owned.md",
+			action: "upsert",
+			content: "Edited by A",
+			content_hash: "new-hash",
+			version: 2,
+			mtime: 50,
+		} as any);
+
+		// No convergence fired, so the diverged local file is left intact on disk
+		// for the next catch-up to retry the copy.
+		expect(reset).not.toHaveBeenCalled();
+		expect(enroll).not.toHaveBeenCalled();
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
 	});
 
