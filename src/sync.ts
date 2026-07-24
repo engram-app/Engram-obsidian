@@ -6551,7 +6551,10 @@ export class SyncEngine {
 				else failed++;
 				continue;
 			}
-			const b64 = this.encodeGenesisFrame(content, file.extension === "canvas" ? "canvas" : "note");
+			const b64 = this.encodeGenesisFrame(
+				content,
+				file.extension === "canvas" ? "canvas" : "note",
+			);
 			const size = b64.length;
 			// #245: snapshot the path now — TFile.path is live and a mid-request
 			// rename would otherwise desync result matching + the pushing set.
