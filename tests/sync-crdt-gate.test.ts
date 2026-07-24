@@ -399,11 +399,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/img.png");
 	});
 
-	test("non-markdown note upsert still processes via legacy path when CRDT active", async () => {
+	test("a canvas upsert with NO note_id falls through to the legacy getNote path", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 
-		// canvas file — not .md — should still go through legacy applyChange
+		// A canvas upsert carrying no id (and no sidecar mapping) can't key a CRDT
+		// room, so it falls through to the legacy getNote fetch (the same fallback
+		// markdown takes when it has no resolvable id).
 		(mockApi.getNote as any).mockResolvedValueOnce({
 			path: "Notes/board.canvas",
 			title: "board",
@@ -420,8 +422,26 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			timestamp: Date.now(),
 		});
 
-		// canvas fetch should happen (legacy path)
 		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/board.canvas");
+	});
+
+	test("a canvas upsert WITH a note_id takes the CRDT branch (id bookkeeping, no legacy getNote) since #306", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/board.canvas",
+			id: "id-board",
+			timestamp: Date.now(),
+		} as never);
+
+		// CRDT owns canvas now — no legacy content fetch; the id is confirmed and the
+		// note enrolled (canvas enrolls even when idle, to pull its Yjs state).
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("id-board");
 	});
 });
 
@@ -449,6 +469,40 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(result).toBe(false);
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("applyChange for a canvas note enrolls for Yjs convergence and NEVER writes the vestigial seq-feed content (#306)", async () => {
+		const engine = createEngine();
+		const enroll = mock((_p: string) => {});
+		const applyLocalEdit = mock(async () => null);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/board.canvas", "id-board");
+		engine.setNoteIdMap(noteIdMap);
+		// getFileByPath null → discovery. Canvas converges over the Yjs handshake
+		// ONLY, so it must enroll (even idle) and must NOT write the vestigial
+		// seq-feed `content` (the backend keeps notes.content stale for canvas).
+
+		const result = await engine.applyChange({
+			path: "Notes/board.canvas",
+			title: "board",
+			content: '{"nodes":[{"id":"STALE","type":"text"}],"edges":[]}',
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+			id: "id-board",
+		} as never);
+
+		expect(result).toBe(false);
+		expect(enroll).toHaveBeenCalledWith("id-board");
+		// The vestigial content is NEVER materialized to disk, nor seeded into a doc.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
 
 	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {

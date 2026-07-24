@@ -838,7 +838,7 @@ export class SyncEngine {
 	): void {
 		if (!noteId || !this.crdtEnrollment) return;
 		if (this.isNoteConfirmed(noteId)) return; // not a create — already live
-		if (!path.endsWith(".md")) return;
+		if (!this.isCrdtEligiblePath(path)) return;
 		if (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)) return;
 		// Vault-channel fan-out: a cold (not-open-in-editor) send stays room-free —
 		// its edits ship over /updates and it RECEIVES future updates over the
@@ -1381,7 +1381,11 @@ export class SyncEngine {
 		// identical path, and createFileWithFolders degrades that collision to an
 		// in-place modify — silently clobbering the first preserved copy.
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-		const conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${stamp}).md`;
+		// Preserve the note's own extension (.md or .canvas) so a canvas drift copy
+		// stays a canvas file, not a stray .md.
+		const ext = normalized.endsWith(".canvas") ? "canvas" : "md";
+		const base = normalized.replace(/\.(md|canvas)$/, "");
+		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
 		await this.createFileWithFolders(conflictPath, localDisk);
 		this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
 		return conflictPath;
@@ -1414,7 +1418,7 @@ export class SyncEngine {
 			);
 			return;
 		}
-		if (!path.endsWith(".md")) return;
+		if (!this.isCrdtEligiblePath(path)) return;
 		const normalized = normalizePath(path);
 		// Already on disk — a content STEP2 created it, or the user already has it.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
@@ -1449,7 +1453,7 @@ export class SyncEngine {
 	 *  the MOVE case only; a tombstone delete clears the byId entry (canonical
 	 *  null), where the isSynced gate is the backstop. */
 	private async materializeRelocated(path: string, noteId: string): Promise<void> {
-		if (!this.crdt || !path.endsWith(".md")) return;
+		if (!this.crdt || !this.isCrdtEligiblePath(path)) return;
 		// Defensive `typeof` (not `?.`) — CrdtManager always has isSynced, but many
 		// existing unit tests wire a partial `{ applyLocalEdit } as any` stand-in
 		// that doesn't, and a missing method must read as "not synced" rather than
@@ -1925,6 +1929,20 @@ export class SyncEngine {
 	 *  types are NOT eligible and stay on the REST/attachment path. */
 	isCrdtEligible(file: TAbstractFile): boolean {
 		return file instanceof TFile && (file.extension === "md" || file.extension === "canvas");
+	}
+
+	/** Path-string variant of isCrdtEligible for the pull/apply path, which works
+	 *  with normalized paths (from a NoteChange), not TFile handles. */
+	isCrdtEligiblePath(path: string): boolean {
+		return path.endsWith(".md") || path.endsWith(".canvas");
+	}
+
+	/** True for a canvas note path. Canvas is CRDT but STRUCTURAL: its authoritative
+	 *  content lives in the Yjs doc, never notes.content (which the backend keeps
+	 *  vestigial for canvas), so the pull path must converge it over the Yjs
+	 *  handshake, never by writing the seq-feed `content`. */
+	private isCanvasPath(path: string): boolean {
+		return path.endsWith(".canvas");
 	}
 
 	/** Check if a file should be synced (markdown, canvas, or binary attachment). */
@@ -4470,7 +4488,7 @@ export class SyncEngine {
 			// Keyed by the DELETE's target id (the recreate case returned above, so
 			// here targetId == currentId or one is null): clear the path mapping and
 			// tear down the room for that id.
-			if (normalized.endsWith(".md")) {
+			if (this.isCrdtEligiblePath(normalized)) {
 				this.noteIdMap?.delete(normalized);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
@@ -4500,7 +4518,7 @@ export class SyncEngine {
 					);
 				} else if (
 					this.crdt &&
-					event.path.endsWith(".md") &&
+					this.isCrdtEligiblePath(event.path) &&
 					(event.id ?? this.noteIdMap?.get(event.path))
 				) {
 					// C1: CRDT owns markdown content for this session — the crdt: topic
@@ -4546,7 +4564,13 @@ export class SyncEngine {
 					} else {
 						this.noteIdMap?.set(event.path, noteId);
 						this.confirmNoteId(noteId);
-						if (this.isLiveBound(normalizePath(event.path))) {
+						// Canvas enrolls even when idle — it converges over the Yjs
+						// handshake ONLY (no seq-feed content fallback), so a room is the
+						// sole way to pull its state; markdown stays idle-room-free (fan-out).
+						if (
+							this.isCanvasPath(normalizePath(event.path)) ||
+							this.isLiveBound(normalizePath(event.path))
+						) {
 							this.crdtEnrollment?.enroll(noteId);
 						}
 						// SEED the CAS base from the event when none exists — the CRDT
@@ -5275,7 +5299,7 @@ export class SyncEngine {
 				// (crdtNoteId null) or attachment is a no-op, so the non-CRDT trash
 				// path is unchanged. Clears the map too (idempotent with
 				// applySyncChange's deferred clear).
-				if (crdtNoteId && normalized.endsWith(".md")) {
+				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
 					this.noteIdMap?.delete(normalized);
 					await this.crdt?.removeDoc(crdtNoteId);
 					this.crdtEnrollment?.reset(crdtNoteId);
@@ -5298,7 +5322,7 @@ export class SyncEngine {
 		// /notes/changes path, or a note discovered without ever learning an
 		// id — src/sync.ts's discovery branch a few lines down never calls
 		// noteIdMap.set).
-		const crdtOwnsBody = !!(this.crdt && normalized.endsWith(".md"));
+		const crdtOwnsBody = !!(this.crdt && this.isCrdtEligiblePath(normalized));
 		const noteId = this.noteIdMap?.get(normalized) ?? null;
 
 		// Anti-stale guard (review 2026-07-15, data-loss race): a push landing
@@ -5347,6 +5371,22 @@ export class SyncEngine {
 		// the block falls through to the legacy conflict flow below instead of
 		// silently backfilling over the local edit.
 		if (crdtOwnsBody) {
+			// Canvas converges via the Yjs handshake ONLY. Its authoritative content
+			// lives in the Yjs doc; the seq-feed `content` is vestigial for canvas
+			// (the backend keeps notes.content stale, Phase B, and its deliver-out +
+			// fan-out are .md-gated), so we must NEVER write `content` to disk here —
+			// that would stamp an empty/stale canvas over the real one. Enroll to pull
+			// the state over STEP1/STEP2 (the manager projects it via projectCanvas);
+			// a migrated REST-era canvas with no server Yjs state is seeded by the
+			// first client that opens it (the push path). Unlike markdown, canvas
+			// enrolls even when idle — it has no content-fallback delivery — but the
+			// room is released after convergence, and later live deltas ride the
+			// note_yjs_update fan-out room-free, so this is not an enrollment storm.
+			if (this.isCanvasPath(normalized)) {
+				if (noteId) this.crdtEnrollment?.enroll(noteId);
+				rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`);
+				return false;
+			}
 			// noteId resolved above (shared with the anti-stale guard). This is
 			// populated for the merged-feed caller (applySyncChange learns `id`
 			// right before calling applyChange) but may be unknown for the
@@ -5687,10 +5727,11 @@ export class SyncEngine {
 					rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
 				}
 			}
-			// CRDT-managed markdown never falls through to the legacy conflict
-			// tail: the double-divergence case is handled inline above by the
-			// drift-copy (#306 Phase A). The tail below serves canvas + other
-			// non-CRDT notes only.
+			// A CRDT-managed note (markdown OR canvas since #306) never falls through
+			// to the legacy conflict tail: markdown double-divergence is handled inline
+			// by the drift-copy (#306 Phase A), and canvas converges over the Yjs
+			// handshake in the early branch above. The tail below serves only the
+			// legacy/oversized REST notes that remain outside the CRDT domain.
 			return false;
 		}
 
