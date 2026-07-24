@@ -369,6 +369,16 @@ export class SyncEngine {
 	 *  data) and is adopted without wiping. */
 	private syncStateVaultId: string | null = null;
 
+	/** Monotonic identity-swap counter (#283). Bumped by main.ts on every OAuth
+	 *  token save/clear — the points where `this.api`'s auth provider is swapped.
+	 *  A destructive manifest-diff reconcile captures this before fetching the
+	 *  manifest and refuses to trash if it changed while the fetch was in flight:
+	 *  a manifest resolved across an identity swap can be a stale snapshot that
+	 *  omits live notes, and trashing those as "server-deleted" is data loss.
+	 *  Same-vault token refresh (test_48) can't be caught by the vaultId guard,
+	 *  so this is a separate, swap-precise signal. */
+	private authGeneration = 0;
+
 	/** This user's server content_hash for EMPTY content, learned from an
 	 *  authoritative op-log ROW that carries "" beside its hash (the hash is a
 	 *  per-user HMAC — underivable client-side but deterministic; the old
@@ -1749,6 +1759,13 @@ export class SyncEngine {
 
 	setSyncStateVaultId(id: string | null): void {
 		this.syncStateVaultId = id;
+	}
+
+	/** #283: mark that the api auth provider was (or is being) swapped. Called by
+	 *  main.ts on OAuth token save/clear so a manifest fetch that straddles the
+	 *  swap can be detected and its destructive reconcile refused. */
+	bumpAuthGeneration(): void {
+		this.authGeneration++;
 	}
 
 	/** Invalidate stale per-vault bookkeeping if the active server vault no
@@ -3425,6 +3442,9 @@ export class SyncEngine {
 	 *  and 3. */
 	async catchUp(): Promise<number> {
 		try {
+			// #283: capture before the fetch so reconcileFromManifest can refuse its
+			// destructive pass if an OAuth swap lands while the manifest is in flight.
+			const authGenAtFetch = this.authGeneration;
 			const manifest = await this.api.getManifest(
 				this.manifestSeq > 0 ? this.manifestSeq : undefined,
 			);
@@ -3443,7 +3463,7 @@ export class SyncEngine {
 				const { applied } = await this.catchupViaSeqReplay();
 				return applied;
 			}
-			await this.reconcileFromManifest(manifest);
+			await this.reconcileFromManifest(manifest, authGenAtFetch);
 			const behind = this.validateFromManifest(manifest);
 			const { applied } = await this.catchupViaSeqReplay();
 			const poked = await this.healDivergedLiveBoundNotes(manifest);
@@ -4953,35 +4973,60 @@ export class SyncEngine {
 	 *  resurrect it on the next push). A null manifest (pre-B1 backend / 404) is
 	 *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
 	 *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
-	private async reconcileFromManifest(manifest?: ManifestResponse | null): Promise<void> {
+	private async reconcileFromManifest(
+		manifest?: ManifestResponse | null,
+		authGenAtFetch?: number,
+	): Promise<void> {
+		// #283: capture the identity-swap counter BEFORE the manifest is read so a
+		// swap racing the fetch is detectable. When catchUp supplies a pre-fetched
+		// manifest it passes the gen it captured before ITS OWN fetch; the
+		// self-fetch path below captures it here.
+		const authGen = authGenAtFetch ?? this.authGeneration;
 		const m = manifest === undefined ? await this.api.getManifest() : manifest;
 		if (!m) return;
 
-		const serverPaths = new Set<string>([
-			...m.notes.map((n) => normalizePath(n.path)),
-			...m.attachments.map((a) => normalizePath(a.path)),
-		]);
+		// A manifest that resolved across an OAuth/identity swap can be a STALE
+		// snapshot missing notes the server still holds (a same-vault token
+		// refresh, so the vaultId guard can't see it — #283). Trashing those as
+		// "server-deleted" is local data loss. Skip only the DESTRUCTIVE pass;
+		// seedEmptyFolders below is non-destructive LOCAL→SERVER and stays. A real
+		// server-delete still arrives as an op-log tombstone (the primary delete
+		// path, unaffected by this skip); only the GC'd-tombstone backstop is
+		// deferred, re-running on a later clean catch-up. The skip errs toward
+		// KEEPING a note (the opposite of #283) and self-corrects on next server
+		// activity, so nothing is lost.
+		if (this.authGeneration === authGen) {
+			const serverPaths = new Set<string>([
+				...m.notes.map((n) => normalizePath(n.path)),
+				...m.attachments.map((a) => normalizePath(a.path)),
+			]);
 
-		// §F structural pass over local syncable files.
-		for (const file of this.app.vault.getFiles()) {
-			if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
-			const np = normalizePath(file.path);
-			if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
-			if (!this.syncState.has(np)) continue; // never synced → pushModifiedFiles handles it
+			// §F structural pass over local syncable files.
+			for (const file of this.app.vault.getFiles()) {
+				if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
+				const np = normalizePath(file.path);
+				if (serverPaths.has(np)) continue; // in manifest → content handled by catch-up
+				if (!this.syncState.has(np)) continue; // never synced → pushModifiedFiles handles it
 
-			// In baseline but gone from the server → server-deleted while away.
-			try {
-				await this.trashRemotelyDeleted(file);
-				this.syncState.delete(np);
-				this.baseStore?.delete(np);
-				rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
-			} catch (e) {
-				rlog().error(
-					"pull",
-					`Reconcile trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
-					e instanceof Error ? e.stack : undefined,
-				);
+				// In baseline but gone from the server → server-deleted while away.
+				try {
+					await this.trashRemotelyDeleted(file);
+					this.syncState.delete(np);
+					this.baseStore?.delete(np);
+					rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
+				} catch (e) {
+					rlog().error(
+						"pull",
+						`Reconcile trash failed (retried next run): ${file.path} — ${errMsg(e)}`,
+						e instanceof Error ? e.stack : undefined,
+					);
+				}
 			}
+		} else {
+			rlog().info(
+				"pull",
+				"Reconcile: skipped delete pass — identity swap raced the manifest fetch (retried next catch-up)",
+			);
 		}
 
 		// Markers for folders the server can't derive. getFiles() never sees

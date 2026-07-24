@@ -48,6 +48,11 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 			async saveSettings() {
 				order.push("saveSettings");
 			},
+			syncEngine: {
+				bumpAuthGeneration() {
+					order.push("bumpAuthGeneration");
+				},
+			},
 		};
 
 		await EngramSyncPlugin.prototype.saveOAuthTokens.call(
@@ -59,6 +64,11 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 
 		const apiSwapIdx = order.findIndex((o) => o.startsWith("api.setAuthProvider"));
 		const saveIdx = order.indexOf("saveSettings");
+
+		// #283: the identity-swap bump must fire before the racy saveSettings/rebuild.
+		const bumpIdx = order.indexOf("bumpAuthGeneration");
+		expect(bumpIdx).toBeGreaterThanOrEqual(0);
+		expect(bumpIdx).toBeLessThan(saveIdx);
 
 		expect(apiSwapIdx).toBeGreaterThanOrEqual(0);
 		expect(saveIdx).toBeGreaterThanOrEqual(0);
@@ -106,6 +116,11 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 			async saveSettings() {
 				order.push("saveSettings");
 			},
+			syncEngine: {
+				bumpAuthGeneration() {
+					order.push("bumpAuthGeneration");
+				},
+			},
 		};
 
 		await EngramSyncPlugin.prototype.clearOAuthTokens.call(fakeThis as never);
@@ -115,6 +130,11 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 		expect(apiSwapIdx).toBeGreaterThanOrEqual(0);
 		expect(saveIdx).toBeGreaterThanOrEqual(0);
 		expect(apiSwapIdx).toBeLessThan(saveIdx);
+
+		// #283: logout also swaps the provider — the bump must precede saveSettings.
+		const bumpIdx = order.indexOf("bumpAuthGeneration");
+		expect(bumpIdx).toBeGreaterThanOrEqual(0);
+		expect(bumpIdx).toBeLessThan(saveIdx);
 
 		// OAuth fields cleared before the save.
 		expect(fakeThis.settings.refreshToken).toBeUndefined();

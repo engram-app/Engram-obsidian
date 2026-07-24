@@ -17926,6 +17926,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
      *  files. `null` means "not yet recorded" (fresh install or pre-upgrade
      *  data) and is adopted without wiping. */
     this.syncStateVaultId = null;
+    /** Monotonic identity-swap counter (#283). Bumped by main.ts on every OAuth
+     *  token save/clear — the points where `this.api`'s auth provider is swapped.
+     *  A destructive manifest-diff reconcile captures this before fetching the
+     *  manifest and refuses to trash if it changed while the fetch was in flight:
+     *  a manifest resolved across an identity swap can be a stale snapshot that
+     *  omits live notes, and trashing those as "server-deleted" is data loss.
+     *  Same-vault token refresh (test_48) can't be caught by the vaultId guard,
+     *  so this is a separate, swap-precise signal. */
+    this.authGeneration = 0;
     /** This user's server content_hash for EMPTY content, learned from an
      *  authoritative op-log ROW that carries "" beside its hash (the hash is a
      *  per-user HMAC — underivable client-side but deterministic; the old
@@ -18972,6 +18981,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   setSyncStateVaultId(id2) {
     this.syncStateVaultId = id2;
   }
+  /** #283: mark that the api auth provider was (or is being) swapped. Called by
+   *  main.ts on OAuth token save/clear so a manifest fetch that straddles the
+   *  swap can be detected and its destructive reconcile refused. */
+  bumpAuthGeneration() {
+    this.authGeneration++;
+  }
   /** Invalidate stale per-vault bookkeeping if the active server vault no
    *  longer matches the one syncState was recorded under. This is the
    *  self-healing backstop for vault switches that bypass the SyncPreviewModal
@@ -19770,7 +19785,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  and 3. */
   async catchUp() {
     try {
-      let manifest = await this.api.getManifest(
+      let authGenAtFetch = this.authGeneration, manifest = await this.api.getManifest(
         this.manifestSeq > 0 ? this.manifestSeq : void 0
       );
       if (manifest != null && manifest.unchanged) {
@@ -19778,7 +19793,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         let { applied: applied2 } = await this.catchupViaSeqReplay();
         return applied2;
       }
-      await this.reconcileFromManifest(manifest);
+      await this.reconcileFromManifest(manifest, authGenAtFetch);
       let behind = this.validateFromManifest(manifest), { applied } = await this.catchupViaSeqReplay(), poked = await this.healDivergedLiveBoundNotes(manifest);
       try {
         await this.syncExplicitFolders();
@@ -20513,29 +20528,36 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  resurrect it on the next push). A null manifest (pre-B1 backend / 404) is
    *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
    *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
-  async reconcileFromManifest(manifest) {
+  async reconcileFromManifest(manifest, authGenAtFetch) {
     var _a;
-    let m = manifest === void 0 ? await this.api.getManifest() : manifest;
-    if (!m) return;
-    let serverPaths = /* @__PURE__ */ new Set([
-      ...m.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
-      ...m.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
-    ]);
-    for (let file of this.app.vault.getFiles()) {
-      if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
-      let np = (0, import_obsidian21.normalizePath)(file.path);
-      if (!serverPaths.has(np) && this.syncState.has(np))
-        try {
-          await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
-        } catch (e) {
-          rlog().error(
-            "pull",
-            `Reconcile trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
-            e instanceof Error ? e.stack : void 0
-          );
+    let authGen = authGenAtFetch != null ? authGenAtFetch : this.authGeneration, m = manifest === void 0 ? await this.api.getManifest() : manifest;
+    if (m) {
+      if (this.authGeneration === authGen) {
+        let serverPaths = /* @__PURE__ */ new Set([
+          ...m.notes.map((n) => (0, import_obsidian21.normalizePath)(n.path)),
+          ...m.attachments.map((a) => (0, import_obsidian21.normalizePath)(a.path))
+        ]);
+        for (let file of this.app.vault.getFiles()) {
+          if (!this.isSyncable(file) || this.shouldIgnore(file.path)) continue;
+          let np = (0, import_obsidian21.normalizePath)(file.path);
+          if (!serverPaths.has(np) && this.syncState.has(np))
+            try {
+              await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
+            } catch (e) {
+              rlog().error(
+                "pull",
+                `Reconcile trash failed (retried next run): ${file.path} \u2014 ${errMsg(e)}`,
+                e instanceof Error ? e.stack : void 0
+              );
+            }
         }
+      } else
+        rlog().info(
+          "pull",
+          "Reconcile: skipped delete pass \u2014 identity swap raced the manifest fetch (retried next catch-up)"
+        );
+      await this.seedEmptyFolders();
     }
-    await this.seedEmptyFolders();
   }
   /** Re-converge any LIVE-BOUND note whose server content (per the manifest)
    *  diverges from our recorded baseline — independent of the seq cursor.
@@ -24171,10 +24193,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     return this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null;
   }
   async saveOAuthTokens(refreshToken, vaultId, userEmail) {
-    this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
+    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = refreshToken, this.settings.userEmail = userEmail, this.settings.authMethod = "oauth", this.settings.vaultId = vaultId, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.createAuthProvider(), this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   async clearOAuthTokens() {
-    this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
+    this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   setupNoteStream() {
     var _a, _b, _c, _d, _e;

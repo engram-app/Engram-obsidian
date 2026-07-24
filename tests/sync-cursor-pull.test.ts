@@ -296,6 +296,26 @@ describe("SyncEngine reconcileFromManifest", () => {
 		expect(engine.exportSyncState()["gone.md"]).toBeDefined();
 	});
 
+	test("does NOT trash a live note when an identity swap races the manifest fetch (#283)", async () => {
+		// OAuth reconnect swaps the api auth provider while a fullSync/poll's
+		// manifest fetch is already in flight. The manifest resolves as a stale
+		// snapshot that omits a note the server actually still holds. Trashing it
+		// as "server-deleted" is the #283 local data-loss bug.
+		const live = fakeFile("live.md");
+		const { engine, pushFileSpy } = createEngine([live]);
+		engine.importSyncState({ "live.md": { hash: 123 } });
+		getManifest.mockImplementationOnce(async () => {
+			engine.bumpAuthGeneration(); // swap lands mid-fetch
+			return emptyManifest(); // stale: omits the still-live note
+		});
+
+		await (engine as any).reconcileFromManifest();
+
+		expect(trashFile).not.toHaveBeenCalled();
+		expect(engine.exportSyncState()["live.md"]).toBeDefined();
+		expect(pushFileSpy).not.toHaveBeenCalled();
+	});
+
 	test("a null manifest (pre-B1 backend / 404) is a no-op", async () => {
 		getManifest.mockResolvedValueOnce(null);
 		const gone = fakeFile("gone.md");

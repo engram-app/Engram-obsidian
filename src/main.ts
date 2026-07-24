@@ -1480,6 +1480,10 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async saveOAuthTokens(refreshToken: string, vaultId: string, userEmail: string): Promise<void> {
+		// #283: mark the identity swap so an in-flight catch-up manifest fetch
+		// straddling this call refuses its destructive delete-reconcile (a stale
+		// snapshot from the old identity would trash live notes as server-deleted).
+		this.syncEngine.bumpAuthGeneration();
 		this.settings.refreshToken = refreshToken;
 		this.settings.userEmail = userEmail;
 		this.settings.authMethod = "oauth";
@@ -1513,6 +1517,9 @@ export default class EngramSyncPlugin extends Plugin {
 	}
 
 	async clearOAuthTokens(): Promise<void> {
+		// #283: same identity-swap guard as saveOAuthTokens — a logout swaps the
+		// provider too, so a straddling manifest fetch must not delete-reconcile.
+		this.syncEngine.bumpAuthGeneration();
 		this.settings.refreshToken = undefined;
 		this.settings.userEmail = undefined;
 		this.settings.authMethod = null;
