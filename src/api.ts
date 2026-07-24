@@ -15,7 +15,6 @@ import type {
 	AttachmentResponse,
 	DeleteResponse,
 	ManifestResponse,
-	NoteDetail,
 	NoteResponse,
 	SearchResponse,
 	VaultInfo,
@@ -452,13 +451,6 @@ export class EngramApi {
 			}
 			throw e;
 		}
-	}
-
-	/** Get full note by path. */
-	async getNote(path: string): Promise<NoteDetail> {
-		const encoded = encodePath(path);
-		const resp = await this.request("GET", `/notes/${encoded}`);
-		return resp.json as NoteDetail;
 	}
 
 	/** Delete a note. */

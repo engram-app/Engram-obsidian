@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, jest, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { SyncEngine, fnv1a } from "../src/sync";
@@ -11,18 +11,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockResolvedValue({ results: [] }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getNote: mock().mockResolvedValue({
-		path: "Notes/Remote.md",
-		title: "Remote Note",
-		content: "# Remote",
-		content_hash: "srvhash-remote",
-		folder: "Notes",
-		tags: [],
-		mtime: 1709345678,
-		created_at: "2026-03-01T12:00:00Z",
-		updated_at: "2026-03-01T12:00:00Z",
-		version: 1,
-	}),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	pushAttachment: mock().mockResolvedValue({ attachment: {} }),
@@ -97,18 +85,6 @@ beforeEach(() => {
 	mockApp.vault.cachedRead.mockReset().mockResolvedValue("# Test");
 	(mockApi.pushNote as jest.Mock).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
 	(mockApi.pushNotesBatch as jest.Mock).mockReset().mockResolvedValue({ results: [] });
-	(mockApi.getNote as jest.Mock).mockReset().mockResolvedValue({
-		path: "Notes/Remote.md",
-		title: "Remote Note",
-		content: "# Remote",
-		content_hash: "srvhash-remote",
-		folder: "Notes",
-		tags: [],
-		mtime: 1709345678,
-		created_at: "2026-03-01T12:00:00Z",
-		updated_at: "2026-03-01T12:00:00Z",
-		version: 1,
-	});
 	(mockApi.getManifest as jest.Mock).mockReset().mockResolvedValue(null);
 });
 
@@ -139,7 +115,6 @@ describe("hash-compare live sync", () => {
 
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("applies inline content when the hash differs (dual-field release)", async () => {
@@ -158,12 +133,14 @@ describe("hash-compare live sync", () => {
 		});
 
 		expect(mockApp.vault.create).toHaveBeenCalled();
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(engine.exportSyncState()["a.md"]?.serverHash).toBe("h-new");
 	});
 
-	test("fetches the body for hash-only events (post-transition shape)", async () => {
+	test("hash-only events with no note_id heal via op-log seq-replay, never a REST getNote (#310)", async () => {
 		const engine = createEngine();
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
+		});
 
 		await engine.handleStreamEvent({
 			event_type: "upsert",
@@ -173,9 +150,10 @@ describe("hash-compare live sync", () => {
 			version: 1,
 		});
 
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/Remote.md");
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		expect(engine.exportSyncState()["Notes/Remote.md"]?.serverHash).toBe("srvhash-remote");
+		// getNote-for-sync is deleted (Phase E3): the op-log seq-replay carries the
+		// real content and is the authoritative backstop for a no-id hash-only event.
+		expect(replay).toHaveBeenCalled();
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 });
 

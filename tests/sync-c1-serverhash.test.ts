@@ -26,7 +26,6 @@ const mockApi = {
 	ping: mock().mockResolvedValue({ ok: true }),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
-	getNote: mock().mockResolvedValue({ path: "", content: "" }),
 } as unknown as EngramApi;
 
 const mockApp = {
@@ -66,10 +65,6 @@ beforeEach(() => {
 		.mockReset()
 		.mockReturnValue(null);
 	(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
-	(mockApi.getNote as ReturnType<typeof mock>).mockClear().mockResolvedValue({
-		path: "",
-		content: "",
-	});
 });
 
 describe("C1 branch records the CAS base from the WS event", () => {
@@ -248,7 +243,6 @@ describe("C1 branch routes a first-delivery idle note to the op-log (Phase E3)",
 			version: 1,
 		} as any);
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(replay).toHaveBeenCalled();
 	});
@@ -273,8 +267,6 @@ describe("C1 branch routes a first-delivery idle note to the op-log (Phase E3)",
 			content_hash: "srv-h",
 			version: 1,
 		} as any);
-
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("a live-bound first delivery is left to its room (no eager write)", async () => {
@@ -294,7 +286,5 @@ describe("C1 branch routes a first-delivery idle note to the op-log (Phase E3)",
 			content_hash: "srv-h",
 			version: 1,
 		} as any);
-
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 });

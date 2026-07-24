@@ -4289,7 +4289,8 @@ export class SyncEngine {
 		// file sticks forever. Strip the inline body here: the CRDT consumer
 		// below then routes to the op-log seq-replay (rows carry the real,
 		// verified bytes — Phase E3 deleted its fetch), and the legacy consumer
-		// falls through to its getNote fetch. A genuinely empty note converges
+		// heals via that same seq-replay (getNote-for-sync deleted, #310). A
+		// genuinely empty note converges
 		// via its replay row, which also TEACHES the empty hash (see
 		// emptyContentHash / applyChange): later inline "" beside that exact
 		// hash is trustworthy without a round-trip. A stale learned value (DEK
@@ -4654,23 +4655,11 @@ export class SyncEngine {
 						version: event.version,
 					});
 				} else {
-					// Hash-only broadcast (or folder rename): fetch the body AND use the
-					// note's own authoritative metadata (mtime/updated_at/version drive
-					// applyChange's staleness + anti-stale-version guards — event.* are
-					// sparse/absent here and would misfire toward a silent overwrite).
-					const note = await this.api.getNote(event.path);
-					await this.applyChange({
-						path: note.path,
-						title: note.title,
-						content: note.content,
-						content_hash: note.content_hash ?? event.content_hash,
-						folder: note.folder,
-						tags: note.tags,
-						mtime: note.mtime,
-						updated_at: note.updated_at,
-						deleted: false,
-						version: note.version ?? event.version,
-					});
+					// Hash-only broadcast with no note_id and no inline body. getNote-for-
+					// sync is deleted (#310): the seq-ordered op-log carries the real
+					// content and is the authoritative backstop (Phase E3). Heal via
+					// replay instead of a REST fetch — a no-op when we are already current.
+					void this.catchupViaSeqReplay();
 				}
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary

@@ -59,15 +59,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: {}, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getNote: mock().mockResolvedValue({
-		path: "Notes/Remote.md",
-		title: "Remote",
-		content: "remote body",
-		folder: "Notes",
-		tags: [],
-		mtime: 1709345678,
-		updated_at: "2026-03-01T12:00:00Z",
-	}),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	pushAttachment: mock().mockResolvedValue({ attachment: {} }),
@@ -113,15 +104,6 @@ const mockApp = {
 
 function resetMocks(): void {
 	(mockApi.pushNote as any).mockReset().mockResolvedValue({ note: {}, chunks_indexed: 1 });
-	(mockApi.getNote as any).mockReset().mockResolvedValue({
-		path: "Notes/Remote.md",
-		title: "Remote",
-		content: "remote body",
-		folder: "Notes",
-		tags: [],
-		mtime: 1709345678,
-		updated_at: "2026-03-01T12:00:00Z",
-	});
 	(mockApi.getAttachment as any).mockReset().mockResolvedValue({
 		path: "Assets/img.png",
 		content_base64: "AQID",
@@ -185,8 +167,6 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		});
 
 		expect(mockApp.vault.create).toHaveBeenCalled();
-		// Inline body used — no extra HTTP round-trip.
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("a KNOWN CRDT note (prior syncState) upsert does NOT re-materialize — CRDT owns the body", async () => {
@@ -214,7 +194,6 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("upsert for an IDLE markdown CRDT note does NOT enroll a room (vault-channel fan-out)", async () => {
@@ -357,7 +336,6 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			content_hash: "abc123",
 		});
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(replay).toHaveBeenCalled();
 	});
@@ -399,30 +377,24 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/img.png");
 	});
 
-	test("a canvas upsert with NO note_id falls through to the legacy getNote path", async () => {
+	test("a canvas upsert with NO note_id falls through to the op-log catch-up", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
-
-		// A canvas upsert carrying no id (and no sidecar mapping) can't key a CRDT
-		// room, so it falls through to the legacy getNote fetch (the same fallback
-		// markdown takes when it has no resolvable id).
-		(mockApi.getNote as any).mockResolvedValueOnce({
-			path: "Notes/board.canvas",
-			title: "board",
-			content: '{"nodes":[],"edges":[]}',
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			updated_at: "2026-03-01T12:00:00Z",
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
 		});
 
+		// A canvas upsert carrying no id (and no sidecar mapping) can't key a CRDT
+		// room and has no inline body, so it heals via the op-log seq-replay — the
+		// same authoritative backstop markdown takes when it has no resolvable id
+		// (Phase E3: getNote-for-sync deleted).
 		await engine.handleStreamEvent({
 			event_type: "upsert",
 			path: "Notes/board.canvas",
 			timestamp: Date.now(),
 		});
 
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/board.canvas");
+		expect(replay).toHaveBeenCalled();
 	});
 
 	test("a canvas upsert WITH a note_id takes the CRDT branch (id bookkeeping, no legacy getNote) since #306", async () => {
@@ -438,9 +410,8 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			timestamp: Date.now(),
 		} as never);
 
-		// CRDT owns canvas now — no legacy content fetch; the id is confirmed and the
-		// note enrolled (canvas enrolls even when idle, to pull its Yjs state).
-		expect(mockApi.getNote).not.toHaveBeenCalled();
+		// CRDT owns canvas now — the id is confirmed and the note enrolled (canvas
+		// enrolls even when idle, to pull its Yjs state).
 		expect(enroll).toHaveBeenCalledWith("id-board");
 	});
 });

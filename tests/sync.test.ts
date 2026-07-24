@@ -14,16 +14,6 @@ const mockApi = {
 	// pushes, which is exactly what these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getNote: mock().mockResolvedValue({
-		path: "Notes/Remote.md",
-		title: "Remote Note",
-		content: "# Remote\n\nFrom SSE",
-		folder: "Notes",
-		tags: [],
-		mtime: 1709345678,
-		created_at: "2026-03-01T12:00:00Z",
-		updated_at: "2026-03-01T12:00:00Z",
-	}),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	pushAttachment: mock().mockResolvedValue({ attachment: {} }),
@@ -780,33 +770,6 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 });
 
 describe("SyncEngine.handleStreamEvent", () => {
-	test("upsert event fetches note and applies change", async () => {
-		const engine = createEngine();
-
-		(mockApi.getNote as jest.Mock).mockResolvedValueOnce({
-			path: "Notes/SSE.md",
-			title: "SSE Note",
-			content: "# SSE\n\nCreated via MCP",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			created_at: "2026-03-01T12:00:00Z",
-			updated_at: "2026-03-01T12:00:00Z",
-		});
-
-		await engine.handleStreamEvent({
-			event_type: "upsert",
-			path: "Notes/SSE.md",
-			timestamp: 1709345678,
-		});
-
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/SSE.md");
-		expect(mockApp.vault.create).toHaveBeenCalledWith(
-			"Notes/SSE.md",
-			"# SSE\n\nCreated via MCP",
-		);
-	});
-
 	test("upsert with inline content skips GET request", async () => {
 		const engine = createEngine();
 
@@ -823,38 +786,9 @@ describe("SyncEngine.handleStreamEvent", () => {
 			version: 3,
 		});
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).toHaveBeenCalledWith(
 			"Notes/Inline.md",
 			"# Inline\n\nDelivered via broadcast",
-		);
-	});
-
-	test("upsert without inline content falls back to GET", async () => {
-		const engine = createEngine();
-
-		(mockApi.getNote as jest.Mock).mockResolvedValueOnce({
-			path: "Notes/Fallback.md",
-			title: "Fallback",
-			content: "# Fallback\n\nFetched via API",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			created_at: "2026-03-01T12:00:00Z",
-			updated_at: "2026-03-01T12:00:00Z",
-		});
-
-		await engine.handleStreamEvent({
-			event_type: "upsert",
-			path: "Notes/Fallback.md",
-			timestamp: 1709345678,
-			// No content field — simulates folder rename broadcast
-		});
-
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/Fallback.md");
-		expect(mockApp.vault.create).toHaveBeenCalledWith(
-			"Notes/Fallback.md",
-			"# Fallback\n\nFetched via API",
 		);
 	});
 
@@ -870,7 +804,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 		});
 
 		expect(mockApp.fileManager.trashFile).toHaveBeenCalledWith(existingFile);
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("delete event is honored even when the path was recently pushed", async () => {
@@ -1218,7 +1151,6 @@ describe("SyncEngine.handleStreamEvent", () => {
 			timestamp: 1709345678,
 		});
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 	});
 
@@ -1248,8 +1180,9 @@ describe("SyncEngine.handleStreamEvent", () => {
 			timestamp: Date.now(),
 		});
 
-		// getNote should NOT have been called (echo suppression)
-		expect(mockApi.getNote).not.toHaveBeenCalled();
+		// Suppressed: the pushing-set guard must keep the echo from materializing.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 
 		// Wait for push to finish
 		await new Promise((r) => setTimeout(r, 500));
@@ -1284,8 +1217,9 @@ describe("SyncEngine.handleStreamEvent", () => {
 			timestamp: Date.now(),
 		});
 
-		// getNote should NOT have been called (cooldown suppression)
-		expect(mockApi.getNote).not.toHaveBeenCalled();
+		// Suppressed by the post-push cooldown: nothing materializes to disk.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 
 		// Clean up cooldown timers
 		engine.destroy();
@@ -2232,33 +2166,7 @@ describe("SyncEngine WebSocket with kind routing", () => {
 		});
 
 		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/remote.png");
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.createBinary).toHaveBeenCalled();
-	});
-
-	test("WebSocket event with kind=note (or no kind) calls getNote", async () => {
-		const engine = createEngine();
-
-		(mockApi.getNote as jest.Mock).mockResolvedValueOnce({
-			path: "Notes/SSE.md",
-			title: "SSE Note",
-			content: "# SSE",
-			folder: "Notes",
-			tags: [],
-			mtime: 1709345678,
-			created_at: "2026-03-01T12:00:00Z",
-			updated_at: "2026-03-01T12:00:00Z",
-		});
-
-		await engine.handleStreamEvent({
-			event_type: "upsert",
-			path: "Notes/SSE.md",
-			timestamp: 1709345678,
-			// no kind field — should default to note behavior
-		});
-
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/SSE.md");
-		expect(mockApi.getAttachment).not.toHaveBeenCalled();
 	});
 
 	test("WebSocket delete with kind=attachment trashes local file", async () => {
@@ -3598,7 +3506,6 @@ describe("SyncEngine sync-blocked gate", () => {
 		const pulled = await engine.pullAll({ deleteLocalExtras: false });
 
 		expect(pulled).toBe(0);
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 	});
 
 	test("setSyncBlocked(true) makes pushAll return 0 without calling ping/pushNote", async () => {

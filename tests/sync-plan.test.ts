@@ -12,7 +12,6 @@ const mockApi = {
 	// per-note path these tests assert.
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getNote: mock().mockResolvedValue(null),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	pushAttachment: mock().mockResolvedValue({ attachment: {} }),
