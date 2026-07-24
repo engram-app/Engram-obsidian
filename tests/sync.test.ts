@@ -3225,7 +3225,11 @@ describe("SyncEngine.pushAll echo suppression fix", () => {
 		// have been pushed via the post-sync drain.
 		await new Promise((r) => setTimeout(r, 50));
 
-		expect(mockApi.pushNote).toHaveBeenCalledWith("Notes/DuringPull.md", big, expect.any(Number));
+		expect(mockApi.pushNote).toHaveBeenCalledWith(
+			"Notes/DuringPull.md",
+			big,
+			expect.any(Number),
+		);
 	});
 });
 
