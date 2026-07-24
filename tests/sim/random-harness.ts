@@ -22,12 +22,13 @@
 // so sustained CONCURRENT ONLINE editing now converges under the strict oracle
 // and is a committed gating suite: `tests/sim/random.test.ts`. THIS file stays a
 // TOOL (`.ts`, never collected by `bun test`) for exploring the STILL-gapped
-// configs the committed suite deliberately scopes out — offline-online editing,
-// create-during-edit, and delete/rename — which remain divergent for the
-// FIDELITY reason in gap #2 + the pull-only-rejoin limitation (documented in
-// random.test.ts's header). Its workload below still edits WITHOUT opening
-// (unbound, history-less), so it also preserves a live demonstration of the
-// pre-enrollment conflict-copy storm gap #1 described for comparison.
+// configs the committed suite deliberately scopes out — create-during-edit (the
+// canSendLive/genesis-race hold) and delete/rename (the note_changed model
+// omission, gap #2 below). (Live-bound offline editing is NOT gapped: it recovers
+// via the mutual rejoin handshake now that the model-server is faithful — see
+// random.test.ts's header and the `#299` regression.) Its workload below still
+// edits WITHOUT opening (unbound, history-less), so it also preserves a live
+// demonstration of the pre-enrollment conflict-copy storm gap #1 for comparison.
 //
 // WHY THIS WORKLOAD STILL DIVERGES (as a tool):
 //
