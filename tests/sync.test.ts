@@ -638,6 +638,104 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
+	test("md double-divergence (#306) writes a modal-free drift-conflict-copy of remote, keeps local", async () => {
+		// conflictResolution:"modal" so the OLD behaviour would call onConflict —
+		// the meaningful RED. setCrdtManager makes crdtOwnsBody true so applyChange
+		// enters the CRDT catch-up block and reaches the localDiverged branch.
+		const engine = createEngine({ conflictResolution: "modal" });
+		engine.setCrdtManager({
+			removeDoc: () => Promise.resolve(),
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		const path = "Notes/Drift306.md";
+
+		const map = new NoteIdMap();
+		map.set(path, "id-drift-306");
+		engine.setNoteIdMap(map);
+
+		const baseline = "# Base\n";
+		const localDrift = "# Base\nlocal unsynced edit\n";
+		const remote = "# Base\nremote edit\n";
+		// Recorded baseline disagrees with disk (local drift) AND remote content
+		// hash differs from the row's — both sides moved off the baseline.
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(path, {
+			hash: fnv1a(baseline),
+			serverHash: "old-server-hash",
+		});
+
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue(localDrift);
+
+		let onConflictCalled = false;
+		engine.onConflict = async () => {
+			onConflictCalled = true;
+			return { choice: "skip" as const };
+		};
+		__noticeCapture.notices.length = 0;
+
+		await engine.applyChange({
+			type: "note",
+			id: "id-drift-306",
+			path,
+			content: remote,
+			content_hash: "new-server-hash",
+			version: 2,
+			mtime: 1709345678,
+			deleted: false,
+		} as unknown as Parameters<typeof engine.applyChange>[0]);
+
+		// Local drift preserved as a "(conflict …)" sibling (existing convention);
+		// main converges to the server via socketConverge; no modal shown.
+		const conflictCreate = (mockApp.vault.create as jest.Mock).mock.calls.find((c: unknown[]) =>
+			/\(conflict .*\)\.md$/.test(c[0] as string),
+		);
+		expect(conflictCreate).toBeDefined();
+		expect(conflictCreate?.[1]).toBe(localDrift);
+		expect(onConflictCalled).toBe(false);
+		expect(__noticeCapture.notices.length).toBeGreaterThan(0);
+	});
+
+	test("md catch-up with a clean local file (no drift) writes NO conflict copy", async () => {
+		const engine = createEngine({ conflictResolution: "modal" });
+		engine.setCrdtManager({
+			removeDoc: () => Promise.resolve(),
+			closeDoc: () => {},
+		} as unknown as import("../src/crdt/manager").CrdtManager);
+		const path = "Notes/Clean306.md";
+
+		const map = new NoteIdMap();
+		map.set(path, "id-clean-306");
+		engine.setNoteIdMap(map);
+
+		const baseline = "# Base\n";
+		const remote = "# Base\nremote edit\n";
+		// Disk still equals the last-synced baseline == NOT drifted.
+		(engine as unknown as { syncState: Map<string, unknown> }).syncState.set(path, {
+			hash: fnv1a(baseline),
+			serverHash: "old-server-hash",
+		});
+		const existingFile = new TFile(path);
+		(mockApp.vault.getFileByPath as jest.Mock).mockReturnValue(existingFile);
+		mockApp.vault.cachedRead.mockResolvedValue(baseline);
+		__noticeCapture.notices.length = 0;
+
+		await engine.applyChange({
+			type: "note",
+			id: "id-clean-306",
+			path,
+			content: remote,
+			content_hash: "new-server-hash",
+			version: 2,
+			mtime: 1709345678,
+			deleted: false,
+		} as unknown as Parameters<typeof engine.applyChange>[0]);
+
+		// Clean local converges via the room, never a drift-copy.
+		const created = (mockApp.vault.create as jest.Mock).mock.calls.map((c: unknown[]) => c[0]);
+		expect(created.some((p: unknown) => /\(conflict .*\)/.test(p as string))).toBe(false);
+	});
+
 	test("still skips + resurrects a legacy (non-CRDT) note with unsynced edits", async () => {
 		const { engine } = makeCrdtDeleteEngine();
 		// No id mapping → not CRDT-managed → legacy resurrection protection.
