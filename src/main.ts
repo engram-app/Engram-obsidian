@@ -25,7 +25,6 @@ import {
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
 import { NoteChannel, connectRetryDelayMs, makeCrdtCatchupSender } from "./channel";
-import { ConflictModal } from "./conflict-modal";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { errMsg } from "./error-util";
@@ -469,14 +468,6 @@ export default class EngramSyncPlugin extends Plugin {
 
 		this.syncEngine.onStatusChange = (status) => {
 			this.updateStatusBar(status);
-		};
-
-		this.syncEngine.onConflict = async (info) => {
-			const modal = new ConflictModal(this.app, info, this.settings, (mode) => {
-				this.settings.conflictViewMode = mode;
-				void this.saveSettings();
-			});
-			return modal.waitForChoice();
 		};
 
 		// Persist plan state to settings whenever the channel reports a new one.
@@ -982,6 +973,10 @@ export default class EngramSyncPlugin extends Plugin {
 									rlog().warn(
 										"crdt",
 										`reconcileColdStart: Y.Doc corrupted for ${file.path} — falling back to disk content`,
+									);
+									new Notice(
+										`Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable — using the on-disk copy.`,
+										8000,
 									);
 								},
 							);

@@ -351,7 +351,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// the device deaf on stale bytes (round 4, CI 29945930489). The only
 		// correct move is the room re-handshake — Yjs deltas are right in
 		// both cases.
-		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, enroll, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -360,8 +360,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		engine.importSyncState({
 			"owned.md": { hash: fnv1a("baseline body"), version: 1, serverHash: "old-hash" },
 		});
-		const onConflict = mock().mockResolvedValue({ choice: "skip" });
-		engine.onConflict = onConflict;
 
 		// …and the row carries exactly the baseline content.
 		await engine.applyChange({
@@ -374,7 +372,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		expect(onConflict).not.toHaveBeenCalled();
 		expect(reset).toHaveBeenCalledWith("note-id-1");
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
 		expect(mockApp.vault.modify).not.toHaveBeenCalled(); // disk untouched
@@ -386,7 +383,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("local edit + remote edit diverged: drift-copy preserves local + converges main, no modal (test_14 regression)", async () => {
-		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, enroll, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -399,8 +396,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		engine.importSyncState({
 			"owned.md": { hash: fnv1a("Base content"), version: 1, serverHash: "old-hash" },
 		});
-		const onConflict = mock().mockResolvedValue({ choice: "skip" });
-		engine.onConflict = onConflict;
 
 		await engine.applyChange({
 			path: "owned.md",
@@ -412,7 +407,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		} as any);
 
 		// No modal; the local edit is saved as a "(conflict)" copy (never lost).
-		expect(onConflict).not.toHaveBeenCalled();
 		const conflictCreate = (mockApp.vault.create as any).mock.calls.find((c: unknown[]) =>
 			/\(conflict .*\)\.md$/.test(c[0] as string),
 		);
@@ -425,7 +419,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("drift-copy: if the conflict-copy write FAILS, do NOT converge (local edit not silently lost)", async () => {
-		const { engine, enroll, reset } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, enroll, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		// Only the main file exists; the "(conflict …)" path does NOT — so a failed
@@ -464,7 +458,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// bodies are a disjoint lineage — the #234 doubling / #282 fence class),
 		// so even this case routes through the socket re-handshake; the
 		// content-verified commit lands the bookkeeping once real ops arrive.
-		const { engine, enroll, projectedText } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, enroll, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
@@ -472,8 +466,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		engine.importSyncState({
 			"owned.md": { hash: fnv1a("older base"), version: 1, serverHash: "old-hash" },
 		});
-		const onConflict = mock().mockResolvedValue({ choice: "skip" });
-		engine.onConflict = onConflict;
 
 		await engine.applyChange({
 			path: "owned.md",
@@ -484,7 +476,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		expect(onConflict).not.toHaveBeenCalled();
 		expect(enroll).toHaveBeenCalledWith("note-id-1");
 		// Nothing recorded until the frame proves it.
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
@@ -1388,13 +1379,11 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	});
 
 	test("no spurious conflict: a VIEWED-then-cold note with the real hash recorded does NOT hit the conflict flow (#2 outcome)", async () => {
-		const { engine, projectedText } = crdtEngine({ conflictResolution: "modal" });
+		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
 		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
 		mockApp.vault.cachedRead.mockResolvedValue("viewed content");
-		const onConflict = mock().mockResolvedValue({ choice: "skip" });
-		engine.onConflict = onConflict;
 
 		// Phase 1: note OPEN (live-bound), no prior baseline. STEP2 commits the
 		// staged convergence, recording the REAL local disk hash, not a 0
@@ -1428,7 +1417,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			version: 3,
 			mtime: 2,
 		} as any);
-		expect(onConflict).not.toHaveBeenCalled();
+
+		// Clean local (disk unchanged) → plain backfill, NEVER a drift-copy. A 0
+		// sentinel hash would have false-positived localDiverged and written a
+		// "(conflict …)" sibling here; the real recorded hash keeps it clean.
+		const created = (mockApp.vault.create as any).mock.calls.map((c: unknown[]) => c[0]);
+		expect(created.some((p: unknown) => /\(conflict .*\)\.md$/.test(p as string))).toBe(false);
 	});
 
 	test("converged hashes: no disk write, and a cold note is not enrolled", async () => {

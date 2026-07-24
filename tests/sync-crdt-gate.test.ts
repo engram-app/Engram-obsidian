@@ -3,7 +3,7 @@
  *
  * C1 — legacy down-sync gate for CRDT-managed markdown:
  *   - note_changed/upsert content event for a .md note does NOT call applyChange
- *     / threeWayMerge / disk-write when this.crdt is set.
+ *     / disk-write when this.crdt is set.
  *   - DELETE event for a CRDT-managed .md note STILL processes via the legacy path.
  *   - Attachment upsert event STILL processes via the legacy path.
  *   - applyChange() returns false (no disk write) for markdown when CRDT is active.

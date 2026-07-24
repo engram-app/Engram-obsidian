@@ -10,18 +10,12 @@ export interface EngramSyncSettings {
 	ignorePatterns: string;
 	/** Debounce delay in ms for modify events */
 	debounceMs: number;
-	/** Preferred conflict diff view: unified or side-by-side */
-	conflictViewMode: "unified" | "side-by-side";
 	/** Single diagnostics switch. When on: ship sync/error events AND verbose
 	 *  vault/editor/WS activity to the server, AND attach distributed-tracing
 	 *  headers to requests. Metadata only, never note content. Default OFF.
 	 *  Collapses the former remoteLoggingEnabled / diagnosticMode / tracingEnabled
 	 *  trio (migrated in settings-migrate.ts). */
 	diagnosticsEnabled: boolean;
-	/** How to handle conflicts that can't be auto-merged.
-	 *  "auto" creates a conflict copy file (non-blocking).
-	 *  "modal" shows the interactive diff modal. */
-	conflictResolution: "auto" | "modal";
 	/** Server-assigned vault ID. Populated after registration. Null until first sync. */
 	vaultId: string | null;
 	/** Server-side name for the selected vault, mirrored from the registration
@@ -79,9 +73,7 @@ export const DEFAULT_SETTINGS: EngramSyncSettings = {
 	apiKey: "",
 	ignorePatterns: "",
 	debounceMs: 2000,
-	conflictViewMode: "unified",
 	diagnosticsEnabled: false,
-	conflictResolution: "auto",
 	vaultId: null,
 	clientId: "",
 	planState: null,
@@ -322,29 +314,6 @@ export interface SyncStatus {
 	lastSync: string;
 	/** Error message when state is "error". */
 	error?: string;
-}
-
-/** Info passed to conflict resolution UI. */
-export interface ConflictInfo {
-	path: string;
-	localContent: string;
-	localMtime: number;
-	remoteContent: string;
-	remoteMtime: number;
-	/** Common ancestor content from last successful sync (for 3-way merge). */
-	baseContent?: string;
-	/** Vault name for display in conflict modal. */
-	vaultName?: string;
-}
-
-/** User's choice for resolving a sync conflict. */
-export type ConflictChoice = "keep-local" | "keep-remote" | "keep-both" | "merge" | "skip";
-
-/** Result returned by the conflict resolution modal. */
-export interface ConflictResolution {
-	choice: ConflictChoice;
-	/** Merged content when choice is "merge". */
-	mergedContent?: string;
 }
 
 /** Full note as returned by GET /notes/{path} */

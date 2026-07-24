@@ -22,9 +22,7 @@ const fullSettings = (override: Partial<EngramSyncSettings> = {}): EngramSyncSet
 	clientId: "client-uuid",
 	ignorePatterns: "node_modules",
 	debounceMs: 2000,
-	conflictViewMode: "unified",
 	diagnosticsEnabled: false,
-	conflictResolution: "auto",
 	...override,
 });
 
