@@ -2063,7 +2063,7 @@ export class SyncEngine {
 		if (this.remotelyDeleted.has(file.path)) {
 			this.remotelyDeleted.delete(file.path);
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
-			if (file.path.endsWith(".md") && crdtNoteId) {
+			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.crdt?.removeDoc(crdtNoteId);
 				this.crdtEnrollment?.reset(crdtNoteId);
 			}
@@ -2074,29 +2074,32 @@ export class SyncEngine {
 			if (isBinary) {
 				await this.api.deleteAttachment(file.path); // attachments stay REST
 				this.goOnline();
-			} else if (file.path.endsWith(".md")) {
-				// CRDT-sole md delete path (REST removed). With a resolvable note_id,
-				// enqueue a durable crdt_delete: the queue holds it until the crdt:
-				// topic is joined and retries transient failures. Enqueue never throws,
-				// so the CRDT teardown below always runs, and there is no goOnline()
-				// here — a local durable hand-off, not a network round-trip. With NO
-				// note_id the note was never synced remotely, so there is nothing to
-				// delete on the server: do nothing rather than fall back to REST.
+			} else if (this.isCrdtEligible(file)) {
+				// CRDT-sole delete path (markdown AND canvas since #306; REST removed).
+				// With a resolvable note_id, enqueue a durable crdt_delete: the queue
+				// holds it until the crdt: topic is joined and retries transient
+				// failures. Enqueue never throws, so the CRDT teardown below always
+				// runs, and there is no goOnline() here — a local durable hand-off, not
+				// a network round-trip. With NO note_id the note was never synced
+				// remotely, so there is nothing to delete on the server: do nothing
+				// rather than fall back to REST.
 				if (crdtNoteId) {
 					this.crdtEnqueue?.({ kind: "delete", docId: crdtNoteId, path: file.path });
 				}
 			} else {
-				// Canvas / other non-md syncable text is not CRDT-managed — still LWW
-				// REST (outside the CRDT-only md collapse).
+				// Defensive fallback: no non-binary syncable type is CRDT-ineligible
+				// today (md + canvas both ride CRDT), so this is unreachable for
+				// current syncable text — kept only so a future REST-only note type
+				// still deletes cleanly.
 				await this.api.deleteNote(file.path);
 				this.goOnline();
 			}
 			// Tear down the CRDT doc so a note recreated at the same path starts
 			// fresh — no ghost lineage that would resurrect stale content (P1-3).
-			// Gate on .md (not !isBinary) so .canvas files never hit removeDoc:
-			// canvas files are syncable text but not CRDT-managed. Also gate on a
-			// known id — nothing to tear down if this note never had a CRDT room.
-			if (file.path.endsWith(".md") && crdtNoteId) {
+			// Gate on CRDT-eligibility (md OR canvas since #306, not !isBinary) so
+			// attachments never hit removeDoc. Also gate on a known id — nothing to
+			// tear down if this note never had a CRDT room.
+			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.crdt?.removeDoc(crdtNoteId);
 				this.crdtEnrollment?.reset(crdtNoteId);
 			}
@@ -2104,7 +2107,7 @@ export class SyncEngine {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
-				if (file.path.endsWith(".md") && crdtNoteId) {
+				if (this.isCrdtEligible(file) && crdtNoteId) {
 					await this.crdt?.removeDoc(crdtNoteId);
 					this.crdtEnrollment?.reset(crdtNoteId);
 				}
@@ -2147,8 +2150,10 @@ export class SyncEngine {
 				if (isBinary) {
 					await this.api.deleteAttachment(oldPath);
 					this.goOnline();
-				} else if (oldPath.endsWith(".md")) {
-					// Phase E2 (rename-as-move): NO tombstone. The pushFile below
+				} else if (this.isCrdtEligible(file)) {
+					// Phase E2 (rename-as-move): NO tombstone (markdown AND canvas since
+					// #306 — a rename keeps the extension, so gating on the new file's
+					// eligibility is equivalent to the old path's). The pushFile below
 					// sends `crdt_create` for the SAME id at the new path and the
 					// backend relocates the live row in place
 					// (genesis_relocate_live -> move_note, :announce_moved fan-out);
@@ -2159,7 +2164,8 @@ export class SyncEngine {
 					// recreate-after-delete, and the delete+create pair could
 					// coalesce on the docId-keyed CrdtOpQueue (the test_10 class).
 				} else {
-					// Canvas / other non-md syncable text stays LWW REST (not CRDT-managed).
+					// Defensive fallback (unreachable for current syncable text — md +
+					// canvas both rename-as-move above; kept for a future REST-only type).
 					await this.api.deleteNote(oldPath);
 					this.goOnline();
 				}

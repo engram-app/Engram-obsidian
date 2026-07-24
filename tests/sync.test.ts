@@ -291,16 +291,27 @@ describe("SyncEngine.handleModify", () => {
 });
 
 describe("SyncEngine.handleDelete", () => {
-	test("calls API to delete a non-md note (canvas stays REST)", async () => {
-		// CRDT-authoritative rewire: md deletes go over the socket (see the
-		// "CRDT-authoritative delete rewire" block). Canvas is not CRDT-managed, so
-		// it still uses the LWW REST delete.
+	test("canvas delete goes over the socket (crdt_delete), NOT REST, since #306", async () => {
+		// CRDT-authoritative delete: since #306 canvas rides CRDT like markdown, so a
+		// canvas delete with a resolvable note_id enqueues a durable crdt_delete and
+		// never calls api.deleteNote.
 		const engine = createEngine();
-		const file = new TFile("Notes/Old.canvas");
+		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => null) } as any);
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/Old.canvas", "id-canvas-del");
+		engine.setNoteIdMap(noteIdMap);
 
+		const file = new TFile("Notes/Old.canvas");
 		await engine.handleDelete(file);
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Old.canvas");
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(enqueued).toContainEqual({
+			kind: "delete",
+			docId: "id-canvas-del",
+			path: "Notes/Old.canvas",
+		});
 	});
 
 	test("cancels pending push on delete", async () => {
@@ -320,25 +331,35 @@ describe("SyncEngine.handleDelete", () => {
 });
 
 describe("SyncEngine.handleRename", () => {
-	test("oversized-note rename deletes old path and pushes new path (LWW REST)", async () => {
+	test("canvas rename is tombstone-less rename-as-move like markdown (no delete) since #306", async () => {
+		// Since #306 canvas rides CRDT, so a canvas rename takes the SAME
+		// tombstone-less rename-as-move path as markdown: NO deleteNote(old), one
+		// crdt_create for the SAME id at the new path (the backend relocates).
 		const engine = createEngine();
-		// Oversized .canvas: rename's old-path delete is gated on the .md extension
-		// (in-cap md goes tombstone-less rename-as-move over CRDT), so to keep BOTH
-		// the REST deleteNote(old) AND the REST pushNote(new) we need a note that is
-		// non-md (canvas → REST delete) AND oversized (> the CRDT cap → REST push).
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
-			"a".repeat(5 * 1024 * 1024),
-		);
-		const file = new TFile("Notes/Renamed.canvas", Date.now());
+		const crdtDelete = mock().mockResolvedValue({ doc_id: "id-canvas-move" });
+		const crdtCreate = mock().mockResolvedValue("id-canvas-move");
+		const enqueued: Array<{ kind: string; docId: string }> = [];
+		engine.setCrdtManager({
+			applyLocalEdit: mock(async (_id: string, c: string) => c),
+		} as any);
+		(mockApp.vault.cachedRead as jest.Mock).mockResolvedValue('{"nodes":[],"edges":[]}');
+		engine.setCrdtDelete(crdtDelete);
+		engine.setCrdtCreate(crdtCreate);
+		engine.setCrdtLiveCheck(() => true);
+		engine.setCrdtEnqueue((op) => enqueued.push(op));
 
-		await engine.handleRename(file, "Notes/Original.canvas");
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/Old.canvas", "id-canvas-move");
+		engine.setNoteIdMap(noteIdMap);
+		(engine as unknown as { confirmNoteId(id: string): void }).confirmNoteId("id-canvas-move");
 
-		expect(mockApi.deleteNote).toHaveBeenCalledWith("Notes/Original.canvas");
-		expect(mockApi.pushNote).toHaveBeenCalledWith(
-			"Notes/Renamed.canvas",
-			expect.any(String),
-			expect.any(Number),
-		);
+		const file = new TFile("Notes/New.canvas", Date.now());
+		await engine.handleRename(file, "Notes/Old.canvas");
+
+		expect(mockApi.deleteNote).not.toHaveBeenCalled();
+		expect(crdtDelete).not.toHaveBeenCalled();
+		expect(enqueued.some((op) => op.kind === "delete")).toBe(false);
+		expect(crdtCreate).toHaveBeenCalledWith("id-canvas-move", "Notes/New.canvas");
 	});
 
 	test("md rename never emits a delete op — one create with the SAME id at the new path (Phase E2)", async () => {
@@ -1963,19 +1984,20 @@ describe("SyncEngine offline queue integration", () => {
 	});
 
 	test("failed delete queues the delete and goes offline", async () => {
-		// A REST delete (canvas — md now goes over the durable CRDT socket, which
-		// never throws) that fails goes offline and queues the delete for retry.
-		(mockApi.deleteNote as jest.Mock).mockRejectedValueOnce(new Error("network"));
+		// A REST delete that fails goes offline and queues for retry. Since #306
+		// both md and canvas deletes go over the durable CRDT socket (which never
+		// throws), the only REST delete left is an ATTACHMENT (binary).
+		(mockApi.deleteAttachment as jest.Mock).mockRejectedValueOnce(new Error("network"));
 
 		const engine = createEngine();
-		const file = new TFile("Notes/Deleted.canvas");
+		const file = new TFile("Notes/Deleted.png");
 
 		await engine.handleDelete(file);
 
 		expect(engine.isOffline()).toBe(true);
 		expect(engine.queue.size).toBe(1);
 		const entry = engine.queue.all()[0];
-		expect(entry.path).toBe("Notes/Deleted.canvas");
+		expect(entry.path).toBe("Notes/Deleted.png");
 		expect(entry.action).toBe("delete");
 	});
 
