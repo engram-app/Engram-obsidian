@@ -1234,11 +1234,6 @@ var EngramApi = class _EngramApi {
       throw e;
     }
   }
-  /** Get full note by path. */
-  async getNote(path) {
-    let encoded = encodePath(path);
-    return (await this.request("GET", `/notes/${encoded}`)).json;
-  }
   /** Delete a note. */
   async deleteNote(path) {
     let encoded = encodePath(path);
@@ -19974,7 +19969,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Handle a WebSocket stream event (upsert or delete). */
   async handleStreamEvent(event) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D;
     if (this.syncBlocked) {
       devLog().log("sync-blocked", "handleStreamEvent short-circuited \u2014 gate closed");
       return;
@@ -20094,34 +20089,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let synced = typeof this.crdt.isSynced == "function" && this.crdt.isSynced(noteId);
             priorState === void 0 && !synced && !this.isLiveBound(np) && !this.app.vault.getAbstractFileByPath(np) && event.content !== void 0 && await this.applyOp(this.eventToOp(event, event.content, noteId)), priorState === void 0 && event.content !== void 0 && ((_y = this.noteIdMap) == null ? void 0 : _y.pathForId(noteId)) === np && !this.app.vault.getAbstractFileByPath(np) ? await this.applyOp(this.eventToOp(event, event.content, noteId)) : (this.materializeRelocated(event.path, noteId), this.app.vault.getAbstractFileByPath(np) || this.catchupViaSeqReplay());
           }
-        } else if (event.content !== void 0)
-          await this.applyChange({
-            path: event.path,
-            title: (_z = event.title) != null ? _z : "",
-            content: event.content,
-            content_hash: event.content_hash,
-            folder: (_A = event.folder) != null ? _A : "",
-            tags: (_B = event.tags) != null ? _B : [],
-            mtime: (_C = event.mtime) != null ? _C : Date.now(),
-            updated_at: (_D = event.updated_at) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
-            deleted: !1,
-            version: event.version
-          });
-        else {
-          let note = await this.api.getNote(event.path);
-          await this.applyChange({
-            path: note.path,
-            title: note.title,
-            content: note.content,
-            content_hash: (_E = note.content_hash) != null ? _E : event.content_hash,
-            folder: note.folder,
-            tags: note.tags,
-            mtime: note.mtime,
-            updated_at: note.updated_at,
-            deleted: !1,
-            version: (_F = note.version) != null ? _F : event.version
-          });
-        }
+        } else event.content !== void 0 ? await this.applyChange({
+          path: event.path,
+          title: (_z = event.title) != null ? _z : "",
+          content: event.content,
+          content_hash: event.content_hash,
+          folder: (_A = event.folder) != null ? _A : "",
+          tags: (_B = event.tags) != null ? _B : [],
+          mtime: (_C = event.mtime) != null ? _C : Date.now(),
+          updated_at: (_D = event.updated_at) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
+          deleted: !1,
+          version: event.version
+        }) : this.catchupViaSeqReplay();
       } catch (e) {
         console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
       }

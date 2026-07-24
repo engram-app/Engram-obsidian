@@ -27,7 +27,6 @@ const mockApi = {
 	ping: mock().mockResolvedValue({ ok: true }),
 	getRateLimit: mock().mockResolvedValue(0),
 	getManifest: mock().mockResolvedValue(null),
-	getNote: mock().mockResolvedValue({ path: "", content: "" }),
 } as unknown as EngramApi;
 
 const mockApp = {
@@ -68,10 +67,6 @@ beforeEach(() => {
 		.mockReturnValue(null);
 	(mockApp.vault.create as ReturnType<typeof mock>).mockClear();
 	(mockApp.vault.modify as ReturnType<typeof mock>).mockClear();
-	(mockApi.getNote as ReturnType<typeof mock>).mockClear().mockResolvedValue({
-		path: "",
-		content: "",
-	});
 });
 
 describe("inline-empty content with a content_hash is fetched, not written", () => {
@@ -102,21 +97,14 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 		// Distrusted inline-"" is stripped, and the content-absent leg NEVER
 		// fetches (getNote-for-sync deleted): the replay row carries the real
 		// bytes. No 0-byte file can materialize from the fabricated "".
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
 		expect(replay).toHaveBeenCalled();
 	});
 
-	test("legacy (non-CRDT) upsert: content:'' + content_hash fetches, never applies ''", async () => {
+	test("legacy (non-CRDT) upsert: content:'' + content_hash heals via op-log seq-replay, never applies ''", async () => {
 		const engine = createEngine();
-		(mockApi.getNote as ReturnType<typeof mock>).mockResolvedValue({
-			path: "plain.md",
-			title: "plain",
-			content: "# real body",
-			folder: "",
-			tags: [],
-			mtime: 1,
-			updated_at: "2026-01-01T00:00:00Z",
+		const replay = spyOn(engine as any, "catchupViaSeqReplay").mockResolvedValue({
+			applied: 0,
 		});
 
 		await engine.handleStreamEvent({
@@ -127,7 +115,7 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			version: 2,
 		} as any);
 
-		expect(mockApi.getNote).toHaveBeenCalledWith("plain.md");
+		expect(replay).toHaveBeenCalled();
 		for (const call of (mockApp.vault.create as ReturnType<typeof mock>).mock.calls) {
 			expect(call[1]).not.toBe("");
 		}
@@ -166,14 +154,13 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			content_hash: "H-empty",
 			version: 1,
 		} as any);
-		expect(mockApi.getNote).not.toHaveBeenCalled();
 		const created = (mockApp.vault.create as ReturnType<typeof mock>).mock.calls;
 		expect(created.map((c: unknown[]) => c[0])).toContain("b.md");
 	});
 
-	test("a genuinely empty inline body WITHOUT a content_hash is left alone", async () => {
-		// No hash means no poisoning is possible and no fetch is warranted; the
-		// legacy inline-apply keeps its one-roundtrip behavior.
+	test("a genuinely empty inline body WITHOUT a content_hash is applied inline", async () => {
+		// No hash means no poisoning is possible: the legacy inline-apply keeps its
+		// behavior and writes the empty body straight through, no distrust/catch-up.
 		const engine = createEngine();
 
 		await engine.handleStreamEvent({
@@ -183,6 +170,6 @@ describe("inline-empty content with a content_hash is fetched, not written", () 
 			version: 1,
 		} as any);
 
-		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(mockApp.vault.create).toHaveBeenCalledWith("empty.md", "");
 	});
 });

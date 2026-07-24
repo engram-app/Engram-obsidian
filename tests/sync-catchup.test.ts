@@ -27,14 +27,6 @@ const mockApi = {
 	pushNote: mock().mockResolvedValue({ note: { id: "sid" }, chunks_indexed: 1 }),
 	pushNotesBatch: mock().mockRejectedValue({ status: 404 }),
 	deleteNote: mock().mockResolvedValue({ deleted: true, path: "" }),
-	getNote: mock().mockResolvedValue({
-		path: "n.md",
-		title: "n",
-		content: "body",
-		folder: "",
-		tags: [],
-		mtime: 1,
-	}),
 	health: mock().mockResolvedValue(true),
 	ping: mock().mockResolvedValue({ ok: true }),
 	pushAttachment: mock().mockResolvedValue({ attachment: {} }),
@@ -334,7 +326,6 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		} as any);
 
 		expect((mockApi as any).getUpdates).not.toHaveBeenCalled();
-		expect((mockApi.getNote as any).mock.calls.length).toBe(0);
 		expect(applyRemoteUpdate).not.toHaveBeenCalled();
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(enroll).toHaveBeenCalledWith("note-id-1");

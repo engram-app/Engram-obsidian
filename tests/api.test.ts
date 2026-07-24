@@ -711,21 +711,6 @@ describe("EngramApi", () => {
 		});
 	});
 
-	describe("getNote", () => {
-		test("sends GET /notes/{encoded_path}", async () => {
-			mockRequestUrl.mockResolvedValueOnce({
-				status: 200,
-				json: { path: "Notes/My File.md", content: "# Hello", version: 1 },
-			} as any);
-			const result = await api.getNote("Notes/My File.md");
-			const opts = mockRequestUrl.mock.calls[0][0] as any;
-			expect(opts.method).toBe("GET");
-			expect(opts.url).toContain("Notes/My%20File.md");
-			expect(opts.url).not.toContain("%2F");
-			expect(result).toEqual({ path: "Notes/My File.md", content: "# Hello", version: 1 });
-		});
-	});
-
 	describe("pushAttachment", () => {
 		test("sends POST /attachments with path, content_base64, mime_type, mtime", async () => {
 			mockRequestUrl.mockResolvedValueOnce({
@@ -947,13 +932,6 @@ describe("path encoding for by-path URL methods", () => {
 		mockRequestUrl.mockResolvedValue({ json: {} });
 		await api().deleteAttachment("Legal/Formation/x.pdf");
 		expect(lastUrl()).toContain("/attachments/Legal/Formation/x.pdf");
-		expect(lastUrl()).not.toContain("%2F");
-	});
-
-	test("getNote keeps real slashes", async () => {
-		mockRequestUrl.mockResolvedValue({ json: {} });
-		await api().getNote("Notes/Sub/Deep.md");
-		expect(lastUrl()).toContain("/notes/Notes/Sub/Deep.md");
 		expect(lastUrl()).not.toContain("%2F");
 	});
 

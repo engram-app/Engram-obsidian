@@ -316,23 +316,6 @@ export interface SyncStatus {
 	error?: string;
 }
 
-/** Full note as returned by GET /notes/{path} */
-export interface NoteDetail {
-	path: string;
-	title: string;
-	content: string;
-	/** Opaque server-side content hash (protocol rev). */
-	content_hash?: string;
-	folder: string;
-	tags: string[];
-	mtime: number;
-	created_at: string;
-	updated_at: string;
-	version?: number;
-	parse_status?: "ok" | "degraded";
-	parse_reason?: ParseReason | null;
-}
-
 /** Attachment metadata as returned by POST /attachments */
 export interface AttachmentResponse {
 	attachment: {
