@@ -5,7 +5,7 @@ import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } f
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
 import { encodeUpdateFrame } from "./crdt/channel";
-import type { CrdtManager } from "./crdt/manager";
+import type { CrdtManager, DocKind } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import { uuid7 } from "./crdt/uuid7";
 import { devLog } from "./dev-log";
@@ -6356,8 +6356,12 @@ export class SyncEngine {
 	 *  wrap (`encodeUpdateFrame`), so the frame the server applies via
 	 *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
 	 *  would deliver — a divergent encoding would corrupt content on merge. */
-	private encodeGenesisFrame(content: string): string {
-		return encodeUpdateFrame(this.crdt!.encodeGenesisUpdate(content));
+	private encodeGenesisFrame(content: string, kind: DocKind = "note"): string {
+		// Thread the doc kind: this is the ONE encode site that bypasses the
+		// manager's docKind (a throwaway doc, no entry()), so a canvas batch-genesis
+		// must be told to seed structurally — else it stuffs canvas JSON into the
+		// markdown body Y.Text and every peer projects an empty {nodes,edges} (#306).
+		return encodeUpdateFrame(this.crdt!.encodeGenesisUpdate(content, kind));
 	}
 
 	/** Record local state after a genesis note's server row is created (batch
@@ -6547,7 +6551,7 @@ export class SyncEngine {
 				else failed++;
 				continue;
 			}
-			const b64 = this.encodeGenesisFrame(content);
+			const b64 = this.encodeGenesisFrame(content, file.extension === "canvas" ? "canvas" : "note");
 			const size = b64.length;
 			// #245: snapshot the path now — TFile.path is live and a mid-request
 			// rename would otherwise desync result matching + the pushing set.

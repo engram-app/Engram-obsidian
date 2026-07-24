@@ -21273,8 +21273,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  wrap (`encodeUpdateFrame`), so the frame the server applies via
    *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
    *  would deliver — a divergent encoding would corrupt content on merge. */
-  encodeGenesisFrame(content) {
-    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content));
+  encodeGenesisFrame(content, kind = "note") {
+    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content, kind));
   }
   /** Record local state after a genesis note's server row is created (batch
    *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
@@ -21383,7 +21383,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
-      let b64 = this.encodeGenesisFrame(content), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
+      let b64 = this.encodeGenesisFrame(content, file.extension === "canvas" ? "canvas" : "note"), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
       if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;

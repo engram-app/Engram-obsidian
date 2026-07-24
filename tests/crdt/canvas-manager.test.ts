@@ -61,6 +61,20 @@ test("hasHistory reflects canvas structure, not the (always-empty) body Y.Text",
 	await mgr.destroy();
 });
 
+test("encodeGenesisUpdate(canvas) seeds a peer STRUCTURALLY, not into the markdown body", () => {
+	// The batch-genesis path (crdt_create_batch) is the ONE encode site that
+	// bypasses docKind, so it must pass kind="canvas" or a peer applies the frame
+	// as an empty {nodes,edges} and the canvas silently never materializes (#306).
+	const { mgr } = makeCanvasManager("canvas-genesis");
+	const frame = mgr.encodeGenesisUpdate(board([NODE]), "canvas");
+
+	const peer = new Y.Doc();
+	Y.applyUpdate(peer, frame);
+	expect(peer.getMap("nodes").has("n1")).toBe(true);
+	// The markdown body Y.Text must be empty — the JSON was NOT char-ingested.
+	expect(peer.getText("content").toString()).toBe("");
+});
+
 test("projectedText returns the canvas JSON for a .canvas doc", async () => {
 	const { mgr } = makeCanvasManager("canvas-project");
 	mgr.markSynced("board.canvas");
