@@ -399,11 +399,13 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 		expect(mockApi.getAttachment).toHaveBeenCalledWith("Assets/img.png");
 	});
 
-	test("non-markdown note upsert still processes via legacy path when CRDT active", async () => {
+	test("a canvas upsert with NO note_id falls through to the legacy getNote path", async () => {
 		const engine = createEngine();
 		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
 
-		// canvas file — not .md — should still go through legacy applyChange
+		// A canvas upsert carrying no id (and no sidecar mapping) can't key a CRDT
+		// room, so it falls through to the legacy getNote fetch (the same fallback
+		// markdown takes when it has no resolvable id).
 		(mockApi.getNote as any).mockResolvedValueOnce({
 			path: "Notes/board.canvas",
 			title: "board",
@@ -420,8 +422,26 @@ describe("C1 — handleStreamEvent: CRDT gate for markdown content", () => {
 			timestamp: Date.now(),
 		});
 
-		// canvas fetch should happen (legacy path)
 		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/board.canvas");
+	});
+
+	test("a canvas upsert WITH a note_id takes the CRDT branch (id bookkeeping, no legacy getNote) since #306", async () => {
+		const engine = createEngine();
+		engine.setCrdtManager({ applyLocalEdit: mock(async () => {}) } as any);
+		const enroll = mock((_p: string) => {});
+		engine.setCrdtEnrollment({ enroll } as any);
+
+		await engine.handleStreamEvent({
+			event_type: "upsert",
+			path: "Notes/board.canvas",
+			id: "id-board",
+			timestamp: Date.now(),
+		} as never);
+
+		// CRDT owns canvas now — no legacy content fetch; the id is confirmed and the
+		// note enrolled (canvas enrolls even when idle, to pull its Yjs state).
+		expect(mockApi.getNote).not.toHaveBeenCalled();
+		expect(enroll).toHaveBeenCalledWith("id-board");
 	});
 });
 
@@ -449,6 +469,40 @@ describe("C1 — applyChange: CRDT gate skips disk write for markdown", () => {
 		expect(result).toBe(false);
 		expect(mockApp.vault.modify).not.toHaveBeenCalled();
 		expect(mockApp.vault.create).not.toHaveBeenCalled();
+	});
+
+	test("applyChange for a canvas note enrolls for Yjs convergence and NEVER writes the vestigial seq-feed content (#306)", async () => {
+		const engine = createEngine();
+		const enroll = mock((_p: string) => {});
+		const applyLocalEdit = mock(async () => null);
+		engine.setCrdtManager({ applyLocalEdit } as any);
+		engine.setCrdtEnrollment({ enroll } as any);
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Notes/board.canvas", "id-board");
+		engine.setNoteIdMap(noteIdMap);
+		// getFileByPath null → discovery. Canvas converges over the Yjs handshake
+		// ONLY, so it must enroll (even idle) and must NOT write the vestigial
+		// seq-feed `content` (the backend keeps notes.content stale for canvas).
+
+		const result = await engine.applyChange({
+			path: "Notes/board.canvas",
+			title: "board",
+			content: '{"nodes":[{"id":"STALE","type":"text"}],"edges":[]}',
+			folder: "Notes",
+			tags: [],
+			mtime: Date.now() / 1000,
+			updated_at: new Date().toISOString(),
+			deleted: false,
+			version: 1,
+			id: "id-board",
+		} as never);
+
+		expect(result).toBe(false);
+		expect(enroll).toHaveBeenCalledWith("id-board");
+		// The vestigial content is NEVER materialized to disk, nor seeded into a doc.
+		expect(mockApp.vault.create).not.toHaveBeenCalled();
+		expect(mockApp.vault.modify).not.toHaveBeenCalled();
+		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
 
 	test("applyChange materializes a not-yet-local markdown note WITHOUT enrolling it (cold discovery, room-free)", async () => {
@@ -632,10 +686,13 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		// Simulate teardown: remove CRDT manager (what setupNoteStream now does)
 		engine.setCrdtManager(null as any);
 
-		// A note OUTSIDE the CRDT domain (.canvas) still takes the kept LWW REST
-		// path. (In-cap markdown no longer REST-falls-back — CRDT is its sole
-		// path — so it can't stand in for the legacy-path regression here.)
-		const file = new TFile("note.canvas");
+		// A note OUTSIDE the CRDT domain still takes the kept LWW REST path. Since
+		// #306 both md and canvas are CRDT-sole, so the only REST note left is an
+		// OVERSIZED one (> the CRDT transport cap) — use that for the regression.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -649,11 +706,15 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 // ---------------------------------------------------------------------------
 
 describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
-	test("without CRDT manager set, a non-CRDT note modify goes through pushNote (not dropped)", async () => {
+	test("without CRDT manager set, a legacy-path note modify goes through pushNote (not dropped)", async () => {
 		const engine = createEngine();
-		// No setCrdtManager call — simulates vaultId=null path where CRDT is never wired
-
-		const file = new TFile("note.canvas");
+		// No setCrdtManager call — simulates vaultId=null path where CRDT is never wired.
+		// Since #306 both md and canvas are CRDT-eligible; the legacy REST push now
+		// only serves OVERSIZED notes (> the CRDT transport cap), so use one here.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -712,12 +773,15 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graceful degradation: channel join gate — CRDT not connected", () => {
-	test("with crdt NOT connected (manager null), a non-CRDT note edit goes through pushNote (legacy)", async () => {
+	test("with crdt NOT connected (manager null), an oversized note edit goes through pushNote (legacy)", async () => {
 		const engine = createEngine();
 		// Simulates: vaultId known but crdt: topic join has not been acknowledged yet
-		// (or backend errored on join) — manager is null, legacy path active.
-
-		const file = new TFile("note.canvas");
+		// (or backend errored on join) — manager is null, legacy path active. Since
+		// #306 the legacy REST push only serves oversized notes (> CRDT cap).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -783,7 +847,11 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		// Simulate channel disconnect: clear manager (mirrors onStatusChange false handler)
 		engine.setCrdtManager(null);
 
-		const file = new TFile("note.canvas");
+		// Since #306 the legacy REST push only serves oversized notes (> CRDT cap).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -896,14 +964,18 @@ describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
 		engine.setSyncBlocked(true);
 
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		await engine.flushFromCrdt("Notes/echo-test.canvas", "content");
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
 
 		// Now unblock and verify handleModify proceeds (not echo-suppressed).
-		// A .canvas note takes the kept LWW REST path, so a non-suppressed edit
-		// is observable as a pushNote call (in-cap md no longer REST-pushes).
+		// Since #306 both md and canvas are CRDT-sole; the legacy REST path (where
+		// recentlyFlushed matters) only serves oversized notes, so a non-suppressed
+		// edit is observable as a pushNote call on an oversized note.
 		engine.setSyncBlocked(false);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
 
-		const file = new TFile("Notes/echo-test.canvas");
+		const file = new TFile("Notes/echo-test.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 

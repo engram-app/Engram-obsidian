@@ -2,7 +2,16 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { rlog } from "../remote-log";
 import { diffIntoYText, seedOnce } from "./bridge";
+import { canvasIsEmpty, projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { parseFrontmatter, projectNote, splitFrontmatter } from "./frontmatter-codec";
+
+/**
+ * A note's CRDT doc shape. `"note"` = markdown (frontmatter Y.Map + body
+ * Y.Text). `"canvas"` = structural (nodes/edges Y.Maps — see canvas-codec).
+ * The manager learns a doc's kind once, at first `entry()`, via the `docKind`
+ * option, and branches its seed + disk-projection on it.
+ */
+export type DocKind = "note" | "canvas";
 
 /**
  * Transaction origin stamped on remotely-applied updates. Updates carrying
@@ -121,11 +130,22 @@ export interface CrdtManagerOptions {
 	 * side is idempotent (no-op when nothing is staged), so this is cheap.
 	 */
 	onSynced?: (noteId: string) => void;
+	/**
+	 * Resolve a note's doc shape (markdown vs canvas) from its id. Called ONCE
+	 * per doc, when `entry()` first mints it, and cached on the entry. sync.ts
+	 * wires this from the note's path (`.canvas` → "canvas"). Absent/unknown →
+	 * "note" (markdown), the safe default that keeps every existing caller and
+	 * test unchanged.
+	 */
+	docKind?: (noteId: string) => DocKind;
 }
 
 interface Entry {
 	doc: Y.Doc;
 	persistence: IndexeddbPersistence;
+	/** This doc's shape, resolved once at creation via `opts.docKind`. Selects
+	 *  the seed codec (markdown vs canvas) and the disk projection. */
+	kind: DocKind;
 	text: Y.Text;
 	/** Resolves once IndexeddbPersistence has replayed stored updates. */
 	ready: Promise<void>;
@@ -397,18 +417,28 @@ export class CrdtManager {
 			}
 		}
 
-		const lca = hasLca ?? this.textHasHistory(e.text);
+		const lca =
+			hasLca ?? (e.kind === "canvas" ? !canvasIsEmpty(e.doc) : this.textHasHistory(e.text));
 
 		// Adopt-first seed gate (#161): a history-less doc whose disk content is
 		// byte-identical to the last-synced content has nothing local to
 		// preserve — seeding it would re-encode server-known content on this
-		// client's lineage (the #846 doubling). Leave the doc empty (body AND
-		// frontmatter) and let the first STEP2 populate it on the server's
-		// lineage; later real edits diff in on that shared history. Returns
-		// `true` ("handled, nothing to push") — a legacy fallback here would
-		// mass re-push every known-synced file on a fresh-IDB cold start.
+		// client's lineage (the #846 doubling). Leave the doc empty and let the
+		// first STEP2 populate it on the server's lineage; later real edits diff in
+		// on that shared history. Returns `content` ("handled, nothing to push") —
+		// a legacy fallback here would mass re-push every known-synced file on a
+		// fresh-IDB cold start.
 		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) {
 			return content;
+		}
+
+		if (e.kind === "canvas") {
+			// Structural docs are immune to the #846 second-lineage doubling (Y.Map
+			// keyed by id merges LWW-per-element, never appends), so the seedOnce
+			// gate the markdown body needs is unnecessary — the codec's upsert is
+			// idempotent and merge-safe. Malformed canvas → NOT consumed (null): the
+			// caller's drift-copy / legacy fallback owns it, never a corrupt merge.
+			return seedCanvasInto(e.doc, content) ? content : null;
 		}
 
 		this.seedContentInto(e.doc, e.text, content, lca);
@@ -453,10 +483,11 @@ export class CrdtManager {
 	 * doubling (#846) — the real doc adopts the server lineage on its first
 	 * handshake.
 	 */
-	encodeGenesisUpdate(content: string): Uint8Array {
+	encodeGenesisUpdate(content: string, kind: DocKind = "note"): Uint8Array {
 		const doc = new Y.Doc();
 		try {
-			this.seedContentInto(doc, doc.getText(CONTENT_KEY), content, false);
+			if (kind === "canvas") seedCanvasInto(doc, content);
+			else this.seedContentInto(doc, doc.getText(CONTENT_KEY), content, false);
 			return Y.encodeStateAsUpdate(doc);
 		} finally {
 			doc.destroy();
@@ -553,12 +584,15 @@ export class CrdtManager {
 	 * transiently-empty in-memory doc.
 	 */
 	async hasHistory(noteId: string): Promise<boolean> {
-		return this.textHasHistory((await this.entry(noteId)).text);
+		const e = await this.entry(noteId);
+		return e.kind === "canvas" ? !canvasIsEmpty(e.doc) : this.textHasHistory(e.text);
 	}
 
-	/** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
+	/** Full reconstructed file as it would be written to disk: a markdown file
+	 *  (frontmatter fence + body) or a canvas JSON document. */
 	async projectedText(noteId: string): Promise<string> {
 		const e = await this.entry(noteId);
+		if (e.kind === "canvas") return projectCanvas(e.doc);
 		const { order, values } = frontmatterOf(e.doc);
 		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
@@ -677,6 +711,12 @@ export class CrdtManager {
 	 */
 	async flattenIfBloated(noteId: string): Promise<boolean> {
 		const e = await this.entry(noteId);
+		// ponytail: no structural flatten for canvas yet. This path reseeds via the
+		// markdown frontmatter+body codec, which would wipe the nodes/edges maps.
+		// A canvas that crosses the bloat threshold keeps its full state vector;
+		// add a nodes/edges-preserving flatten in Phase 2 if a real board hits it
+		// (mirrors the backend do_structural_checkpoint no-flatten decision).
+		if (e.kind === "canvas") return false;
 		const encoded = Y.encodeStateAsUpdate(e.doc);
 		const clientIds = Y.decodeStateVector(Y.encodeStateVector(e.doc)).size;
 
@@ -802,10 +842,25 @@ export class CrdtManager {
 		// CrdtManagerOptions.dbPrefix) — but `id` (bare, no prefix) is still what
 		// goes on the wire and keys the in-memory `docs` map.
 		const persistence = new IndexeddbPersistence(this.storeName(noteId), doc);
+		const kind = this.opts.docKind?.(noteId) ?? "note";
+		// Markdown body Y.Text. For a canvas doc this stays permanently empty (its
+		// data lives in the nodes/edges Y.Maps); it exists only so the many
+		// markdown code paths that read `entry.text` never see undefined.
 		const text = doc.getText(CONTENT_KEY);
 		const ready: Promise<void> = persistence.whenSynced.then(() => undefined);
+		// `hasContent` differs by shape: markdown = body Y.Text non-empty; canvas =
+		// nodes/edges maps non-empty. Gates the empty-genesis flush guard (#288).
+		const hasContent = () => (kind === "canvas" ? !canvasIsEmpty(doc) : text.length > 0);
 		// Created BEFORE the listeners below so they can tick entry.remoteSeq.
-		const entry: Entry = { doc, persistence, text, ready, remoteSeq: 0, hadContent: false };
+		const entry: Entry = {
+			doc,
+			persistence,
+			kind,
+			text,
+			ready,
+			remoteSeq: 0,
+			hadContent: false,
+		};
 
 		// Surface IndexedDB quota / storage errors via onPersistError instead of
 		// throwing into the sync loop. On iOS WKWebView the per-origin quota is
@@ -815,7 +870,7 @@ export class CrdtManager {
 
 		// Local-edit path: forward update to the channel; skip remote-origin updates.
 		doc.on("update", (update: Uint8Array, origin: unknown) => {
-			if (text.length > 0) entry.hadContent = true; // also covers IDB-replay updates
+			if (hasContent()) entry.hadContent = true; // also covers IDB-replay updates
 			if (origin === REMOTE_ORIGIN) return;
 			if (this.opts.canSendLive && !this.opts.canSendLive(id)) return; // HOLD: not create-acked
 			this.opts.onUpdate(id, update, origin);
@@ -825,34 +880,40 @@ export class CrdtManager {
 		// Reconstruct the full file (frontmatter fence + body) from the Y.Map/Y.Array
 		// and body Y.Text so disk always gets a complete, valid markdown file.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
-			if (text.length > 0) entry.hadContent = true;
+			if (hasContent()) entry.hadContent = true;
 			if (origin !== REMOTE_ORIGIN) return;
 			entry.remoteSeq += 1;
-			const { order, values } = frontmatterOf(doc);
-			const raws = rawFrontmatterOf(doc);
-			const body = text.toJSON();
 			// Guard A (#288, e2e test_39): an unseeded genesis (structure ops only,
-			// body never held content) must NOT flush empty over the creator's
+			// content never held) must NOT flush empty over the creator's
 			// just-written file — the wipe echo-skips on the empty hash and locks
 			// in on both devices. Invariant (crdt-editor-bind-race-pollution.md,
 			// #257 bind-path analog): empty + never-seeded is NEVER a legitimate
 			// empty; a genuine remote delete-all had content first (hadContent
 			// true) and still flushes below. Genuinely empty notes materialize via
 			// sync.ts materializeEmptyDiscovered → flushFromCrdt, not this listener.
-			if (body.length === 0 && !entry.hadContent) {
+			if (!hasContent() && !entry.hadContent) {
 				rlog().warn(
 					"crdt",
-					`remote-merge flush SKIPPED for ${noteId}: empty body on never-seeded doc (#288 genesis guard)`,
+					`remote-merge flush SKIPPED for ${noteId}: empty ${kind} on never-seeded doc (#288 genesis guard)`,
 				);
 				return;
 			}
+			// Reconstruct the full on-disk file from the doc's shared types: a
+			// markdown file (frontmatter fence + body) or a canvas JSON document.
+			const projected =
+				kind === "canvas"
+					? projectCanvas(doc)
+					: projectNote(
+							frontmatterOf(doc).order,
+							frontmatterOf(doc).values,
+							text.toJSON(),
+							rawFrontmatterOf(doc),
+						);
 			// Record the flush promise (do NOT fire-and-forget): applyRemoteUpdate
 			// awaits it so a write failure rejects the apply and the caller leaves
 			// crdtHead unadvanced (#235). Promise.resolve() normalizes a sync/void
 			// return from a test double into an awaitable.
-			const flush = Promise.resolve(
-				this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws)),
-			);
+			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected));
 			this.pendingFlush.set(id, flush);
 			// Room-path updates (crdt/channel readSyncMessage applies straight to
 			// the doc) never consume this entry the way applyRemoteUpdate does —
@@ -869,9 +930,9 @@ export class CrdtManager {
 
 		this.docs.set(id, entry);
 		await ready;
-		// IDB hydration replayed stored updates above; a rehydrated non-empty body
+		// IDB hydration replayed stored updates above; rehydrated non-empty content
 		// counts as "has held content" (#288) even if no listener observed it.
-		if (text.length > 0) entry.hadContent = true;
+		if (hasContent()) entry.hadContent = true;
 		return entry;
 	}
 

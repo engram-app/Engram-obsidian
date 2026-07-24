@@ -287,6 +287,11 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
 		// is staged for this note_id), so fire-and-forget is safe here.
 		onSynced: (noteId) => void syncEngine.commitCrdtConvergence(noteId),
+		// Doc shape from the note's path. `.canvas` → the structural nodes/edges
+		// schema; everything else → markdown. Resolved once per doc at creation.
+		// The path is always mapped before a doc is minted in the normal push/pull
+		// flows; an unmapped id (rare heal path) safely defaults to markdown.
+		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
 	});
 
 	const channel = new CrdtChannel({

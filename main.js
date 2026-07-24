@@ -12209,6 +12209,79 @@ function diffIntoYText(text2, incoming) {
   text2.doc ? text2.doc.transact(apply) : apply();
 }
 
+// src/crdt/canvas-codec.ts
+var NODES_KEY = "nodes", EDGES_KEY = "edges", NODES_ORDER_KEY = "nodes_order", EDGES_ORDER_KEY = "edges_order", CANVAS_META_KEY = "canvas_meta";
+function parseCanvas(json) {
+  let data;
+  try {
+    data = JSON.parse(json);
+  } catch (e) {
+    return null;
+  }
+  if (data === null || typeof data != "object" || Array.isArray(data)) return null;
+  let obj = data, nodes = asElements(obj.nodes), edges = asElements(obj.edges);
+  if (nodes === null || edges === null) return null;
+  let meta = {};
+  for (let [k, v] of Object.entries(obj))
+    k !== NODES_KEY && k !== EDGES_KEY && (meta[k] = v);
+  return { nodes, edges, meta };
+}
+function asElements(v) {
+  if (v === void 0) return [];
+  if (!Array.isArray(v)) return null;
+  let out = [];
+  for (let el of v) {
+    if (el === null || typeof el != "object" || Array.isArray(el) || typeof el.id != "string") return null;
+    out.push(el);
+  }
+  return out;
+}
+function seedCanvasInto(doc2, json) {
+  let parsed = parseCanvas(json);
+  return parsed === null ? !1 : (doc2.transact(() => {
+    upsertElements(doc2.getMap(NODES_KEY), doc2.getArray(NODES_ORDER_KEY), parsed.nodes), upsertElements(doc2.getMap(EDGES_KEY), doc2.getArray(EDGES_ORDER_KEY), parsed.edges), upsertMeta(doc2.getMap(CANVAS_META_KEY), parsed.meta);
+  }), !0);
+}
+function upsertElements(map3, order, elements) {
+  let ids = new Set(elements.map((e) => e.id));
+  for (let el of elements) {
+    let cur = map3.get(el.id);
+    (cur === void 0 || !jsonEqual(cur, el)) && map3.set(el.id, el);
+  }
+  for (let id2 of [...map3.keys()])
+    ids.has(id2) || map3.delete(id2);
+  order.length > 0 && order.delete(0, order.length), elements.length > 0 && order.insert(
+    0,
+    elements.map((e) => e.id)
+  );
+}
+function upsertMeta(map3, meta) {
+  for (let [k, v] of Object.entries(meta))
+    jsonEqual(map3.get(k), v) || map3.set(k, v);
+  for (let k of [...map3.keys()])
+    k in meta || map3.delete(k);
+}
+function projectCanvas(doc2) {
+  let meta = doc2.getMap(CANVAS_META_KEY).toJSON(), nodes = orderedElements(doc2.getMap(NODES_KEY), doc2.getArray(NODES_ORDER_KEY)), edges = orderedElements(doc2.getMap(EDGES_KEY), doc2.getArray(EDGES_ORDER_KEY));
+  return JSON.stringify({ ...meta, nodes, edges }, null, "	");
+}
+function orderedElements(map3, order) {
+  let out = [], seen = /* @__PURE__ */ new Set();
+  for (let id2 of order.toArray()) {
+    let el = map3.get(id2);
+    el !== void 0 && !seen.has(id2) && (out.push(el), seen.add(id2));
+  }
+  for (let id2 of [...map3.keys()].sort())
+    seen.has(id2) || out.push(map3.get(id2));
+  return out;
+}
+function canvasIsEmpty(doc2) {
+  return doc2.getMap(NODES_KEY).size === 0 && doc2.getMap(EDGES_KEY).size === 0;
+}
+function jsonEqual(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
 // node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = /* @__PURE__ */ Symbol.for("yaml.alias"), DOC = /* @__PURE__ */ Symbol.for("yaml.document"), MAP = /* @__PURE__ */ Symbol.for("yaml.map"), PAIR = /* @__PURE__ */ Symbol.for("yaml.pair"), SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar"), SEQ = /* @__PURE__ */ Symbol.for("yaml.seq"), NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type"), isAlias = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === ALIAS, isDocument = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === DOC, isMap = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === MAP, isPair = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === PAIR, isScalar = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SCALAR, isSeq = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SEQ;
 function isCollection(node) {
@@ -17191,8 +17264,8 @@ var _CrdtManager = class _CrdtManager {
       if (!stable)
         return null;
     }
-    let lca = hasLca != null ? hasLca : this.textHasHistory(e.text);
-    return !lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)) || this.seedContentInto(e.doc, e.text, content, lca), content;
+    let lca = hasLca != null ? hasLca : e.kind === "canvas" ? !canvasIsEmpty(e.doc) : this.textHasHistory(e.text);
+    return !lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)) ? content : e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (this.seedContentInto(e.doc, e.text, content, lca), content);
   }
   /**
    * Ingest a disk-content string into a doc's Y.Text + frontmatter shared types
@@ -17225,10 +17298,10 @@ var _CrdtManager = class _CrdtManager {
    * doubling (#846) — the real doc adopts the server lineage on its first
    * handshake.
    */
-  encodeGenesisUpdate(content) {
+  encodeGenesisUpdate(content, kind = "note") {
     let doc2 = new Doc();
     try {
-      return this.seedContentInto(doc2, doc2.getText(CONTENT_KEY), content, !1), encodeStateAsUpdate(doc2);
+      return kind === "canvas" ? seedCanvasInto(doc2, content) : this.seedContentInto(doc2, doc2.getText(CONTENT_KEY), content, !1), encodeStateAsUpdate(doc2);
     } finally {
       doc2.destroy();
     }
@@ -17301,11 +17374,15 @@ var _CrdtManager = class _CrdtManager {
    * transiently-empty in-memory doc.
    */
   async hasHistory(noteId) {
-    return this.textHasHistory((await this.entry(noteId)).text);
+    let e = await this.entry(noteId);
+    return e.kind === "canvas" ? !canvasIsEmpty(e.doc) : this.textHasHistory(e.text);
   }
-  /** Full reconstructed file (frontmatter fence + body) as it would be written to disk. */
+  /** Full reconstructed file as it would be written to disk: a markdown file
+   *  (frontmatter fence + body) or a canvas JSON document. */
   async projectedText(noteId) {
-    let e = await this.entry(noteId), { order, values } = frontmatterOf(e.doc);
+    let e = await this.entry(noteId);
+    if (e.kind === "canvas") return projectCanvas(e.doc);
+    let { order, values } = frontmatterOf(e.doc);
     return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
   }
   /**
@@ -17380,7 +17457,9 @@ var _CrdtManager = class _CrdtManager {
    * Returns true if the doc was flattened, false if the threshold was not met.
    */
   async flattenIfBloated(noteId) {
-    let e = await this.entry(noteId), encoded = encodeStateAsUpdate(e.doc), clientIds = decodeStateVector(encodeStateVector(e.doc)).size;
+    let e = await this.entry(noteId);
+    if (e.kind === "canvas") return !1;
+    let encoded = encodeStateAsUpdate(e.doc), clientIds = decodeStateVector(encodeStateVector(e.doc)).size;
     if (encoded.length < _CrdtManager.MAX_CONTENT_BYTES || clientIds < _CrdtManager.MAX_CLIENT_IDS)
       return !1;
     let plaintext = e.text.toJSON(), { order, values } = frontmatterOf(e.doc), raws = rawFrontmatterOf(e.doc), id2 = this.docId(noteId);
@@ -17431,35 +17510,45 @@ var _CrdtManager = class _CrdtManager {
    *   remote update → flushed to disk via `onFlushToDisk`; NOT forwarded
    */
   async entry(noteId) {
+    var _a, _b, _c;
     let id2 = this.docId(noteId), cached = this.docs.get(id2);
     if (cached)
       return await cached.ready, cached;
-    let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), text2 = doc2.getText(CONTENT_KEY), ready = persistence.whenSynced.then(() => {
-    }), entry = { doc: doc2, persistence, text: text2, ready, remoteSeq: 0, hadContent: !1 };
+    let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), ready = persistence.whenSynced.then(() => {
+    }), hasContent2 = () => kind === "canvas" ? !canvasIsEmpty(doc2) : text2.length > 0, entry = {
+      doc: doc2,
+      persistence,
+      kind,
+      text: text2,
+      ready,
+      remoteSeq: 0,
+      hadContent: !1
+    };
     return persistence.on("error", (err) => {
-      var _a, _b;
-      return (_b = (_a = this.opts).onPersistError) == null ? void 0 : _b.call(_a, noteId, err);
+      var _a2, _b2;
+      return (_b2 = (_a2 = this.opts).onPersistError) == null ? void 0 : _b2.call(_a2, noteId, err);
     }), doc2.on("update", (update, origin) => {
-      text2.length > 0 && (entry.hadContent = !0), origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
+      hasContent2() && (entry.hadContent = !0), origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
     }), doc2.on("update", (_u, origin) => {
-      if (text2.length > 0 && (entry.hadContent = !0), origin !== REMOTE_ORIGIN) return;
-      entry.remoteSeq += 1;
-      let { order, values } = frontmatterOf(doc2), raws = rawFrontmatterOf(doc2), body = text2.toJSON();
-      if (body.length === 0 && !entry.hadContent) {
+      if (hasContent2() && (entry.hadContent = !0), origin !== REMOTE_ORIGIN) return;
+      if (entry.remoteSeq += 1, !hasContent2() && !entry.hadContent) {
         rlog().warn(
           "crdt",
-          `remote-merge flush SKIPPED for ${noteId}: empty body on never-seeded doc (#288 genesis guard)`
+          `remote-merge flush SKIPPED for ${noteId}: empty ${kind} on never-seeded doc (#288 genesis guard)`
         );
         return;
       }
-      let flush = Promise.resolve(
-        this.opts.onFlushToDisk(noteId, projectNote(order, values, body, raws))
-      );
+      let projected = kind === "canvas" ? projectCanvas(doc2) : projectNote(
+        frontmatterOf(doc2).order,
+        frontmatterOf(doc2).values,
+        text2.toJSON(),
+        rawFrontmatterOf(doc2)
+      ), flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected));
       this.pendingFlush.set(id2, flush), flush.catch(() => {
       }).finally(() => {
         this.pendingFlush.get(id2) === flush && this.pendingFlush.delete(id2);
       });
-    }), this.docs.set(id2, entry), await ready, text2.length > 0 && (entry.hadContent = !0), entry;
+    }), this.docs.set(id2, entry), await ready, hasContent2() && (entry.hadContent = !0), entry;
   }
   /**
    * Returns true when the Y.Text already carries CRDT history (content
@@ -17771,7 +17860,7 @@ function exceedsCrdtNoteLimit(content, maxBytes) {
   return maxBytes > 0 && new TextEncoder().encode(content).length > maxBytes;
 }
 async function routeModify(file, crdt, maxBytes) {
-  if (!file.isMarkdown) return null;
+  if (!file.crdtEligible) return null;
   let content = await file.readContent();
   if (exceedsCrdtNoteLimit(content, maxBytes))
     return null;
@@ -18495,7 +18584,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  exists. Md + size gated exactly like the pre-push enroll (an oversized
    *  doc must never enroll — 8 MB WS frame limit). */
   refireEnrollmentOnFirstConfirm(noteId, path, content) {
-    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || path.endsWith(".md") && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
+    !noteId || !this.crdtEnrollment || this.isNoteConfirmed(noteId) || this.isCrdtEligiblePath(path) && (exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) || this.isLiveBound((0, import_obsidian21.normalizePath)(path)) && (this.crdtEnrollment.reset(noteId), this.crdtEnrollment.enroll(noteId)));
   }
   /** Drop a note_id's confirmed status when its server row is deleted, so a
    *  subsequent push of the same id (a rename's new-path push) takes the
@@ -18577,11 +18666,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       (_c = this.crdtEnrollment) == null || _c.reset(localId);
     }
     let file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
-    if (this.crdt && file instanceof import_obsidian21.TFile && this.isMarkdown(file))
+    if (this.crdt && file instanceof import_obsidian21.TFile && this.isCrdtEligible(file))
       try {
         let consumed = await routeModify(
           {
-            isMarkdown: !0,
+            crdtEligible: !0,
             noteId: effectiveId,
             readContent: () => this.app.vault.cachedRead(file)
           },
@@ -18781,7 +18870,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  real errors (disk full, permission, illegal path) propagate. Returns the
    *  conflict path written. */
   async writeDriftConflictCopy(normalized, localDisk) {
-    let date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10), conflictPath = `${normalized.replace(/\.md$/, "")} (conflict ${date}).md`;
+    let stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"), ext = normalized.endsWith(".canvas") ? "canvas" : "md", conflictPath = `${normalized.replace(/\.(md|canvas)$/, "")} (conflict ${stamp}).${ext}`;
     return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
@@ -18811,7 +18900,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       );
       return;
     }
-    if (!path.endsWith(".md")) return;
+    if (!this.isCrdtEligiblePath(path)) return;
     let normalized = (0, import_obsidian21.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
@@ -18836,7 +18925,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  null), where the isSynced gate is the backstop. */
   async materializeRelocated(path, noteId) {
     var _a, _b;
-    if (!this.crdt || !path.endsWith(".md") || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
+    if (!this.crdt || !this.isCrdtEligiblePath(path) || typeof this.crdt.isSynced != "function" || !this.crdt.isSynced(noteId) || this.app.vault.getAbstractFileByPath((0, import_obsidian21.normalizePath)(path))) return;
     let text2 = await this.crdt.projectedText(noteId), canonical = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId)) != null ? _b : null;
     if (canonical !== null && (0, import_obsidian21.normalizePath)(canonical) !== (0, import_obsidian21.normalizePath)(path)) {
       rlog().info(
@@ -19088,6 +19177,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   isMarkdown(file) {
     return file instanceof import_obsidian21.TFile && file.extension === "md";
   }
+  /** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
+   *  (the manager's docKind picks the per-type schema). Binary/attachment
+   *  types are NOT eligible and stay on the REST/attachment path. */
+  isCrdtEligible(file) {
+    return file instanceof import_obsidian21.TFile && (file.extension === "md" || file.extension === "canvas");
+  }
+  /** Path-string variant of isCrdtEligible for the pull/apply path, which works
+   *  with normalized paths (from a NoteChange), not TFile handles. */
+  isCrdtEligiblePath(path) {
+    return path.endsWith(".md") || path.endsWith(".canvas");
+  }
+  /** True for a canvas note path. Canvas is CRDT but STRUCTURAL: its authoritative
+   *  content lives in the Yjs doc, never notes.content (which the backend keeps
+   *  vestigial for canvas), so the pull path must converge it over the Yjs
+   *  handshake, never by writing the seq-feed `content`. */
+  isCanvasPath(path) {
+    return path.endsWith(".canvas");
+  }
   /** Check if a file should be synced (markdown, canvas, or binary attachment). */
   isSyncable(file) {
     return file instanceof import_obsidian21.TFile ? TEXT_EXTENSIONS.has(file.extension) || BINARY_EXTENSIONS.has(file.extension) : !1;
@@ -19112,7 +19219,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.pendingPostPullPushes.add(file.path), this.schedulePostPullDrain();
       return;
     }
-    let crdtManaged = !!this.crdt && this.isMarkdown(file);
+    let crdtManaged = !!this.crdt && this.isCrdtEligible(file);
     if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
@@ -19138,14 +19245,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
     if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian21.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
-      this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), file.path.endsWith(".md") && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
+      this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
       return;
     }
     try {
-      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : file.path.endsWith(".md") ? crdtNoteId && ((_f = this.crdtEnqueue) == null || _f.call(this, { kind: "delete", docId: crdtNoteId, path: file.path })) : (await this.api.deleteNote(file.path), this.goOnline()), file.path.endsWith(".md") && crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
+      isBinary ? (await this.api.deleteAttachment(file.path), this.goOnline()) : this.isCrdtEligible(file) ? crdtNoteId && ((_f = this.crdtEnqueue) == null || _f.call(this, { kind: "delete", docId: crdtNoteId, path: file.path })) : (await this.api.deleteNote(file.path), this.goOnline()), this.isCrdtEligible(file) && crdtNoteId && (await ((_g = this.crdt) == null ? void 0 : _g.removeDoc(crdtNoteId)), (_h = this.crdtEnrollment) == null || _h.reset(crdtNoteId));
     } catch (e) {
       if (isHttpStatus(e, 404)) {
-        this.goOnline(), file.path.endsWith(".md") && crdtNoteId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(crdtNoteId)), (_j = this.crdtEnrollment) == null || _j.reset(crdtNoteId));
+        this.goOnline(), this.isCrdtEligible(file) && crdtNoteId && (await ((_i = this.crdt) == null ? void 0 : _i.removeDoc(crdtNoteId)), (_j = this.crdtEnrollment) == null || _j.reset(crdtNoteId));
         return;
       }
       console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
@@ -19168,7 +19275,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file);
     if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
-        isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : oldPath.endsWith(".md") || (await this.api.deleteNote(oldPath), this.goOnline());
+        isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
         isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
           path: oldPath,
@@ -19319,13 +19426,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             ), !1;
           noteId = uuid7(), this.noteIdMap.set(file.path, noteId);
         }
-        if (file.extension === "md" && rlog().info(
+        if (this.isCrdtEligible(file) && rlog().info(
           "push",
           `route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : !1} live=${(_e = (_d = this.crdtLive) == null ? void 0 : _d.call(this)) != null ? _e : !0} id=${noteId != null ? noteId : "none"}`
         ), this.crdt && noteId && this.hasServerNote(noteId)) {
           let consumed = await routeModify(
             {
-              isMarkdown: file.extension === "md",
+              crdtEligible: this.isCrdtEligible(file),
               noteId,
               // A LIVE read, not the frozen `content` above: routeModify
               // forwards this as the manager's stale-snapshot reread, and a
@@ -19344,9 +19451,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           ), rlog().info(
             "push",
             `CRDT edit queued durably (channel down): ${file.path}`
-          ), !0)) : (file.extension === "md" && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
+          ), !0)) : (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) && this.isLiveBound((0, import_obsidian21.normalizePath)(file.path)) && ((_i = this.crdtEnrollment) == null || _i.enroll(noteId)), !0);
         }
-        if (this.crdtCreate && this.crdt && noteId && file.extension === "md" && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
+        if (this.crdtCreate && this.crdt && noteId && this.isCrdtEligible(file) && !this.hasServerNote(noteId) && ((_k = (_j = this.crdtLive) == null ? void 0 : _j.call(this)) == null || _k) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           try {
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
@@ -19367,7 +19474,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
                   {
-                    isMarkdown: !0,
+                    crdtEligible: !0,
                     noteId: effectiveId,
                     readContent: () => this.app.vault.cachedRead(file)
                   },
@@ -19400,7 +19507,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `crdt_create failed, enqueued for durable retry: ${pushedPath} | ${String(err)}`
             ), this.crdtEnqueue ? (this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !0) : !1;
           }
-        if (file.extension === "md" && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
+        if (this.isCrdtEligible(file) && !exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES))
           return this.crdtEnqueue && this.crdt && noteId && !this.hasServerNote(noteId) && this.crdtEnqueue({ kind: "create", docId: noteId, path: pushedPath }), !1;
         let resp = await this.api.pushNote(pushedPath, content, mtime);
         if ("conflict" in resp)
@@ -20315,7 +20422,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         }
         await this.trashRemotelyDeleted(existing), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_k = this.baseStore) == null || _k.delete(normalized);
       }
-      if (normalized.endsWith(".md")) {
+      if (this.isCrdtEligiblePath(normalized)) {
         (_l = this.noteIdMap) == null || _l.delete(normalized);
         let roomId2 = targetId != null ? targetId : currentId;
         roomId2 && (await ((_m = this.crdt) == null ? void 0 : _m.removeDoc(roomId2)), (_n = this.crdtEnrollment) == null || _n.reset(roomId2));
@@ -20337,7 +20444,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             },
             attachment.content_base64
           );
-        } else if (this.crdt && event.path.endsWith(".md") && ((_p = event.id) != null ? _p : (_o = this.noteIdMap) != null && _o.get(event.path))) {
+        } else if (this.crdt && this.isCrdtEligiblePath(event.path) && ((_p = event.id) != null ? _p : (_o = this.noteIdMap) != null && _o.get(event.path))) {
           let noteId = (_r = event.id) != null ? _r : (_q = this.noteIdMap) == null ? void 0 : _q.get(event.path), canonicalPath = (_t2 = (_s = this.noteIdMap) == null ? void 0 : _s.pathForId(noteId)) != null ? _t2 : null;
           if (canonicalPath !== null && (0, import_obsidian21.normalizePath)(canonicalPath) !== (0, import_obsidian21.normalizePath)(event.path))
             rlog().info(
@@ -20345,7 +20452,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `Stale-path upsert ignored for ${noteId}: canonical=${canonicalPath} event=${event.path}`
             );
           else {
-            (_u = this.noteIdMap) == null || _u.set(event.path, noteId), this.confirmNoteId(noteId), this.isLiveBound((0, import_obsidian21.normalizePath)(event.path)) && ((_v = this.crdtEnrollment) == null || _v.enroll(noteId));
+            (_u = this.noteIdMap) == null || _u.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian21.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian21.normalizePath)(event.path))) && ((_v = this.crdtEnrollment) == null || _v.enroll(noteId));
             let np = (0, import_obsidian21.normalizePath)(event.path), priorState = this.syncState.get(np);
             event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
               hash: (_w = priorState == null ? void 0 : priorState.hash) != null ? _w : fnv1a(""),
@@ -20629,7 +20736,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, skip conflict detection and always apply. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
@@ -20680,14 +20787,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               `CRDT tombstone honoured (no drift): ${change.path} | syncedHash=${(_e = lastSynced == null ? void 0 : lastSynced.hash) != null ? _e : "none"}`
             );
         }
-        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && normalized.endsWith(".md") && ((_g = this.noteIdMap) == null || _g.delete(normalized), await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId)), !0;
+        return await this.trashRemotelyDeleted(existing2), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (_f = this.baseStore) == null || _f.delete(normalized), rlog().info("pull", `Deleted: ${change.path}`), crdtNoteId && this.isCrdtEligiblePath(normalized) && ((_g = this.noteIdMap) == null || _g.delete(normalized), await ((_h = this.crdt) == null ? void 0 : _h.removeDoc(crdtNoteId)), (_i = this.crdtEnrollment) == null || _i.reset(crdtNoteId)), !0;
       }
       return !1;
     }
     let content = change.content;
     if (content === void 0)
       throw new Error(`applyChange: missing content for ${change.path}`);
-    let crdtOwnsBody = !!(this.crdt && normalized.endsWith(".md")), noteId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) != null ? _k : null;
+    let crdtOwnsBody = !!(this.crdt && this.isCrdtEligiblePath(normalized)), noteId = (_k = (_j = this.noteIdMap) == null ? void 0 : _j.get(normalized)) != null ? _k : null;
     if (!forceOverwrite && !(crdtOwnsBody && noteId) && change.version !== void 0) {
       let known = (_l = this.syncState.get(normalized)) == null ? void 0 : _l.version;
       if (known !== void 0 && known >= change.version && this.app.vault.getFileByPath(normalized))
@@ -20696,17 +20803,18 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           `applyChange skip (stale v${change.version} <= synced v${known}): ${change.path}`
         ), !1;
     }
-    let crdtConflictFallthrough = !1;
     if (crdtOwnsBody) {
+      if (this.isCanvasPath(normalized))
+        return noteId && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT canvas: enroll for Yjs convergence ${change.path}`), !1;
       if (!this.app.vault.getFileByPath(normalized))
-        noteId && this.isLiveBound(normalized) && ((_m = this.crdtEnrollment) == null || _m.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
+        noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId)), rlog().info("pull", `CRDT discovery: enrolling new note ${change.path}`), await this.flushFromCrdt(normalized, content);
       else {
-        noteId && this.isLiveBound(normalized) && ((_n = this.crdtEnrollment) == null || _n.enroll(noteId));
+        noteId && this.isLiveBound(normalized) && ((_o = this.crdtEnrollment) == null || _o.enroll(noteId));
         let stored = this.syncState.get(normalized), contentMatches = !change.content_hash || (stored == null ? void 0 : stored.serverHash) === change.content_hash;
         if (change.seq !== void 0 ? (stored == null ? void 0 : stored.seq) !== void 0 && (change.seq < stored.seq || change.seq === stored.seq && contentMatches) : (stored == null ? void 0 : stored.version) !== void 0 && change.version !== void 0 && change.version <= stored.version)
           rlog().info(
             "pull",
-            `CRDT catch-up: stale row (seq ${(_o = change.seq) != null ? _o : "-"}/${(_p = stored == null ? void 0 : stored.seq) != null ? _p : "-"} v${(_q = change.version) != null ? _q : "-"}/${(_r = stored == null ? void 0 : stored.version) != null ? _r : "-"}) \u2014 history, skip ${change.path}`
+            `CRDT catch-up: stale row (seq ${(_p = change.seq) != null ? _p : "-"}/${(_q = stored == null ? void 0 : stored.seq) != null ? _q : "-"} v${(_r = change.version) != null ? _r : "-"}/${(_s = stored == null ? void 0 : stored.version) != null ? _s : "-"}) \u2014 history, skip ${change.path}`
           );
         else if (change.content_hash && (stored == null ? void 0 : stored.serverHash) !== change.content_hash)
           if (this.isLiveBound(normalized)) {
@@ -20740,14 +20848,38 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                 version: change.version,
                 seq: change.seq
               }), this.socketConverge(normalized, noteId), !1;
-            localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content ? (rlog().warn(
-              "pull",
-              `CRDT catch-up: local+remote both diverged, routing to conflict flow ${change.path}`
-            ), crdtConflictFallthrough = !0) : noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
+            if (localNow !== null && (stored == null ? void 0 : stored.hash) !== void 0 && fnv1a(localNow) !== stored.hash && localNow !== content && localNow !== null) {
+              rlog().warn(
+                "pull",
+                `CRDT catch-up: local+remote both diverged, drift-copy + converge ${change.path}`
+              );
+              let copy2 = null;
+              try {
+                copy2 = await this.writeDriftConflictCopy(normalized, localNow);
+              } catch (e) {
+                rlog().warn(
+                  "conflict",
+                  `drift-copy capture failed for ${normalized}: ${errMsg(e)}`
+                );
+              }
+              return copy2 === null ? (rlog().warn(
+                "conflict",
+                `drift-copy failed \u2014 leaving ${normalized} intact, deferring convergence to next catch-up`
+              ), !1) : (new import_obsidian21.Notice(
+                `Engram: sync conflict on ${normalized} \u2014 your local edit was saved as ${copy2}`
+              ), noteId && (this.pendingConvergence.set(noteId, {
+                path: normalized,
+                serverHash: change.content_hash,
+                content,
+                version: change.version,
+                seq: change.seq
+              }), this.socketConverge(normalized, noteId)), !1);
+            }
+            noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
               "pull",
               `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
             ), this.syncState.set(normalized, {
-              ...(_s = this.syncState.get(normalized)) != null ? _s : {},
+              ...(_t2 = this.syncState.get(normalized)) != null ? _t2 : {},
               hash: fnv1a(content),
               version: change.version,
               serverHash: change.content_hash
@@ -20773,7 +20905,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         else
           rlog().info("pull", `CRDT-managed: re-enroll for catch-up ${change.path}`);
       }
-      if (!crdtConflictFallthrough) return !1;
+      return !1;
     }
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
@@ -20795,14 +20927,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           "conflict",
           `Detected: ${change.path} | firstSync=${firstSync} | localHash=${localHash} | syncedHash=${lastSyncedHash != null ? lastSyncedHash : "none"} | localMtime=${new Date(localMtime * 1e3).toISOString()} | remoteMtime=${new Date(change.mtime * 1e3).toISOString()} | localLen=${localContent.length} | remoteLen=${content.length}`
         );
-        let pullBase = (_t2 = this.baseStore) == null ? void 0 : _t2.get(normalized);
+        let pullBase = (_u = this.baseStore) == null ? void 0 : _u.get(normalized);
         if (pullBase) {
           let merge2 = threeWayMerge(pullBase.content, localContent, content);
           if (merge2.clean) {
             await this.modifyFile(existing, merge2.merged), this.syncState.set(normalized, {
               hash: fnv1a(merge2.merged),
               version: change.version
-            }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, merge2.merged, change.version));
+            }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, merge2.merged, change.version));
             try {
               await this.pushFile(existing, !0);
             } catch (e) {
@@ -20853,7 +20985,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.createFileWithFolders(conflictPath, content), this.syncState.set((0, import_obsidian21.normalizePath)(conflictPath), {
               hash: fnv1a(content),
               version: change.version
-            }), change.version != null && ((_v = this.baseStore) == null || _v.set(
+            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
               (0, import_obsidian21.normalizePath)(conflictPath),
               content,
               change.version
@@ -20875,7 +21007,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             await this.modifyFile(existing, resolution.mergedContent), this.syncState.set(normalized, {
               hash: fnv1a(resolution.mergedContent),
               version: change.version
-            }), change.version != null && ((_w = this.baseStore) == null || _w.set(
+            }), change.version != null && ((_x = this.baseStore) == null || _x.set(
               normalized,
               resolution.mergedContent,
               change.version
@@ -20901,15 +21033,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           // E1 (#1065): record the row's seq so the manifest validator can
           // integer-diff this path (a legacy change without one keeps the
           // prior value rather than erasing it).
-          seq: typeof change.seq == "number" ? change.seq : (_x = this.syncState.get(normalized)) == null ? void 0 : _x.seq
-        }), change.version != null && ((_y = this.baseStore) == null || _y.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
+          seq: typeof change.seq == "number" ? change.seq : (_y = this.syncState.get(normalized)) == null ? void 0 : _y.seq
+        }), change.version != null && ((_z = this.baseStore) == null || _z.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1;
       return devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): seq recorded for the manifest validator's integer diff.
-        seq: typeof change.seq == "number" ? change.seq : (_z = this.syncState.get(normalized)) == null ? void 0 : _z.seq
-      }), change.version != null && ((_A = this.baseStore) == null || _A.set(normalized, content, change.version)), rlog().info(
+        seq: typeof change.seq == "number" ? change.seq : (_A = this.syncState.get(normalized)) == null ? void 0 : _A.seq
+      }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0;
@@ -20930,7 +21062,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_B = this.baseStore) == null || _B.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_C = this.baseStore) == null || _C.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -21141,8 +21273,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  wrap (`encodeUpdateFrame`), so the frame the server applies via
    *  SharedDoc.send_yjs_message is byte-identical to what a live `crdt_msg`
    *  would deliver — a divergent encoding would corrupt content on merge. */
-  encodeGenesisFrame(content) {
-    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content));
+  encodeGenesisFrame(content, kind = "note") {
+    return encodeUpdateFrame(this.crdt.encodeGenesisUpdate(content, kind));
   }
   /** Record local state after a genesis note's server row is created (batch
    *  path). Mirrors pushFile's post-`crdt_create` bookkeeping (sync.ts ~2574):
@@ -21251,7 +21383,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
       }
-      let b64 = this.encodeGenesisFrame(content), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
+      let b64 = this.encodeGenesisFrame(content, file.extension === "canvas" ? "canvas" : "note"), size2 = b64.length, pushedPath = file.path, noteId = (_d = (_c = this.noteIdMap) == null ? void 0 : _c.get(np)) != null ? _d : uuid7();
       if (this.noteIdMap && !this.noteIdMap.get(np) && this.noteIdMap.set(np, noteId), size2 > PAYLOAD_BUDGET) {
         await this.pushFile(file, !0) ? pushed++ : failed++;
         continue;
@@ -23189,6 +23321,14 @@ function createCrdtWiring(deps) {
     // is staged for this note_id), so fire-and-forget is safe here.
     onSynced: (noteId) => {
       syncEngine.commitCrdtConvergence(noteId);
+    },
+    // Doc shape from the note's path. `.canvas` → the structural nodes/edges
+    // schema; everything else → markdown. Resolved once per doc at creation.
+    // The path is always mapped before a doc is minted in the normal push/pull
+    // flows; an unmapped id (rare heal path) safely defaults to markdown.
+    docKind: (noteId) => {
+      var _a2;
+      return (_a2 = noteIdMap.pathForId(noteId)) != null && _a2.endsWith(".canvas") ? "canvas" : "note";
     }
   }), channel = new CrdtChannel({
     manager,
