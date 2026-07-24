@@ -165,38 +165,45 @@ describe("handleRename re-keys the map, id unchanged", () => {
 });
 
 describe("rename/delete drop stale sync-state (echo-suppression on recreate)", () => {
-	// Uses a .canvas fixture: markdown notes no longer REST-push via pushFile
-	// (CRDT-sole), so a .md edit records no sync-state entry to assert against.
-	// The sync-state cleanup on rename/delete is transport-agnostic — the kept
-	// LWW REST path for .canvas exercises the exact same syncState bookkeeping.
+	// Uses an OVERSIZED .md fixture: in-cap markdown/canvas notes no longer
+	// REST-push via pushFile (CRDT-sole), so they record no sync-state entry to
+	// assert against. An oversized note (> the CRDT transport cap) is the only
+	// remaining REST-push path; the sync-state cleanup on rename/delete is
+	// transport-agnostic and exercises the exact same syncState bookkeeping.
 	test("handleRename removes the old path's sync-state entry", async () => {
 		const engine = createEngine();
 		engine.setNoteIdMap(new NoteIdMap());
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
 
-		// Push a.canvas so it gets a sync-state entry (recorded content hash).
-		engine.handleModify(new TFile("a.canvas"));
+		// Push a.md so it gets a sync-state entry (recorded content hash).
+		engine.handleModify(new TFile("a.md"));
 		await flush();
-		expect(engine.exportSyncState()["a.canvas"]).toBeDefined();
+		expect(engine.exportSyncState()["a.md"]).toBeDefined();
 
-		// Rename a.canvas -> b.canvas. The old path no longer holds a note, so its
-		// stale sync-state must be dropped (else a later create at a.canvas with
-		// the same content echo-suppresses and never syncs).
-		await engine.handleRename(new TFile("b.canvas"), "a.canvas");
+		// Rename a.md -> b.md. The old path no longer holds a note, so its stale
+		// sync-state must be dropped (else a later create at a.md with the same
+		// content echo-suppresses and never syncs).
+		await engine.handleRename(new TFile("b.md"), "a.md");
 
-		expect(engine.exportSyncState()["a.canvas"]).toBeUndefined();
+		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
 	});
 
 	test("handleDelete removes the deleted path's sync-state entry", async () => {
 		const engine = createEngine();
 		engine.setNoteIdMap(new NoteIdMap());
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
 
-		engine.handleModify(new TFile("a.canvas"));
+		engine.handleModify(new TFile("a.md"));
 		await flush();
-		expect(engine.exportSyncState()["a.canvas"]).toBeDefined();
+		expect(engine.exportSyncState()["a.md"]).toBeDefined();
 
-		await engine.handleDelete(new TFile("a.canvas"));
+		await engine.handleDelete(new TFile("a.md"));
 
-		expect(engine.exportSyncState()["a.canvas"]).toBeUndefined();
+		expect(engine.exportSyncState()["a.md"]).toBeUndefined();
 	});
 });
 

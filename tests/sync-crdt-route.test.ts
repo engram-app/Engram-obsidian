@@ -34,7 +34,7 @@ describe("routeModify helper", () => {
 		const applyLocalEdit = mock(async () => "body");
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
-			{ isMarkdown: true, noteId: "id-n", readContent: async () => "body" },
+			{ crdtEligible: true, noteId: "id-n", readContent: async () => "body" },
 			{ applyLocalEdit } as any,
 			BIG,
 		);
@@ -62,7 +62,7 @@ describe("routeModify helper", () => {
 				await reread!(),
 		);
 		const result = await routeModify(
-			{ isMarkdown: true, noteId: "id-n", readContent },
+			{ crdtEligible: true, noteId: "id-n", readContent },
 			{ applyLocalEdit } as any,
 			BIG,
 		);
@@ -86,7 +86,7 @@ describe("routeModify helper", () => {
 			},
 		);
 		const result = await routeModify(
-			{ isMarkdown: true, noteId: "id-n", readContent },
+			{ crdtEligible: true, noteId: "id-n", readContent },
 			{ applyLocalEdit } as any,
 			10,
 		);
@@ -97,7 +97,7 @@ describe("routeModify helper", () => {
 		const applyLocalEdit = mock(async () => null);
 		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
-			{ isMarkdown: false, noteId: "id-img", readContent: async () => "" },
+			{ crdtEligible: false, noteId: "id-img", readContent: async () => "" },
 			{ applyLocalEdit } as any,
 			BIG,
 		);
@@ -112,7 +112,7 @@ describe("routeModify helper", () => {
 		// killing the socket. Must fall through to the legacy push path instead.
 		const huge = "x".repeat(5 * 1024 * 1024);
 		const result = await routeModify(
-			{ isMarkdown: true, noteId: "id-big", readContent: async () => huge },
+			{ crdtEligible: true, noteId: "id-big", readContent: async () => huge },
 			{ applyLocalEdit } as any,
 			4 * 1024 * 1024,
 		);
@@ -126,7 +126,7 @@ describe("routeModify helper", () => {
 		// A naive .length check (code units) would wrongly let it through.
 		const emoji = "😀".repeat(2 * 1024 * 1024);
 		const result = await routeModify(
-			{ isMarkdown: true, noteId: "id-emoji", readContent: async () => emoji },
+			{ crdtEligible: true, noteId: "id-emoji", readContent: async () => emoji },
 			{ applyLocalEdit } as any,
 			6 * 1024 * 1024,
 		);
@@ -396,17 +396,22 @@ describe("SyncEngine handleModify with CrdtManager", () => {
 		expect(applyLocalEdit).not.toHaveBeenCalled();
 	});
 
-	test(".canvas modify uses legacy pushNote, NOT applyLocalEdit, even when CRDT is wired", async () => {
-		const engine = createEngine();
-		const applyLocalEdit = mock(async () => {});
+	test(".canvas modify routes through CRDT applyLocalEdit (not legacy pushNote) since #306", async () => {
+		// Canvas now rides the CRDT transport like markdown: a server-known .canvas
+		// note routes its edit through applyLocalEdit, never api.pushNote.
+		const noteIdMap = new NoteIdMap();
+		noteIdMap.set("Canvases/board.canvas", "id-board");
+		const engine = createEngine(noteIdMap);
+		const applyLocalEdit = mock(async (_id: string, c: string) => c);
 		engine.setCrdtManager({ applyLocalEdit } as any);
+		markConfirmed(engine, "id-board");
 
 		const file = new TFile("Canvases/board.canvas");
 		engine.handleModify(file);
 		await flush();
 
-		expect(applyLocalEdit).not.toHaveBeenCalled();
-		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
+		expect(applyLocalEdit).toHaveBeenCalledTimes(1);
+		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
 	test(".md modify still routes through CRDT applyLocalEdit when CRDT is wired", async () => {
@@ -585,19 +590,21 @@ describe("SyncEngine.flushFromCrdt echo suppression", () => {
 		// (CRDT disk-write echoes), NOT recentlyPushed — which is also set after
 		// every legacy push. Folding them together silently dropped real user
 		// edits within the 5 s post-push cooldown, breaking conflict detection.
-		// Uses a .canvas fixture: the cooldown/echo-guard logic is transport-
-		// agnostic and .canvas exercises the kept LWW REST push path (markdown is
-		// CRDT-sole and no longer REST-pushes).
+		// The cooldown/echo-guard logic is transport-agnostic; since #306 both
+		// markdown AND canvas are CRDT-sole, so we exercise the remaining LWW REST
+		// push path with an OVERSIZED note (> the CRDT transport cap).
 		const engine = createEngine();
-		const file = new TFile("note.canvas");
+		const file = new TFile("note.md");
+		const big = (c: string) => c.repeat(5 * 1024 * 1024);
 
-		// First edit → pushes → marks recentlyPushed in the push finally.
+		// First edit → oversized → REST-pushes → marks recentlyPushed in the finally.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(big("a"));
 		engine.handleModify(file);
 		await flush();
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
 
 		// A real, diverging edit to the same file within the cooldown MUST push.
-		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue("edited body");
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(big("b"));
 		engine.handleModify(file);
 		await flush();
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(2);
@@ -916,25 +923,28 @@ describe("offline CRDT capture — queue behaviour", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("(b) non-md edit + network failure → queue entry EXISTS", async () => {
-		// The offline-queue-on-failure path is transport-agnostic. Markdown is now
-		// CRDT-sole (a declined md edit no longer falls through to REST), so this
-		// uses a .canvas fixture — the kept LWW REST push fails offline and must
-		// enqueue so the note retries on reconnect.
+	test("(b) oversized-note edit + network failure → queue entry EXISTS", async () => {
+		// The offline-queue-on-failure path is transport-agnostic. Since #306 BOTH
+		// markdown and canvas are CRDT-sole (a declined edit no longer falls through
+		// to REST), so this exercises the kept LWW REST push with an OVERSIZED note
+		// (> the CRDT transport cap) — it fails offline and must enqueue for retry.
 		const engine = createEngine();
 		const applyLocalEdit = mock(async () => null);
 		engine.setCrdtManager({ applyLocalEdit } as any);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
 
 		// Stub pushNote to simulate a connection-lost error
 		(mockApi.pushNote as ReturnType<typeof mock>).mockRejectedValueOnce(networkError());
 
-		const file = new TFile("note.canvas");
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await flush(100);
 
 		// The edit must be queued for retry on reconnect
 		expect(engine.queue.size).toBe(1);
-		expect(engine.queue.all()[0]?.path).toBe("note.canvas");
+		expect(engine.queue.all()[0]?.path).toBe("note.md");
 	});
 
 	test("(c) non-md file (attachment) + network failure → queue entry EXISTS", async () => {

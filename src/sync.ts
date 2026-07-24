@@ -78,7 +78,7 @@ export function exceedsCrdtNoteLimit(content: string, maxBytes: number): boolean
 }
 
 export async function routeModify(
-	file: { isMarkdown: boolean; noteId: string; readContent: () => Promise<string> },
+	file: { crdtEligible: boolean; noteId: string; readContent: () => Promise<string> },
 	crdt: {
 		applyLocalEdit: (
 			noteId: string,
@@ -89,7 +89,10 @@ export async function routeModify(
 	},
 	maxBytes: number,
 ): Promise<string | null> {
-	if (!file.isMarkdown) return null;
+	// CRDT-eligible = markdown OR canvas (both ride the Yjs transport). The
+	// manager's docKind selects the schema (body Y.Text vs nodes/edges Y.Maps);
+	// this gate just keeps binary/attachment types off the CRDT path.
+	if (!file.crdtEligible) return null;
 	const content = await file.readContent();
 	// Oversized notes must NOT enter the Yjs doc. The channel transmits each
 	// update as a base64 crdt_msg (~+33%), so a multi-MB note becomes a
@@ -1007,11 +1010,11 @@ export class SyncEngine {
 		// Seed the body from disk under the effective id (mirrors the live genesis
 		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify.
 		const file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
-		if (this.crdt && file instanceof TFile && this.isMarkdown(file)) {
+		if (this.crdt && file instanceof TFile && this.isCrdtEligible(file)) {
 			try {
 				const consumed = await routeModify(
 					{
-						isMarkdown: true,
+						crdtEligible: true,
 						noteId: effectiveId,
 						readContent: () => this.app.vault.cachedRead(file),
 					},
@@ -1917,6 +1920,13 @@ export class SyncEngine {
 		return file instanceof TFile && file.extension === "md";
 	}
 
+	/** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
+	 *  (the manager's docKind picks the per-type schema). Binary/attachment
+	 *  types are NOT eligible and stay on the REST/attachment path. */
+	isCrdtEligible(file: TAbstractFile): boolean {
+		return file instanceof TFile && (file.extension === "md" || file.extension === "canvas");
+	}
+
 	/** Check if a file should be synced (markdown, canvas, or binary attachment). */
 	isSyncable(file: TAbstractFile): file is TFile {
 		if (!(file instanceof TFile)) return false;
@@ -1965,7 +1975,7 @@ export class SyncEngine {
 		// — e.g. editing a note the moment after it was discovered/flushed — would
 		// be wrongly dropped here and never reach the CRDT path. So only apply the
 		// guard off the CRDT path (legacy writes, attachments).
-		const crdtManaged = !!this.crdt && this.isMarkdown(file);
+		const crdtManaged = !!this.crdt && this.isCrdtEligible(file);
 		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
@@ -2463,7 +2473,7 @@ export class SyncEngine {
 				// the server already holds (crdtHead != null) routes over CRDT ops; a
 				// never-server-known note takes the genesis crdt_create path below.
 				// `confirmed` is a legacy diagnostic; it no longer drives routing.
-				if (file.extension === "md") {
+				if (this.isCrdtEligible(file)) {
 					rlog().info(
 						"push",
 						`route: ${file.path} crdt=${!!this.crdt} server=${this.hasServerNote(noteId)} confirmed=${noteId ? this.isNoteConfirmed(noteId) : false} live=${this.crdtLive?.() ?? true} id=${noteId ?? "none"}`,
@@ -2498,7 +2508,7 @@ export class SyncEngine {
 				if (this.crdt && noteId && this.hasServerNote(noteId)) {
 					const consumed = await routeModify(
 						{
-							isMarkdown: file.extension === "md",
+							crdtEligible: this.isCrdtEligible(file),
 							noteId,
 							// A LIVE read, not the frozen `content` above: routeModify
 							// forwards this as the manager's stale-snapshot reread, and a
@@ -2584,7 +2594,7 @@ export class SyncEngine {
 					// ponytail: no immediate delivery on decline (the old REST fallback is
 					// gone); acceptable because the gate makes this path unreachable.
 					if (
-						file.extension === "md" &&
+						this.isCrdtEligible(file) &&
 						!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES) &&
 						this.isLiveBound(normalizePath(file.path))
 					) {
@@ -2611,7 +2621,7 @@ export class SyncEngine {
 					this.crdtCreate &&
 					this.crdt &&
 					noteId &&
-					file.extension === "md" &&
+					this.isCrdtEligible(file) &&
 					!this.hasServerNote(noteId) &&
 					(this.crdtLive?.() ?? true) &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
@@ -2698,7 +2708,7 @@ export class SyncEngine {
 								// stale-snapshot guard.
 								consumed = await routeModify(
 									{
-										isMarkdown: true,
+										crdtEligible: true,
 										noteId: effectiveId,
 										readContent: () => this.app.vault.cachedRead(file),
 									},
@@ -2797,7 +2807,7 @@ export class SyncEngine {
 				// re-pushes over CRDT on reconnect. LWW (no version/base_hash → no
 				// 409/conflict surface); the server may still sanitize the path.
 				if (
-					file.extension === "md" &&
+					this.isCrdtEligible(file) &&
 					!exceedsCrdtNoteLimit(content, MAX_CRDT_NOTE_BYTES)
 				) {
 					// The CRDT create branch above was skipped (crdt: topic not joined

@@ -75,10 +75,13 @@ describe("bounded post-pull push deferral (#244)", () => {
 		void engine.pullAll();
 		await flush(5);
 
-		// .canvas so the drained push takes the kept LWW REST path (md is
-		// CRDT-sole and never REST-pushes) — the deferral mechanism under test
-		// is transport-agnostic.
-		const file = new TFile("user-edit.canvas");
+		// Oversized .md so the drained push takes the kept LWW REST path (in-cap
+		// md/canvas are CRDT-sole and never REST-push) — the deferral mechanism
+		// under test is transport-agnostic.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("user-edit.md");
 		(mockApp.vault.getFileByPath as ReturnType<typeof mock>).mockReturnValue(file);
 		engine.handleModify(file);
 
@@ -90,9 +93,7 @@ describe("bounded post-pull push deferral (#244)", () => {
 		// Past the bound: the drain fires even though the pull never ended.
 		await flush(50);
 		expect(mockApi.pushNote).toHaveBeenCalledTimes(1);
-		expect((mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0][0]).toBe(
-			"user-edit.canvas",
-		);
+		expect((mockApi.pushNote as ReturnType<typeof mock>).mock.calls[0][0]).toBe("user-edit.md");
 
 		engine.destroy();
 	});

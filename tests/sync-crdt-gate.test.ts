@@ -632,10 +632,13 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 		// Simulate teardown: remove CRDT manager (what setupNoteStream now does)
 		engine.setCrdtManager(null as any);
 
-		// A note OUTSIDE the CRDT domain (.canvas) still takes the kept LWW REST
-		// path. (In-cap markdown no longer REST-falls-back — CRDT is its sole
-		// path — so it can't stand in for the legacy-path regression here.)
-		const file = new TFile("note.canvas");
+		// A note OUTSIDE the CRDT domain still takes the kept LWW REST path. Since
+		// #306 both md and canvas are CRDT-sole, so the only REST note left is an
+		// OVERSIZED one (> the CRDT transport cap) — use that for the regression.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -649,11 +652,15 @@ describe("I1 — CrdtManager destroy on re-setup", () => {
 // ---------------------------------------------------------------------------
 
 describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
-	test("without CRDT manager set, a non-CRDT note modify goes through pushNote (not dropped)", async () => {
+	test("without CRDT manager set, a legacy-path note modify goes through pushNote (not dropped)", async () => {
 		const engine = createEngine();
-		// No setCrdtManager call — simulates vaultId=null path where CRDT is never wired
-
-		const file = new TFile("note.canvas");
+		// No setCrdtManager call — simulates vaultId=null path where CRDT is never wired.
+		// Since #306 both md and canvas are CRDT-eligible; the legacy REST push now
+		// only serves OVERSIZED notes (> the CRDT transport cap), so use one here.
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -712,12 +719,15 @@ describe("I2 — null vaultId: CRDT unset, legacy path active", () => {
 // ---------------------------------------------------------------------------
 
 describe("Graceful degradation: channel join gate — CRDT not connected", () => {
-	test("with crdt NOT connected (manager null), a non-CRDT note edit goes through pushNote (legacy)", async () => {
+	test("with crdt NOT connected (manager null), an oversized note edit goes through pushNote (legacy)", async () => {
 		const engine = createEngine();
 		// Simulates: vaultId known but crdt: topic join has not been acknowledged yet
-		// (or backend errored on join) — manager is null, legacy path active.
-
-		const file = new TFile("note.canvas");
+		// (or backend errored on join) — manager is null, legacy path active. Since
+		// #306 the legacy REST push only serves oversized notes (> CRDT cap).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -783,7 +793,11 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 		// Simulate channel disconnect: clear manager (mirrors onStatusChange false handler)
 		engine.setCrdtManager(null);
 
-		const file = new TFile("note.canvas");
+		// Since #306 the legacy REST push only serves oversized notes (> CRDT cap).
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
+		const file = new TFile("note.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
@@ -896,14 +910,18 @@ describe("P0-2 — flushFromCrdt: no-ops when syncBlocked", () => {
 		engine.setSyncBlocked(true);
 
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		await engine.flushFromCrdt("Notes/echo-test.canvas", "content");
+		await engine.flushFromCrdt("Notes/echo-test.md", "content");
 
 		// Now unblock and verify handleModify proceeds (not echo-suppressed).
-		// A .canvas note takes the kept LWW REST path, so a non-suppressed edit
-		// is observable as a pushNote call (in-cap md no longer REST-pushes).
+		// Since #306 both md and canvas are CRDT-sole; the legacy REST path (where
+		// recentlyFlushed matters) only serves oversized notes, so a non-suppressed
+		// edit is observable as a pushNote call on an oversized note.
 		engine.setSyncBlocked(false);
+		(mockApp.vault.cachedRead as ReturnType<typeof mock>).mockResolvedValue(
+			"a".repeat(5 * 1024 * 1024),
+		);
 
-		const file = new TFile("Notes/echo-test.canvas");
+		const file = new TFile("Notes/echo-test.md");
 		engine.handleModify(file);
 		await new Promise((r) => setTimeout(r, 50));
 
