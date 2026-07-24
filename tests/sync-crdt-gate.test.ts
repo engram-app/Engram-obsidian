@@ -953,10 +953,8 @@ describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
 
 		// File not on disk (simulating discovery)
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		// No CRDT manager → projectedText falls back to ""
+		// No CRDT manager → projectedText falls back to "" → materializes empty.
 		engine.setCrdtManager(null as any);
-		// Server also has no content → genuinely empty.
-		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/empty.md", content: "" });
 
 		await engine.materializeEmptyDiscovered("Notes/empty.md");
 
@@ -965,49 +963,12 @@ describe("P0-2 — materializeEmptyDiscovered: no-ops when syncBlocked", () => {
 	});
 });
 
-describe("materializeEmptyDiscovered — transient-empty STEP2 race guard", () => {
-	test("writes the REST body (NOT empty) when the server note has content", async () => {
-		const engine = createEngine();
-		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		engine.setCrdtManager(null as any); // CRDT doc empty → projectedText ""
-		// Server DID receive A's REST push — the empty STEP2 is stale, not authoritative.
-		(mockApi.getNote as any).mockResolvedValueOnce({
-			path: "Notes/race.md",
-			content: "server body v1",
-		});
-
-		await engine.materializeEmptyDiscovered("Notes/race.md");
-
-		expect(mockApi.getNote).toHaveBeenCalledWith("Notes/race.md");
-		const createArgs = (mockApp.vault.create as any).mock.calls[0];
-		expect(createArgs).toBeDefined();
-		expect(createArgs[1]).toContain("server body v1");
-	});
-
-	test("writes empty when the server confirms the note is genuinely empty", async () => {
-		const engine = createEngine();
-		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		engine.setCrdtManager(null as any);
-		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/blank.md", content: "" });
-
-		await engine.materializeEmptyDiscovered("Notes/blank.md");
-
-		expect(mockApp.vault.create).toHaveBeenCalled();
-		expect((mockApp.vault.create as any).mock.calls[0][1]).toBe("");
-	});
-
-	test("falls back to empty-materialize when getNote fails (offline / 404)", async () => {
-		const engine = createEngine();
-		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
-		engine.setCrdtManager(null as any);
-		(mockApi.getNote as any).mockRejectedValueOnce(new Error("404"));
-
-		await engine.materializeEmptyDiscovered("Notes/gone.md");
-
-		// A genuinely-empty note must still materialize even if REST is unreachable.
-		expect(mockApp.vault.create).toHaveBeenCalled();
-	});
-});
+// The former "transient-empty STEP2 race guard" describe block (a REST getNote
+// cross-check that distrusted an empty STEP2) was removed with the #310
+// race-closer: backend #1094 now seeds the room from notes.content server-side,
+// so materializeEmptyDiscovered materializes the doc projection directly. Its
+// convergence is covered end-to-end by e2e test_38/test_43 against the
+// #1094-in-prod backend.
 
 describe("materializeEmptyDiscovered — reads the CRDT doc via note_id, not path", () => {
 	test("projectedText is called with the note_id, never the path (no path-keyed ghost doc)", async () => {
@@ -1015,7 +976,6 @@ describe("materializeEmptyDiscovered — reads the CRDT doc via note_id, not pat
 		(mockApp.vault.getAbstractFileByPath as any).mockReturnValue(null);
 		const projectedText = mock(async () => "");
 		engine.setCrdtManager({ projectedText } as any);
-		(mockApi.getNote as any).mockResolvedValueOnce({ path: "Notes/idkeyed.md", content: "" });
 
 		await engine.materializeEmptyDiscovered("Notes/idkeyed.md", "note-abc-123");
 
