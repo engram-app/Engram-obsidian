@@ -347,6 +347,11 @@ export default class EngramSyncPlugin extends Plugin {
 		initDevLog();
 		devLog().log("lifecycle", "plugin loading");
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
+		// reload-loop tripwire (warn so it SHIPS to Loki): if this fires every
+		// ~15-30s, the plugin is being reloaded from outside — the real wedge the
+		// persistent-stack fix can't survive. If it does NOT fire between socket
+		// rebuilds, the rebuilds are same-instance and it's an internal bug.
+		rlog().warn("lifecycle", `PLUGIN onload — fresh instance v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
 		await this.loadSettings();
 
@@ -1055,6 +1060,9 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtWiring?.dispose();
 		devLog().log("lifecycle", "plugin unloading");
 		rlog().info("lifecycle", "Plugin unloading");
+		// reload-loop tripwire (warn so it SHIPS). Pairs with the onload marker:
+		// a tight onunload→onload cadence == an external reload loop.
+		rlog().warn("lifecycle", "PLUGIN onunload");
 		activeDocument.body.classList.remove("engram-vault-sync-active");
 		// Flush any buffered obsidian.push spans before teardown. The buffer's
 		// own 2s timer would otherwise never fire post-unload.
