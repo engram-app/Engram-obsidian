@@ -620,6 +620,21 @@ export class CrdtManager {
 		},
 		opts: { clearData: boolean },
 	): Promise<void> {
+		// bindrace TEARDOWN seam: names WHO destroyed this Y.Doc. closeDoc logs
+		// separately; this catches the non-closeDoc destroyers (removeDoc / destroy /
+		// flattenIfBloated) that also churn the doc without the closeDoc tripwire.
+		{
+			const guid = (e.doc as { guid?: string }).guid ?? "none";
+			const st = (new Error().stack ?? "")
+				.split("\n")
+				.slice(2, 7)
+				.map((s) => s.trim().replace(/^at\s+/, ""))
+				.join(" <- ");
+			rlog().warn(
+				"bindrace",
+				`TEARDOWN id=${id} docGuid=${guid} clearData=${opts.clearData} via ${st}`,
+			);
+		}
 		// Drop the in-memory entry SYNCHRONOUSLY, before any await — a caller
 		// that fires this un-awaited (closeDoc) may be followed immediately by
 		// an apply whose entry() must mint a FRESH doc, never see the dying one.
@@ -953,6 +968,19 @@ export class CrdtManager {
 		});
 
 		this.docs.set(id, entry);
+		// bindrace MINT seam: names WHO created this Y.Doc. A single MINT per open
+		// note is healthy; repeated MINTs for the same noteId (guid churn) while the
+		// note stays open is the disease — each re-mint reseeds from server state and
+		// can silently drop unsent local edits. The stack tail names the caller so a
+		// repro identifies the churner (bindTo/getYText vs a teardown+re-open path).
+		{
+			const st = (new Error().stack ?? "")
+				.split("\n")
+				.slice(2, 7)
+				.map((s) => s.trim().replace(/^at\s+/, ""))
+				.join(" <- ");
+			rlog().warn("bindrace", `MINT noteId=${noteId} docGuid=${doc.guid} via ${st}`);
+		}
 		await ready;
 		// IDB hydration replayed stored updates above; rehydrated non-empty content
 		// counts as "has held content" (#288) even if no listener observed it.

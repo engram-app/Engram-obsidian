@@ -35,9 +35,9 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 )), __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: !0 }), mod);
 var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "symbol" ? key + "" : key, value);
 
-// ../../node_modules/diff-match-patch/index.js
+// node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
-  "../../node_modules/diff-match-patch/index.js"(exports, module2) {
+  "node_modules/diff-match-patch/index.js"(exports, module2) {
     var diff_match_patch3 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
@@ -799,7 +799,7 @@ async function applyApiUrlChange(target, newUrl, save) {
   var _a;
   if (target.settings.apiUrl === newUrl) return !1;
   let cleared = isBackendChange(target.settings.apiUrl, newUrl);
-  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect()), target.settings.apiUrl = newUrl, await save(), cleared;
+  return cleared && (Object.assign(target.settings, withClearedAuth(target.settings)), target.api.setAuthProvider(null), target.resetAuthProvider(), (_a = target.noteStream) == null || _a.disconnect("apiUrlChange")), target.settings.apiUrl = newUrl, await save(), cleared;
 }
 
 // src/limit-error.ts
@@ -1720,11 +1720,11 @@ var _NoteChannel = class _NoteChannel {
   async connect() {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
-  disconnect() {
+  disconnect(reason = "unspecified") {
     this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
     for (let [, p] of this.pendingReplies)
       window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
-    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
+    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().warn("channel", `Channel disconnected \u2014 caller=${reason}`);
   }
   /** Call when the app returns to the foreground (mobile resume). Mobile OSes
    *  suspend the socket while backgrounded; readyState can still report OPEN on a
@@ -1809,7 +1809,7 @@ var _NoteChannel = class _NoteChannel {
         );
       }
     }
-    rlog().info(
+    rlog().warn(
       "channel",
       `openSocket \u2014 token.length=${token.length} source=${source} userId=${this.userId} vaultId=${(_e = this.vaultId) != null ? _e : "null"}`
     ), this.connId = crypto.randomUUID(), rlog().setConnId(this.connId);
@@ -1833,9 +1833,9 @@ var _NoteChannel = class _NoteChannel {
     }, this.ws.onerror = (e) => {
       rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
     }, this.ws.onclose = (evt) => {
-      var _a2, _b2, _c2, _d2;
-      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
-      let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
+      var _a2, _b2, _c2, _d2, _e2;
+      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1), rlog().warn("channel", `crdtJoined->false (socket close code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "?"})`);
+      let closeInfo = `code=${(_b2 = evt == null ? void 0 : evt.code) != null ? _b2 : "unknown"} reason="${(_c2 = evt == null ? void 0 : evt.reason) != null ? _c2 : ""}" wasClean=${(_d2 = evt == null ? void 0 : evt.wasClean) != null ? _d2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
       if (rlog().info(
         "channel",
         `WS closed, ${closeInfo} opened=${opened} sinceOpen=${sinceOpen}ms online=${online}`
@@ -1854,7 +1854,7 @@ var _NoteChannel = class _NoteChannel {
           this.openSocket();
         }, delay);
       } else if (opened) {
-        let jitterWindow = (_d2 = this.reconnectJitterMaxMs) != null ? _d2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
+        let jitterWindow = (_e2 = this.reconnectJitterMaxMs) != null ? _e2 : RECONNECT_JITTER_DEFAULT_MS, delay = fullJitterDelay(jitterWindow);
         rlog().info(
           "channel",
           `Channel dropped after live connection \u2014 jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`
@@ -1869,12 +1869,17 @@ var _NoteChannel = class _NoteChannel {
     };
   }
   joinChannel() {
+    var _a;
     this.crdtJoinMsgRef = null, this.crdtJoinFailedReason = null, this.send([this.joinRef, String(++this.ref), this.topic, "phx_join", {}]), this.send([this.userJoinRef, String(++this.ref), this.userTopic, "phx_join", {}]);
     let crdtT = this.crdtTopic;
     if (crdtT) {
       let msgRef = String(++this.ref);
-      this.crdtJoinMsgRef = msgRef, this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
-    }
+      this.crdtJoinMsgRef = msgRef, rlog().warn("channel", `crdt join SENT ${crdtT} ref=${msgRef}`), this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+    } else
+      rlog().warn(
+        "channel",
+        `crdt join SKIPPED \u2014 no crdtTopic (vaultId=${(_a = this.vaultId) != null ? _a : "null"} userId=${this.userId})`
+      );
   }
   startHeartbeat() {
     this.heartbeatTimer = window.setInterval(() => this.heartbeatTick(), 3e4);
@@ -1928,7 +1933,10 @@ var _NoteChannel = class _NoteChannel {
         } else if (topic === this.userTopic) {
           let response = payload.response, plan = response == null ? void 0 : response.plan;
           plan != null && (rlog().info("channel", `Joined ${this.userTopic} \u2014 plan state received`), (_a = this.onPlanState) == null || _a.call(this, plan));
-        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, this.joinFailureBackoffMs = 1e3, rlog().info("channel", `Joined ${topic} \u2014 CRDT routing active`), (_b = this.onCrdtJoined) == null || _b.call(this));
+        } else topic === this.crdtTopic && !this.crdtJoined && (this.crdtJoined = !0, this.joinFailureBackoffMs = 1e3, rlog().warn(
+          "channel",
+          `crdtJoined->true (Joined ${topic}, CRDT routing active)`
+        ), (_b = this.onCrdtJoined) == null || _b.call(this));
       else if (status === "error") {
         let response = payload.response;
         if (topic === this.crdtTopic && (response == null ? void 0 : response.reason) === "note_not_found" && response.doc_id) {
@@ -5071,20 +5079,20 @@ function createSingleFlight() {
 // src/sync.ts
 var import_obsidian20 = require("obsidian");
 
-// ../../node_modules/lib0/math.js
+// node_modules/lib0/math.js
 var floor = Math.floor;
 var abs = Math.abs;
 var min = (a, b) => a < b ? a : b, max = (a, b) => a > b ? a : b, isNaN2 = Number.isNaN;
 var isNegativeZero = (n) => n !== 0 ? n < 0 : 1 / n < 0;
 
-// ../../node_modules/lib0/number.js
+// node_modules/lib0/number.js
 var MAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER, MIN_SAFE_INTEGER = Number.MIN_SAFE_INTEGER, LOWEST_INT32 = 1 << 31;
 var isInteger = Number.isInteger || ((num) => typeof num == "number" && isFinite(num) && floor(num) === num), isNaN3 = Number.isNaN, parseInt2 = Number.parseInt;
 
-// ../../node_modules/lib0/set.js
+// node_modules/lib0/set.js
 var create = () => /* @__PURE__ */ new Set();
 
-// ../../node_modules/lib0/array.js
+// node_modules/lib0/array.js
 var last = (arr) => arr[arr.length - 1];
 var appendTo = (dest, src) => {
   for (let i = 0; i < src.length; i++)
@@ -5108,7 +5116,7 @@ var unfold = (len, f) => {
 };
 var isArray = Array.isArray;
 
-// ../../node_modules/lib0/string.js
+// node_modules/lib0/string.js
 var fromCharCode = String.fromCharCode, fromCodePoint = String.fromCodePoint, MAX_UTF16_CHARACTER = fromCharCode(65535), toLowerCase = (s) => s.toLowerCase(), trimLeftRegex = /^\s*/g, trimLeft = (s) => s.replace(trimLeftRegex, ""), fromCamelCaseRegex = /([A-Z])/g, fromCamelCase = (s, separator) => trimLeft(s.replace(fromCamelCaseRegex, (match2) => `${separator}${toLowerCase(match2)}`));
 var _encodeUtf8Polyfill = (str) => {
   let encodedString = unescape(encodeURIComponent(str)), len = encodedString.length, buf = new Uint8Array(len);
@@ -5124,14 +5132,14 @@ var utf8TextDecoder = typeof TextDecoder == "undefined" ? null : new TextDecoder
 utf8TextDecoder && utf8TextDecoder.decode(new Uint8Array()).length === 1 && (utf8TextDecoder = null);
 var repeat = (source, n) => unfold(n, () => source).join("");
 
-// ../../node_modules/lib0/error.js
+// node_modules/lib0/error.js
 var create2 = (s) => new Error(s), methodUnimplemented = () => {
   throw create2("Method unimplemented");
 }, unexpectedCase = () => {
   throw create2("Unexpected case");
 };
 
-// ../../node_modules/lib0/encoding.js
+// node_modules/lib0/encoding.js
 var Encoder = class {
   constructor() {
     this.cpos = 0, this.cbuf = new Uint8Array(100), this.bufs = [];
@@ -5308,7 +5316,7 @@ var flushIntDiffOptRleEncoder = (encoder) => {
   }
 };
 
-// ../../node_modules/lib0/decoding.js
+// node_modules/lib0/decoding.js
 var errorUnexpectedEndOfArray = create2("Unexpected end of array"), errorIntegerOutOfRange = create2("Integer out of Range"), Decoder = class {
   /**
    * @param {Uint8Array<Buf>} uint8Array Binary data to decode
@@ -5475,7 +5483,7 @@ var IntDiffOptRleDecoder = class extends Decoder {
   }
 };
 
-// ../../node_modules/lib0/map.js
+// node_modules/lib0/map.js
 var create3 = () => /* @__PURE__ */ new Map(), copy = (m) => {
   let r = create3();
   return m.forEach((v, k) => {
@@ -5496,7 +5504,7 @@ var create3 = () => /* @__PURE__ */ new Map(), copy = (m) => {
   return !1;
 };
 
-// ../../node_modules/lib0/observable.js
+// node_modules/lib0/observable.js
 var ObservableV2 = class {
   constructor() {
     this._observers = create3();
@@ -5604,10 +5612,10 @@ var ObservableV2 = class {
   }
 };
 
-// ../../node_modules/lib0/webcrypto.js
+// node_modules/lib0/webcrypto.js
 var subtle = crypto.subtle, getRandomValues = crypto.getRandomValues.bind(crypto);
 
-// ../../node_modules/lib0/random.js
+// node_modules/lib0/random.js
 var uint32 = () => getRandomValues(new Uint32Array(1))[0];
 var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Template.replace(
   /[018]/g,
@@ -5615,20 +5623,20 @@ var uuidv4Template = "10000000-1000-4000-8000" + -1e11, uuidv4 = () => uuidv4Tem
   (c) => (c ^ uint32() & 15 >> c / 4).toString(16)
 );
 
-// ../../node_modules/lib0/time.js
+// node_modules/lib0/time.js
 var getUnixTime = Date.now;
 
-// ../../node_modules/lib0/promise.js
+// node_modules/lib0/promise.js
 var create4 = (f) => (
   /** @type {Promise<T>} */
   new Promise(f)
 );
 var all = Promise.all.bind(Promise);
 
-// ../../node_modules/lib0/conditions.js
+// node_modules/lib0/conditions.js
 var undefinedToNull = (v) => v === void 0 ? null : v;
 
-// ../../node_modules/lib0/storage.js
+// node_modules/lib0/storage.js
 var VarStoragePolyfill = class {
   constructor() {
     this.map = /* @__PURE__ */ new Map();
@@ -5653,13 +5661,13 @@ try {
 }
 var varStorage = _localStorage;
 
-// ../../node_modules/lib0/trait/equality.js
+// node_modules/lib0/trait/equality.js
 var EqualityTraitSymbol = /* @__PURE__ */ Symbol("Equality"), equals = (a, b) => {
   var _a;
   return a === b || !!((_a = a == null ? void 0 : a[EqualityTraitSymbol]) != null && _a.call(a, b)) || !1;
 };
 
-// ../../node_modules/lib0/object.js
+// node_modules/lib0/object.js
 var isObject = (o) => typeof o == "object", assign = Object.assign, keys = Object.keys;
 var forEach = (obj, f) => {
   for (let key in obj)
@@ -5683,7 +5691,7 @@ var isEmpty = (obj) => {
   return freeze(o);
 };
 
-// ../../node_modules/lib0/function.js
+// node_modules/lib0/function.js
 var callAll = (fs, args2, i = 0) => {
   try {
     for (; i < fs.length; i++)
@@ -5749,7 +5757,7 @@ var equalityDeep = (a, b) => {
   return !0;
 }, isOneOf = (value, options) => options.includes(value);
 
-// ../../node_modules/lib0/environment.js
+// node_modules/lib0/environment.js
 var isNode = typeof process != "undefined" && process.release && /node|io\.js/.test(process.release.name) && Object.prototype.toString.call(typeof process != "undefined" ? process : 0) === "[object process]";
 var isMac = typeof navigator != "undefined" ? /Mac/.test(navigator.platform) : !1, params, args = [], computeParams = () => {
   if (params === void 0)
@@ -5773,14 +5781,14 @@ var getVariable = (name) => isNode ? undefinedToNull(process.env[name.toUpperCas
 var hasConf = (name) => hasParam("--" + name) || getVariable(name) !== null, production = hasConf("production"), forceColor = isNode && isOneOf(process.env.FORCE_COLOR, ["true", "1", "2"]), supportsColor = forceColor || !hasParam("--no-colors") && // @todo deprecate --no-colors
 !hasConf("no-color") && (!isNode || process.stdout.isTTY) && (!isNode || hasParam("--color") || getVariable("COLORTERM") !== null || (getVariable("TERM") || "").includes("color"));
 
-// ../../node_modules/lib0/buffer.js
+// node_modules/lib0/buffer.js
 var createUint8ArrayFromLen = (len) => new Uint8Array(len);
 var copyUint8Array = (uint8Array) => {
   let newBuf = createUint8ArrayFromLen(uint8Array.byteLength);
   return newBuf.set(uint8Array), newBuf;
 };
 
-// ../../node_modules/lib0/pair.js
+// node_modules/lib0/pair.js
 var Pair = class {
   /**
    * @param {L} left
@@ -5792,7 +5800,7 @@ var Pair = class {
 }, create5 = (left, right) => new Pair(left, right);
 var forEach2 = (arr, f) => arr.forEach((p) => f(p.left, p.right));
 
-// ../../node_modules/lib0/prng.js
+// node_modules/lib0/prng.js
 var bool = (gen) => gen.next() >= 0.5, int53 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
 var int32 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
 var int31 = (gen, min2, max2) => int32(gen, min2, max2);
@@ -5804,7 +5812,7 @@ var letter = (gen) => fromCharCode(int31(gen, 97, 122)), word = (gen, minLen = 0
 };
 var oneOf = (gen, array) => array[int31(gen, 0, array.length - 1)];
 
-// ../../node_modules/lib0/schema.js
+// node_modules/lib0/schema.js
 var schemaSymbol = /* @__PURE__ */ Symbol("0schema"), ValidationError = class {
   constructor() {
     this._rerrs = [];
@@ -6398,7 +6406,7 @@ ${err.toString()}`);
   _random($(schema4), gen)
 );
 
-// ../../node_modules/lib0/dom.js
+// node_modules/lib0/dom.js
 var doc = (
   /** @type {Document} */
   typeof document != "undefined" ? document : {}
@@ -6420,10 +6428,10 @@ var text = createTextNode, $text = $custom((el) => el.nodeType === TEXT_NODE);
 var mapToStyleString = (m) => map(m, (value, key) => `${key}:${value};`).join("");
 var appendChild = (parent, child) => parent.appendChild(child), ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
 
-// ../../node_modules/lib0/symbol.js
+// node_modules/lib0/symbol.js
 var create6 = Symbol;
 
-// ../../node_modules/lib0/logging.common.js
+// node_modules/lib0/logging.common.js
 var BOLD = create6(), UNBOLD = create6(), BLUE = create6(), GREY = create6(), GREEN = create6(), RED = create6(), PURPLE = create6(), ORANGE = create6(), UNCOLOR = create6(), computeNoColorLoggingArgs = (args2) => {
   var _a;
   args2.length === 1 && ((_a = args2[0]) == null ? void 0 : _a.constructor) === Function && (args2 = /** @type {Array<string|Symbol|Object|number>} */
@@ -6447,7 +6455,7 @@ var BOLD = create6(), UNBOLD = create6(), BLUE = create6(), GREY = create6(), GR
 };
 var lastLoggingTime = getUnixTime();
 
-// ../../node_modules/lib0/logging.js
+// node_modules/lib0/logging.js
 var _browserStyleMap = {
   [BOLD]: create5("font-weight", "bold"),
   [UNBOLD]: create5("font-weight", "normal"),
@@ -6491,7 +6499,7 @@ var _browserStyleMap = {
 };
 var vconsoles = create();
 
-// ../../node_modules/lib0/iterator.js
+// node_modules/lib0/iterator.js
 var createIterator = (next) => ({
   /**
    * @return {IterableIterator<T>}
@@ -6512,7 +6520,7 @@ var createIterator = (next) => ({
   return { done, value: done ? void 0 : fmap(value) };
 });
 
-// ../../node_modules/yjs/dist/yjs.mjs
+// node_modules/yjs/dist/yjs.mjs
 var DeleteItem = class {
   /**
    * @param {number} clock
@@ -11708,7 +11716,7 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
 glo[importIdentifier] === !0 && console.error("Yjs was already imported. This breaks constructor checks and will lead to issues! - https://github.com/yjs/yjs/issues/438");
 glo[importIdentifier] = !0;
 
-// ../../node_modules/y-protocols/sync.js
+// node_modules/y-protocols/sync.js
 var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
   writeVarUint(encoder, messageYjsSyncStep1);
   let sv = encodeStateVector(doc2);
@@ -11744,7 +11752,7 @@ var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writ
   return messageType;
 };
 
-// ../../node_modules/lib0/indexeddb.js
+// node_modules/lib0/indexeddb.js
 var rtop = (request) => create4((resolve, reject) => {
   request.onerror = (event) => reject(new Error(event.target.error)), request.onsuccess = (event) => resolve(event.target.result);
 }), openDB = (name, initDB) => create4((resolve, reject) => {
@@ -11780,7 +11788,7 @@ var iterateOnRequest = (request, f) => create4((resolve, reject) => {
 var iterateKeys = (store, keyrange, f, direction = "next") => iterateOnRequest(store.openKeyCursor(keyrange, direction), (cursor) => f(cursor.key)), getStore = (t, store) => t.objectStore(store);
 var createIDBKeyRangeUpperBound = (upper, upperOpen) => IDBKeyRange.upperBound(upper, upperOpen), createIDBKeyRangeLowerBound = (lower, lowerOpen) => IDBKeyRange.lowerBound(lower, lowerOpen);
 
-// ../../node_modules/y-indexeddb/src/y-indexeddb.js
+// node_modules/y-indexeddb/src/y-indexeddb.js
 var customStoreName = "custom", updatesStoreName = "updates", PREFERRED_TRIM_SIZE = 500, fetchUpdates = (idbPersistence, beforeApplyUpdatesCallback = () => {
 }, afterApplyUpdatesCallback = () => {
 }) => {
@@ -11974,7 +11982,7 @@ function jsonEqual(a, b) {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/identity.js
+// node_modules/yaml/browser/dist/nodes/identity.js
 var ALIAS = /* @__PURE__ */ Symbol.for("yaml.alias"), DOC = /* @__PURE__ */ Symbol.for("yaml.document"), MAP = /* @__PURE__ */ Symbol.for("yaml.map"), PAIR = /* @__PURE__ */ Symbol.for("yaml.pair"), SCALAR = /* @__PURE__ */ Symbol.for("yaml.scalar"), SEQ = /* @__PURE__ */ Symbol.for("yaml.seq"), NODE_TYPE = /* @__PURE__ */ Symbol.for("yaml.node.type"), isAlias = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === ALIAS, isDocument = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === DOC, isMap = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === MAP, isPair = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === PAIR, isScalar = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SCALAR, isSeq = (node) => !!node && typeof node == "object" && node[NODE_TYPE] === SEQ;
 function isCollection(node) {
   if (node && typeof node == "object")
@@ -11998,7 +12006,7 @@ function isNode2(node) {
 }
 var hasAnchor = (node) => (isScalar(node) || isCollection(node)) && !!node.anchor;
 
-// ../../node_modules/yaml/browser/dist/visit.js
+// node_modules/yaml/browser/dist/visit.js
 var BREAK = /* @__PURE__ */ Symbol("break visit"), SKIP = /* @__PURE__ */ Symbol("skip children"), REMOVE = /* @__PURE__ */ Symbol("remove node");
 function visit(node, visitor) {
   let visitor_ = initVisitor(visitor);
@@ -12120,7 +12128,7 @@ function replaceNode(key, path, node) {
   }
 }
 
-// ../../node_modules/yaml/browser/dist/doc/directives.js
+// node_modules/yaml/browser/dist/doc/directives.js
 var escapeChars = {
   "!": "%21",
   ",": "%2C",
@@ -12238,7 +12246,7 @@ var escapeChars = {
 Directives.defaultYaml = { explicit: !1, version: "1.2" };
 Directives.defaultTags = { "!!": "tag:yaml.org,2002:" };
 
-// ../../node_modules/yaml/browser/dist/doc/anchors.js
+// node_modules/yaml/browser/dist/doc/anchors.js
 function anchorIsValid(anchor) {
   if (/[\x00-\x19\s,[\]{}]/.test(anchor)) {
     let msg = `Anchor must not contain whitespace or control characters: ${JSON.stringify(anchor)}`;
@@ -12289,7 +12297,7 @@ function createNodeAnchors(doc2, prefix) {
   };
 }
 
-// ../../node_modules/yaml/browser/dist/doc/applyReviver.js
+// node_modules/yaml/browser/dist/doc/applyReviver.js
 function applyReviver(reviver, obj, key, val) {
   if (val && typeof val == "object")
     if (Array.isArray(val))
@@ -12315,7 +12323,7 @@ function applyReviver(reviver, obj, key, val) {
   return reviver.call(obj, key, val);
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/toJS.js
+// node_modules/yaml/browser/dist/nodes/toJS.js
 function toJS(value, arg, ctx) {
   if (Array.isArray(value))
     return value.map((v, i) => toJS(v, String(i), ctx));
@@ -12332,7 +12340,7 @@ function toJS(value, arg, ctx) {
   return typeof value == "bigint" && !(ctx != null && ctx.keep) ? Number(value) : value;
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/Node.js
+// node_modules/yaml/browser/dist/nodes/Node.js
 var NodeBase = class {
   constructor(type) {
     Object.defineProperty(this, NODE_TYPE, { value: type });
@@ -12361,7 +12369,7 @@ var NodeBase = class {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/nodes/Alias.js
+// node_modules/yaml/browser/dist/nodes/Alias.js
 var Alias = class extends NodeBase {
   constructor(source) {
     super(ALIAS), this.source = source, Object.defineProperty(this, "tag", {
@@ -12441,7 +12449,7 @@ function getAliasCount(doc2, node, anchors) {
   return 1;
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/Scalar.js
+// node_modules/yaml/browser/dist/nodes/Scalar.js
 var isScalarValue = (value) => !value || typeof value != "function" && typeof value != "object", Scalar = class extends NodeBase {
   constructor(value) {
     super(SCALAR), this.value = value;
@@ -12459,7 +12467,7 @@ Scalar.PLAIN = "PLAIN";
 Scalar.QUOTE_DOUBLE = "QUOTE_DOUBLE";
 Scalar.QUOTE_SINGLE = "QUOTE_SINGLE";
 
-// ../../node_modules/yaml/browser/dist/doc/createNode.js
+// node_modules/yaml/browser/dist/doc/createNode.js
 var defaultTagPrefix = "tag:yaml.org,2002:";
 function findTagObject(value, tagName, tags) {
   var _a;
@@ -12503,7 +12511,7 @@ function createNode(value, tagName, ctx) {
   return tagName ? node.tag = tagName : tagObj.default || (node.tag = tagObj.tag), ref && (ref.node = node), node;
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/Collection.js
+// node_modules/yaml/browser/dist/nodes/Collection.js
 function collectionFromPath(schema4, path, value) {
   let v = value;
   for (let i = path.length - 1; i >= 0; --i) {
@@ -12620,7 +12628,7 @@ var isEmptyPath = (path) => path == null || typeof path == "object" && !!path[Sy
   }
 };
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyComment.js
+// node_modules/yaml/browser/dist/stringify/stringifyComment.js
 var stringifyComment = (str) => str.replace(/^(?!$)(?: $)?/gm, "#");
 function indentComment(comment, indent) {
   return /^\n+$/.test(comment) ? comment.substring(1) : indent ? comment.replace(/^(?! *$)/gm, indent) : comment;
@@ -12630,7 +12638,7 @@ var lineComment = (str, indent, comment) => str.endsWith(`
 `) ? `
 ` + indentComment(comment, indent) : (str.endsWith(" ") ? "" : " ") + comment;
 
-// ../../node_modules/yaml/browser/dist/stringify/foldFlowLines.js
+// node_modules/yaml/browser/dist/stringify/foldFlowLines.js
 var FOLD_FLOW = "flow", FOLD_BLOCK = "block", FOLD_QUOTED = "quoted";
 function foldFlowLines(text2, indent, mode = "flow", { indentAtStart, lineWidth = 80, minContentWidth = 20, onFold, onOverflow } = {}) {
   if (!lineWidth || lineWidth < 0)
@@ -12712,7 +12720,7 @@ function consumeMoreIndentedLines(text2, i, indent) {
   return end;
 }
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyString.js
+// node_modules/yaml/browser/dist/stringify/stringifyString.js
 var getFoldOptions = (ctx, isBlock2) => ({
   indentAtStart: isBlock2 ? ctx.indent.length : ctx.indentAtStart,
   lineWidth: ctx.options.lineWidth,
@@ -12924,7 +12932,7 @@ function stringifyString(item, ctx, onComment, onChompKeep) {
   return res;
 }
 
-// ../../node_modules/yaml/browser/dist/stringify/stringify.js
+// node_modules/yaml/browser/dist/stringify/stringify.js
 function createStringifyContext(doc2, options) {
   let opt = Object.assign({
     blockQuote: !0,
@@ -13022,7 +13030,7 @@ function stringify(item, ctx, onComment, onChompKeep) {
 ${ctx.indent}${str}` : str;
 }
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyPair.js
+// node_modules/yaml/browser/dist/stringify/stringifyPair.js
 function stringifyPair({ key, value }, ctx, onComment, onChompKeep) {
   var _a, _b;
   let { allNullValues, doc: doc2, indent, indentStep, options: { commentString, indentSeq, simpleKeys } } = ctx, keyComment = isNode2(key) && key.comment || null;
@@ -13085,12 +13093,12 @@ ${ctx.indent}`);
   return str += ws + valueStr, ctx.inFlow ? valueCommentDone && onComment && onComment() : valueComment && !valueCommentDone ? str += lineComment(str, ctx.indent, commentString(valueComment)) : chompKeep && onChompKeep && onChompKeep(), str;
 }
 
-// ../../node_modules/yaml/browser/dist/log.js
+// node_modules/yaml/browser/dist/log.js
 function warn2(logLevel, warning) {
   (logLevel === "debug" || logLevel === "warn") && console.warn(warning);
 }
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/merge.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/merge.js
 var MERGE_KEY = "<<", merge = {
   identify: (value) => value === MERGE_KEY || typeof value == "symbol" && value.description === MERGE_KEY,
   default: "key",
@@ -13130,7 +13138,7 @@ function resolveAliasValue(ctx, value) {
   return ctx && isAlias(value) ? value.resolve(ctx.doc, ctx) : value;
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
+// node_modules/yaml/browser/dist/nodes/addPairToJSMap.js
 function addPairToJSMap(ctx, map3, { key, value }) {
   if (isNode2(key) && key.addToJSMap)
     key.addToJSMap(ctx, map3, value);
@@ -13175,7 +13183,7 @@ function stringifyKey(key, jsKey, ctx) {
   return JSON.stringify(jsKey);
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/Pair.js
+// node_modules/yaml/browser/dist/nodes/Pair.js
 function createPair(key, value, ctx) {
   let k = createNode(key, void 0, ctx), v = createNode(value, void 0, ctx);
   return new Pair2(k, v);
@@ -13197,7 +13205,7 @@ var Pair2 = class _Pair {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyCollection.js
+// node_modules/yaml/browser/dist/stringify/stringifyCollection.js
 function stringifyCollection(collection, ctx, options) {
   var _a;
   return (((_a = ctx.inFlow) != null ? _a : collection.flow) ? stringifyFlowCollection : stringifyBlockCollection)(collection, ctx, options);
@@ -13279,7 +13287,7 @@ function addCommentBefore({ indent, options: { commentString } }, lines, comment
   }
 }
 
-// ../../node_modules/yaml/browser/dist/nodes/YAMLMap.js
+// node_modules/yaml/browser/dist/nodes/YAMLMap.js
 function findPair(items, key) {
   let k = isScalar(key) ? key.value : key;
   for (let it of items)
@@ -13377,7 +13385,7 @@ var YAMLMap = class extends Collection {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/schema/common/map.js
+// node_modules/yaml/browser/dist/schema/common/map.js
 var map2 = {
   collection: "map",
   default: !0,
@@ -13389,7 +13397,7 @@ var map2 = {
   createNode: (schema4, obj, ctx) => YAMLMap.from(schema4, obj, ctx)
 };
 
-// ../../node_modules/yaml/browser/dist/nodes/YAMLSeq.js
+// node_modules/yaml/browser/dist/nodes/YAMLSeq.js
 var YAMLSeq = class extends Collection {
   static get tagName() {
     return "tag:yaml.org,2002:seq";
@@ -13480,7 +13488,7 @@ function asItemIndex(key) {
   return idx && typeof idx == "string" && (idx = Number(idx)), typeof idx == "number" && Number.isInteger(idx) && idx >= 0 ? idx : null;
 }
 
-// ../../node_modules/yaml/browser/dist/schema/common/seq.js
+// node_modules/yaml/browser/dist/schema/common/seq.js
 var seq = {
   collection: "seq",
   default: !0,
@@ -13492,7 +13500,7 @@ var seq = {
   createNode: (schema4, obj, ctx) => YAMLSeq.from(schema4, obj, ctx)
 };
 
-// ../../node_modules/yaml/browser/dist/schema/common/string.js
+// node_modules/yaml/browser/dist/schema/common/string.js
 var string = {
   identify: (value) => typeof value == "string",
   default: !0,
@@ -13503,7 +13511,7 @@ var string = {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/schema/common/null.js
+// node_modules/yaml/browser/dist/schema/common/null.js
 var nullTag = {
   identify: (value) => value == null,
   createNode: () => new Scalar(null),
@@ -13514,7 +13522,7 @@ var nullTag = {
   stringify: ({ source }, ctx) => typeof source == "string" && nullTag.test.test(source) ? source : ctx.options.nullStr
 };
 
-// ../../node_modules/yaml/browser/dist/schema/core/bool.js
+// node_modules/yaml/browser/dist/schema/core/bool.js
 var boolTag = {
   identify: (value) => typeof value == "boolean",
   default: !0,
@@ -13531,7 +13539,7 @@ var boolTag = {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyNumber.js
+// node_modules/yaml/browser/dist/stringify/stringifyNumber.js
 function stringifyNumber({ format, minFractionDigits, tag, value }) {
   if (typeof value == "bigint")
     return String(value);
@@ -13549,7 +13557,7 @@ function stringifyNumber({ format, minFractionDigits, tag, value }) {
   return n;
 }
 
-// ../../node_modules/yaml/browser/dist/schema/core/float.js
+// node_modules/yaml/browser/dist/schema/core/float.js
 var floatNaN = {
   identify: (value) => typeof value == "number",
   default: !0,
@@ -13580,7 +13588,7 @@ var floatNaN = {
   stringify: stringifyNumber
 };
 
-// ../../node_modules/yaml/browser/dist/schema/core/int.js
+// node_modules/yaml/browser/dist/schema/core/int.js
 var intIdentify = (value) => typeof value == "bigint" || Number.isInteger(value), intResolve = (str, offset, radix, { intAsBigInt }) => intAsBigInt ? BigInt(str) : parseInt(str.substring(offset), radix);
 function intStringify(node, radix, prefix) {
   let { value } = node;
@@ -13611,7 +13619,7 @@ var intOct = {
   stringify: (node) => intStringify(node, 16, "0x")
 };
 
-// ../../node_modules/yaml/browser/dist/schema/core/schema.js
+// node_modules/yaml/browser/dist/schema/core/schema.js
 var schema = [
   map2,
   seq,
@@ -13626,7 +13634,7 @@ var schema = [
   float
 ];
 
-// ../../node_modules/yaml/browser/dist/schema/json/schema.js
+// node_modules/yaml/browser/dist/schema/json/schema.js
 function intIdentify2(value) {
   return typeof value == "bigint" || Number.isInteger(value);
 }
@@ -13680,7 +13688,7 @@ var stringifyJSON = ({ value }) => JSON.stringify(value), jsonScalars = [
   }
 }, schema2 = [map2, seq].concat(jsonScalars, jsonError);
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
 var binary = {
   identify: (value) => value instanceof Uint8Array,
   // Buffer inherits from Uint8Array
@@ -13725,7 +13733,7 @@ var binary = {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
 function resolvePairs(seq3, onError) {
   var _a;
   if (isSeq(seq3))
@@ -13783,7 +13791,7 @@ var pairs = {
   createNode: createPairs
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/omap.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/omap.js
 var YAMLOMap = class _YAMLOMap extends YAMLSeq {
   constructor() {
     super(), this.add = YAMLMap.prototype.add.bind(this), this.delete = YAMLMap.prototype.delete.bind(this), this.get = YAMLMap.prototype.get.bind(this), this.has = YAMLMap.prototype.has.bind(this), this.set = YAMLMap.prototype.set.bind(this), this.tag = _YAMLOMap.tag;
@@ -13826,7 +13834,7 @@ var omap = {
   createNode: (schema4, iterable, ctx) => YAMLOMap.from(schema4, iterable, ctx)
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/bool.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/bool.js
 function boolStringify({ value, source }, ctx) {
   return source && (value ? trueTag : falseTag).test.test(source) ? source : value ? ctx.options.trueStr : ctx.options.falseStr;
 }
@@ -13846,7 +13854,7 @@ var trueTag = {
   stringify: boolStringify
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/float.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/float.js
 var floatNaN2 = {
   identify: (value) => typeof value == "number",
   default: !0,
@@ -13881,7 +13889,7 @@ var floatNaN2 = {
   stringify: stringifyNumber
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/int.js
 var intIdentify3 = (value) => typeof value == "bigint" || Number.isInteger(value);
 function intResolve2(str, offset, radix, { intAsBigInt }) {
   let sign = str[0];
@@ -13944,7 +13952,7 @@ var intBin = {
   stringify: (node) => intStringify2(node, 16, "0x")
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/set.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/set.js
 var YAMLSet = class _YAMLSet extends YAMLMap {
   constructor(schema4) {
     super(schema4), this.tag = _YAMLSet.tag;
@@ -14004,7 +14012,7 @@ var set = {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/timestamp.js
 function parseSexagesimal(str, asBigInt) {
   let sign = str[0], parts = sign === "-" || sign === "+" ? str.substring(1) : str, num = (n) => asBigInt ? BigInt(n) : Number(n), res = parts.replace(/_/g, "").split(":").reduce((res2, p) => res2 * num(60) + num(p), num(0));
   return sign === "-" ? num(-1) * res : res;
@@ -14061,7 +14069,7 @@ var intTime = {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
+// node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
 var schema3 = [
   map2,
   seq,
@@ -14086,7 +14094,7 @@ var schema3 = [
   timestamp
 ];
 
-// ../../node_modules/yaml/browser/dist/schema/tags.js
+// node_modules/yaml/browser/dist/schema/tags.js
 var schemas = /* @__PURE__ */ new Map([
   ["core", schema],
   ["failsafe", [map2, seq, string]],
@@ -14146,7 +14154,7 @@ function getTags(customTags, schemaName, addMergeTag) {
   }, []);
 }
 
-// ../../node_modules/yaml/browser/dist/schema/Schema.js
+// node_modules/yaml/browser/dist/schema/Schema.js
 var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, Schema2 = class _Schema {
   constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
     this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
@@ -14157,7 +14165,7 @@ var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, 
   }
 };
 
-// ../../node_modules/yaml/browser/dist/stringify/stringifyDocument.js
+// node_modules/yaml/browser/dist/stringify/stringifyDocument.js
 function stringifyDocument(doc2, options) {
   var _a;
   let lines = [], hasDirectives = options.directives === !0;
@@ -14201,7 +14209,7 @@ function stringifyDocument(doc2, options) {
 `;
 }
 
-// ../../node_modules/yaml/browser/dist/doc/Document.js
+// node_modules/yaml/browser/dist/doc/Document.js
 var Document = class _Document {
   constructor(value, replacer, options) {
     this.commentBefore = null, this.comment = null, this.errors = [], this.warnings = [], Object.defineProperty(this, NODE_TYPE, { value: DOC });
@@ -14418,7 +14426,7 @@ function assertCollection(contents) {
   throw new Error("Expected a YAML collection as document contents");
 }
 
-// ../../node_modules/yaml/browser/dist/errors.js
+// node_modules/yaml/browser/dist/errors.js
 var YAMLError = class extends Error {
   constructor(name, pos, code, message) {
     super(), this.name = name, this.code = code, this.message = message, this.pos = pos;
@@ -14459,7 +14467,7 @@ ${pointer}
   }
 };
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-props.js
+// node_modules/yaml/browser/dist/compose/resolve-props.js
 function resolveProps(tokens, { flow, indicator, next, offset, onError, parentIndent, startOnNewline }) {
   let spaceBefore = !1, atNewline = startOnNewline, hasSpace = startOnNewline, comment = "", commentSep = "", hasNewline = !1, reqSpace = !1, tab = null, anchor = null, tag = null, newlineAfterProp = null, comma = null, found = null, start = null;
   for (let token of tokens)
@@ -14510,7 +14518,7 @@ function resolveProps(tokens, { flow, indicator, next, offset, onError, parentIn
   };
 }
 
-// ../../node_modules/yaml/browser/dist/compose/util-contains-newline.js
+// node_modules/yaml/browser/dist/compose/util-contains-newline.js
 function containsNewline(key) {
   if (!key)
     return null;
@@ -14547,7 +14555,7 @@ function containsNewline(key) {
   }
 }
 
-// ../../node_modules/yaml/browser/dist/compose/util-flow-indent-check.js
+// node_modules/yaml/browser/dist/compose/util-flow-indent-check.js
 function flowIndentCheck(indent, fc, onError) {
   if ((fc == null ? void 0 : fc.type) === "flow-collection") {
     let end = fc.end[0];
@@ -14555,7 +14563,7 @@ function flowIndentCheck(indent, fc, onError) {
   }
 }
 
-// ../../node_modules/yaml/browser/dist/compose/util-map-includes.js
+// node_modules/yaml/browser/dist/compose/util-map-includes.js
 function mapIncludes(ctx, items, search) {
   let { uniqueKeys } = ctx.options;
   if (uniqueKeys === !1)
@@ -14564,7 +14572,7 @@ function mapIncludes(ctx, items, search) {
   return items.some((pair) => isEqual(pair.key, search));
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-block-map.js
+// node_modules/yaml/browser/dist/compose/resolve-block-map.js
 var startColMsg = "All mapping items must start at the same column";
 function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bm, onError, tag) {
   var _a, _b;
@@ -14615,7 +14623,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
   return commentEnd && commentEnd < offset && onError(commentEnd, "IMPOSSIBLE", "Map comment with trailing content"), map3.range = [bm.offset, offset, commentEnd != null ? commentEnd : offset], map3;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-block-seq.js
+// node_modules/yaml/browser/dist/compose/resolve-block-seq.js
 function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bs, onError, tag) {
   var _a;
   let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq3 = new NodeClass(ctx.schema);
@@ -14643,7 +14651,7 @@ function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeE
   return seq3.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq3;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-end.js
+// node_modules/yaml/browser/dist/compose/resolve-end.js
 function resolveEnd(end, offset, reqSpace, onError) {
   let comment = "";
   if (end) {
@@ -14672,7 +14680,7 @@ function resolveEnd(end, offset, reqSpace, onError) {
   return { comment, offset };
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-flow-collection.js
+// node_modules/yaml/browser/dist/compose/resolve-flow-collection.js
 var blockMsg = "Block collections are not allowed within flow collections", isBlock = (token) => token && (token.type === "block-map" || token.type === "block-seq");
 function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, fc, onError, tag) {
   var _a, _b, _c;
@@ -14787,7 +14795,7 @@ function resolveFlowCollection({ composeNode: composeNode2, composeEmptyNode: co
   return coll;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/compose-collection.js
+// node_modules/yaml/browser/dist/compose/compose-collection.js
 function resolveCollection(CN2, ctx, token, onError, tagName, tag) {
   let coll = token.type === "block-map" ? resolveBlockMap(CN2, ctx, token, onError, tag) : token.type === "block-seq" ? resolveBlockSeq(CN2, ctx, token, onError, tag) : resolveFlowCollection(CN2, ctx, token, onError, tag), Coll = coll.constructor;
   return tagName === "!" || tagName === Coll.tagName ? (coll.tag = Coll.tagName, coll) : (tagName && (coll.tag = tagName), coll);
@@ -14814,7 +14822,7 @@ function composeCollection(CN2, ctx, token, props, onError) {
   return node.range = coll.range, node.tag = tagName, tag != null && tag.format && (node.format = tag.format), node;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-block-scalar.js
+// node_modules/yaml/browser/dist/compose/resolve-block-scalar.js
 function resolveBlockScalar(ctx, scalar, onError) {
   let start = scalar.offset, header = parseBlockScalarHeader(scalar, ctx.options.strict, onError);
   if (!header)
@@ -14934,7 +14942,7 @@ function splitLines(source) {
   return lines;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/resolve-flow-scalar.js
+// node_modules/yaml/browser/dist/compose/resolve-flow-scalar.js
 function resolveFlowScalar(scalar, strict, onError) {
   let { offset, type, source, end } = scalar, _type, value, _onError = (rel, code, msg) => onError(offset + rel, code, msg);
   switch (type) {
@@ -15109,7 +15117,7 @@ function parseCharCode(source, offset, length2, onError) {
   }
 }
 
-// ../../node_modules/yaml/browser/dist/compose/compose-scalar.js
+// node_modules/yaml/browser/dist/compose/compose-scalar.js
 function composeScalar(ctx, token, tagToken, onError) {
   let { value, type, comment, range } = token.type === "block-scalar" ? resolveBlockScalar(ctx, token, onError) : resolveFlowScalar(token, ctx.options.strict, onError), tagName = tagToken ? ctx.directives.tagName(tagToken.source, (msg) => onError(tagToken, "TAG_RESOLVE_FAILED", msg)) : null, tag;
   ctx.options.stringKeys && ctx.atKey ? tag = ctx.schema[SCALAR] : tagName ? tag = findScalarTagByName(ctx.schema, value, tagName, tagToken, onError) : token.type === "scalar" ? tag = findScalarTagByTest(ctx, value, token, onError) : tag = ctx.schema[SCALAR];
@@ -15159,7 +15167,7 @@ function findScalarTagByTest({ atKey, directives, schema: schema4 }, value, toke
   return tag;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/util-empty-scalar-position.js
+// node_modules/yaml/browser/dist/compose/util-empty-scalar-position.js
 function emptyScalarPosition(offset, before, pos) {
   if (before) {
     pos != null || (pos = before.length);
@@ -15180,7 +15188,7 @@ function emptyScalarPosition(offset, before, pos) {
   return offset;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/compose-node.js
+// node_modules/yaml/browser/dist/compose/compose-node.js
 var CN = { composeNode, composeEmptyNode };
 function composeNode(ctx, token, props, onError) {
   let atKey = ctx.atKey, { spaceBefore, comment, anchor, tag } = props, node, isSrcToken = !0;
@@ -15227,7 +15235,7 @@ function composeAlias({ options }, { offset, source, end }, onError) {
   return alias.range = [offset, valueEnd, re.offset], re.comment && (alias.comment = re.comment), alias;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/compose-doc.js
+// node_modules/yaml/browser/dist/compose/compose-doc.js
 function composeDoc(options, directives, { offset, start, value, end }, onError) {
   let opts = Object.assign({ _directives: directives }, options), doc2 = new Document(void 0, opts), ctx = {
     atKey: !1,
@@ -15248,7 +15256,7 @@ function composeDoc(options, directives, { offset, start, value, end }, onError)
   return re.comment && (doc2.comment = re.comment), doc2.range = [offset, contentEnd, re.offset], doc2;
 }
 
-// ../../node_modules/yaml/browser/dist/compose/composer.js
+// node_modules/yaml/browser/dist/compose/composer.js
 function getErrorPos(src) {
   if (typeof src == "number")
     return [src, src + 1];
@@ -15401,7 +15409,7 @@ ${end.comment}` : end.comment;
   }
 };
 
-// ../../node_modules/yaml/browser/dist/parse/cst-visit.js
+// node_modules/yaml/browser/dist/parse/cst-visit.js
 var BREAK2 = /* @__PURE__ */ Symbol("break visit"), SKIP2 = /* @__PURE__ */ Symbol("skip children"), REMOVE2 = /* @__PURE__ */ Symbol("remove item");
 function visit2(cst, visitor) {
   "type" in cst && cst.type === "document" && (cst = { start: cst.start, value: cst.value }), _visit(Object.freeze([]), cst, visitor);
@@ -15449,7 +15457,7 @@ function _visit(path, item, visitor) {
   return typeof ctrl == "function" ? ctrl(item, path) : ctrl;
 }
 
-// ../../node_modules/yaml/browser/dist/parse/cst.js
+// node_modules/yaml/browser/dist/parse/cst.js
 var BOM = "\uFEFF", DOCUMENT = "", FLOW_END = "", SCALAR2 = "";
 function tokenType(source) {
   switch (source) {
@@ -15513,7 +15521,7 @@ function tokenType(source) {
   return null;
 }
 
-// ../../node_modules/yaml/browser/dist/parse/lexer.js
+// node_modules/yaml/browser/dist/parse/lexer.js
 function isEmpty2(ch) {
   switch (ch) {
     case void 0:
@@ -15950,7 +15958,7 @@ var hexDigits = new Set("0123456789ABCDEFabcdef"), tagChars = new Set("012345678
   }
 };
 
-// ../../node_modules/yaml/browser/dist/parse/line-counter.js
+// node_modules/yaml/browser/dist/parse/line-counter.js
 var LineCounter = class {
   constructor() {
     this.lineStarts = [], this.addNewLine = (offset) => this.lineStarts.push(offset), this.linePos = (offset) => {
@@ -15969,7 +15977,7 @@ var LineCounter = class {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/parse/parser.js
+// node_modules/yaml/browser/dist/parse/parser.js
 function includesToken(list, type) {
   for (let i = 0; i < list.length; ++i)
     if (list[i].type === type)
@@ -16626,7 +16634,7 @@ var Parser = class {
   }
 };
 
-// ../../node_modules/yaml/browser/dist/public-api.js
+// node_modules/yaml/browser/dist/public-api.js
 function parseOptions(options) {
   let prettyErrors = options.prettyErrors !== !1;
   return { lineCounter: options.lineCounter || prettyErrors && new LineCounter() || null, prettyErrors };
@@ -16750,7 +16758,7 @@ ${body}`;
 }
 
 // src/crdt/manager.ts
-var REMOTE_ORIGIN = "remote", FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
+var REMOTE_ORIGIN = "remote", bindraceSendAt = /* @__PURE__ */ new Map(), FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
 function frontmatterOf(doc2) {
   let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
   return { order, values };
@@ -17089,14 +17097,26 @@ var _CrdtManager = class _CrdtManager {
    *  differ there (closeDoc/removeDoc clear both, flattenIfBloated keeps
    *  them for the re-opened entry, destroy() clears in bulk). */
   async teardownEntry(id2, e, opts) {
+    var _a, _b;
+    {
+      let guid = (_a = e.doc.guid) != null ? _a : "none", st = ((_b = new Error().stack) != null ? _b : "").split(`
+`).slice(2, 7).map((s) => s.trim().replace(/^at\s+/, "")).join(" <- ");
+      rlog().warn(
+        "bindrace",
+        `TEARDOWN id=${id2} docGuid=${guid} clearData=${opts.clearData} via ${st}`
+      );
+    }
     this.docs.delete(id2), e.doc.destroy(), opts.clearData && await e.persistence.clearData(), await e.persistence.destroy();
   }
   closeDoc(noteId) {
-    var _a;
+    var _a, _b, _c;
     let id2 = this.docId(noteId);
     if (((_a = this.inFlightOps.get(id2)) != null ? _a : 0) > 0) return;
     let e = this.docs.get(id2);
-    e && (this.teardownEntry(id2, e, { clearData: !1 }), this.synced.delete(id2), this.pendingFlush.delete(id2));
+    e && (rlog().warn(
+      "bindrace",
+      `closeDoc noteId=${noteId} docGuid=${(_b = e.doc.guid) != null ? _b : "none"} inFlight=${(_c = this.inFlightOps.get(id2)) != null ? _c : 0}`
+    ), this.teardownEntry(id2, e, { clearData: !1 }), this.synced.delete(id2), this.pendingFlush.delete(id2));
   }
   /**
    * Permanently remove the Y.Doc and its IndexedDB store for `noteId`.
@@ -17202,7 +17222,7 @@ var _CrdtManager = class _CrdtManager {
    *   remote update → flushed to disk via `onFlushToDisk`; NOT forwarded
    */
   async entry(noteId) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     let id2 = this.docId(noteId), cached = this.docs.get(id2);
     if (cached)
       return await cached.ready, cached;
@@ -17216,11 +17236,17 @@ var _CrdtManager = class _CrdtManager {
       remoteSeq: 0,
       hadContent: !1
     };
-    return persistence.on("error", (err) => {
+    persistence.on("error", (err) => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.opts).onPersistError) == null ? void 0 : _b2.call(_a2, noteId, err);
     }), doc2.on("update", (update, origin) => {
-      hasContent2() && (entry.hadContent = !0), origin !== REMOTE_ORIGIN && (this.opts.canSendLive && !this.opts.canSendLive(id2) || this.opts.onUpdate(id2, update, origin));
+      var _a2;
+      if (hasContent2() && (entry.hadContent = !0), origin === REMOTE_ORIGIN || this.opts.canSendLive && !this.opts.canSendLive(id2)) return;
+      let now = Date.now();
+      now - ((_a2 = bindraceSendAt.get(id2)) != null ? _a2 : 0) > 1e3 && (bindraceSendAt.set(id2, now), rlog().warn(
+        "bindrace",
+        `SEND noteId=${noteId} docGuid=${doc2.guid} len=${update.length}`
+      )), this.opts.onUpdate(id2, update, origin);
     }), doc2.on("update", (_u, origin) => {
       if (hasContent2() && (entry.hadContent = !0), origin !== REMOTE_ORIGIN) return;
       if (entry.remoteSeq += 1, !hasContent2() && !entry.hadContent) {
@@ -17240,7 +17266,13 @@ var _CrdtManager = class _CrdtManager {
       }).finally(() => {
         this.pendingFlush.get(id2) === flush && this.pendingFlush.delete(id2);
       });
-    }), this.docs.set(id2, entry), await ready, hasContent2() && (entry.hadContent = !0), entry;
+    }), this.docs.set(id2, entry);
+    {
+      let st = ((_d = new Error().stack) != null ? _d : "").split(`
+`).slice(2, 7).map((s) => s.trim().replace(/^at\s+/, "")).join(" <- ");
+      rlog().warn("bindrace", `MINT noteId=${noteId} docGuid=${doc2.guid} via ${st}`);
+    }
+    return await ready, hasContent2() && (entry.hadContent = !0), entry;
   }
   /**
    * Returns true when the Y.Text already carries CRDT history (content
@@ -19699,8 +19731,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  paths in `socketConverge`. Records the cooldown timestamp —
    *  ONLY called on a real fire, never on a suppressed attempt. */
   fireCrdtReHandshake(path, noteId) {
-    var _a, _b;
-    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+    var _a, _b, _c, _d;
+    this.crdtHealCooldown.set(noteId, Date.now()), (_a = this.crdtEnrollment) == null || _a.reset(noteId), (_b = this.crdtEnrollment) == null || _b.enroll(noteId), rlog().warn(
+      "crdt",
+      `converge: re-handshake fired for ${path} attempts=${(_d = (_c = this.crdtRehandshakeAttempts.get(noteId)) == null ? void 0 : _c.attempts) != null ? _d : 0}`
+    );
   }
   /** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
    *  the live-bound and the cold catch-up legs since Phase E3) — the ONLY
@@ -19733,7 +19768,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  can't write syncState at a stale/dead path — no separate teardown hook
    *  needed. Never throws into the CRDT manager's synchronous callback. */
   async commitCrdtConvergence(noteId) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     let queued = this.pendingQueueDeliveries.get(noteId);
     if (queued) {
       this.pendingQueueDeliveries.delete(noteId);
@@ -19752,44 +19787,47 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (staged.content !== null) {
-      let matches = !1;
+      let matches = !1, projected = null;
       if (this.crdt)
         try {
-          matches = await this.crdt.projectedText(noteId) === staged.content;
+          projected = await this.crdt.projectedText(noteId), matches = projected === staged.content;
         } catch (e) {
-          devLog().log(
+          rlog().warn(
             "crdt",
-            `socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`
+            `converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`
           );
         }
       if (!matches) {
-        devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
+        rlog().warn(
+          "crdt",
+          `converge: commit DEFERRED ${noteId} projLen=${(_a = projected == null ? void 0 : projected.length) != null ? _a : -1} projHash=${projected === null ? "err" : fnv1a(projected)} stagedLen=${staged.content.length} stagedHash=${fnv1a(staged.content)}`
+        );
         return;
       }
-      let boundPath = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId);
+      let boundPath = (_b = this.noteIdMap) == null ? void 0 : _b.pathForId(noteId);
       if (boundPath && this.isLiveBound(boundPath)) {
-        let buffer = (_c = (_b = this.crdtBoundBufferText) == null ? void 0 : _b.call(this, boundPath)) != null ? _c : null;
+        let buffer = (_d = (_c = this.crdtBoundBufferText) == null ? void 0 : _c.call(this, boundPath)) != null ? _d : null;
         buffer !== null && buffer !== staged.content && (rlog().warn(
           "crdt",
           `socket converge: phantom binding rebound for ${boundPath}`
-        ), (_d = this.crdtEditorRebind) == null || _d.call(this, boundPath), (_e = this.crdtRequestSave) == null || _e.call(this, boundPath));
+        ), (_e = this.crdtEditorRebind) == null || _e.call(this, boundPath), (_f = this.crdtRequestSave) == null || _f.call(this, boundPath));
       }
     }
     this.pendingConvergence.delete(noteId), this.crdtRehandshakeAttempts.delete(noteId);
-    let path = (_f = this.noteIdMap) == null ? void 0 : _f.pathForId(noteId);
+    let path = (_g = this.noteIdMap) == null ? void 0 : _g.pathForId(noteId);
     if (!path) {
       this.releaseHealRoom(noteId, null);
       return;
     }
     try {
-      let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
+      let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_h = stored == null ? void 0 : stored.hash) != null ? _h : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
       this.syncState.set(path, {
-        ...(_h = this.syncState.get(path)) != null ? _h : {},
+        ...(_i = this.syncState.get(path)) != null ? _i : {},
         hash: localHash,
         serverHash: staged.serverHash,
         version: staged.version,
         seq: staged.seq
-      }), rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+      }), rlog().warn("crdt", `converge: STEP2 committed ${path} seq=${staged.seq}`);
     } catch (e) {
       rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
     }
@@ -21588,7 +21626,7 @@ var BaseStore = class {
 // src/crdt/live/live-views.ts
 var import_obsidian22 = require("obsidian");
 
-// ../../node_modules/y-protocols/awareness.js
+// node_modules/y-protocols/awareness.js
 var outdatedTimeout = 3e4, Awareness = class extends Observable {
   /**
    * @param {Y.Doc} doc
@@ -21669,10 +21707,10 @@ var outdatedTimeout = 3e4, Awareness = class extends Observable {
 // src/crdt/live/ycollab-binding.ts
 var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
 
-// ../../node_modules/y-codemirror.next/src/index.js
+// node_modules/y-codemirror.next/src/index.js
 var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
 
-// ../../node_modules/y-codemirror.next/src/y-range.js
+// node_modules/y-codemirror.next/src/y-range.js
 var YRange = class _YRange {
   /**
    * @param {Y.RelativePosition} yanchor
@@ -21699,7 +21737,7 @@ var YRange = class _YRange {
   }
 };
 
-// ../../node_modules/y-codemirror.next/src/y-sync.js
+// node_modules/y-codemirror.next/src/y-sync.js
 var cmState = __toESM(require("@codemirror/state"), 1), cmView = __toESM(require("@codemirror/view"), 1);
 var YSyncConfig = class {
   constructor(ytext, awareness) {
@@ -21803,7 +21841,7 @@ var YSyncConfig = class {
   }
 }, ySync = cmView.ViewPlugin.fromClass(YSyncPluginValue);
 
-// ../../node_modules/y-codemirror.next/src/y-remote-selections.js
+// node_modules/y-codemirror.next/src/y-remote-selections.js
 var cmView2 = __toESM(require("@codemirror/view"), 1), cmState2 = __toESM(require("@codemirror/state"), 1);
 var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
   ".cm-ySelection": {},
@@ -21993,10 +22031,10 @@ var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
   decorations: (v) => v.decorations
 });
 
-// ../../node_modules/y-codemirror.next/src/y-undomanager.js
+// node_modules/y-codemirror.next/src/y-undomanager.js
 var cmState3 = __toESM(require("@codemirror/state"), 1), cmView3 = __toESM(require("@codemirror/view"), 1);
 
-// ../../node_modules/lib0/mutex.js
+// node_modules/lib0/mutex.js
 var createMutex = () => {
   let token = !0;
   return (f, g) => {
@@ -22011,7 +22049,7 @@ var createMutex = () => {
   };
 };
 
-// ../../node_modules/y-codemirror.next/src/y-undomanager.js
+// node_modules/y-codemirror.next/src/y-undomanager.js
 var YUndoManagerConfig = class {
   /**
    * @param {Y.UndoManager} undoManager
@@ -22083,7 +22121,7 @@ var yUndoManagerKeymap = [
   { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
 ];
 
-// ../../node_modules/y-codemirror.next/src/index.js
+// node_modules/y-codemirror.next/src/index.js
 var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
   let ySyncConfig = new YSyncConfig(ytext, awareness), plugins = [
     ySyncFacet.of(ySyncConfig),
@@ -22116,7 +22154,7 @@ function textDiffToChangeSpec(before, after) {
 }
 
 // src/crdt/live/ycollab-binding.ts
-var crdtCompartment = new import_state.Compartment();
+var bindraceKeystrokeAt = /* @__PURE__ */ new Map(), crdtCompartment = new import_state.Compartment();
 function ycollabExtension() {
   return crdtCompartment.of([]);
 }
@@ -22156,10 +22194,17 @@ function bindSpec(ytext, awareness) {
         return handleUndoBeforeInput(e.inputType, router) ? (e.preventDefault(), !0) : !1;
       }
     })
-  );
+  ), keystrokeTripwire = import_view.EditorView.updateListener.of((u) => {
+    var _a, _b, _c;
+    if (u.docChanged && u.transactions.some((t) => t.isUserEvent("input") || t.isUserEvent("delete"))) {
+      let guid = (_b = (_a = ytext.doc) == null ? void 0 : _a.guid) != null ? _b : "none", now = Date.now();
+      now - ((_c = bindraceKeystrokeAt.get(guid)) != null ? _c : 0) > 1e3 && (bindraceKeystrokeAt.set(guid, now), rlog().warn("bindrace", `KEYSTROKE docGuid=${guid} ytLen=${ytext.length}`));
+    }
+  });
   return {
     extension: [
       captureExt,
+      keystrokeTripwire,
       ycollabExt,
       // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
       // Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
@@ -22201,23 +22246,41 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq2 = 0, EditorController = class {
     return this.path;
   }
   async bindTo(view, path) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f;
     if (this.path === path) return;
     this.detach(view);
     let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
-    if (this.released || epoch !== this.bindEpoch) return;
+    if (this.released || epoch !== this.bindEpoch) {
+      rlog().warn(
+        "bindrace",
+        `BIND aborted-stale path=${path} epoch=${epoch} cur=${this.bindEpoch} released=${this.released}`
+      );
+      return;
+    }
     let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
-    if (shown !== void 0 && shown !== path) return;
+    if (shown !== void 0 && shown !== path) {
+      rlog().warn(
+        "bindrace",
+        `BIND skipped-viewpath path=${path} shows=${shown} epoch=${epoch}`
+      );
+      return;
+    }
     let editorText = view.state.doc.toString();
     if (ytext.length === 0 && editorText.length > 0) {
-      this.deferUntilSeeded(view, path, ytext, epoch);
+      rlog().warn(
+        "bindrace",
+        `BIND deferred-unseeded path=${path} edLen=${editorText.length} docGuid=${(_d = (_c = ytext.doc) == null ? void 0 : _c.guid) != null ? _d : "none"} epoch=${epoch}`
+      ), this.deferUntilSeeded(view, path, ytext, epoch);
       return;
     }
     let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
       effects: crdtCompartment.reconfigure(result.extension)
-    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, rlog().warn(
+      "bindrace",
+      `BIND ok path=${path} epoch=${epoch} viewId=${this.viewId} docGuid=${(_f = (_e = ytext.doc) == null ? void 0 : _e.guid) != null ? _f : "none"} ytLen=${ytext.length} edLen=${editorText.length}`
+    ), this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
   }
   /** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
    *  server, then rebind. Never seeds the doc locally (that would double against
@@ -22900,7 +22963,8 @@ function createCrdtWiring(deps) {
     drainStrandedFlushes,
     clearStrandHealAttempts: () => strandHealAttempts.clear(),
     reEnrollUnsent: () => {
-      for (let id2 of [...unsentDocIds]) enrollment.enroll(id2);
+      for (let id2 of [...unsentDocIds])
+        enrollment.enroll(id2), manager.flushHeldState(id2);
     },
     forgetUnsent: (docId) => {
       unsentDocIds.delete(docId);
@@ -23622,7 +23686,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect("pluginUnload"), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroy(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -23779,7 +23843,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian25.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(`clearAuthAndPromptRelink:${reason}`), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian25.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -23847,16 +23911,19 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
   setupNoteStream() {
-    var _a, _b, _c, _d, _e;
-    let connectionKey = channelConnectionKey(this.settings);
-    if (shouldReuseLiveStream(
+    var _a, _b, _c, _d, _e, _f;
+    let connectionKey = channelConnectionKey(this.settings), willReuse = shouldReuseLiveStream(
       this.noteStream !== null,
       this.everConnected,
       connectionKey,
       this.liveChannelKey
-    ))
+    );
+    if (rlog().warn(
+      "channel",
+      `setupNoteStream ${willReuse ? "REUSE" : "REBUILD"} \u2014 streamNull=${this.noteStream === null} everConnected=${this.everConnected} keyMatch=${connectionKey === this.liveChannelKey} key=${connectionKey} liveKey=${(_a = this.liveChannelKey) != null ? _a : "null"}`
+    ), willReuse)
       return;
-    this.liveChannelKey = connectionKey, this.everConnected = !1, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, this.everConnected = !1, (_b = this.crdtLiveViews) == null || _b.destroy(), this.crdtLiveViews = null, (_c = this.crdtWiring) == null || _c.dispose(), this.crdtWiring = null, (_d = this.crdtManager) == null || _d.destroy(), this.crdtManager = null, (_e = this.crdtEnrollment) == null || _e.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_f = this.noteStream) == null || _f.disconnect("setupNoteStreamRebuild"), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -23962,7 +24029,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         )), (_a2 = this.crdtManager) == null || _a2.clearSynced());
       }, channel.onVaultDeleted = () => {
         var _a2;
-        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect("vaultDeletedOnServer");
       }, channel.onFoldersChanged = () => {
         this.syncEngine.resyncFolders().catch((e) => {
           rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
