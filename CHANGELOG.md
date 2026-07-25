@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.18.0](https://github.com/engram-app/Engram-obsidian/compare/1.17.0...1.18.0) (2026-07-25)
+
+
+### Features
+
+* **crdt:** canvas onto CRDT — structural Yjs sync ([#306](https://github.com/engram-app/Engram-obsidian/issues/306) Phase B, plugin) ([#321](https://github.com/engram-app/Engram-obsidian/issues/321)) ([65335e9](https://github.com/engram-app/Engram-obsidian/commit/65335e905f69f70b34cc0603ef0b908e5c35a927))
+* modal-free drift-conflict-copy for CRDT md double-divergence (refs [#306](https://github.com/engram-app/Engram-obsidian/issues/306)) ([#320](https://github.com/engram-app/Engram-obsidian/issues/320)) ([c71b15b](https://github.com/engram-app/Engram-obsidian/commit/c71b15bd60bda75f4459d33bbdbb36f94dcb983f))
+* sync preview on the op-log socket feed (redo of [#311](https://github.com/engram-app/Engram-obsidian/issues/311), startup + vault-switch fixed) ([#314](https://github.com/engram-app/Engram-obsidian/issues/314)) ([e7c9c87](https://github.com/engram-app/Engram-obsidian/commit/e7c9c87afefd5e8fe4fe9d3a9fb8747cc14c9256))
+* sync preview on the op-log socket feed; delete /notes/changes + /attachments/changes client path ([#311](https://github.com/engram-app/Engram-obsidian/issues/311)) ([bb25db0](https://github.com/engram-app/Engram-obsidian/commit/bb25db0c36cc5a95fef29d22a70547d3a5d73fd2))
+* thread + persist the composite {seq,id} catch-up cursor ([#312](https://github.com/engram-app/Engram-obsidian/issues/312)) ([#315](https://github.com/engram-app/Engram-obsidian/issues/315)) ([f1ccc95](https://github.com/engram-app/Engram-obsidian/commit/f1ccc95727a25f18d648852349e9b91a7e3dda57))
+
+
+### Bug Fixes
+
+* CRDT error guards — replay mint refusal, enrollment retry, frame/flush logging ([#302](https://github.com/engram-app/Engram-obsidian/issues/302)) ([b3ef617](https://github.com/engram-app/Engram-obsidian/commit/b3ef617eae8be972506c1a4db9372c2bfe1e2781))
+* **deps:** clear brace-expansion audit via bx5 + minimatch10 overrides ([#324](https://github.com/engram-app/Engram-obsidian/issues/324)) ([13f9b21](https://github.com/engram-app/Engram-obsidian/commit/13f9b212994617602188069f9bcc7946303d79c9))
+* release the transient heal room after convergence commits (e2e fan-out flake root cause) ([#307](https://github.com/engram-app/Engram-obsidian/issues/307)) ([014879a](https://github.com/engram-app/Engram-obsidian/commit/014879abf4f25fdc74de0d2406f3256d83d22007))
+* **sync:** guard delete-reconcile against identity-swap race ([#283](https://github.com/engram-app/Engram-obsidian/issues/283)) ([#316](https://github.com/engram-app/Engram-obsidian/issues/316)) ([ee5a8f9](https://github.com/engram-app/Engram-obsidian/commit/ee5a8f92f83844368d2e8f212dc6f3b0fd4a85bb))
+
 ## [1.17.0](https://github.com/engram-app/Engram-obsidian/compare/1.16.0...1.17.0) (2026-07-23)
 
 
