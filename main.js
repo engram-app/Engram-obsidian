@@ -23186,6 +23186,14 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
      *  stack. That churn was starving CRDT delivery (empty-flush clobber under a
      *  reconnect that raced note reconciliation). */
     this.liveChannelKey = null;
+    /** Connection identity (backend|account|vault) the PERSISTENT CRDT stack
+     *  (manager + wiring + liveViews + Y.Docs) was built for. Relay model: the
+     *  doc layer outlives the socket. A socket reconnect swaps only the transport
+     *  (a fresh NoteChannel, re-pointed at the surviving wiring via the box) — the
+     *  Y.Docs are NEVER destroyed, so reconnect is a clean syncStep1 diff, not a
+     *  full re-push that doubles the lineage. The stack is torn down ONLY when
+     *  THIS key changes (real vault/account/backend switch) or on unload. */
+    this.crdtStackKey = null;
     /** Fires whenever the status bar text/state changes — used by the settings
      *  panel to keep its top status row in sync with sync engine + WebSocket
      *  connection state without requiring tab navigation. Single-slot. */
@@ -23850,7 +23858,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       this.liveChannelKey
     ))
       return;
-    this.liveChannelKey = connectionKey, this.everConnected = !1, (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1, (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, this.everConnected = !1, connectionKey !== this.crdtStackKey && ((_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroy(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.crdtStackKey = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1), (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -23922,6 +23930,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       "channel",
       `connectChannel(attempt=${attempt}) \u2014 apiKeyLen=${(_b = (_a = this.settings.apiKey) == null ? void 0 : _a.length) != null ? _b : 0} refreshTokenLen=${(_d = (_c = this.settings.refreshToken) == null ? void 0 : _c.length) != null ? _d : 0} hasAuthProvider=${this.authProvider !== null} authProviderType=${(_f = (_e = this.authProvider) == null ? void 0 : _e.constructor.name) != null ? _f : "none"} vaultId=${(_g = this.settings.vaultId) != null ? _g : "null"}`
     ), this.api.getMe().then(async (user) => {
+      var _a2;
       if (epoch !== this.channelEpoch) {
         rlog().info("channel", "connectChannel aborted \u2014 superseded by newer setup");
         return;
@@ -23946,17 +23955,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       if (channel.setAuthProbe(() => this.api.getMe()), channel.onEvent = (event) => {
         this.syncEngine.handleStreamEvent(event);
       }, channel.onStatusChange = (connected) => {
-        var _a2;
+        var _a3;
         this.liveConnected = connected, connected && (this.everConnected = !0), connected || this.api.failWedgedRequests(), this.updateStatusBar(this.syncEngine.getStatus()), connected ? this.syncEngine.clearConfirmedNoteIds() : (this.crdtEverJoined ? rlog().info(
           "crdt",
           "Disconnected \u2014 CRDT routing RETAINED for offline capture (Y.Doc + IDB)"
         ) : (this.syncEngine.setCrdtManager(null), rlog().info(
           "crdt",
           "Disconnected before crdt: join \u2014 CRDT routing cleared, legacy path active"
-        )), (_a2 = this.crdtManager) == null || _a2.clearSynced());
+        )), (_a3 = this.crdtManager) == null || _a3.clearSynced());
       }, channel.onVaultDeleted = () => {
-        var _a2;
-        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.noteStream) == null || _a2.disconnect();
+        var _a3;
+        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
       }, channel.onFoldersChanged = () => {
         this.syncEngine.resyncFolders().catch((e) => {
           rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
@@ -23984,72 +23993,69 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           );
           return;
         }
-        let wiring = createCrdtWiring({
-          noteIdMap: this.noteIdMap,
-          syncEngine: this.syncEngine,
-          sendCrdt: (docId, frame) => channel.sendCrdt(docId, frame),
-          // Backed lazily: crdtLiveViews is constructed just below, so this
-          // closure must read the field at call time, not capture a value.
-          isBound: (path) => {
-            var _a2, _b2;
-            return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
-          },
-          // Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
-          // flush a programmatically-updated bound editor to disk — nudge
-          // Obsidian's own save pipeline after a remote merge paints in.
-          onBoundUpdate: (path) => {
-            var _a2;
-            return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.requestSaveForBoundPath(path);
-          },
-          // Gate live crdt_msg sends on the note's create-ack (create-before-edit):
-          // a brand-new note's crdt_create must land before any crdt_msg, or the
-          // server drops the edit (note_not_found) — see manager.ts canSendLive.
-          // hasServerNote (crdtHead-backed), NOT isNoteConfirmed: confirmedNoteIds
-          // is cleared on every WS reconnect (clearConfirmedNoteIds) while
-          // re-enrollment does not re-confirm, so isNoteConfirmed would hold an
-          // existing note's edits forever after a mid-session reconnect.
-          // hasServerNote survives reconnect (syncState/crdtHead is untouched).
-          canSendLive: (id2) => this.syncEngine.hasServerNote(id2)
-        });
-        this.crdtWiring = wiring, this.crdtManager = wiring.manager, this.crdtEnrollment = wiring.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
-          app: this.app,
-          manager: this.crdtManager,
-          enrollment: this.crdtEnrollment,
-          // Resolve-or-mint: the editor binding needs a note_id immediately
-          // on open, even for a brand-new note that has never been pushed
-          // (pushFile would otherwise be the only minter, deferring the live
-          // binding until after the first save).
-          resolveId: (path) => this.noteIdMap.getOrMint(path),
-          flushToDisk: (path, content) => (
-            // flushFromCrdt now reports a write-success boolean (#235); the
-            // live-editor release path keeps its prior behavior (a failed write
-            // is logged inside flushFromCrdt, not surfaced here), so discard it.
-            this.syncEngine.flushFromCrdt(path, content).then(() => {
-            })
-          ),
-          onReleaseError: (path, err) => rlog().warn(
-            "crdt",
-            `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
-          )
-        }), this.syncEngine.setLiveBoundCheck(
-          (path) => {
-            var _a2, _b2;
-            return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.isBound(path)) != null ? _b2 : !1;
-          }
-        ), this.crdtLiveViews.refresh(), channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate, channel.onCrdtJoined = () => {
+        if (!this.crdtWiring) {
+          let wiring2 = createCrdtWiring({
+            noteIdMap: this.noteIdMap,
+            syncEngine: this.syncEngine,
+            // `?? false`: a null socket (mid-reconnect) must read as REFUSED so
+            // the frame is held in unsentDocIds and flushed on rejoin — never
+            // silently dropped as if sent.
+            sendCrdt: (docId, frame) => {
+              var _a3, _b2;
+              return (_b2 = (_a3 = this.noteStream) == null ? void 0 : _a3.sendCrdt(docId, frame)) != null ? _b2 : !1;
+            },
+            // crdtLiveViews is constructed just below; read the field at call
+            // time, never capture a value.
+            isBound: (path) => {
+              var _a3, _b2;
+              return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.isBound(path)) != null ? _b2 : !1;
+            },
+            // Fix wave 6: nudge Obsidian's save pipeline after a remote merge
+            // paints into an unfocused bound editor (CI doesn't flush it).
+            onBoundUpdate: (path) => {
+              var _a3;
+              return (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.requestSaveForBoundPath(path);
+            },
+            // Gate live crdt_msg on the note's create-ack. hasServerNote
+            // (crdtHead-backed) survives reconnect; confirmedNoteIds does not.
+            canSendLive: (id2) => this.syncEngine.hasServerNote(id2)
+          });
+          this.crdtWiring = wiring2, this.crdtManager = wiring2.manager, this.crdtEnrollment = wiring2.enrollment, this.syncEngine.setCrdtEnrollment(this.crdtEnrollment), this.crdtLiveViews = new CrdtLiveViews({
+            app: this.app,
+            manager: this.crdtManager,
+            enrollment: this.crdtEnrollment,
+            // Resolve-or-mint: the editor binding needs a note_id immediately
+            // on open, even for a brand-new never-pushed note.
+            resolveId: (path) => this.noteIdMap.getOrMint(path),
+            flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content).then(() => {
+            }),
+            onReleaseError: (path, err) => rlog().warn(
+              "crdt",
+              `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
+            )
+          }), this.syncEngine.setLiveBoundCheck(
+            (path) => {
+              var _a3, _b2;
+              return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.isBound(path)) != null ? _b2 : !1;
+            }
+          ), this.crdtStackKey = channelConnectionKey(this.settings);
+        }
+        (_a2 = this.crdtLiveViews) == null || _a2.refresh();
+        let wiring = this.crdtWiring;
+        wiring && (channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate), channel.onCrdtJoined = () => {
           rlog().info(
             "crdt",
             "crdt: topic joined \u2014 activating CRDT routing in SyncEngine"
           ), this.crdtEverJoined = !0, this.syncEngine.setCrdtManager(this.crdtManager), (async () => {
-            var _a2;
-            await ((_a2 = this.crdtOpQueue) == null ? void 0 : _a2.onJoined()), await this.onCrdtTopicJoined();
+            var _a3;
+            await ((_a3 = this.crdtOpQueue) == null ? void 0 : _a3.onJoined()), await this.onCrdtTopicJoined();
           })();
         }, channel.onCrdtJoinError = (reason, min2) => {
-          var _a2, _b2;
+          var _a3, _b2;
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a2 = this.crdtManager) == null || _a2.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian25.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtEnrollment) == null || _b2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian25.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(
