@@ -629,6 +629,11 @@ export default class EngramSyncPlugin extends Plugin {
 				if (file instanceof TFolder) {
 					void this.syncEngine.handleFolderDelete(file);
 				} else {
+					// Resolve the note_id BEFORE handleDelete clears the map, and drop
+					// it from the unsent-tracking set so a note deleted while offline is
+					// not re-enrolled (a spurious STEP1 racing delete-wins) on rejoin.
+					const noteId = this.noteIdMap.get(file.path);
+					if (noteId) this.crdtWiring?.forgetUnsent(noteId);
 					void this.syncEngine.handleDelete(file);
 				}
 			}),

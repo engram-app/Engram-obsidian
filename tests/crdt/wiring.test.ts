@@ -437,3 +437,53 @@ test("inbound frame for an unknown id strands, then heals on reconcile", async (
 
 	await destroy(a, b);
 });
+
+// A note edited then DELETED while offline must be pruned from the unsent set,
+// so the reconnect re-enroll (reEnrollUnsent) does not fire a spurious STEP1 for
+// a dead doc. forgetUnsent (wired from the plugin's vault delete handler) is the
+// prune. reEnrollUnsent calls enrollment.enroll for each tracked id, so a spy on
+// enroll is the observable "would re-open a room" signal.
+test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete cleanup)", async () => {
+	const map = new NoteIdMap();
+	const noteId = map.getOrMint("gone.md");
+	const joined = false; // crdt topic not joined → every frame is refused (offline)
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			flushFromCrdt: async () => true,
+			isUnchangedSynced: () => false,
+			materializeEmptyDiscovered: async () => {},
+			reconcileNoteIdMapFromManifest: async () => 0,
+			isSyncBlocked: () => false,
+			ensureNoteIdMapped: () => {},
+			discoverAnnouncedNote: async () => {},
+			commitCrdtConvergence: async () => {},
+		},
+		sendCrdt: () => joined,
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "forget-unsent",
+	});
+
+	// Offline edit: the update is produced but sendCrdt refuses it → id is tracked.
+	await wiring.manager.applyLocalEdit(noteId, "edited while offline\n");
+	await sleep(30);
+
+	// Deleted while offline → pruned. reEnrollUnsent must NOT re-enroll it.
+	const enrollAfterForget = spyOn(wiring.enrollment, "enroll");
+	wiring.forgetUnsent(noteId);
+	wiring.reEnrollUnsent();
+	expect(enrollAfterForget).not.toHaveBeenCalled();
+	enrollAfterForget.mockRestore();
+
+	// Control: a still-tracked (not forgotten) id IS re-enrolled on rejoin.
+	await wiring.manager.applyLocalEdit(noteId, "edited offline again\n");
+	await sleep(30);
+	const enrollControl = spyOn(wiring.enrollment, "enroll");
+	wiring.reEnrollUnsent();
+	expect(enrollControl).toHaveBeenCalledWith(noteId);
+	enrollControl.mockRestore();
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});

@@ -92,12 +92,20 @@ export interface CrdtWiring {
 	 *  notes so an edit made to a note that was then closed/switched-away-from
 	 *  still converges via the mutual STEP1 handshake (switch-away data-loss). */
 	reEnrollUnsent: () => void;
+	/** Drop a doc from the unsent-tracking set. Call when the note is deleted so a
+	 *  since-deleted note is never re-enrolled on the next rejoin (a spurious STEP1
+	 *  that could race delete-wins / resurrect the note). */
+	forgetUnsent: (docId: string) => void;
 	/** Clear the pending strand-heal timer (call from the plugin's onunload). */
 	dispose: () => void;
 }
 
 const DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
 const STRAND_HEAL_MAX_ATTEMPTS = 5;
+/** Cap on the unsent-doc tracking set. Mirrors CrdtOpQueue.MAX_QUEUE: bounds
+ *  memory across a long outage; past the cap the oldest tracked doc is evicted
+ *  (it reconverges via the normal reconnect catch-up either way). */
+const MAX_UNSENT_DOCS = 500;
 
 /** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
  *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
@@ -313,8 +321,18 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		send: (docId, frame) => {
 			const ok = deps.sendCrdt(docId, frame);
 			// sendCrdt returns false ONLY on a refused (topic-not-joined) frame.
-			if (ok === false) unsentDocIds.add(docId);
-			else unsentDocIds.delete(docId);
+			if (ok === false) {
+				if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
+					// Evict the single oldest (Set preserves insertion order).
+					for (const oldest of unsentDocIds) {
+						unsentDocIds.delete(oldest);
+						break;
+					}
+				}
+				unsentDocIds.add(docId);
+			} else {
+				unsentDocIds.delete(docId);
+			}
 			return ok;
 		},
 		// An inbound STEP2 that leaves the doc empty is the server's authoritative
@@ -445,6 +463,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			// Snapshot: enroll() → startSync succeeds → clears the id from the set;
 			// iterate a copy so that mutation can't skip entries mid-loop.
 			for (const id of [...unsentDocIds]) enrollment.enroll(id);
+		},
+		forgetUnsent: (docId) => {
+			unsentDocIds.delete(docId);
 		},
 		dispose,
 	};

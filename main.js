@@ -22714,7 +22714,7 @@ var CrdtEnrollment = class {
 };
 
 // src/crdt/wiring.ts
-var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5;
+var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5, MAX_UNSENT_DOCS = 500;
 function partitionStrandedFlushes(pending, resolvePath, attempts, maxAttempts) {
   var _a;
   let toFlush = [], toRetry = [], toGiveUp = [];
@@ -22823,7 +22823,16 @@ function createCrdtWiring(deps) {
     manager,
     send: (docId, frame) => {
       let ok = deps.sendCrdt(docId, frame);
-      return ok === !1 ? unsentDocIds.add(docId) : unsentDocIds.delete(docId), ok;
+      if (ok === !1) {
+        if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
+          for (let oldest of unsentDocIds) {
+            unsentDocIds.delete(oldest);
+            break;
+          }
+        unsentDocIds.add(docId);
+      } else
+        unsentDocIds.delete(docId);
+      return ok;
     },
     // An inbound STEP2 that leaves the doc empty is the server's authoritative
     // "genuinely empty note" signal — materialize the file off the handshake
@@ -22886,6 +22895,9 @@ function createCrdtWiring(deps) {
     clearStrandHealAttempts: () => strandHealAttempts.clear(),
     reEnrollUnsent: () => {
       for (let id2 of [...unsentDocIds]) enrollment.enroll(id2);
+    },
+    forgetUnsent: (docId) => {
+      unsentDocIds.delete(docId);
     },
     dispose
   };
@@ -23365,7 +23377,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        var _a2;
+        if (file instanceof import_obsidian25.TFolder)
+          this.syncEngine.handleFolderDelete(file);
+        else {
+          let noteId = this.noteIdMap.get(file.path);
+          noteId && ((_a2 = this.crdtWiring) == null || _a2.forgetUnsent(noteId)), this.syncEngine.handleDelete(file);
+        }
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {

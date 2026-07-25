@@ -393,7 +393,12 @@ export class Replica {
 				const f = app.vault.getAbstractFileByPath(p);
 				if (f instanceof TFolder)
 					void engine.handleFolderDelete(f); // main.ts:610-611
-				else if (f instanceof TFile) void engine.handleDelete(f); // main.ts:613
+				else if (f instanceof TFile) {
+					// Mirror main.ts: drop the id from the unsent set before delete.
+					const nid = noteIdMap.get(p);
+					if (nid) wiring.forgetUnsent(nid);
+					void engine.handleDelete(f); // main.ts:613
+				}
 			},
 			onRename: (oldP, newP) => {
 				const f = app.vault.getAbstractFileByPath(newP);
