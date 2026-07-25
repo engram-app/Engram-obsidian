@@ -138,6 +138,18 @@ export interface CrdtManagerOptions {
 	 * test unchanged.
 	 */
 	docKind?: (noteId: string) => DocKind;
+	/**
+	 * Max number of Y.Docs kept resident in memory (the LRU working set).
+	 * A note's doc lives for as long as it fits here — it is NEVER torn down
+	 * merely because its editor view closed. This is the Relay-style persistent
+	 * doc lifetime: rapid file switching among a handful of notes keeps every
+	 * one of them resident, so the editor stays bound to ONE stable doc instead
+	 * of racing a close<->re-mint storm. Eviction only happens under cap
+	 * pressure, and never for a protected (live-bound) or in-flight doc.
+	 * Default 64 — comfortably above any realistic set of simultaneously-open
+	 * tabs, bounded enough to cap memory on a long browsing session.
+	 */
+	residentCap?: number;
 }
 
 interface Entry {
@@ -169,6 +181,20 @@ export class CrdtManager {
 	 *  here. The manager itself never interprets the string, it only forwards
 	 *  it to callbacks. */
 	private readonly docs = new Map<string, Entry>();
+	/**
+	 * LRU recency of resident doc IDs — least-recently-used first, most-recent
+	 * last. Touched on every `entry()` access (mint or cache hit). Drives
+	 * cap-pressure eviction so the resident set stays bounded WITHOUT tearing a
+	 * doc down the moment its editor view closes (which caused the switch-away
+	 * churn/data-loss). Same key space as `docs`.
+	 */
+	private readonly lru: string[] = [];
+	/**
+	 * Doc IDs that must never be evicted regardless of LRU position — a live
+	 * editor is bound to them. `CrdtLiveViews` calls `protect`/`unprotect` on
+	 * bind/release. Same key space as `docs`.
+	 */
+	private readonly protectedIds = new Set<string>();
 	/**
 	 * Per-session set of doc IDs for which at least one inbound server sync
 	 * frame has been applied (i.e. the STEP2 handshake has completed for the
@@ -300,6 +326,55 @@ export class CrdtManager {
 	 *  orphaned mint doc was torn down (removeDoc) after a genesis adopt. */
 	hasDoc(noteId: string): boolean {
 		return this.docs.has(this.docId(noteId));
+	}
+
+	/** Pin `noteId`'s doc in the resident set: it must not be LRU-evicted while
+	 *  a live editor is bound to it. `CrdtLiveViews` calls this on bind. */
+	protect(noteId: string): void {
+		this.protectedIds.add(this.docId(noteId));
+	}
+
+	/** Release the pin from `protect`. The doc stays resident (recently used) and
+	 *  is only freed later under cap pressure. Called on editor unbind/release. */
+	unprotect(noteId: string): void {
+		this.protectedIds.delete(this.docId(noteId));
+	}
+
+	/** Mark `id` most-recently-used, then evict the least-recently-used resident
+	 *  docs until the set fits `residentCap`. Never evicts a protected
+	 *  (live-bound) or in-flight doc, nor `id` itself. Eviction reuses closeDoc's
+	 *  persist-safe teardown (IndexedDB store kept — the note re-hydrates on next
+	 *  open), so nothing is lost. */
+	private touchLru(id: string): void {
+		const at = this.lru.indexOf(id);
+		if (at !== -1) this.lru.splice(at, 1);
+		this.lru.push(id);
+		const cap = this.opts.residentCap ?? 64;
+		if (this.docs.size <= cap) return;
+		// Walk LRU-first, evicting eligible docs until we're back under the cap.
+		for (let i = 0; i < this.lru.length && this.docs.size > cap; ) {
+			const cand = this.lru[i];
+			if (
+				cand === undefined ||
+				cand === id ||
+				this.protectedIds.has(cand) ||
+				(this.inFlightOps.get(cand) ?? 0) > 0 ||
+				!this.docs.has(cand)
+			) {
+				i++;
+				continue;
+			}
+			this.closeDoc(cand); // persist-safe; teardownEntry drops it from this.lru
+		}
+	}
+
+	/** Remove `id` from the LRU + protected bookkeeping. Called from the single
+	 *  teardown choke point so every destroyer (closeDoc / removeDoc / destroy /
+	 *  flatten / eviction) keeps the resident-set metadata consistent. */
+	private forgetResident(id: string): void {
+		const at = this.lru.indexOf(id);
+		if (at !== -1) this.lru.splice(at, 1);
+		this.protectedIds.delete(id);
 	}
 
 	/**
@@ -620,6 +695,7 @@ export class CrdtManager {
 		// that fires this un-awaited (closeDoc) may be followed immediately by
 		// an apply whose entry() must mint a FRESH doc, never see the dying one.
 		this.docs.delete(id);
+		this.forgetResident(id); // keep the LRU + protected set consistent
 		e.doc.destroy();
 		if (opts.clearData) await e.persistence.clearData();
 		await e.persistence.destroy();
@@ -833,6 +909,7 @@ export class CrdtManager {
 		const id = this.docId(noteId);
 		const cached = this.docs.get(id);
 		if (cached) {
+			this.touchLru(id); // mark most-recently-used so it survives eviction
 			await cached.ready;
 			return cached;
 		}
@@ -929,6 +1006,7 @@ export class CrdtManager {
 		});
 
 		this.docs.set(id, entry);
+		this.touchLru(id); // record recency + evict LRU overflow (never this id)
 		await ready;
 		// IDB hydration replayed stored updates above; rehydrated non-empty content
 		// counts as "has held content" (#288) even if no listener observed it.

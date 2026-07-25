@@ -3194,17 +3194,18 @@ export class SyncEngine {
 	 *  have opened the note in the editor while the apply was in flight, in
 	 *  which case that room now owns the doc's lifecycle and it must stay
 	 *  resident. */
-	private hibernateIfIdle(path: string, noteId: string): void {
-		if (!this.crdt) return;
-		if (this.isLiveBound(normalizePath(path))) return;
-		// Best-effort memory reclamation: a failure to free the doc must not throw
-		// into the never-throw convergence loop nor downgrade an already-recorded
-		// head. The doc simply stays resident (bounded; retried next hibernate).
-		try {
-			this.crdt.closeDoc(noteId);
-		} catch (e) {
-			devLog().log("crdt", `hibernateIfIdle: closeDoc ${noteId} failed — ${errMsg(e)}`);
-		}
+	private hibernateIfIdle(_path: string, _noteId: string): void {
+		// No-op since the persistent-doc rework: doc lifetime is now the
+		// CrdtManager's bounded LRU working set (`residentCap`), not per-apply
+		// hibernation. Eagerly closing an idle doc here was a churn source — a
+		// background apply's own getDoc() and any concurrent startSync/handleFrame
+		// re-minted the doc microseconds later, and during rapid file switching
+		// that close<->re-mint storm bound the editor to the wrong/empty doc and
+		// stranded edits. Idle docs now stay resident (their IndexedDB store
+		// intact) until the working set overflows, at which point the manager
+		// evicts the least-recently-used unprotected, non-in-flight doc. Kept as a
+		// no-op (rather than deleting both call sites) so the apply flow reads
+		// unchanged; safe to inline away later.
 	}
 
 	private crdtCatchupSince:

@@ -554,13 +554,16 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 	// Heal-room release (fan-out idle invariant): the diverged-cold-note heal
 	// and the queued-delivery nudge open a TRANSIENT room via reset+enroll.
 	// Once the convergence commits (or the delivery settles), the room must be
-	// RELEASED — enrollment un-marked (so a future heal can re-handshake) and
-	// the doc hibernated. Without the release every healed idle note holds a
-	// room for the rest of the session (the e2e fan-out precondition flake,
-	// test_cold_send_over_fanout_opens_no_room).
+	// RELEASED — enrollment un-marked (so a future heal can re-handshake).
+	// Without the release every healed idle note holds a room for the rest of
+	// the session (the e2e fan-out precondition flake,
+	// test_cold_send_over_fanout_opens_no_room). Since the persistent-doc rework
+	// the room release no longer *closes* the doc (hibernateIfIdle is a no-op —
+	// eager close raced startSync/handleFrame re-mints and stranded switch-away
+	// edits); the doc stays resident under the manager's bounded LRU.
 	// -----------------------------------------------------------------------
 
-	test("heal-room release: verified commit for an IDLE note resets enrollment and hibernates the doc", async () => {
+	test("heal-room release: verified commit for an IDLE note resets enrollment (doc stays resident)", async () => {
 		const { engine, enroll, reset, closeDoc, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -586,11 +589,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		projectedText.mockResolvedValue("new server body");
 		await engine.commitCrdtConvergence("note-id-1");
 
-		// Release: a SECOND reset (un-mark, so a future heal re-handshakes) and
-		// the doc hibernated — the idle note holds no room after convergence.
+		// Release: a SECOND reset (un-mark, so a future heal re-handshakes). The
+		// idle note holds no room after convergence. The doc is NOT closed now —
+		// it stays resident under the LRU (hibernateIfIdle is a no-op).
 		expect(reset).toHaveBeenCalledTimes(2);
 		expect(reset.mock.calls[1]?.[0]).toBe("note-id-1");
-		expect(closeDoc).toHaveBeenCalledWith("note-id-1");
+		expect(closeDoc).not.toHaveBeenCalled();
 		// No re-enroll — released, not re-opened.
 		expect(enroll).toHaveBeenCalledTimes(1);
 	});
@@ -638,7 +642,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		await engine.commitCrdtConvergence("note-id-1");
 
 		expect(reset).toHaveBeenCalledWith("note-id-1");
-		expect(closeDoc).toHaveBeenCalledWith("note-id-1");
+		expect(closeDoc).not.toHaveBeenCalled(); // doc stays resident (LRU-managed)
 		expect((engine as any).queue.size).toBe(0); // the settle still dequeues
 	});
 

@@ -7,6 +7,68 @@ import { rlog } from "../../src/remote-log";
 import { reconcileColdStart } from "../../src/sync";
 
 // ---------------------------------------------------------------------------
+// Persistent-doc LRU working set (Relay-style doc lifetime).
+//
+// Root cause of the switch-away edit loss: getDoc() re-mints a doc whenever one
+// isn't resident, while onLastViewerRelease/hibernateIfIdle closeDoc() the doc
+// the instant its editor view closes. Rapid file switching produces a
+// close<->re-mint storm that binds the editor to the wrong/empty doc and strands
+// edits. Fix: a note's Y.Doc is resident for as long as it fits in a bounded LRU
+// working set — never torn down on view-release — so the editor stays bound to
+// one stable doc. Eviction happens only under cap pressure, and never for a
+// live-bound (protected) or in-flight doc.
+// ---------------------------------------------------------------------------
+
+test("getDoc keeps a note resident across re-access (no re-mint) within the cap", async () => {
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-lru-resident",
+		residentCap: 8,
+		onUpdate: () => {},
+		onFlushToDisk: async () => {},
+	});
+	const first = await mgr.getDoc("a.md");
+	const firstGuid = first.guid;
+	// Touch several other notes (well within the cap), then come back to a.md.
+	for (const p of ["b.md", "c.md", "d.md"]) await mgr.getDoc(p);
+	const again = await mgr.getDoc("a.md");
+	expect(again.guid).toBe(firstGuid); // SAME Y.Doc — not re-minted (no churn)
+	expect(mgr.hasDoc("a.md")).toBe(true);
+	await mgr.destroy();
+});
+
+test("resident set evicts the least-recently-used unprotected doc past the cap", async () => {
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-lru-evict",
+		residentCap: 2,
+		onUpdate: () => {},
+		onFlushToDisk: async () => {},
+	});
+	await mgr.getDoc("old.md"); // LRU
+	await mgr.getDoc("mid.md");
+	await mgr.getDoc("new.md"); // opening the 3rd evicts the LRU (old.md)
+	expect(mgr.hasDoc("old.md")).toBe(false); // evicted
+	expect(mgr.hasDoc("mid.md")).toBe(true);
+	expect(mgr.hasDoc("new.md")).toBe(true);
+	await mgr.destroy();
+});
+
+test("a protected (live-bound) doc is never evicted, even as the LRU", async () => {
+	const mgr = new CrdtManager({
+		dbPrefix: "vault-lru-protect",
+		residentCap: 1,
+		onUpdate: () => {},
+		onFlushToDisk: async () => {},
+	});
+	await mgr.getDoc("bound.md");
+	mgr.protect("bound.md"); // editor bound to it — must survive cap pressure
+	await mgr.getDoc("other1.md");
+	await mgr.getDoc("other2.md");
+	expect(mgr.hasDoc("bound.md")).toBe(true); // protected: still resident
+	mgr.unprotect("bound.md");
+	await mgr.destroy();
+});
+
+// ---------------------------------------------------------------------------
 // Task 6: doc-shape constants + frontmatterOf accessor
 // ---------------------------------------------------------------------------
 
