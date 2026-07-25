@@ -691,7 +691,7 @@ export class NoteChannel {
 			// next socket and skips re-firing onCrdtJoined (#191).
 			this.crdtJoined = false;
 			this.setConnected(false);
-			rlog().diag("channel", `crdtJoined->false (socket close code=${evt?.code ?? "?"})`);
+			rlog().warn("channel", `crdtJoined->false (socket close code=${evt?.code ?? "?"})`);
 
 			// Real browsers always pass a CloseEvent here; some lightweight test
 			// doubles call onclose with no argument. Fall back to "unknown" rather
@@ -793,7 +793,17 @@ export class NoteChannel {
 			// Capture the join ref so handleMessage can distinguish a join-error reply
 			// (this ref) from per-message error replies (a different ref) — see crdtJoinMsgRef.
 			this.crdtJoinMsgRef = msgRef;
+			rlog().warn("channel", `crdt join SENT ${crdtT} ref=${msgRef}`);
 			this.send([this.crdtJoinRef, msgRef, crdtT, "phx_join", { crdt_proto: 2 }]);
+		} else {
+			// The wedge witness: no crdtTopic means vaultId is null at connect, so
+			// the crdt join is SILENTLY skipped — crdtJoined stays false forever and
+			// every edit is refused/held. If this fires, the root cause is a null
+			// vaultId at (re)connect, not a socket-close or join-reject.
+			rlog().warn(
+				"channel",
+				`crdt join SKIPPED — no crdtTopic (vaultId=${this.vaultId ?? "null"} userId=${this.userId})`,
+			);
 		}
 	}
 
@@ -898,7 +908,7 @@ export class NoteChannel {
 					this.crdtJoined = true;
 					// Health restored: forget any backoff built up by prior rejections.
 					this.joinFailureBackoffMs = 1000;
-					rlog().diag(
+					rlog().warn(
 						"channel",
 						`crdtJoined->true (Joined ${topic}, CRDT routing active)`,
 					);
