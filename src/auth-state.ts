@@ -156,7 +156,7 @@ export async function applyApiUrlChange(
 		Object.assign(target.settings, withClearedAuth(target.settings));
 		target.api.setAuthProvider(null);
 		target.resetAuthProvider();
-		target.noteStream?.disconnect();
+		target.noteStream?.disconnect("apiUrlChange");
 	}
 	target.settings.apiUrl = newUrl;
 	await save();

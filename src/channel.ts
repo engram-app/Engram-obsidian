@@ -467,7 +467,7 @@ export class NoteChannel {
 		await this.openSocket();
 	}
 
-	disconnect(): void {
+	disconnect(reason = "unspecified"): void {
 		this.clearTimers();
 		if (this.ws) {
 			this.ws.onclose = null; // prevent reconnect on intentional close
@@ -492,7 +492,7 @@ export class NoteChannel {
 		this.reconnectJitterMaxMs = null;
 		this.crdtJoinFailedReason = null;
 		this.joinFailureBackoffMs = 1000;
-		rlog().warn("channel", "Channel disconnected (explicit disconnect())");
+		rlog().warn("channel", `Channel disconnected — caller=${reason}`);
 	}
 
 	/** Call when the app returns to the foreground (mobile resume). Mobile OSes

@@ -1057,7 +1057,7 @@ export default class EngramSyncPlugin extends Plugin {
 		void this.baseStore?.save();
 		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
-		this.noteStream?.disconnect();
+		this.noteStream?.disconnect("pluginUnload");
 		this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
 		void this.crdtManager?.destroy();
@@ -1352,7 +1352,7 @@ export default class EngramSyncPlugin extends Plugin {
 		Object.assign(this.settings, withClearedAuth(this.settings));
 		this.api.setAuthProvider(null);
 		this.authProvider = null;
-		this.noteStream?.disconnect();
+		this.noteStream?.disconnect(`clearAuthAndPromptRelink:${reason}`);
 		this.noteStream = null;
 		this.liveConnected = false;
 		this.everConnected = false;
@@ -1606,7 +1606,7 @@ export default class EngramSyncPlugin extends Plugin {
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
-		this.noteStream?.disconnect();
+		this.noteStream?.disconnect("setupNoteStreamRebuild");
 		this.noteStream = null;
 		this.channelEpoch++;
 
@@ -1853,7 +1853,7 @@ export default class EngramSyncPlugin extends Plugin {
 					this.api.setVaultId(null);
 					// Use savePluginData instead of saveSettings to avoid triggering re-registration
 					void this.savePluginData(this.syncEngine.getLastSync());
-					this.noteStream?.disconnect();
+					this.noteStream?.disconnect("vaultDeletedOnServer");
 				};
 
 				channel.onFoldersChanged = () => {
