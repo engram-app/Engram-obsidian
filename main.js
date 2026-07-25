@@ -14320,8 +14320,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let entry of manifest.notes) {
       let seq2 = entry.seq;
       if (typeof seq2 != "number" || !Number.isFinite(seq2) || seq2 > cursor) continue;
-      let stored = this.syncState.get((0, import_obsidian20.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
-      seq2 > recorded && (behind++, seq2 < minBehind && (minBehind = seq2));
+      let path = (0, import_obsidian20.normalizePath)(entry.path), stored = this.syncState.get(path), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
+      if (seq2 > recorded) {
+        if ((stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash === entry.content_hash) {
+          this.syncState.set(path, { ...stored, seq: seq2 });
+          continue;
+        }
+        behind++, seq2 < minBehind && (minBehind = seq2);
+      }
     }
     if (behind === 0) return 0;
     let target = minBehind - 1;
