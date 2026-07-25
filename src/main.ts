@@ -233,6 +233,14 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  stack. That churn was starving CRDT delivery (empty-flush clobber under a
 	 *  reconnect that raced note reconciliation). */
 	private liveChannelKey: string | null = null;
+	/** Connection identity (backend|account|vault) the PERSISTENT CRDT stack
+	 *  (manager + wiring + liveViews + Y.Docs) was built for. Relay model: the
+	 *  doc layer outlives the socket. A socket reconnect swaps only the transport
+	 *  (a fresh NoteChannel, re-pointed at the surviving wiring via the box) — the
+	 *  Y.Docs are NEVER destroyed, so reconnect is a clean syncStep1 diff, not a
+	 *  full re-push that doubles the lineage. The stack is torn down ONLY when
+	 *  THIS key changes (real vault/account/backend switch) or on unload. */
+	private crdtStackKey: string | null = null;
 
 	/** Fires whenever the status bar text/state changes — used by the settings
 	 *  panel to keep its top status row in sync with sync engine + WebSocket
@@ -1582,27 +1590,31 @@ export default class EngramSyncPlugin extends Plugin {
 		// Without this, repeated calls (settings save / reconnect) leak Y.Doc and
 		// IndexeddbPersistence listeners — each overwrites the references but the
 		// old objects stay alive with their observers still firing.
-		this.crdtLiveViews?.destroy();
-		this.crdtLiveViews = null;
-		this.crdtWiring?.dispose();
-		this.crdtWiring = null;
-		void this.crdtManager?.destroy();
-		this.crdtManager = null;
-		this.crdtEnrollment?.resetAll();
-		this.crdtEnrollment = null;
-		// Teardown must NOT depend on the connection-state transition that nulls
-		// the SyncEngine's CRDT manager via setConnected(false): when the offline-
-		// retention branch is active (crdtEverJoined = true and the socket was
-		// already disconnected), setConnected is transition-gated and becomes a
-		// no-op. Clear the SyncEngine references explicitly here so that a
-		// destroyed manager never outlives its channel session as a zombie.
-		this.syncEngine.setCrdtManager(null);
-		this.syncEngine.setCrdtEnrollment(null);
-		// Reset the joined flag: a new channel session must re-confirm CRDT support
-		// before offline capture stays active. This ensures a genuine backend/vault
-		// switch degrades back to legacy (crdtEverJoined = false → disconnect handler
-		// nulls the manager) until the new server confirms the crdt: topic join.
-		this.crdtEverJoined = false;
+		// Relay model: tear the persistent CRDT stack down ONLY on a real identity
+		// change (vault/account/backend switch). A plain transport reconnect (same
+		// identity) KEEPS the manager + Y.Docs — only the socket below is rebuilt.
+		// Destroying the stack on every reconnect was the wedge: it forced a full
+		// re-push that doubled the lineage server-side, and no LRU/doc-level fix
+		// could survive the whole manager being nuked.
+		if (connectionKey !== this.crdtStackKey) {
+			this.crdtLiveViews?.destroy();
+			this.crdtLiveViews = null;
+			this.crdtWiring?.dispose();
+			this.crdtWiring = null;
+			void this.crdtManager?.destroy();
+			this.crdtManager = null;
+			this.crdtEnrollment?.resetAll();
+			this.crdtEnrollment = null;
+			this.crdtStackKey = null;
+			// Clear the SyncEngine references explicitly (setConnected(false) is
+			// transition-gated and can no-op under offline retention), so a destroyed
+			// manager never outlives its session as a zombie.
+			this.syncEngine.setCrdtManager(null);
+			this.syncEngine.setCrdtEnrollment(null);
+			// A genuinely new identity must re-confirm CRDT support before offline
+			// capture stays active (degrades to legacy until the new server joins).
+			this.crdtEverJoined = false;
+		}
 
 		// Disconnect existing channel + invalidate any in-flight connectChannel()
 		// (its async getMe() may still be pending) so it can't spawn a zombie.
@@ -1944,76 +1956,76 @@ export default class EngramSyncPlugin extends Plugin {
 					// createCrdtWiring — see src/crdt/wiring.ts. Everything below (the
 					// Obsidian-bound CrdtLiveViews and the onCrdtJoined/JoinError control-
 					// plane) stays here because it touches plugin lifecycle, not keying.
-					const wiring = createCrdtWiring({
-						noteIdMap: this.noteIdMap,
-						syncEngine: this.syncEngine,
-						sendCrdt: (docId, frame) => channel.sendCrdt(docId, frame),
-						// Backed lazily: crdtLiveViews is constructed just below, so this
-						// closure must read the field at call time, not capture a value.
-						isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
-						// Fix wave 6: headless/unfocused Obsidian (CI) doesn't promptly
-						// flush a programmatically-updated bound editor to disk — nudge
-						// Obsidian's own save pipeline after a remote merge paints in.
-						onBoundUpdate: (path) => this.crdtLiveViews?.requestSaveForBoundPath(path),
-						// Gate live crdt_msg sends on the note's create-ack (create-before-edit):
-						// a brand-new note's crdt_create must land before any crdt_msg, or the
-						// server drops the edit (note_not_found) — see manager.ts canSendLive.
-						// hasServerNote (crdtHead-backed), NOT isNoteConfirmed: confirmedNoteIds
-						// is cleared on every WS reconnect (clearConfirmedNoteIds) while
-						// re-enrollment does not re-confirm, so isNoteConfirmed would hold an
-						// existing note's edits forever after a mid-session reconnect.
-						// hasServerNote survives reconnect (syncState/crdtHead is untouched).
-						canSendLive: (id) => this.syncEngine.hasServerNote(id),
-					});
-					this.crdtWiring = wiring;
-					this.crdtManager = wiring.manager;
-					this.crdtEnrollment = wiring.enrollment;
-					// Level-triggered discovery: a pull that surfaces a CRDT-managed
-					// note we don't have locally enrolls it (sync-step-1), so the body
-					// arrives over the handshake. Backstops the edge-triggered
-					// crdt_doc_ready announce for a device that was offline / not yet
-					// subscribed when the other device opened the room.
-					this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
-					this.crdtLiveViews = new CrdtLiveViews({
-						app: this.app,
-						manager: this.crdtManager,
-						enrollment: this.crdtEnrollment,
-						// Resolve-or-mint: the editor binding needs a note_id immediately
-						// on open, even for a brand-new note that has never been pushed
-						// (pushFile would otherwise be the only minter, deferring the live
-						// binding until after the first save).
-						resolveId: (path) => this.noteIdMap.getOrMint(path),
-						flushToDisk: (path, content) =>
-							// flushFromCrdt now reports a write-success boolean (#235); the
-							// live-editor release path keeps its prior behavior (a failed write
-							// is logged inside flushFromCrdt, not surfaced here), so discard it.
-							this.syncEngine
-								.flushFromCrdt(path, content)
-								.then(() => {}),
-						onReleaseError: (path, err) =>
-							rlog().warn(
-								"crdt",
-								`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
-							),
-					});
-					// Tell the sync engine which paths have a live editor binding so its
-					// disk-modify handler skips re-feeding disk content into the Y.Text for
-					// open notes (the binding owns them). Without this, Obsidian's autosave
-					// churns the doc every ~2s.
-					this.syncEngine.setLiveBoundCheck(
-						(path) => this.crdtLiveViews?.isBound(path) ?? false,
-					);
-					// Editor extension + workspace events are registered once in onload
-					// so repeated setupNoteStream() calls don't stack them. Trigger an
-					// initial refresh here so the new manager sees currently-open leaves.
-					this.crdtLiveViews.refresh();
-					// Inbound frame + remote room-open discovery handlers (id->path
-					// resolution, enrollment gating, #955 note_not_found id-map heal)
-					// are built by createCrdtWiring.
-					channel.onCrdtMessage = wiring.onCrdtMessage;
-					channel.onCrdtDocReady = wiring.onCrdtDocReady;
-					channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
-					channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate;
+					// Relay model: the persistent CRDT stack (manager + wiring +
+					// liveViews + Y.Docs) is built ONCE per identity and OUTLIVES the
+					// socket. A reconnect rebuilds only the transport (a fresh
+					// NoteChannel, below) and re-points it at this surviving wiring — the
+					// Y.Docs are NEVER destroyed, so reconnect is a clean syncStep1 diff,
+					// not a full re-push that doubles the lineage (the "one breaks, all
+					// break" wedge). `sendCrdt` reads `this.noteStream` (assigned just
+					// above) at call time so a swapped socket is transparent.
+					if (!this.crdtWiring) {
+						const wiring = createCrdtWiring({
+							noteIdMap: this.noteIdMap,
+							syncEngine: this.syncEngine,
+							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
+							// the frame is held in unsentDocIds and flushed on rejoin — never
+							// silently dropped as if sent.
+							sendCrdt: (docId, frame) =>
+								this.noteStream?.sendCrdt(docId, frame) ?? false,
+							// crdtLiveViews is constructed just below; read the field at call
+							// time, never capture a value.
+							isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+							// Fix wave 6: nudge Obsidian's save pipeline after a remote merge
+							// paints into an unfocused bound editor (CI doesn't flush it).
+							onBoundUpdate: (path) =>
+								this.crdtLiveViews?.requestSaveForBoundPath(path),
+							// Gate live crdt_msg on the note's create-ack. hasServerNote
+							// (crdtHead-backed) survives reconnect; confirmedNoteIds does not.
+							canSendLive: (id) => this.syncEngine.hasServerNote(id),
+						});
+						this.crdtWiring = wiring;
+						this.crdtManager = wiring.manager;
+						this.crdtEnrollment = wiring.enrollment;
+						this.syncEngine.setCrdtEnrollment(this.crdtEnrollment);
+						this.crdtLiveViews = new CrdtLiveViews({
+							app: this.app,
+							manager: this.crdtManager,
+							enrollment: this.crdtEnrollment,
+							// Resolve-or-mint: the editor binding needs a note_id immediately
+							// on open, even for a brand-new never-pushed note.
+							resolveId: (path) => this.noteIdMap.getOrMint(path),
+							flushToDisk: (path, content) =>
+								this.syncEngine.flushFromCrdt(path, content).then(() => {}),
+							onReleaseError: (path, err) =>
+								rlog().warn(
+									"crdt",
+									`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
+								),
+						});
+						// Tell the sync engine which paths have a live editor binding so its
+						// disk-modify handler skips re-feeding disk content into the Y.Text
+						// for open notes (the binding owns them).
+						this.syncEngine.setLiveBoundCheck(
+							(path) => this.crdtLiveViews?.isBound(path) ?? false,
+						);
+						// Remember the identity this stack belongs to. setupNoteStream tears
+						// the stack down ONLY when this key changes (real vault/account/backend
+						// switch), never on a plain transport reconnect.
+						this.crdtStackKey = channelConnectionKey(this.settings);
+					}
+					// Bind whatever leaves are open now — a fresh stack saw none at build;
+					// a reconnect re-checks in case the open set changed while offline.
+					this.crdtLiveViews?.refresh();
+					// Re-point the NEW channel's inbound callbacks at the PERSISTENT wiring
+					// every (re)connect. The wiring (and its box.channel) outlives the socket.
+					const wiring = this.crdtWiring;
+					if (wiring) {
+						channel.onCrdtMessage = wiring.onCrdtMessage;
+						channel.onCrdtDocReady = wiring.onCrdtDocReady;
+						channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound;
+						channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate;
+					}
 					// Deferred activation: only engage CRDT routing in the SyncEngine
 					// after the server confirms the crdt: topic join. Against a non-CRDT
 					// backend this never fires and setCrdtManager stays null → every
