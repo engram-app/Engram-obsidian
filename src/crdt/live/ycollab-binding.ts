@@ -12,6 +12,11 @@ import {
 	Prec,
 } from "@codemirror/state";
 import { EditorView, keymap } from "@codemirror/view";
+import { rlog } from "../../remote-log";
+
+// bindrace diagnostics: throttle per Y.Doc guid so a burst of keystrokes logs at
+// most ~1/sec/doc (enough to see the pattern, not flood Loki).
+const bindraceKeystrokeAt = new Map<string, number>();
 // yCollab, YSyncConfig, and yUndoManagerKeymap are all re-exported from the
 // package root (confirmed in node_modules/y-codemirror.next/src/index.js).
 // Deep imports (yUndoManagerFacet, ySyncAnnotation, etc.) are NOT re-exported,
@@ -208,8 +213,27 @@ export function bindSpec(ytext: Y.Text, awareness: Awareness): BindResult {
 		}),
 	);
 
+	// bindrace tripwire: fires from INSIDE the compartment, so it logs iff this
+	// binding is still attached. A KEYSTROKE(docGuid=X) with no matching SEND
+	// (manager onUpdate, same guid) — especially after a closeDoc(guid=X) — means
+	// the editor is typing into a dead/detached Y.Text: the deaf-note data loss.
+	const keystrokeTripwire = EditorView.updateListener.of((u) => {
+		if (
+			u.docChanged &&
+			u.transactions.some((t) => t.isUserEvent("input") || t.isUserEvent("delete"))
+		) {
+			const guid = ytext.doc?.guid ?? "none";
+			const now = Date.now();
+			if (now - (bindraceKeystrokeAt.get(guid) ?? 0) > 1000) {
+				bindraceKeystrokeAt.set(guid, now);
+				rlog().warn("bindrace", `KEYSTROKE docGuid=${guid} ytLen=${ytext.length}`);
+			}
+		}
+	});
+
 	const extension: Extension = [
 		captureExt,
+		keystrokeTripwire,
 		ycollabExt,
 		// Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
 		// Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the

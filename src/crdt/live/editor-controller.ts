@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
+import { rlog } from "../../remote-log";
 import {
 	type BindResult,
 	bindSpec,
@@ -80,7 +81,13 @@ export class EditorController {
 		// and must abort — otherwise a slow b.md bind can clobber a fast c.md one.
 		const epoch = ++this.bindEpoch;
 		const ytext = await this.deps.getYText(path);
-		if (this.released || epoch !== this.bindEpoch) return;
+		if (this.released || epoch !== this.bindEpoch) {
+			rlog().warn(
+				"bindrace",
+				`BIND aborted-stale path=${path} epoch=${epoch} cur=${this.bindEpoch} released=${this.released}`,
+			);
+			return;
+		}
 		// View-identity guard (mirrors runDriftCheck's, at bind time). The await
 		// above — and, for a DEFERRED bind, the unbounded wait for the server seed
 		// (deferUntilSeeded → onSeed rebind, fired on a network event long after
@@ -90,7 +97,13 @@ export class EditorController {
 		// boundary (the 2026-07-07 cross-file pollution class). Never bind a view
 		// that no longer shows `path`; refresh() will bind whatever it now shows.
 		const shown = this.deps.viewPath?.();
-		if (shown !== undefined && shown !== path) return;
+		if (shown !== undefined && shown !== path) {
+			rlog().warn(
+				"bindrace",
+				`BIND skipped-viewpath path=${path} shows=${shown} epoch=${epoch}`,
+			);
+			return;
+		}
 		// Data-loss guard (deaf live-bound base loss, test_live_bound_both_ends):
 		// materialize writes base to DISK but leaves the Y.Doc EMPTY on purpose —
 		// the adopt-first gate has the server seed it on its OWN lineage (STEP2 /
@@ -108,6 +121,13 @@ export class EditorController {
 		// disk while the doc is still unseeded.
 		const editorText = view.state.doc.toString();
 		if (ytext.length === 0 && editorText.length > 0) {
+			// Editor is LIVE but nothing flows to the Y.Doc until the server seed
+			// lands (deferUntilSeeded rebinds on onSeed). If the seed never comes,
+			// this note is silently unsynced — a prime "changing files broke it" seam.
+			rlog().warn(
+				"bindrace",
+				`BIND deferred-unseeded path=${path} edLen=${editorText.length} docGuid=${ytext.doc?.guid ?? "none"} epoch=${epoch}`,
+			);
 			this.deferUntilSeeded(view, path, ytext, epoch);
 			return;
 		}
@@ -122,6 +142,13 @@ export class EditorController {
 		this.bindResult = result;
 		this.boundYtext = ytext;
 		this.path = path;
+		// bindrace: the docGuid here is the Y.Doc the editor is now forwarding
+		// keystrokes into. Correlate with KEYSTROKE + SEND (same guid) and closeDoc:
+		// a later closeDoc(guid=X) while this note stays open = the binding goes deaf.
+		rlog().warn(
+			"bindrace",
+			`BIND ok path=${path} epoch=${epoch} viewId=${this.viewId} docGuid=${ytext.doc?.guid ?? "none"} ytLen=${ytext.length} edLen=${editorText.length}`,
+		);
 		this.deps.onBind(path, this.viewId);
 		this.scheduleDriftCheck(view);
 	}

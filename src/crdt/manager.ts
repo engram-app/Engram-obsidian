@@ -23,6 +23,10 @@ export type DocKind = "note" | "canvas";
  */
 export const REMOTE_ORIGIN = "remote";
 
+// bindrace diagnostics: throttle the per-local-update SEND log per docId so a
+// keystroke burst logs at most ~1/sec/doc (correlate with KEYSTROKE + BIND guids).
+const bindraceSendAt = new Map<string, number>();
+
 /** Y.Doc shared-type key for the frontmatter key-value map. */
 export const FRONTMATTER_KEY = "frontmatter";
 /**
@@ -635,6 +639,15 @@ export class CrdtManager {
 		if ((this.inFlightOps.get(id) ?? 0) > 0) return;
 		const e = this.docs.get(id);
 		if (!e) return;
+		// bindrace tripwire: destroying this doc removes its update listeners. Any
+		// live editor still bound to this Y.Text goes DEAF (keystrokes enter a dead
+		// doc; entry() later mints a fresh doc the editor never sees). A
+		// closeDoc(docGuid=X) followed by KEYSTROKE(docGuid=X) with no SEND is the
+		// deaf-note data-loss, caught live.
+		rlog().warn(
+			"bindrace",
+			`closeDoc noteId=${noteId} docGuid=${(e.doc as { guid?: string }).guid ?? "none"} inFlight=${this.inFlightOps.get(id) ?? 0}`,
+		);
 		void this.teardownEntry(id, e, { clearData: false });
 		this.synced.delete(id);
 		this.pendingFlush.delete(id);
@@ -873,6 +886,17 @@ export class CrdtManager {
 			if (hasContent()) entry.hadContent = true; // also covers IDB-replay updates
 			if (origin === REMOTE_ORIGIN) return;
 			if (this.opts.canSendLive && !this.opts.canSendLive(id)) return; // HOLD: not create-acked
+			// bindrace SEND seam: a local edit reached the wire for THIS doc. The guid
+			// must match the editor's BIND/KEYSTROKE guid — if KEYSTROKE(guid=X) fires
+			// but SEND(guid=X) never does, the editor is bound to a dead/wrong doc.
+			const now = Date.now();
+			if (now - (bindraceSendAt.get(id) ?? 0) > 1000) {
+				bindraceSendAt.set(id, now);
+				rlog().warn(
+					"bindrace",
+					`SEND noteId=${noteId} docGuid=${doc.guid} len=${update.length}`,
+				);
+			}
 			this.opts.onUpdate(id, update, origin);
 		});
 
