@@ -66,12 +66,17 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		getText?: (id: string) => Promise<string>;
 	}) {
 		const closed: string[] = [];
+		const unprotected: string[] = [];
 		const flushed: Array<{ path: string; content: string }> = [];
 		const releaseErrors: Array<{ path: string; err: unknown }> = [];
 		const manager = {
 			getText: opts?.getText ?? (async (id: string) => `text-of-${id}`),
 			closeDoc: (id: string) => {
 				closed.push(id);
+			},
+			protect: () => {},
+			unprotect: (id: string) => {
+				unprotected.push(id);
 			},
 		};
 		const lv = new CrdtLiveViews({
@@ -88,21 +93,25 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 				releaseErrors.push({ path, err });
 			},
 		});
-		return { lv, closed, flushed, releaseErrors };
+		return { lv, closed, unprotected, flushed, releaseErrors };
 	}
 
-	it("flushes then frees the doc when the last viewer releases", async () => {
-		const { lv, closed, flushed } = makeLiveViews();
+	it("flushes then UNPROTECTS (keeps resident) when the last viewer releases", async () => {
+		const { lv, closed, unprotected, flushed } = makeLiveViews();
 		await (
 			lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 		).onLastViewerRelease("a.md");
 		expect(flushed).toEqual([{ path: "a.md", content: "text-of-id:a.md" }]);
-		expect(closed).toEqual(["id:a.md"]); // doc freed after the final flush
+		// Persistent-doc rework: the doc is NOT torn down on view-release (that
+		// caused switch-away churn). It stays resident and merely loses its
+		// eviction pin, so it survives in the LRU working set until cap pressure.
+		expect(closed).toEqual([]);
+		expect(unprotected).toEqual(["id:a.md"]);
 	});
 
-	it("does NOT free the doc if a viewer re-binds during the flush (re-open race)", async () => {
+	it("does NOT unprotect if a viewer re-binds during the flush (re-open race)", async () => {
 		let onFlush: () => void = () => {};
-		const { lv, closed } = makeLiveViews({
+		const { lv, closed, unprotected } = makeLiveViews({
 			flushToDisk: async () => {
 				onFlush();
 			},
@@ -114,11 +123,12 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		await (
 			lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 		).onLastViewerRelease("a.md");
-		expect(closed).toEqual([]); // re-bound during flush → left resident
+		expect(closed).toEqual([]);
+		expect(unprotected).toEqual([]); // re-bound during flush → stays pinned
 	});
 
-	it("a flush failure retains the doc (no free without a successful persist)", async () => {
-		const { lv, closed } = makeLiveViews({
+	it("a flush failure keeps the doc pinned (no unprotect without a successful persist)", async () => {
+		const { lv, closed, unprotected } = makeLiveViews({
 			flushToDisk: async () => {
 				throw new Error("disk full");
 			},
@@ -128,11 +138,12 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 				lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 			).onLastViewerRelease("a.md"),
 		).rejects.toThrow("disk full");
-		expect(closed).toEqual([]); // never freed — we could not persist
+		expect(closed).toEqual([]);
+		expect(unprotected).toEqual([]); // never unpinned — we could not persist
 	});
 
-	it("a getText failure neither flushes nor frees", async () => {
-		const { lv, closed, flushed } = makeLiveViews({
+	it("a getText failure neither flushes nor unprotects", async () => {
+		const { lv, closed, unprotected, flushed } = makeLiveViews({
 			getText: async () => {
 				throw new Error("no text");
 			},
@@ -144,6 +155,7 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		).rejects.toThrow("no text");
 		expect(flushed).toEqual([]);
 		expect(closed).toEqual([]);
+		expect(unprotected).toEqual([]);
 	});
 
 	it("surfaces a last-release failure via onReleaseError instead of swallowing it", async () => {
@@ -184,7 +196,12 @@ describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
 
 	function makeLiveViewsWithViews(views: Array<InstanceType<typeof MdView>>) {
 		const app = { workspace: { getLeavesOfType: mock(() => views.map((view) => ({ view }))) } };
-		const manager = { getText: async (id: string) => `text-of-${id}`, closeDoc: () => {} };
+		const manager = {
+			getText: async (id: string) => `text-of-${id}`,
+			closeDoc: () => {},
+			protect: () => {},
+			unprotect: () => {},
+		};
 		const lv = new CrdtLiveViews({
 			app: app as never,
 			manager: manager as never,
@@ -238,7 +255,12 @@ describe("CrdtLiveViews.refresh() coalescing", () => {
 		const getLeaves = mock(() => [] as Array<{ view: unknown }>);
 		const lv = new CrdtLiveViews({
 			app: { workspace: { getLeavesOfType: getLeaves } } as never,
-			manager: { getText: async () => "", closeDoc: () => {} } as never,
+			manager: {
+				getText: async () => "",
+				closeDoc: () => {},
+				protect: () => {},
+				unprotect: () => {},
+			} as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
 			flushToDisk: async () => {},

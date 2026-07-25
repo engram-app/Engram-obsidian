@@ -16776,6 +16776,20 @@ var _CrdtManager = class _CrdtManager {
      *  it to callbacks. */
     this.docs = /* @__PURE__ */ new Map();
     /**
+     * LRU recency of resident doc IDs — least-recently-used first, most-recent
+     * last. Touched on every `entry()` access (mint or cache hit). Drives
+     * cap-pressure eviction so the resident set stays bounded WITHOUT tearing a
+     * doc down the moment its editor view closes (which caused the switch-away
+     * churn/data-loss). Same key space as `docs`.
+     */
+    this.lru = [];
+    /**
+     * Doc IDs that must never be evicted regardless of LRU position — a live
+     * editor is bound to them. `CrdtLiveViews` calls `protect`/`unprotect` on
+     * bind/release. Same key space as `docs`.
+     */
+    this.protectedIds = /* @__PURE__ */ new Set();
+    /**
      * Per-session set of doc IDs for which at least one inbound server sync
      * frame has been applied (i.e. the STEP2 handshake has completed for the
      * path). Keyed by docId — same key space as `docs`.
@@ -16892,6 +16906,43 @@ var _CrdtManager = class _CrdtManager {
    *  orphaned mint doc was torn down (removeDoc) after a genesis adopt. */
   hasDoc(noteId) {
     return this.docs.has(this.docId(noteId));
+  }
+  /** Pin `noteId`'s doc in the resident set: it must not be LRU-evicted while
+   *  a live editor is bound to it. `CrdtLiveViews` calls this on bind. */
+  protect(noteId) {
+    this.protectedIds.add(this.docId(noteId));
+  }
+  /** Release the pin from `protect`. The doc stays resident (recently used) and
+   *  is only freed later under cap pressure. Called on editor unbind/release. */
+  unprotect(noteId) {
+    this.protectedIds.delete(this.docId(noteId));
+  }
+  /** Mark `id` most-recently-used, then evict the least-recently-used resident
+   *  docs until the set fits `residentCap`. Never evicts a protected
+   *  (live-bound) or in-flight doc, nor `id` itself. Eviction reuses closeDoc's
+   *  persist-safe teardown (IndexedDB store kept — the note re-hydrates on next
+   *  open), so nothing is lost. */
+  touchLru(id2) {
+    var _a, _b;
+    let at = this.lru.indexOf(id2);
+    at !== -1 && this.lru.splice(at, 1), this.lru.push(id2);
+    let cap = (_a = this.opts.residentCap) != null ? _a : 64;
+    if (!(this.docs.size <= cap))
+      for (let i = 0; i < this.lru.length && this.docs.size > cap; ) {
+        let cand = this.lru[i];
+        if (cand === void 0 || cand === id2 || this.protectedIds.has(cand) || ((_b = this.inFlightOps.get(cand)) != null ? _b : 0) > 0 || !this.docs.has(cand)) {
+          i++;
+          continue;
+        }
+        this.closeDoc(cand);
+      }
+  }
+  /** Remove `id` from the LRU + protected bookkeeping. Called from the single
+   *  teardown choke point so every destroyer (closeDoc / removeDoc / destroy /
+   *  flatten / eviction) keeps the resident-set metadata consistent. */
+  forgetResident(id2) {
+    let at = this.lru.indexOf(id2);
+    at !== -1 && this.lru.splice(at, 1), this.protectedIds.delete(id2);
   }
   /**
    * Apply a disk-read content string into the doc's Y.Text and frontmatter
@@ -17106,7 +17157,7 @@ var _CrdtManager = class _CrdtManager {
         `TEARDOWN id=${id2} docGuid=${guid} clearData=${opts.clearData} via ${st}`
       );
     }
-    this.docs.delete(id2), e.doc.destroy(), opts.clearData && await e.persistence.clearData(), await e.persistence.destroy();
+    this.docs.delete(id2), this.forgetResident(id2), e.doc.destroy(), opts.clearData && await e.persistence.clearData(), await e.persistence.destroy();
   }
   closeDoc(noteId) {
     var _a, _b, _c;
@@ -17225,7 +17276,7 @@ var _CrdtManager = class _CrdtManager {
     var _a, _b, _c, _d;
     let id2 = this.docId(noteId), cached = this.docs.get(id2);
     if (cached)
-      return await cached.ready, cached;
+      return this.touchLru(id2), await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), ready = persistence.whenSynced.then(() => {
     }), hasContent2 = () => kind === "canvas" ? !canvasIsEmpty(doc2) : text2.length > 0, entry = {
       doc: doc2,
@@ -17266,7 +17317,7 @@ var _CrdtManager = class _CrdtManager {
       }).finally(() => {
         this.pendingFlush.get(id2) === flush && this.pendingFlush.delete(id2);
       });
-    }), this.docs.set(id2, entry);
+    }), this.docs.set(id2, entry), this.touchLru(id2);
     {
       let st = ((_d = new Error().stack) != null ? _d : "").split(`
 `).slice(2, 7).map((s) => s.trim().replace(/^at\s+/, "")).join(" <- ");
@@ -19418,13 +19469,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  have opened the note in the editor while the apply was in flight, in
    *  which case that room now owns the doc's lifecycle and it must stay
    *  resident. */
-  hibernateIfIdle(path, noteId) {
-    if (this.crdt && !this.isLiveBound((0, import_obsidian20.normalizePath)(path)))
-      try {
-        this.crdt.closeDoc(noteId);
-      } catch (e) {
-        devLog().log("crdt", `hibernateIfIdle: closeDoc ${noteId} failed \u2014 ${errMsg(e)}`);
-      }
+  hibernateIfIdle(_path, _noteId) {
   }
   setCrdtCatchupSince(fn) {
     this.crdtCatchupSince = fn;
@@ -22551,16 +22596,19 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
     }
   }
-  /** The last viewer of `path` left: persist the current Y.Text to disk, then
-   *  free the doc so the resident set stays bounded by open notes (closeDoc was
-   *  dead code before this — a Y.Doc leaked for every note ever visited in a
-   *  session). The IndexedDB store is preserved, so the note re-hydrates on next
-   *  open or remote update; no data loss. Skips the free if a new viewer bound
-   *  during the async flush (re-open race) — destroying a doc the editor just
-   *  re-bound to would break live sync. Returns the promise for tests. */
+  /** The last viewer of `path` left: persist the current Y.Text to disk and
+   *  UNPROTECT the doc so it becomes eligible for later cap-pressure eviction —
+   *  but do NOT tear it down now. Closing the doc on view-release caused the
+   *  switch-away churn: getDoc() (startSync/handleFrame) immediately re-minted
+   *  it, and rapid file switching produced a close<->re-mint storm that bound
+   *  the editor to the wrong/empty doc and stranded edits. The doc now stays
+   *  resident (Relay-style) until the LRU working set overflows, so switching
+   *  back to a recent note reuses the SAME stable doc. Skips the unprotect if a
+   *  new viewer bound during the async flush (re-open race). Returns the
+   *  promise for tests. */
   async onLastViewerRelease(path) {
     let noteId = this.deps.resolveId(path), text2 = await this.deps.manager.getText(noteId);
-    await this.deps.flushToDisk(path, text2), this.refcount.isBound(path) || this.deps.manager.closeDoc(noteId);
+    await this.deps.flushToDisk(path, text2), this.refcount.isBound(path) || this.deps.manager.unprotect(noteId);
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
@@ -22590,7 +22638,9 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       ctrl || (ctrl = new EditorController({
         getYText: (p) => this.getYText(p),
         awareness: () => this.localAwareness,
-        onBind: (p, id2) => this.refcount.bind(p, id2),
+        onBind: (p, id2) => {
+          this.refcount.bind(p, id2), this.deps.manager.protect(this.deps.resolveId(p));
+        },
         onRelease: (p, id2) => this.refcount.release(p, id2),
         // The MdView owning this cm is stable for the cm's lifetime, but the
         // FILE it displays is not (Obsidian reuses views across note

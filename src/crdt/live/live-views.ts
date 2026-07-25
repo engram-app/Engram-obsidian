@@ -173,18 +173,21 @@ export class CrdtLiveViews {
 		}
 	}
 
-	/** The last viewer of `path` left: persist the current Y.Text to disk, then
-	 *  free the doc so the resident set stays bounded by open notes (closeDoc was
-	 *  dead code before this — a Y.Doc leaked for every note ever visited in a
-	 *  session). The IndexedDB store is preserved, so the note re-hydrates on next
-	 *  open or remote update; no data loss. Skips the free if a new viewer bound
-	 *  during the async flush (re-open race) — destroying a doc the editor just
-	 *  re-bound to would break live sync. Returns the promise for tests. */
+	/** The last viewer of `path` left: persist the current Y.Text to disk and
+	 *  UNPROTECT the doc so it becomes eligible for later cap-pressure eviction —
+	 *  but do NOT tear it down now. Closing the doc on view-release caused the
+	 *  switch-away churn: getDoc() (startSync/handleFrame) immediately re-minted
+	 *  it, and rapid file switching produced a close<->re-mint storm that bound
+	 *  the editor to the wrong/empty doc and stranded edits. The doc now stays
+	 *  resident (Relay-style) until the LRU working set overflows, so switching
+	 *  back to a recent note reuses the SAME stable doc. Skips the unprotect if a
+	 *  new viewer bound during the async flush (re-open race). Returns the
+	 *  promise for tests. */
 	private async onLastViewerRelease(path: string): Promise<void> {
 		const noteId = this.deps.resolveId(path);
 		const text = await this.deps.manager.getText(noteId);
 		await this.deps.flushToDisk(path, text);
-		if (!this.refcount.isBound(path)) this.deps.manager.closeDoc(noteId);
+		if (!this.refcount.isBound(path)) this.deps.manager.unprotect(noteId);
 	}
 
 	/** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
@@ -223,7 +226,12 @@ export class CrdtLiveViews {
 				ctrl = new EditorController({
 					getYText: (p) => this.getYText(p),
 					awareness: () => this.localAwareness,
-					onBind: (p, id) => this.refcount.bind(p, id),
+					onBind: (p, id) => {
+						this.refcount.bind(p, id);
+						// Pin the doc while a live editor is bound so cap-pressure
+						// eviction can never yank it out from under the binding.
+						this.deps.manager.protect(this.deps.resolveId(p));
+					},
 					onRelease: (p, id) => this.refcount.release(p, id),
 					// The MdView owning this cm is stable for the cm's lifetime, but the
 					// FILE it displays is not (Obsidian reuses views across note

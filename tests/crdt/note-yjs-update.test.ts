@@ -75,7 +75,7 @@ function noteEngine(opts: {
 }
 
 describe("applyPushedNoteUpdate (note_yjs_update)", () => {
-	test("a confirmed, not-live-bound note applies the update, persists the head, and hibernates the doc (P3)", async () => {
+	test("a confirmed, not-live-bound note applies the update, persists the head, and keeps the doc resident (persistent-doc rework)", async () => {
 		const { e, applied, closed } = noteEngine({});
 		markConfirmed(e, "id-a");
 		const update = new Uint8Array([1, 2, 3]);
@@ -84,7 +84,11 @@ describe("applyPushedNoteUpdate (note_yjs_update)", () => {
 
 		expect(applied).toEqual([{ id: "id-a", update }]);
 		expect((e as any).getCrdtHead("a.md")).toBe("SRV");
-		expect(closed).toEqual(["id-a"]); // idle doc freed after the head is durably set
+		// hibernateIfIdle is now a no-op: doc lifetime is the CrdtManager's bounded
+		// LRU working set, not per-apply hibernation (eager close raced startSync/
+		// handleFrame re-mints and stranded switch-away edits). The idle doc stays
+		// resident until the working set overflows.
+		expect(closed).toEqual([]);
 	});
 
 	test("a live-bound note APPLIES the fan-out update (the room is not a guaranteed delivery path)", async () => {
@@ -277,9 +281,11 @@ describe("applyPushedNoteUpdate — gap heal (missed-open reconnect)", () => {
 });
 
 describe("applyPushedNoteUpdate ordering (b#3)", () => {
-	test("the idle doc is freed only AFTER setCrdtHead durably records the head", async () => {
-		// Mirrors the coldReceive ordering test: hibernateIfIdle -> closeDoc must
-		// run AFTER the head is persisted, so a half-recorded note is never freed.
+	test("an idle apply records the head and never closes the doc (persistent-doc rework)", async () => {
+		// hibernateIfIdle no longer closes the doc — lifetime is the CrdtManager's
+		// bounded LRU. The apply must still durably record the head; it just must
+		// not free the doc (eager close raced startSync/handleFrame re-mints and
+		// stranded switch-away edits).
 		const order: string[] = [];
 		const crdt = {
 			applyRemoteUpdate: async () => {},
@@ -299,6 +305,6 @@ describe("applyPushedNoteUpdate ordering (b#3)", () => {
 
 		await (e as any).applyPushedNoteUpdate("id-a", new Uint8Array([1]), "SRV");
 
-		expect(order).toEqual(["head:a.md", "close:id-a"]);
+		expect(order).toEqual(["head:a.md"]); // head recorded; no close
 	});
 });
