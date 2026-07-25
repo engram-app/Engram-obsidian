@@ -492,7 +492,7 @@ export class NoteChannel {
 		this.reconnectJitterMaxMs = null;
 		this.crdtJoinFailedReason = null;
 		this.joinFailureBackoffMs = 1000;
-		rlog().info("channel", "Channel disconnected");
+		rlog().warn("channel", "Channel disconnected (explicit disconnect())");
 	}
 
 	/** Call when the app returns to the foreground (mobile resume). Mobile OSes
@@ -628,7 +628,7 @@ export class NoteChannel {
 			}
 		}
 
-		rlog().info(
+		rlog().warn(
 			"channel",
 			`openSocket — token.length=${token.length} source=${source} userId=${this.userId} vaultId=${this.vaultId ?? "null"}`,
 		);

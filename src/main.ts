@@ -1556,14 +1556,21 @@ export default class EngramSyncPlugin extends Plugin {
 		// reconnect churn raced note reconciliation and clobbered live docs (empty
 		// flush on a transient disconnect). Only rebuild when the identity changes.
 		const connectionKey = channelConnectionKey(this.settings);
-		if (
-			shouldReuseLiveStream(
-				this.noteStream !== null,
-				this.everConnected,
-				connectionKey,
-				this.liveChannelKey,
-			)
-		) {
+		const willReuse = shouldReuseLiveStream(
+			this.noteStream !== null,
+			this.everConnected,
+			connectionKey,
+			this.liveChannelKey,
+		);
+		// Wedge witness: a REBUILD tears down the socket + CRDT stack (new conn_id,
+		// brief joined=false window, held edits). If this fires repeatedly mid-edit,
+		// the reconnect churn is a spurious setupNoteStream rebuild — see why via the
+		// key delta (streamNull / notEverConnected / keyChanged).
+		rlog().warn(
+			"channel",
+			`setupNoteStream ${willReuse ? "REUSE" : "REBUILD"} — streamNull=${this.noteStream === null} everConnected=${this.everConnected} keyMatch=${connectionKey === this.liveChannelKey} key=${connectionKey} liveKey=${this.liveChannelKey ?? "null"}`,
+		);
+		if (willReuse) {
 			return;
 		}
 		this.liveChannelKey = connectionKey;
