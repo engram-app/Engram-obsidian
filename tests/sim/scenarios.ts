@@ -230,3 +230,53 @@ export async function offlineBoundEditRecovers(seed = 299): Promise<Test299Resul
 
 	return { topology: t, notePath };
 }
+
+// ---------------------------------------------------------------------------
+// Scenario 5 — offline edit + SWITCH AWAY, recovered on reconnect (the
+// switch-away data-loss class; prod "moving between files, only some make it").
+//
+// Like #299, but A CLOSES the note (switches to another file) before the socket
+// recovers. reEnrollOpenCrdtNotes re-enrolls only notes still open in an editor,
+// so the switched-away note is never re-solicited and its offline edit strands
+// on A's disk — the server row stays "base".
+//
+// DIFFERENTIAL PROOF (source overlay): remove the wiring.reEnrollUnsent() call
+// from the rejoin path (main.ts / replica.ts onCrdtTopicJoined) and the server
+// never receives A's edit — DIVERGES. With it, re-enrolling the refused doc
+// re-opens it from IndexedDB, fires STEP1, and the mutual handshake converges.
+// ---------------------------------------------------------------------------
+
+export interface SwitchAwayResult {
+	topology: Topology;
+	notePath: string;
+	offlineEdit: string;
+}
+
+export async function offlineEditSwitchAwayRecovers(seed = 911): Promise<SwitchAwayResult> {
+	const t = await boot(seed, ["A", "B"], { genesisEmptyDoc: true });
+	const [a] = t.replicas;
+	const notePath = "switch-away.md";
+	await a.createNote(notePath, "base\n");
+	await t.scheduler.drain();
+
+	// A opens the note (live-bound), goes offline, and edits it — the delta is
+	// refused (crdt topic not joined) and held only in A's Y.Doc.
+	await a.openNote(notePath);
+	await t.scheduler.drain();
+	await a.goOffline();
+	await t.scheduler.drain();
+	const offlineEdit = "base\noffline edit by A\n";
+	await a.editNote(notePath, offlineEdit);
+	await t.scheduler.drain();
+
+	// A switches away: the editor closes, the note is no longer live-bound.
+	await a.closeNote(notePath);
+	await t.scheduler.drain();
+
+	// Reconnect: rejoin re-enrolls still-open notes AND (with the fix) any doc
+	// whose update was refused while unjoined — recovering this one.
+	await a.goOnline();
+	await t.scheduler.drain();
+
+	return { topology: t, notePath, offlineEdit };
+}

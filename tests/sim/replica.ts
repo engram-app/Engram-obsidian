@@ -603,6 +603,9 @@ export class Replica {
 			for (const p of boundPaths) {
 				wiring.enrollment.enroll(noteIdMap.getOrMint(p));
 			}
+			// Mirror main.ts: also re-enroll any doc whose live update was refused
+			// while unjoined, so an edit to a since-closed note still converges.
+			wiring.reEnrollUnsent();
 			try {
 				await engine.catchupViaSeqReplay();
 			} catch {
