@@ -5080,9 +5080,24 @@ export class SyncEngine {
 		for (const entry of manifest.notes) {
 			const seq = entry.seq;
 			if (typeof seq !== "number" || !Number.isFinite(seq) || seq > cursor) continue;
-			const stored = this.syncState.get(normalizePath(entry.path));
+			const path = normalizePath(entry.path);
+			const stored = this.syncState.get(path);
 			const recorded = stored ? (stored.seq ?? Number.POSITIVE_INFINITY) : -1;
 			if (seq > recorded) {
+				// Content-hash-aware (mirrors the #296 equal-seq fence): a row can
+				// carry a NEWER server seq with the SAME content_hash we already
+				// recorded (a meta/seq-only advance). The content is converged; only
+				// the seq bookkeeping lagged. Stamp it rather than re-serve — catch-up
+				// would otherwise fall through (not stale because the seq is newer, not
+				// diverged because the hash matches) and never record it, so the
+				// validator re-served the same rows every poll forever (the prod
+				// no-progress stall on device a75644e9). A shared-seq FRESHER update
+				// carries a DIFFERENT content_hash, so this can never fence out unseen
+				// content — only a genuine hash mismatch is re-served.
+				if (stored?.serverHash !== undefined && stored.serverHash === entry.content_hash) {
+					this.syncState.set(path, { ...stored, seq });
+					continue;
+				}
 				behind++;
 				if (seq < minBehind) minBehind = seq;
 			}
