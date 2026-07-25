@@ -462,7 +462,17 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		reEnrollUnsent: () => {
 			// Snapshot: enroll() → startSync succeeds → clears the id from the set;
 			// iterate a copy so that mutation can't skip entries mid-loop.
-			for (const id of [...unsentDocIds]) enrollment.enroll(id);
+			for (const id of [...unsentDocIds]) {
+				// enroll re-fires STEP1 — a PULL. The real backend never STEP1s back
+				// (sync.ts:785-789), so the pull alone can't re-solicit an edit refused
+				// during the joined=false gap: the client Y.Doc stays AHEAD of the
+				// server and commitCrdtConvergence defers forever (prod: "only some
+				// edits make it"). Also PUSH the held state up — mirrors the create-ack
+				// rejoin (sync.ts:800 flushHeldEditsOnCreateAck). Idempotent Yjs merge
+				// on the existing lineage, so no doubling (manager.ts:553-561).
+				enrollment.enroll(id);
+				void manager.flushHeldState(id);
+			}
 		},
 		forgetUnsent: (docId) => {
 			unsentDocIds.delete(docId);

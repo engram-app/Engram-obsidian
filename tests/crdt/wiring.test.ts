@@ -487,3 +487,52 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 	wiring.dispose();
 	await wiring.manager.destroy();
 });
+
+// An edit refused while the crdt topic was unjoined (offline / a reconnect or
+// plugin-reload gap) lands in the Y.Doc but never on the wire. On rejoin,
+// reEnrollUnsent must not only re-enroll (STEP1, a PULL) but also PUSH the held
+// state up via manager.flushHeldState — mirroring the create-ack path
+// (sync.ts:800 flushHeldEditsOnCreateAck). Without the push, a real PULL-ONLY
+// backend (sync.ts:785-789 "the backend never STEP1s back") never receives the
+// held edit: the client Y.Doc stays ahead of the server and commitCrdtConvergence
+// defers forever (prod: "only some edits make it to the server", projLen>stagedLen).
+// The sim tier can't gate this (its ModelServer sends a mutual STEP1 AND its async
+// y-indexeddb replay re-emits the held update on reconnect — two fidelity artifacts
+// that mask it), so this seam-level spy is the discriminating gate. Spy pattern
+// mirrors the enroll spy above.
+test("reEnrollUnsent pushes held state up (flushHeldState) for a doc refused while offline", async () => {
+	const map = new NoteIdMap();
+	const noteId = map.getOrMint("held.md");
+	const joined = false; // crdt topic not joined → the edit is refused and held
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			flushFromCrdt: async () => true,
+			isUnchangedSynced: () => false,
+			materializeEmptyDiscovered: async () => {},
+			reconcileNoteIdMapFromManifest: async () => 0,
+			isSyncBlocked: () => false,
+			ensureNoteIdMapped: () => {},
+			discoverAnnouncedNote: async () => {},
+			commitCrdtConvergence: async () => {},
+		},
+		sendCrdt: () => joined,
+		isBound: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "reenroll-flush",
+	});
+
+	// Offline edit: the update is produced but sendCrdt refuses it → id is tracked
+	// in the unsent set (the prod "refused while joined=false" population).
+	await wiring.manager.applyLocalEdit(noteId, "held edit reaches the server\n");
+	await sleep(30);
+
+	// Rejoin: reEnrollUnsent must PUSH the held state (not just STEP1-pull).
+	const flushSpy = spyOn(wiring.manager, "flushHeldState");
+	wiring.reEnrollUnsent();
+	expect(flushSpy).toHaveBeenCalledWith(noteId);
+	flushSpy.mockRestore();
+
+	wiring.dispose();
+	await wiring.manager.destroy();
+});
