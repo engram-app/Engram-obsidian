@@ -393,7 +393,12 @@ export class Replica {
 				const f = app.vault.getAbstractFileByPath(p);
 				if (f instanceof TFolder)
 					void engine.handleFolderDelete(f); // main.ts:610-611
-				else if (f instanceof TFile) void engine.handleDelete(f); // main.ts:613
+				else if (f instanceof TFile) {
+					// Mirror main.ts: drop the id from the unsent set before delete.
+					const nid = noteIdMap.get(p);
+					if (nid) wiring.forgetUnsent(nid);
+					void engine.handleDelete(f); // main.ts:613
+				}
 			},
 			onRename: (oldP, newP) => {
 				const f = app.vault.getAbstractFileByPath(newP);
@@ -603,6 +608,9 @@ export class Replica {
 			for (const p of boundPaths) {
 				wiring.enrollment.enroll(noteIdMap.getOrMint(p));
 			}
+			// Mirror main.ts: also re-enroll any doc whose live update was refused
+			// while unjoined, so an edit to a since-closed note still converges.
+			wiring.reEnrollUnsent();
 			try {
 				await engine.catchupViaSeqReplay();
 			} catch {

@@ -1486,7 +1486,7 @@ function makeCrdtCatchupSender(channel, currentVaultId) {
     return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
   };
 }
-var NoteChannel = class {
+var _NoteChannel = class _NoteChannel {
   constructor(baseUrl, apiKey, userId, vaultId = null, deviceId = null) {
     this.ws = null;
     this.ref = 0;
@@ -1509,6 +1509,12 @@ var NoteChannel = class {
      *  that does not serve the crdt: topic replies with an error (handled below),
      *  keeping this false — which allows the legacy pushNote path to remain active. */
     this.crdtJoined = !1;
+    /** Per-doc throttle for the "sendCrdt refused" warn. An offline window refuses
+     *  many frames per doc in a burst (STEP1 + each keystroke's update); logging
+     *  each one buried the signal. Log once per doc per window. The refused frame
+     *  is NOT lost — the doc is re-enrolled on rejoin (wiring reEnrollUnsent) and
+     *  the mutual handshake re-solicits its state, so this is a transient. */
+    this.lastRefusedWarnAt = /* @__PURE__ */ new Map();
     /**
      * The `ref` value sent with the crdt: topic phx_join frame.
      * Stored so handleMessage can distinguish a join-error reply (ref matches)
@@ -1651,11 +1657,16 @@ var NoteChannel = class {
    *  a frame with a stale/absent join_ref is silently dropped server-side
    *  (the plugin #179 failure shape), so refusing locally is the honest signal. */
   sendCrdt(docId, b64) {
+    var _a;
     let t = this.crdtTopic;
-    return !t || !this.crdtJoined ? (rlog().warn(
-      "channel",
-      `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`
-    ), !1) : (this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0);
+    if (!t || !this.crdtJoined) {
+      let now = Date.now();
+      return now - ((_a = this.lastRefusedWarnAt.get(docId)) != null ? _a : 0) >= _NoteChannel.REFUSED_WARN_THROTTLE_MS && (this.lastRefusedWarnAt.set(docId, now), rlog().warn(
+        "channel",
+        `sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined} \u2014 held, recovers on rejoin`
+      )), !1;
+    }
+    return this.send([this.crdtJoinRef, String(++this.ref), t, "crdt_msg", { doc_id: docId, b64 }]), !0;
   }
   /** Push a request frame on the crdt topic and resolve when the matching
    *  phx_reply (same ref) arrives. Rejects on error reply, timeout, or
@@ -2040,6 +2051,8 @@ var NoteChannel = class {
     }, base + jitter);
   }
 };
+_NoteChannel.REFUSED_WARN_THROTTLE_MS = 3e3;
+var NoteChannel = _NoteChannel;
 
 // src/crdt-op-dispatch.ts
 var TERMINAL_REASONS = /* @__PURE__ */ new Set([
@@ -22403,6 +22416,11 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     this.controllers = /* @__PURE__ */ new Map();
     /** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
     this.saveNudgeTimers = /* @__PURE__ */ new Map();
+    /** Coalesce guard: one file switch fires active-leaf-change + file-open
+     *  (± layout-change), each calling refresh(). Same-microtask duplicates
+     *  observe identical workspace state, so only the first need do the
+     *  O(open-leaves) rebind. Reset on the next microtask (see refresh). */
+    this.refreshCoalescing = !1;
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
       this.onLastViewerRelease(path).catch((e) => {
         var _a, _b;
@@ -22486,6 +22504,10 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *  Detaches frontmatter + reading hooks for views whose path changed before
    *  re-attaching, so the idempotency guard does not block the rebind. */
   refresh() {
+    if (this.refreshCoalescing) return;
+    this.refreshCoalescing = !0, queueMicrotask(() => {
+      this.refreshCoalescing = !1;
+    });
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
@@ -22692,7 +22714,7 @@ var CrdtEnrollment = class {
 };
 
 // src/crdt/wiring.ts
-var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5;
+var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5, MAX_UNSENT_DOCS = 500;
 function partitionStrandedFlushes(pending, resolvePath, attempts, maxAttempts) {
   var _a;
   let toFlush = [], toRetry = [], toGiveUp = [];
@@ -22797,9 +22819,21 @@ function createCrdtWiring(deps) {
       var _a2;
       return (_a2 = noteIdMap.pathForId(noteId)) != null && _a2.endsWith(".canvas") ? "canvas" : "note";
     }
-  }), channel = new CrdtChannel({
+  }), unsentDocIds = /* @__PURE__ */ new Set(), channel = new CrdtChannel({
     manager,
-    send: (docId, frame) => deps.sendCrdt(docId, frame),
+    send: (docId, frame) => {
+      let ok = deps.sendCrdt(docId, frame);
+      if (ok === !1) {
+        if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
+          for (let oldest of unsentDocIds) {
+            unsentDocIds.delete(oldest);
+            break;
+          }
+        unsentDocIds.add(docId);
+      } else
+        unsentDocIds.delete(docId);
+      return ok;
+    },
     // An inbound STEP2 that leaves the doc empty is the server's authoritative
     // "genuinely empty note" signal — materialize the file off the handshake
     // (not a timer) so a slow content STEP2 can never race a premature empty
@@ -22859,6 +22893,12 @@ function createCrdtWiring(deps) {
     onNoteYjsUpdate,
     drainStrandedFlushes,
     clearStrandHealAttempts: () => strandHealAttempts.clear(),
+    reEnrollUnsent: () => {
+      for (let id2 of [...unsentDocIds]) enrollment.enroll(id2);
+    },
+    forgetUnsent: (docId) => {
+      unsentDocIds.delete(docId);
+    },
     dispose
   };
 }
@@ -23337,7 +23377,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
-        file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderDelete(file) : this.syncEngine.handleDelete(file);
+        var _a2;
+        if (file instanceof import_obsidian25.TFolder)
+          this.syncEngine.handleFolderDelete(file);
+        else {
+          let noteId = this.noteIdMap.get(file.path);
+          noteId && ((_a2 = this.crdtWiring) == null || _a2.forgetUnsent(noteId)), this.syncEngine.handleDelete(file);
+        }
       })
     ), this.registerEvent(
       this.app.vault.on("rename", (file, oldPath) => {
@@ -23847,7 +23893,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
    * converged. CRDT socket only, no REST fallback.
    */
   async onCrdtTopicJoined() {
-    var _a, _b;
+    var _a, _b, _c;
     let now = Date.now();
     if (now - this.lastMapReconcileAt > _EngramSyncPlugin.RECONCILE_THROTTLE_MS) {
       this.lastMapReconcileAt = now;
@@ -23861,7 +23907,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         );
       }
     }
-    (_a = this.crdtEnrollment) == null || _a.resetAll(), (_b = this.crdtWiring) == null || _b.clearStrandHealAttempts(), this.reEnrollOpenCrdtNotes();
+    (_a = this.crdtEnrollment) == null || _a.resetAll(), (_b = this.crdtWiring) == null || _b.clearStrandHealAttempts(), this.reEnrollOpenCrdtNotes(), (_c = this.crdtWiring) == null || _c.reEnrollUnsent();
     try {
       await this.syncEngine.catchupViaSeqReplay();
     } catch (e) {

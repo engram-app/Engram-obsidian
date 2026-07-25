@@ -94,6 +94,11 @@ export class CrdtLiveViews {
 	private readonly controllers = new Map<EditorView, EditorController>();
 	/** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
 	private readonly saveNudgeTimers = new Map<string, number>();
+	/** Coalesce guard: one file switch fires active-leaf-change + file-open
+	 *  (± layout-change), each calling refresh(). Same-microtask duplicates
+	 *  observe identical workspace state, so only the first need do the
+	 *  O(open-leaves) rebind. Reset on the next microtask (see refresh). */
+	private refreshCoalescing = false;
 
 	constructor(deps: CrdtLiveViewsDeps) {
 		this.deps = deps;
@@ -194,6 +199,16 @@ export class CrdtLiveViews {
 	 *  Detaches frontmatter + reading hooks for views whose path changed before
 	 *  re-attaching, so the idempotency guard does not block the rebind. */
 	refresh(): void {
+		// Coalesce duplicate same-tick calls (see refreshCoalescing). The FIRST
+		// call runs synchronously as before; a duplicate within the same microtask
+		// checkpoint is skipped. Reset via queueMicrotask so any later-turn refresh
+		// (observing genuinely new workspace state) always runs — this never defers
+		// or drops a refresh, it only elides a redundant re-run of identical state.
+		if (this.refreshCoalescing) return;
+		this.refreshCoalescing = true;
+		queueMicrotask(() => {
+			this.refreshCoalescing = false;
+		});
 		const seen = new Set<EditorView>();
 		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;

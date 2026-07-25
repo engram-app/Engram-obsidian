@@ -87,12 +87,25 @@ export interface CrdtWiring {
 	 *  against the now-current map, not counters left over from before the drift
 	 *  was fixed (final review MINOR-6). */
 	clearStrandHealAttempts: () => void;
+	/** Re-enroll every doc whose live update was refused while the crdt: topic was
+	 *  unjoined (offline / mid-reconnect). Call on rejoin AFTER re-enrolling open
+	 *  notes so an edit made to a note that was then closed/switched-away-from
+	 *  still converges via the mutual STEP1 handshake (switch-away data-loss). */
+	reEnrollUnsent: () => void;
+	/** Drop a doc from the unsent-tracking set. Call when the note is deleted so a
+	 *  since-deleted note is never re-enrolled on the next rejoin (a spurious STEP1
+	 *  that could race delete-wins / resurrect the note). */
+	forgetUnsent: (docId: string) => void;
 	/** Clear the pending strand-heal timer (call from the plugin's onunload). */
 	dispose: () => void;
 }
 
 const DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750;
 const STRAND_HEAL_MAX_ATTEMPTS = 5;
+/** Cap on the unsent-doc tracking set. Mirrors CrdtOpQueue.MAX_QUEUE: bounds
+ *  memory across a long outage; past the cap the oldest tracked doc is evicted
+ *  (it reconverges via the normal reconnect catch-up either way). */
+const MAX_UNSENT_DOCS = 500;
 
 /** Pure retry/give-up decision for one strand-heal drain pass (e2e test_43
  *  burst mechanism, round 3 — see `drainStrandedFlushes`). Given the ids
@@ -294,9 +307,34 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
 	});
 
+	// Docs whose live update was refused because the crdt: topic was not joined
+	// (offline / mid-reconnect). Tracked so a note edited while the socket was
+	// down — then SWITCHED AWAY FROM before reconnect, so reEnrollOpenCrdtNotes
+	// (open leaves only) misses it — still gets re-enrolled on rejoin. The mutual
+	// STEP1 handshake then solicits the held struct and it converges (the #299
+	// recovery path, widened past still-open notes). Cleared once a later send
+	// for the doc succeeds (it reached the server).
+	const unsentDocIds = new Set<string>();
+
 	const channel = new CrdtChannel({
 		manager,
-		send: (docId, frame) => deps.sendCrdt(docId, frame),
+		send: (docId, frame) => {
+			const ok = deps.sendCrdt(docId, frame);
+			// sendCrdt returns false ONLY on a refused (topic-not-joined) frame.
+			if (ok === false) {
+				if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
+					// Evict the single oldest (Set preserves insertion order).
+					for (const oldest of unsentDocIds) {
+						unsentDocIds.delete(oldest);
+						break;
+					}
+				}
+				unsentDocIds.add(docId);
+			} else {
+				unsentDocIds.delete(docId);
+			}
+			return ok;
+		},
 		// An inbound STEP2 that leaves the doc empty is the server's authoritative
 		// "genuinely empty note" signal — materialize the file off the handshake
 		// (not a timer) so a slow content STEP2 can never race a premature empty
@@ -421,6 +459,14 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		onNoteYjsUpdate,
 		drainStrandedFlushes,
 		clearStrandHealAttempts: () => strandHealAttempts.clear(),
+		reEnrollUnsent: () => {
+			// Snapshot: enroll() → startSync succeeds → clears the id from the set;
+			// iterate a copy so that mutation can't skip entries mid-loop.
+			for (const id of [...unsentDocIds]) enrollment.enroll(id);
+		},
+		forgetUnsent: (docId) => {
+			unsentDocIds.delete(docId);
+		},
 		dispose,
 	};
 }

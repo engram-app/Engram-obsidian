@@ -629,6 +629,11 @@ export default class EngramSyncPlugin extends Plugin {
 				if (file instanceof TFolder) {
 					void this.syncEngine.handleFolderDelete(file);
 				} else {
+					// Resolve the note_id BEFORE handleDelete clears the map, and drop
+					// it from the unsent-tracking set so a note deleted while offline is
+					// not re-enrolled (a spurious STEP1 racing delete-wins) on rejoin.
+					const noteId = this.noteIdMap.get(file.path);
+					if (noteId) this.crdtWiring?.forgetUnsent(noteId);
 					void this.syncEngine.handleDelete(file);
 				}
 			}),
@@ -1685,6 +1690,12 @@ export default class EngramSyncPlugin extends Plugin {
 		// counter left over from before the drift was fixed.
 		this.crdtWiring?.clearStrandHealAttempts();
 		this.reEnrollOpenCrdtNotes();
+		// reEnrollOpenCrdtNotes only re-enrolls notes still open in an editor. A
+		// note edited while the socket was down and then switched away from has no
+		// leaf, so its held offline edit would never be re-solicited. Re-enroll any
+		// doc whose live update was refused while unjoined so the mutual handshake
+		// recovers it (switch-away data-loss class).
+		this.crdtWiring?.reEnrollUnsent();
 		// Sole convergence path on (re)connect: replay the seq-ordered op-log from
 		// our persisted cursor. Every op missed while away is delivered IN ORDER
 		// with FULL content, so it can't pend the way the old state-vector delta

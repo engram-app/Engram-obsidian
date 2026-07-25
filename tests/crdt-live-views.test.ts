@@ -230,3 +230,31 @@ describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
 		expect(requestSave).not.toHaveBeenCalled();
 	});
 });
+
+describe("CrdtLiveViews.refresh() coalescing", () => {
+	it("skips a duplicate same-microtask refresh(), runs again the next tick", async () => {
+		// getLeavesOfType is the first thing refresh() does; count it to see how
+		// many rebind passes actually ran. Empty list keeps the pass a no-op.
+		const getLeaves = mock(() => [] as Array<{ view: unknown }>);
+		const lv = new CrdtLiveViews({
+			app: { workspace: { getLeavesOfType: getLeaves } } as never,
+			manager: { getText: async () => "", closeDoc: () => {} } as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => `id:${p}`,
+			flushToDisk: async () => {},
+		});
+
+		// One file switch fires active-leaf-change + file-open (+ layout-change):
+		// three synchronous refresh() calls, one real rebind pass.
+		lv.refresh();
+		lv.refresh();
+		lv.refresh();
+		expect(getLeaves.mock.calls.length).toBe(1);
+
+		// The queueMicrotask reset clears the guard, so a genuinely-later refresh
+		// (observing new workspace state) is never dropped.
+		await new Promise((r) => setTimeout(r, 0));
+		lv.refresh();
+		expect(getLeaves.mock.calls.length).toBe(2);
+	});
+});

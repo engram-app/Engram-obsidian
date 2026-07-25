@@ -151,6 +151,13 @@ export class NoteChannel {
 	 *  that does not serve the crdt: topic replies with an error (handled below),
 	 *  keeping this false — which allows the legacy pushNote path to remain active. */
 	private crdtJoined = false;
+	/** Per-doc throttle for the "sendCrdt refused" warn. An offline window refuses
+	 *  many frames per doc in a burst (STEP1 + each keystroke's update); logging
+	 *  each one buried the signal. Log once per doc per window. The refused frame
+	 *  is NOT lost — the doc is re-enrolled on rejoin (wiring reEnrollUnsent) and
+	 *  the mutual handshake re-solicits its state, so this is a transient. */
+	private lastRefusedWarnAt = new Map<string, number>();
+	private static readonly REFUSED_WARN_THROTTLE_MS = 3000;
 	/**
 	 * The `ref` value sent with the crdt: topic phx_join frame.
 	 * Stored so handleMessage can distinguish a join-error reply (ref matches)
@@ -344,12 +351,20 @@ export class NoteChannel {
 	sendCrdt(docId: string, b64: string): boolean {
 		const t = this.crdtTopic;
 		if (!t || !this.crdtJoined) {
-			// A refused frame is a lost STEP1/update from the caller's view — say
-			// so, or a not-yet-joined window reads as a mystery deaf note later.
-			rlog().warn(
-				"channel",
-				`sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined}`,
-			);
+			// The frame is HELD, not lost: the doc is re-enrolled on rejoin and the
+			// mutual handshake re-solicits its state (wiring reEnrollUnsent). Throttle
+			// per doc so an offline burst logs once, not per refused frame.
+			const now = Date.now();
+			if (
+				now - (this.lastRefusedWarnAt.get(docId) ?? 0) >=
+				NoteChannel.REFUSED_WARN_THROTTLE_MS
+			) {
+				this.lastRefusedWarnAt.set(docId, now);
+				rlog().warn(
+					"channel",
+					`sendCrdt refused (crdt topic not joined): doc=${docId} joined=${this.crdtJoined} — held, recovers on rejoin`,
+				);
+			}
 			return false;
 		}
 		// join_ref MUST be the crdt: topic's join_ref. Phoenix routes channel

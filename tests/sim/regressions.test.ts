@@ -43,6 +43,7 @@ import {
 	equalSeqFence,
 	genesisWipe,
 	offlineBoundEditRecovers,
+	offlineEditSwitchAwayRecovers,
 	test85MissedDeliveryLocalPush,
 } from "./scenarios";
 
@@ -105,6 +106,26 @@ test("#299 live-bound offline edit recovers on reconnect (mutual handshake)", as
 		cleanup(r.topology);
 	}
 	expect(true).toBe(true);
+});
+
+// #299b — offline edit + SWITCH AWAY recovers on reconnect (switch-away class).
+//
+// Prod "moving between files, only some edits make it": an edit typed while the
+// socket is down, to a note then CLOSED before reconnect, is stranded because
+// reEnrollOpenCrdtNotes only re-enrolls still-open notes.
+//
+// Assert on SERVER CONTENT (not assertConverged): if reconnect instead reverted
+// A's edit, all replicas would land on "base" and a convergence check would
+// FALSELY pass. The server-content assertion fails whether the edit is dropped
+// OR reverted. Green ONLY with wiring.reEnrollUnsent() on the rejoin path.
+test("#299b offline edit + switch-away reaches the server on reconnect", async () => {
+	const r = await offlineEditSwitchAwayRecovers();
+	try {
+		const srv = r.topology.server.state().notes.get(r.notePath);
+		expect(srv?.content ?? "").toContain("offline edit by A");
+	} finally {
+		cleanup(r.topology);
+	}
 });
 
 // #288 genesis-wipe — DOCUMENTED-BOUNDARY PIN (P1 Task 7b: exercise the
