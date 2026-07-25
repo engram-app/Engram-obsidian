@@ -3864,7 +3864,10 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, Date.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
-		rlog().info("crdt", `socket converge: re-handshake fired for ${path}`);
+		rlog().diag(
+			"crdt",
+			`converge: re-handshake fired for ${path} attempts=${this.crdtRehandshakeAttempts.get(noteId)?.attempts ?? 0}`,
+		);
 	}
 
 	/** Commit a staged convergence (see `pendingConvergence` — staged by BOTH
@@ -3926,18 +3929,26 @@ export class SyncEngine {
 		}
 		if (staged.content !== null) {
 			let matches = false;
+			let projected: string | null = null;
 			if (this.crdt) {
 				try {
-					matches = (await this.crdt.projectedText(noteId)) === staged.content;
+					projected = await this.crdt.projectedText(noteId);
+					matches = projected === staged.content;
 				} catch (e) {
-					devLog().log(
+					rlog().diag(
 						"crdt",
-						`socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
+						`converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
 					);
 				}
 			}
 			if (!matches) {
-				devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
+				// Diagnostic (never raw note content — lengths + FNV hashes only): a
+				// repeating DEFERRED for the same note = the doc never reaches the
+				// staged row (deterministic non-convergence / deaf-note class).
+				rlog().diag(
+					"crdt",
+					`converge: commit DEFERRED ${noteId} projLen=${projected?.length ?? -1} projHash=${projected === null ? "err" : fnv1a(projected)} stagedLen=${staged.content.length} stagedHash=${fnv1a(staged.content)}`,
+				);
 				return; // leave staged — the next inbound frame re-runs this check
 			}
 			// Fix wave 7 (#191 slice): the doc is content-verified converged, but a
@@ -3986,7 +3997,7 @@ export class SyncEngine {
 				version: staged.version,
 				seq: staged.seq,
 			});
-			rlog().info("crdt", `socket converge: STEP2 committed ${path}`);
+			rlog().diag("crdt", `converge: STEP2 committed ${path} seq=${staged.seq}`);
 		} catch (e) {
 			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
 		}

@@ -691,6 +691,7 @@ export class NoteChannel {
 			// next socket and skips re-firing onCrdtJoined (#191).
 			this.crdtJoined = false;
 			this.setConnected(false);
+			rlog().diag("channel", `crdtJoined->false (socket close code=${evt?.code ?? "?"})`);
 
 			// Real browsers always pass a CloseEvent here; some lightweight test
 			// doubles call onclose with no argument. Fall back to "unknown" rather
@@ -897,7 +898,10 @@ export class NoteChannel {
 					this.crdtJoined = true;
 					// Health restored: forget any backoff built up by prior rejections.
 					this.joinFailureBackoffMs = 1000;
-					rlog().info("channel", `Joined ${topic} — CRDT routing active`);
+					rlog().diag(
+						"channel",
+						`crdtJoined->true (Joined ${topic}, CRDT routing active)`,
+					);
 					this.onCrdtJoined?.();
 				}
 			} else if (status === "error") {
