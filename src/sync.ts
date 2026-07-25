@@ -3864,7 +3864,7 @@ export class SyncEngine {
 		this.crdtHealCooldown.set(noteId, Date.now());
 		this.crdtEnrollment?.reset(noteId);
 		this.crdtEnrollment?.enroll(noteId);
-		rlog().diag(
+		rlog().warn(
 			"crdt",
 			`converge: re-handshake fired for ${path} attempts=${this.crdtRehandshakeAttempts.get(noteId)?.attempts ?? 0}`,
 		);
@@ -3935,7 +3935,7 @@ export class SyncEngine {
 					projected = await this.crdt.projectedText(noteId);
 					matches = projected === staged.content;
 				} catch (e) {
-					rlog().diag(
+					rlog().warn(
 						"crdt",
 						`converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
 					);
@@ -3945,7 +3945,7 @@ export class SyncEngine {
 				// Diagnostic (never raw note content — lengths + FNV hashes only): a
 				// repeating DEFERRED for the same note = the doc never reaches the
 				// staged row (deterministic non-convergence / deaf-note class).
-				rlog().diag(
+				rlog().warn(
 					"crdt",
 					`converge: commit DEFERRED ${noteId} projLen=${projected?.length ?? -1} projHash=${projected === null ? "err" : fnv1a(projected)} stagedLen=${staged.content.length} stagedHash=${fnv1a(staged.content)}`,
 				);
@@ -3997,7 +3997,7 @@ export class SyncEngine {
 				version: staged.version,
 				seq: staged.seq,
 			});
-			rlog().diag("crdt", `converge: STEP2 committed ${path} seq=${staged.seq}`);
+			rlog().warn("crdt", `converge: STEP2 committed ${path} seq=${staged.seq}`);
 		} catch (e) {
 			rlog().warn("crdt", `socket converge: commit failed for ${path}: ${errMsg(e)}`);
 		}
