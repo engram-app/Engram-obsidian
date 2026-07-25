@@ -96,7 +96,7 @@ export function withClearedAuth(settings: EngramSyncSettings): EngramSyncSetting
 export interface ApiUrlSwitchTarget {
 	settings: EngramSyncSettings;
 	api: { setAuthProvider: (provider: null) => void };
-	noteStream: { disconnect: () => void } | null;
+	noteStream: { disconnect: (reason?: string) => void } | null;
 	/** Drop the plugin's in-memory auth provider. The cleared settings only stop
 	 *  a *future* (post-reload) provider from being rebuilt with stale auth; the
 	 *  live provider object holds an old-backend-signed access token in memory and
