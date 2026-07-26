@@ -106,7 +106,7 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		await mgr.destroyAll();
 	});
 
-	test("a note with no edits flushes a syncStep1 once without error", async () => {
+	test("a note with no held edits flushes nothing and opens NO room (create-ack is a SEND, not an enroll)", async () => {
 		const sentMsgs: string[] = [];
 		const send = mock((docId: string) => {
 			sentMsgs.push(docId);
@@ -122,7 +122,11 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		engine.setCrdtManager(mgr);
 
 		await expect(engine.flushHeldEditsOnCreateAck("note-2", "n2.md")).resolves.toBeUndefined();
-		expect(sentMsgs).toContain("note-2");
+		// Nothing was held, so nothing goes out — and crucially NO syncStep1: a
+		// freshly-created note stays room-free (fan-out invariant) until the editor
+		// binds it. A create-ack that enrolled would leak a permanent room.
+		expect(sentMsgs).toHaveLength(0);
+		expect(mgr.enrolled.has("note-2")).toBe(false);
 
 		await mgr.destroyAll();
 	});

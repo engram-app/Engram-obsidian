@@ -289,14 +289,13 @@ export class ProviderRegistry {
 		}
 	}
 
-	/** Create-ack flush: OPEN the note's room (advertise) and flush any frames the
-	 *  create-gate held. A just-created note the user is editing should start
-	 *  pulling, so unlike a cold send this DOES enroll. The syncStep1 delivers held
-	 *  ops as a state-vector diff — no full-state re-push (that was the doubling). */
+	/** Create-ack flush: re-attempt the frames the create-gate (canSendLive) held
+	 *  now that the server row exists. This is a SEND, not an enroll — a
+	 *  newly-created note stays room-free (no syncStep1) exactly like a cold send;
+	 *  it opens a room only when the editor binds it (enroll). setConnected re-runs
+	 *  the buffered-frame flush without advertising. */
 	async flushHeldState(noteId: string): Promise<void> {
-		this.enrolledIds.add(noteId);
 		const e = await this.entry(noteId);
-		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
 	}
 
