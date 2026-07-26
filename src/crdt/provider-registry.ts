@@ -14,7 +14,7 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
-import { NoteProvider } from "./note-provider";
+import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
 
 export type DocKind = "note" | "canvas";
@@ -48,8 +48,9 @@ export interface ProviderRegistryOpts {
 	dbPrefix?: string;
 	/** Transport: base64 frame → wire for `noteId`. False when the socket isn't
 	 *  joined (provider buffers + flushes on rejoin). Read the CURRENT socket at
-	 *  call time so a reconnect is transparent. */
-	send: (noteId: string, frame: string) => boolean;
+	 *  call time so a reconnect is transparent. `kind` distinguishes a content-less
+	 *  `"pull"` (syncStep1) from an `"op"` so the create-ack gate holds ops only. */
+	send: (noteId: string, frame: string, kind: FrameKind) => boolean;
 	/** Write a REMOTE-merged doc back to disk (echo-suppressed). Returns false /
 	 *  throws on a real write failure so applyRemoteUpdate can propagate it. */
 	onFlushToDisk: (
@@ -141,10 +142,14 @@ export class ProviderRegistry {
 			// syncStep1 on connect advertises the hydrated state instead.
 			deferActivation: true,
 			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
-			// the provider and flush once the server row exists.
-			send: (frame) => {
-				const gated = this.opts.canSendLive ? !this.opts.canSendLive(noteId) : false;
-				return gated ? false : this.opts.send(noteId, frame);
+			// the provider and flush once the server row exists. OPS only — a
+			// "pull" (syncStep1) carries no content and is the sole way a note whose
+			// fan-out this device missed can converge, so gating it made the
+			// diverged-note heal a permanent no-op (#1130).
+			send: (frame, kind) => {
+				const gated =
+					kind === "op" && this.opts.canSendLive ? !this.opts.canSendLive(noteId) : false;
+				return gated ? false : this.opts.send(noteId, frame, kind);
 			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
