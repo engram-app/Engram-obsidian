@@ -15632,7 +15632,7 @@ function decideReconcile(editorText, docText, dirty) {
 }
 
 // src/crdt/live/live-binding.ts
-var ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
+var DRIFT_CHECK_MS = 3e3, ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
 function setLiveBindingCoordinator(c) {
   coordinator = c;
 }
@@ -15664,6 +15664,8 @@ var LiveBindingValue = class {
     this.observer = null;
     /** One-shot observer waiting for an unseeded doc to receive its server seed. */
     this.deferObserver = null;
+    /** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
+    this.driftTimer = null;
     this.editor = editor, this.attach();
   }
   update(u) {
@@ -15685,14 +15687,19 @@ var LiveBindingValue = class {
     for (let tr of u.transactions) {
       if (!tr.docChanged || tr.annotation(ySyncAnnotation) === this.editor) continue;
       let changes = [];
-      tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      if (tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
         changes.push({
           fromA,
           toA,
           insert: inserted.sliceString(0, inserted.length, `
 `)
         });
-      }), changes.length > 0 && doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
+      }), changes.length !== 0)
+        try {
+          doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
+        } catch (err) {
+          ediagAlways(`[EDIAG] forward FAILED path=${this.path}: ${String(err)}`), this.scheduleDriftCheck();
+        }
     }
   }
   destroy() {
@@ -15756,11 +15763,50 @@ var LiveBindingValue = class {
     this.observer = (event, tr) => {
       if (this.destroyed || tr.origin === this) return;
       let changes = yDeltaToChangeSpec(event.delta);
-      changes.length > 0 && this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
-    }, text2.observe(this.observer), this.ready = !0, ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text2.length}`);
+      if (changes.length !== 0)
+        try {
+          this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
+        } catch (err) {
+          ediagAlways(`[EDIAG] paint FAILED path=${this.path}: ${String(err)}`), this.scheduleDriftCheck();
+        }
+    }, text2.observe(this.observer), this.ready = !0, this.scheduleDriftCheck(), ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text2.length}`);
+  }
+  /** Periodic backstop (Relay's checkAndCorrectDrift): while bound, compare the
+   *  editor text to the Y.Text every DRIFT_CHECK_MS. If a delta/forward was silently
+   *  dropped (a swallowed dispatch/transact error, a filtered transaction) they
+   *  diverge; re-adopt the doc into the editor so the two never stay out of sync.
+   *  The doc is authoritative for a live-bound synced note, so adopting toward it is
+   *  the safe restore. Skipped during IME composition (a diff mid-composition would
+   *  corrupt the input). Reschedules itself; cleared on detach. */
+  scheduleDriftCheck() {
+    this.driftTimer !== null && window.clearTimeout(this.driftTimer), this.driftTimer = window.setTimeout(() => {
+      this.driftTimer = null, this.runDriftCheck();
+    }, DRIFT_CHECK_MS);
+  }
+  runDriftCheck() {
+    if (this.destroyed || !this.ready || !this.ytext) return;
+    if (this.editor.composing) {
+      this.scheduleDriftCheck();
+      return;
+    }
+    let editorText = this.editor.state.doc.toString(), docText = this.ytext.toJSON();
+    if (editorText !== docText) {
+      ediagAlways(
+        `[EDIAG] DRIFT path=${this.path} editorLen=${editorText.length} docLen=${docText.length} \u2014 re-adopting`
+      );
+      try {
+        this.editor.dispatch({
+          changes: textDiffToChangeSpec(editorText, docText),
+          annotations: [ySyncAnnotation.of(this.editor)]
+        });
+      } catch (err) {
+        ediagAlways(`[EDIAG] drift re-adopt FAILED path=${this.path}: ${String(err)}`);
+      }
+    }
+    this.scheduleDriftCheck();
   }
   detach() {
-    this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && this.boundCoordinator && this.boundCoordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = null, this.path = null;
+    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null), this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && this.boundCoordinator && this.boundCoordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = null, this.path = null;
   }
 }, liveBindingPlugin = import_view.ViewPlugin.fromClass(LiveBindingValue);
 

@@ -24,8 +24,16 @@ import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { ediagAlways } from "../ediag";
-import { type YDeltaEntry, applyCmChangesToYText, yDeltaToChangeSpec } from "./cm-yjs-bridge";
+import {
+	type YDeltaEntry,
+	applyCmChangesToYText,
+	textDiffToChangeSpec,
+	yDeltaToChangeSpec,
+} from "./cm-yjs-bridge";
 import { decideReconcile, needsReattach } from "./live-binding-decisions";
+
+/** Interval for the drift backstop (Relay's DRIFT_CHECK_DELAY is 3000ms). */
+const DRIFT_CHECK_MS = 3000;
 
 /** Marks editor dispatches that ORIGINATE from a Y.Text delta (or the initial
  *  reconcile) so update() does not echo them back into the Y.Text. Value = the
@@ -81,6 +89,8 @@ class LiveBindingValue implements PluginValue {
 	private observer: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
 	/** One-shot observer waiting for an unseeded doc to receive its server seed. */
 	private deferObserver: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
+	/** Periodic drift-check timer (self-heal backstop); null when not scheduled. */
+	private driftTimer: number | null = null;
 
 	constructor(editor: EditorView) {
 		this.editor = editor;
@@ -141,7 +151,15 @@ class LiveBindingValue implements PluginValue {
 					insert: inserted.sliceString(0, inserted.length, "\n"),
 				});
 			});
-			if (changes.length > 0) doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+			if (changes.length === 0) continue;
+			try {
+				doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+			} catch (err) {
+				// A malformed offset / concurrent-transaction error must not throw out of
+				// update() and wedge the editor. Log and let the drift check reconcile.
+				ediagAlways(`[EDIAG] forward FAILED path=${this.path}: ${String(err)}`);
+				this.scheduleDriftCheck();
+			}
 		}
 	}
 
@@ -236,16 +254,68 @@ class LiveBindingValue implements PluginValue {
 			// Y.Text (not Y.XmlText) deltas only ever carry string inserts; the shared
 			// yjs delta type widens `insert` to object, so narrow it here.
 			const changes = yDeltaToChangeSpec(event.delta as YDeltaEntry[]);
-			if (changes.length > 0) {
+			if (changes.length === 0) return;
+			try {
 				this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
+			} catch (err) {
+				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
+				// observe callback, which would otherwise break painting for this
+				// transaction). Swallow and let the drift check re-adopt the doc.
+				ediagAlways(`[EDIAG] paint FAILED path=${this.path}: ${String(err)}`);
+				this.scheduleDriftCheck();
 			}
 		};
 		text.observe(this.observer);
 		this.ready = true;
+		this.scheduleDriftCheck();
 		ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text.length}`);
 	}
 
+	/** Periodic backstop (Relay's checkAndCorrectDrift): while bound, compare the
+	 *  editor text to the Y.Text every DRIFT_CHECK_MS. If a delta/forward was silently
+	 *  dropped (a swallowed dispatch/transact error, a filtered transaction) they
+	 *  diverge; re-adopt the doc into the editor so the two never stay out of sync.
+	 *  The doc is authoritative for a live-bound synced note, so adopting toward it is
+	 *  the safe restore. Skipped during IME composition (a diff mid-composition would
+	 *  corrupt the input). Reschedules itself; cleared on detach. */
+	private scheduleDriftCheck(): void {
+		if (this.driftTimer !== null) window.clearTimeout(this.driftTimer);
+		this.driftTimer = window.setTimeout(() => {
+			this.driftTimer = null;
+			this.runDriftCheck();
+		}, DRIFT_CHECK_MS);
+	}
+
+	private runDriftCheck(): void {
+		if (this.destroyed || !this.ready || !this.ytext) return;
+		if (this.editor.composing) {
+			// Mid-IME: a diff dispatch now would corrupt the composition. Retry later.
+			this.scheduleDriftCheck();
+			return;
+		}
+		const editorText = this.editor.state.doc.toString();
+		const docText = this.ytext.toJSON();
+		if (editorText !== docText) {
+			ediagAlways(
+				`[EDIAG] DRIFT path=${this.path} editorLen=${editorText.length} docLen=${docText.length} — re-adopting`,
+			);
+			try {
+				this.editor.dispatch({
+					changes: textDiffToChangeSpec(editorText, docText),
+					annotations: [ySyncAnnotation.of(this.editor)],
+				});
+			} catch (err) {
+				ediagAlways(`[EDIAG] drift re-adopt FAILED path=${this.path}: ${String(err)}`);
+			}
+		}
+		this.scheduleDriftCheck();
+	}
+
 	private detach(): void {
+		if (this.driftTimer !== null) {
+			window.clearTimeout(this.driftTimer);
+			this.driftTimer = null;
+		}
 		if (this.observer && this.ytext) this.ytext.unobserve(this.observer);
 		if (this.deferObserver && this.ytext) this.ytext.unobserve(this.deferObserver);
 		this.observer = null;
