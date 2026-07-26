@@ -56,11 +56,10 @@ import {
 import { checkForPluginUpdate } from "./update-check";
 
 import { BaseStore } from "./base-store";
-import type { CrdtEnrollment } from "./crdt/enrollment";
 import { CrdtLiveViews } from "./crdt/live/live-views";
 import { ycollabExtension } from "./crdt/live/ycollab-binding";
-import type { CrdtManager } from "./crdt/manager";
 import { NoteIdMap } from "./crdt/note-id-map";
+import type { ProviderRegistry } from "./crdt/provider-registry";
 import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
@@ -260,8 +259,8 @@ export default class EngramSyncPlugin extends Plugin {
 
 	private baseStore: BaseStore | null = null;
 	private explicitFolders: ExplicitFolders | null = null;
-	private crdtManager: CrdtManager | null = null;
-	private crdtEnrollment: CrdtEnrollment | null = null;
+	private crdtManager: ProviderRegistry | null = null;
+	private crdtEnrollment: ProviderRegistry | null = null;
 	/** CRDT data-plane glue (manager/channel/enrollment + id->path callbacks +
 	 *  strand-heal), extracted from the inline setupNoteStream block. Rebuilt on
 	 *  each channel setup; disposed on teardown/unload to clear its heal timer. */
@@ -1068,7 +1067,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.noteStream?.disconnect();
 		this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
-		void this.crdtManager?.destroy();
+		void this.crdtManager?.destroyAll();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
 		// open resources; the WebSocket it dispatches over is owned by the Phoenix
 		// channel and torn down via noteStream?.disconnect().
@@ -1594,7 +1593,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.crdtLiveViews = null;
 			this.crdtWiring?.dispose();
 			this.crdtWiring = null;
-			void this.crdtManager?.destroy();
+			void this.crdtManager?.destroyAll();
 			this.crdtManager = null;
 			this.crdtEnrollment?.resetAll();
 			this.crdtEnrollment = null;
@@ -1848,6 +1847,10 @@ export default class EngramSyncPlugin extends Plugin {
 						// and re-establishes marks when a non-empty STEP2 arrives
 						// after reconnect.
 						this.crdtManager?.clearSynced();
+						// Relay model: mark every resident provider offline so local edits
+						// buffer (flushed via syncStep1 on the next setConnected(true)) and
+						// no frame is written to a dead socket.
+						this.crdtManager?.setConnected(false);
 					}
 				};
 
@@ -2030,6 +2033,13 @@ export default class EngramSyncPlugin extends Plugin {
 						);
 						this.crdtEverJoined = true;
 						this.syncEngine.setCrdtManager(this.crdtManager);
+						// Relay model: the crdt: topic is now joined, so frames can go out.
+						// Mark every resident provider connected — this re-advertises each
+						// via syncStep1 (a state-vector diff, never a full re-push) AND
+						// flushes any frames buffered while offline. This is the reconnect
+						// convergence trigger; the enroll/catch-up below layer on id-map
+						// reconcile + seq replay.
+						this.crdtManager?.setConnected(true);
 						// Deliver any HELD create/delete ops FIRST, then reconcile the
 						// id-map, re-enroll open notes, and run the socket catch-up.
 						// onCrdtTopicJoined re-creates NOTHING (it is catch-up/pull-only,
@@ -2063,6 +2073,8 @@ export default class EngramSyncPlugin extends Plugin {
 						this.syncEngine.setCrdtManager(null);
 						// Invalidate any handshake marks so a future re-join starts clean.
 						this.crdtManager?.clearSynced();
+						// Relay model: no crdt: topic → providers offline (buffer, don't send).
+						this.crdtManager?.setConnected(false);
 						// A later same-socket rejoin must re-fire STEP1s; resetAll clears the once-per-session guard.
 						this.crdtEnrollment?.resetAll();
 						if (reason === "crdt_proto_too_old") {

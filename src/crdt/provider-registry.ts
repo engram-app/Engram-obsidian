@@ -55,8 +55,16 @@ export interface ProviderRegistryOpts {
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+	/** Create-before-edit gate: return false to HOLD a note's frames until its
+	 *  server row exists (crdt_create acked). Held frames buffer in the provider
+	 *  and flush once this returns true (a later send/reconnect). */
+	canSendLive?: (noteId: string) => boolean;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
+	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
+	 *  authoritative "genuinely empty note" signal (materialize off the handshake,
+	 *  #547). */
+	onEmptyStep2?: (noteId: string) => void;
 	docKind?: (noteId: string) => DocKind;
 	onPersistError?: (noteId: string, err: unknown) => void;
 }
@@ -93,8 +101,18 @@ export class ProviderRegistry {
 		const kind = this.opts.docKind?.(noteId) ?? "note";
 		const text = doc.getText(CONTENT_KEY);
 		const provider = new NoteProvider(doc, {
-			send: (frame) => this.opts.send(noteId, frame),
-			onSynced: () => this.opts.onSynced?.(noteId),
+			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
+			// the provider and flush once the server row exists.
+			send: (frame) =>
+				this.opts.canSendLive && !this.opts.canSendLive(noteId)
+					? false
+					: this.opts.send(noteId, frame),
+			onSynced: () => {
+				this.opts.onSynced?.(noteId);
+				// A first syncStep2 that left the doc empty = the server's "genuinely
+				// empty note" signal (materialize off the handshake, #547).
+				if (text.length === 0) this.opts.onEmptyStep2?.(noteId);
+			},
 		});
 		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(noteId, err));
 		const entry: Entry = {

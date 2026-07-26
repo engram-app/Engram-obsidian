@@ -4,10 +4,10 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
-import { encodeUpdateFrame } from "./crdt/channel";
-import type { CrdtManager, DocKind } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
+import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
+import { encodeUpdateFrame } from "./crdt/wire";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -412,9 +412,9 @@ export class SyncEngine {
 	 *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
 	 *  for IndexedDB namespacing; the CRDT doc itself is keyed by the note's bare
 	 *  note_id, matching the backend's note_id lookup. */
-	private crdt: CrdtManager | null = null;
+	private crdt: ProviderRegistry | null = null;
 
-	setCrdtManager(mgr: CrdtManager | null): void {
+	setCrdtManager(mgr: ProviderRegistry | null): void {
 		this.crdt = mgr;
 	}
 
@@ -3925,33 +3925,22 @@ export class SyncEngine {
 			return;
 		}
 		if (staged.content !== null) {
-			let matches = false;
-			if (this.crdt) {
-				try {
-					matches = (await this.crdt.projectedText(noteId)) === staged.content;
-				} catch (e) {
-					devLog().log(
-						"crdt",
-						`socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
-					);
-				}
-			}
-			if (!matches) {
-				devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
-				return; // leave staged — the next inbound frame re-runs this check
-			}
-			// Fix wave 7 (#191 slice): the doc is content-verified converged, but a
-			// rejected STEP1 / unclean close during a rate-limited window can
-			// detach the editor's Yjs binding while isLiveBound stays true (CI run
-			// 29923077791) — onFlushToDisk then skips forever (thinks the editor
-			// owns disk) and nothing repaints the stale buffer, so the wave-6
-			// requestSave nudge just re-saves the same stale content. Detect it
-			// here: if the bound editor's actual buffer no longer matches the
-			// verified content, the binding is phantom — force a rebind through
-			// the existing bindEpoch-guarded machinery (never a raw setViewData,
-			// never spans an await between detach/rebind — see
-			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the
-			// save on the freshly-painted buffer.
+			// Relay model: the provider fired onSynced from readSyncMessage — the doc
+			// is ALREADY converged with the server (syncStep2 reconciled the full
+			// state vector), so there is NO text-verify defer here. The old
+			// `projectedText === staged.content` gate wedged permanently whenever the
+			// projection differed by a cosmetic byte (frontmatter key order, a
+			// trailing newline): the stage never committed, syncState never advanced,
+			// and the note re-handshaked forever. Converged means converged — commit.
+			//
+			// Phantom-binding repair still applies (#191 slice): a rejected STEP1 /
+			// unclean close during a rate-limited window can detach the editor's Yjs
+			// binding while isLiveBound stays true (CI run 29923077791) — onFlushToDisk
+			// then skips forever (thinks the editor owns disk) and nothing repaints the
+			// stale buffer. If the bound buffer no longer matches the converged
+			// content, force a rebind through the bindEpoch-guarded machinery (never a
+			// raw setViewData, never an await between detach/rebind — see
+			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the save.
 			const boundPath = this.noteIdMap?.pathForId(noteId);
 			if (boundPath && this.isLiveBound(boundPath)) {
 				const buffer = this.crdtBoundBufferText?.(boundPath) ?? null;

@@ -61,9 +61,8 @@ import { EngramApi } from "../../src/api";
 import { NoteChannel } from "../../src/channel";
 import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
-import type { CrdtEnrollment } from "../../src/crdt/enrollment";
-import type { CrdtManager } from "../../src/crdt/manager";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
+import type { ProviderRegistry } from "../../src/crdt/provider-registry";
 import { createCrdtWiring } from "../../src/crdt/wiring";
 import { SyncEngine } from "../../src/sync";
 import { SyncLog } from "../../src/sync-log";
@@ -188,11 +187,11 @@ export class Replica {
 	/** Oracle (Task 6) accessor: the real CrdtManager backing this replica's
 	 *  Y.Docs, for reading projected text / state vector directly off the
 	 *  CRDT (not disk) — the "doc-text" and "head" convergence surfaces. */
-	readonly crdtManager: CrdtManager;
+	readonly crdtManager: ProviderRegistry;
 
 	private readonly app: SimApp;
 	private readonly channel: NoteChannel;
-	private readonly enrollment: CrdtEnrollment;
+	private readonly enrollment: ProviderRegistry;
 	/** Paths this replica has "opened" in an editor (makes isBound true + drives
 	 *  the live-editor edit/flush routing). Modeled here because there is no real
 	 *  CrdtLiveViews headless — see the file header's editor-binding note. */
@@ -211,10 +210,10 @@ export class Replica {
 		engine: SyncEngine;
 		vaultDir: string;
 		noteIdMap: NoteIdMap;
-		crdtManager: CrdtManager;
+		crdtManager: ProviderRegistry;
 		app: SimApp;
 		channel: NoteChannel;
-		enrollment: CrdtEnrollment;
+		enrollment: ProviderRegistry;
 		boundPaths: Set<string>;
 		hydrated: Set<string>;
 	}) {
@@ -503,7 +502,10 @@ export class Replica {
 			} else if (!crdtEverJoined) {
 				engine.setCrdtManager(null); // main.ts:1757-1758
 			}
-			if (!connected) manager.clearSynced(); // main.ts:1776
+			if (!connected) {
+				manager.clearSynced(); // main.ts:1776
+				manager.setConnected(false); // Relay: buffer offline, don't send on a dead socket
+			}
 		};
 
 		// Socket-native create/delete/catchup senders (main.ts:1815-1826).
@@ -580,6 +582,9 @@ export class Replica {
 		channel.onCrdtJoined = () => {
 			crdtEverJoined = true;
 			engine.setCrdtManager(manager);
+			// Relay: topic joined — re-advertise every resident doc via syncStep1 and
+			// flush frames buffered while offline (the reconnect convergence trigger).
+			manager.setConnected(true);
 			void (async () => {
 				await crdtOpQueue.onJoined();
 				await onCrdtTopicJoined();
@@ -589,6 +594,7 @@ export class Replica {
 			crdtEverJoined = false;
 			engine.setCrdtManager(null);
 			manager.clearSynced();
+			manager.setConnected(false); // Relay: no topic → providers offline
 			wiring.enrollment.resetAll();
 		};
 

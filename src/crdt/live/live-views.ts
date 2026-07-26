@@ -6,8 +6,7 @@ import type * as Y from "yjs";
 import * as YDoc from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
-import type { CrdtEnrollment } from "../enrollment";
-import type { CrdtManager } from "../manager";
+import type { ProviderRegistry } from "../provider-registry";
 import { EditorController } from "./editor-controller";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
@@ -63,8 +62,8 @@ export class ViewerRefcount {
 
 export interface CrdtLiveViewsDeps {
 	app: App;
-	manager: CrdtManager;
-	enrollment: CrdtEnrollment;
+	manager: ProviderRegistry;
+	enrollment: ProviderRegistry;
 	/**
 	 * Task 6 (note_id-keyed CRDT): resolve (minting if this path has never been
 	 * seen before) the note_id that keys the CRDT manager and channel for
