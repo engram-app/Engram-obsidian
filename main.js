@@ -15585,21 +15585,6 @@ var BaseStore = class {
 // src/crdt/live/live-binding.ts
 var import_state = require("@codemirror/state"), import_view = require("@codemirror/view"), import_obsidian22 = require("obsidian");
 
-// src/crdt/ediag.ts
-var clog = (...args2) => console.log(...args2), ediag = (...args2) => {
-}, ediagAlways = (...args2) => clog(...args2), hangDiagnosticsInstalled = !1;
-function installHangDiagnostics(_snapshot) {
-  hangDiagnosticsInstalled || typeof window == "undefined" || (hangDiagnosticsInstalled = !0, window.addEventListener("unhandledrejection", (e) => {
-    let r = e.reason, msg = r instanceof Error ? r.message : String(r), stack = r instanceof Error ? r.stack : void 0;
-    ediagAlways(`[EDIAG] UNHANDLED-REJECTION ${msg} :: ${stack != null ? stack : "(no stack)"}`);
-  }), window.addEventListener("error", (e) => {
-    let stack = e.error instanceof Error ? e.error.stack : void 0;
-    ediagAlways(
-      `[EDIAG] WINDOW-ERROR ${e.message} @ ${e.filename}:${e.lineno} :: ${stack != null ? stack : ""}`
-    );
-  }));
-}
-
 // src/crdt/live/cm-yjs-bridge.ts
 var import_diff_match_patch = __toESM(require_diff_match_patch(), 1), dmp = new import_diff_match_patch.diff_match_patch();
 function yDeltaToChangeSpec(delta) {
@@ -15752,7 +15737,10 @@ var LiveBindingValue = class {
         try {
           doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
         } catch (err) {
-          ediagAlways(`[EDIAG] forward FAILED path=${this.path}: ${String(err)}`), this.scheduleDriftCheck();
+          rlog().error(
+            "crdt-live-binding",
+            `forward failed for ${this.path}: ${String(err)}`
+          ), this.scheduleDriftCheck();
         }
     }
   }
@@ -15774,23 +15762,29 @@ var LiveBindingValue = class {
    *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
   reconcileAndGoLive(text2) {
     let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = text2.toJSON(), base = this.preEditText === null ? null : this.preEditText.slice(frontmatterPrefixLen(this.preEditText)), action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
-    switch (action.kind) {
-      case "defer":
-        ediagAlways(
-          `[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`
-        ), this.deferSeed(text2);
-        return;
-      case "adopt":
-        this.paintEditor(action.changes, prefix);
-        break;
-      case "forward":
-        this.writeYText(text2, action.changes);
-        break;
-      case "merge":
-        this.writeYText(text2, action.toDoc), this.paintEditor(action.toEditor, prefix);
-        break;
-      case "noop":
-        break;
+    if (action.kind === "defer") {
+      this.deferSeed(text2);
+      return;
+    }
+    try {
+      switch (action.kind) {
+        case "adopt":
+          this.paintEditor(action.changes, prefix);
+          break;
+        case "forward":
+          this.writeYText(text2, action.changes);
+          break;
+        case "merge":
+          this.writeYText(text2, action.toDoc), this.paintEditor(action.toEditor, prefix);
+          break;
+        case "noop":
+          break;
+      }
+    } catch (err) {
+      rlog().error(
+        "crdt-live-binding",
+        `reconcile ${action.kind} failed for ${this.path}: ${String(err)}`
+      );
     }
     this.goLive(text2);
   }
@@ -15838,9 +15832,9 @@ var LiveBindingValue = class {
             annotations: [ySyncAnnotation.of(this.editor)]
           });
         } catch (err) {
-          ediagAlways(`[EDIAG] paint FAILED path=${this.path}: ${String(err)}`), this.scheduleDriftCheck();
+          rlog().error("crdt-live-binding", `paint failed for ${this.path}: ${String(err)}`), this.scheduleDriftCheck();
         }
-    }, text2.observe(this.observer), this.ready = !0, this.scheduleDriftCheck(), ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text2.length}`);
+    }, text2.observe(this.observer), this.ready = !0, this.scheduleDriftCheck();
   }
   /** Periodic backstop (Relay's checkAndCorrectDrift): while bound, compare the
    *  editor text to the Y.Text every DRIFT_CHECK_MS. If a delta/forward was silently
@@ -15862,8 +15856,9 @@ var LiveBindingValue = class {
     }
     let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = this.ytext.toJSON();
     if (editorText !== docText) {
-      ediagAlways(
-        `[EDIAG] DRIFT path=${this.path} editorLen=${editorText.length} docLen=${docText.length} \u2014 re-adopting`
+      rlog().warn(
+        "crdt-live-binding",
+        `drift on ${this.path} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`
       );
       try {
         this.editor.dispatch({
@@ -15871,7 +15866,10 @@ var LiveBindingValue = class {
           annotations: [ySyncAnnotation.of(this.editor)]
         });
       } catch (err) {
-        ediagAlways(`[EDIAG] drift re-adopt FAILED path=${this.path}: ${String(err)}`);
+        rlog().error(
+          "crdt-live-binding",
+          `drift re-adopt failed for ${this.path}: ${String(err)}`
+        );
       }
     }
     this.scheduleDriftCheck();
@@ -15995,6 +15993,11 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
     /** Strong-reference set so detachAll() can iterate all attached views.
      *  The WeakMap alone is not iterable. */
     this.attached = /* @__PURE__ */ new Set();
+    /** Per view, the body text the reading pane was last rendered from. This is the
+     *  LCA for a preview edit: `previewMode.edit` hands back that text plus the
+     *  user's toggle, so it is exactly "what the user was looking at when they
+     *  clicked" — which is NOT necessarily the current Y.Text. */
+    this.rendered = /* @__PURE__ */ new WeakMap();
     this.deps = deps;
   }
   async attach(view, path) {
@@ -16003,13 +16006,16 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
     }), this.attached.add(view);
     let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
     if (!ytext) return;
+    this.rendered.set(view, ytext.toJSON());
     let handler = () => {
-      this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
+      if (!this.deps.isReadingMode(view)) return;
+      let text2 = ytext.toJSON();
+      this.rendered.set(view, text2), setPreviewRendered(view, text2);
     };
     ytext.observe(handler);
     let unpatch = patchPreviewEdit(
       view,
-      (fullText) => this.captureEdit(path, ytext, fullText)
+      (fullText) => this.captureEdit(view, path, ytext, fullText)
     );
     this.observers.set(view, () => {
       ytext.unobserve(handler), unpatch == null || unpatch();
@@ -16019,12 +16025,24 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
    *  edit when an editor pane also holds the path: without one, Obsidian's own
    *  write reaches disk and the ordinary modify path routes it, so intercepting
    *  would be a second write path for no gain. `fullText` is the whole file, so
-   *  the frontmatter block is sliced off to reach the body-only Y.Text. */
-  captureEdit(path, ytext, fullText) {
+   *  the frontmatter block is sliced off to reach the body-only Y.Text.
+   *
+   *  MERGED, never whole-text-diffed. `body` is the text the pane was RENDERED
+   *  from plus the toggle, so it lags any remote update that landed since that
+   *  render. Diffing it straight onto the live Y.Text would delete whatever
+   *  arrived in between — the same content-destroying shape decideReconcile was
+   *  hardened against. Instead patch only the toggle (rendered -> body) onto the
+   *  live text, exactly as the editor reconcile does. */
+  captureEdit(view, path, ytext, fullText) {
     if (!this.deps.isBound(path)) return !1;
     let doc2 = ytext.doc;
     if (!doc2) return !1;
-    let body = fullText.slice(frontmatterPrefixLen(fullText)), changes = textDiffToChangeSpec(ytext.toJSON(), body);
+    let base = this.rendered.get(view);
+    if (base === void 0) return !1;
+    let live = ytext.toJSON(), body = fullText.slice(frontmatterPrefixLen(fullText)), merged = mergeTypedEdits(base, body, live);
+    if (merged === null)
+      return this.rendered.set(view, live), setPreviewRendered(view, live), !0;
+    let changes = textDiffToChangeSpec(live, merged);
     if (changes.length > 0) {
       let mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
       doc2.transact(() => applyCmChangesToYText(ytext, mapped), READING_EDIT_ORIGIN), this.deps.onEditCaptured(path);
@@ -21307,15 +21325,9 @@ var NoteProvider = class {
     /** Frames produced while the transport was down; flushed on reconnect. */
     this.buffer = [];
     var _a;
-    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.label = opts.label, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
-      if (origin === this) return;
-      if (!this.active) {
-        ediag(`[EDIAG] MUTED-DROP note=${this.label} updateLen=${update.length}`);
+    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
+      if (origin === this || !this.active)
         return;
-      }
-      ediag(
-        `[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`
-      );
       let encoder = createEncoder();
       writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)));
     }, this.doc.on("update", this.updateHandler);
@@ -21344,10 +21356,7 @@ var NoteProvider = class {
   /** Relay's broadcastMessage: send now if connected, else buffer for the next
    *  onopen flush. A refused send (transport down mid-flight) also buffers. */
   broadcast(frame) {
-    let sent = this.connected && this.send(frame);
-    ediag(
-      `[EDIAG] broadcast note=${this.label} connected=${this.connected} sent=${sent} bufLen=${this.buffer.length}`
-    ), !sent && this.buffer.push(frame);
+    this.connected && this.send(frame) || this.buffer.push(frame);
   }
   /** Relay's onopen: (re)connect the transport. */
   connect() {
@@ -21380,7 +21389,6 @@ var NoteProvider = class {
       this.send(frame) || this.buffer.push(frame);
   }
   sendSyncStep1() {
-    ediag(`[EDIAG] sendStep1 note=${this.label}`);
     let encoder = createEncoder();
     writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)));
   }
@@ -21396,9 +21404,7 @@ var NoteProvider = class {
     let reply = createEncoder();
     writeVarUint(reply, MESSAGE_SYNC);
     let syncType = readSyncMessage(decoder, reply, this.doc, this);
-    ediag(
-      `[EDIAG] recv note=${this.label} syncType=${syncType} replyLen=${length(reply)}`
-    ), length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply))), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
+    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply))), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
   }
   /** Detach the update listener. Call ONLY when the note truly closes / on
    *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
@@ -21447,10 +21453,6 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediagAlways("[EDIAG] BUILD=relay-viewplugin (ProviderRegistry created)"), installHangDiagnostics(() => ({
-      docs: this.entries.size,
-      enrolled: this.enrolledIds.size
-    }));
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -21488,7 +21490,6 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     let cached = this.entries.get(noteId);
     if (cached) return cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), provider = new NoteProvider(doc2, {
-      label: noteId,
       // Start MUTED until IndexedDB replay finishes (activate() below): the
       // replayed persisted state must NOT be re-broadcast as a fresh local edit
       // (it forks the lineage → non-converging storm → the file-switch wedge).
@@ -21496,10 +21497,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       deferActivation: !0,
       // Create-ack gate: a held note reads as REFUSED so its frames buffer in
       // the provider and flush once the server row exists.
-      send: (frame) => {
-        let gated = this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1, ok = gated ? !1 : this.opts.send(noteId, frame);
-        return ediag(`[EDIAG] providerSend note=${noteId} gated=${gated} sendOk=${ok}`), ok;
-      },
+      send: (frame) => (this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1) ? !1 : this.opts.send(noteId, frame),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -21602,7 +21600,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
     if (e.destroyed) return;
-    ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`), applyUpdate(e.doc, update, e.provider);
+    applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }
@@ -21662,16 +21660,13 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     this.reset(noteId);
   }
   resetAll() {
-    ediag(`[EDIAG] resetAll (re-handshake ${this.enrolledIds.size} enrolled notes)`);
     for (let id2 of [...this.enrolledIds]) this.reset(id2);
   }
   /** Socket (re)connected/dropped: fan out to every resident provider. On
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    ediag(
-      `[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`
-    ), this.connected = connected;
+    this.connected = connected;
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------

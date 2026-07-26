@@ -18,7 +18,6 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
-import { ediag } from "./ediag";
 import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
 
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
@@ -31,8 +30,6 @@ export interface NoteProviderOpts {
 	/** Fired the first time an inbound syncStep2 lands (Relay's `provider.synced`
 	 *  transition) — op-level proof the doc holds the peer's content. */
 	onSynced?: () => void;
-	/** Diagnostic label (the note_id) for [EDIAG] console breadcrumbs. */
-	label?: string;
 	/** Start MUTED: the doc's update handler ignores local updates until activate()
 	 *  is called. The registry sets this so the IndexedDB replay (y-indexeddb applies
 	 *  stored updates with no origin, which otherwise reads as a fresh local edit) is
@@ -61,7 +58,6 @@ export class NoteProvider {
 	private active: boolean;
 	private send: ProviderSend;
 	private readonly onSynced?: () => void;
-	private readonly label?: string;
 	/** Frames produced while the transport was down; flushed on reconnect. */
 	private readonly buffer: string[] = [];
 	private readonly updateHandler: (update: Uint8Array, origin: unknown) => void;
@@ -70,7 +66,6 @@ export class NoteProvider {
 		this.doc = doc;
 		this.send = opts.send ?? (() => false);
 		this.onSynced = opts.onSynced;
-		this.label = opts.label;
 		this.active = !opts.deferActivation;
 		// Relay's _updateHandler: a LOCAL edit (origin !== this) becomes a sync
 		// UPDATE frame; a remote-applied op (origin === this, set by
@@ -81,14 +76,10 @@ export class NoteProvider {
 		this.updateHandler = (update, origin) => {
 			if (origin === this) return;
 			if (!this.active) {
-				// The fix in action: IndexedDB replay (or any pre-hydration update) is
-				// dropped instead of broadcast. Seeing this on open = new build running.
-				ediag(`[EDIAG] MUTED-DROP note=${this.label} updateLen=${update.length}`);
+				// IndexedDB replay (or any pre-hydration update) is dropped instead of
+				// broadcast: it is already-persisted state the syncStep1 covers.
 				return;
 			}
-			ediag(
-				`[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`,
-			);
 			const encoder = encoding.createEncoder();
 			encoding.writeVarUint(encoder, MESSAGE_SYNC);
 			syncProtocol.writeUpdate(encoder, update);
@@ -125,9 +116,6 @@ export class NoteProvider {
 	 *  onopen flush. A refused send (transport down mid-flight) also buffers. */
 	private broadcast(frame: string): void {
 		const sent = this.connected && this.send(frame);
-		ediag(
-			`[EDIAG] broadcast note=${this.label} connected=${this.connected} sent=${sent} bufLen=${this.buffer.length}`,
-		);
 		if (sent) return;
 		this.buffer.push(frame);
 	}
@@ -177,7 +165,6 @@ export class NoteProvider {
 	}
 
 	private sendSyncStep1(): void {
-		ediag(`[EDIAG] sendStep1 note=${this.label}`);
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
@@ -195,11 +182,6 @@ export class NoteProvider {
 		const reply = encoding.createEncoder();
 		encoding.writeVarUint(reply, MESSAGE_SYNC);
 		const syncType = syncProtocol.readSyncMessage(decoder, reply, this.doc, this);
-		// syncType: 0=step1(server pulling → we reply step2), 1=step2(we caught up),
-		// 2=update(live op). A storm of type-0 = server re-pulling in a loop.
-		ediag(
-			`[EDIAG] recv note=${this.label} syncType=${syncType} replyLen=${encoding.length(reply)}`,
-		);
 		if (encoding.length(reply) > 1) {
 			this.broadcast(toB64(encoding.toUint8Array(reply)));
 		}

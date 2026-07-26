@@ -13,7 +13,6 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { ediag, ediagAlways, installHangDiagnostics } from "./ediag";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -88,13 +87,7 @@ export class ProviderRegistry {
 	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
 	private readonly enrolledIds = new Set<string>();
 
-	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediagAlways("[EDIAG] BUILD=relay-viewplugin (ProviderRegistry created)");
-		installHangDiagnostics(() => ({
-			docs: this.entries.size,
-			enrolled: this.enrolledIds.size,
-		}));
-	}
+	constructor(private readonly opts: ProviderRegistryOpts) {}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
 	 *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -142,7 +135,6 @@ export class ProviderRegistry {
 		const kind = this.opts.docKind?.(noteId) ?? "note";
 		const text = doc.getText(CONTENT_KEY);
 		const provider = new NoteProvider(doc, {
-			label: noteId,
 			// Start MUTED until IndexedDB replay finishes (activate() below): the
 			// replayed persisted state must NOT be re-broadcast as a fresh local edit
 			// (it forks the lineage → non-converging storm → the file-switch wedge).
@@ -152,9 +144,7 @@ export class ProviderRegistry {
 			// the provider and flush once the server row exists.
 			send: (frame) => {
 				const gated = this.opts.canSendLive ? !this.opts.canSendLive(noteId) : false;
-				const ok = gated ? false : this.opts.send(noteId, frame);
-				ediag(`[EDIAG] providerSend note=${noteId} gated=${gated} sendOk=${ok}`);
-				return ok;
+				return gated ? false : this.opts.send(noteId, frame);
 			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
@@ -308,7 +298,6 @@ export class ProviderRegistry {
 		if (this.removed.has(noteId)) return; // deleted — a late fan-out must not resurrect
 		const e = await this.entry(noteId);
 		if (e.destroyed) return; // destroyed while we awaited hydration
-		ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`);
 		// Apply with the PROVIDER as origin (NOT a distinct REMOTE symbol): the
 		// provider's update handler suppresses its own origin, so a fanned-out update
 		// is NOT re-broadcast to the server. Applying it as a foreign origin (the old
@@ -404,7 +393,6 @@ export class ProviderRegistry {
 	}
 
 	resetAll(): void {
-		ediag(`[EDIAG] resetAll (re-handshake ${this.enrolledIds.size} enrolled notes)`);
 		for (const id of [...this.enrolledIds]) this.reset(id);
 	}
 
@@ -412,9 +400,6 @@ export class ProviderRegistry {
 	 *  connect each re-advertises via syncStep1 — the reason the doc layer
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
-		ediag(
-			`[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`,
-		);
 		this.connected = connected;
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}

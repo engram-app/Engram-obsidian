@@ -194,6 +194,56 @@ describe("CrdtReadingView — preview-edit capture (#6)", () => {
 		expect(saved).toEqual(["n.md"]); // and the bound editor gets nudged to save
 	});
 
+	it("preserves a remote edit that landed after the pane rendered (no whole-text diff)", async () => {
+		// THE RACE: previewMode.edit hands back the text the pane was RENDERED from
+		// plus the toggle. If a remote update lands between that render and the
+		// click, a straight diff(live -> body) would DELETE the remote line.
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] task\nline B\n");
+
+		const view = fakePreviewView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => false, // pane not re-rendered, so `rendered` stays at attach
+			isBound: () => true,
+			onEditCaptured: () => {},
+		});
+		await rv.attach(view, "n.md");
+
+		// Remote peer appends while the pane still shows the pre-append text.
+		ytext.insert(ytext.length, "line C\n");
+
+		// User toggles the checkbox against the STALE rendered text.
+		view.previewMode.edit("- [x] task\nline B\n");
+
+		expect(ytext.toJSON()).toBe("- [x] task\nline B\nline C\n");
+	});
+
+	it("refuses the toggle and re-renders when it collides with a remote edit", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] the quick brown fox\n");
+
+		const view = fakePreviewView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => false,
+			isBound: () => true,
+			onEditCaptured: () => {},
+		});
+		await rv.attach(view, "n.md");
+
+		// Remote rewrites the very line the user is about to toggle.
+		ytext.delete(0, ytext.length);
+		ytext.insert(0, "- [ ] a completely different line entirely\n");
+
+		view.previewMode.edit("- [x] the quick brown fox\n");
+
+		// The remote content survives; the toggle is dropped rather than clobbering it.
+		expect(ytext.toJSON()).toBe("- [ ] a completely different line entirely\n");
+	});
+
 	it("strips frontmatter before diffing into the body-only Y.Text", async () => {
 		const doc = new Y.Doc();
 		const ytext = doc.getText("content");

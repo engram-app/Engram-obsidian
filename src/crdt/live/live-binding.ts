@@ -23,7 +23,7 @@ import { Annotation } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
-import { ediagAlways } from "../ediag";
+import { rlog } from "../../remote-log";
 import {
 	type CmChangeSpec,
 	type YDeltaEntry,
@@ -201,7 +201,10 @@ class LiveBindingValue implements PluginValue {
 			} catch (err) {
 				// A malformed offset / concurrent-transaction error must not throw out of
 				// update() and wedge the editor. Log and let the drift check reconcile.
-				ediagAlways(`[EDIAG] forward FAILED path=${this.path}: ${String(err)}`);
+				rlog().error(
+					"crdt-live-binding",
+					`forward failed for ${this.path}: ${String(err)}`,
+				);
 				this.scheduleDriftCheck();
 			}
 		}
@@ -255,28 +258,41 @@ class LiveBindingValue implements PluginValue {
 				? null
 				: this.preEditText.slice(frontmatterPrefixLen(this.preEditText));
 		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
-		switch (action.kind) {
-			case "defer":
-				ediagAlways(
-					`[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`,
-				);
-				this.deferSeed(text);
-				return;
-			case "adopt":
-				this.paintEditor(action.changes, prefix);
-				break;
-			case "forward":
-				this.writeYText(text, action.changes);
-				break;
-			case "merge":
-				// Both sides diverged and merged cleanly: converge each onto the merge
-				// result. The doc write comes first so the editor paint is never the
-				// state that briefly wins if the second step throws.
-				this.writeYText(text, action.toDoc);
-				this.paintEditor(action.toEditor, prefix);
-				break;
-			case "noop":
-				break;
+		if (action.kind === "defer") {
+			this.deferSeed(text);
+			return;
+		}
+		// NOTE: everything below runs BEFORE goLive(), so neither echo guard is live
+		// yet — the observer is unregistered and `ready` is still false, which is what
+		// actually stops these writes from being re-forwarded or re-painted. Keep
+		// goLive() last; moving observer registration earlier would silently turn
+		// these into double-applies.
+		try {
+			switch (action.kind) {
+				case "adopt":
+					this.paintEditor(action.changes, prefix);
+					break;
+				case "forward":
+					this.writeYText(text, action.changes);
+					break;
+				case "merge":
+					// Both sides diverged and merged cleanly: converge each onto the merge
+					// result. The doc write comes first so the editor paint is never the
+					// state that briefly wins if the second step throws.
+					this.writeYText(text, action.toDoc);
+					this.paintEditor(action.toEditor, prefix);
+					break;
+				case "noop":
+					break;
+			}
+		} catch (err) {
+			// A throw here must NOT skip goLive(): that would leave `ready` false
+			// forever, so the note silently stops syncing until the next attach. Log
+			// and go live anyway — the drift check goLive schedules re-converges it.
+			rlog().error(
+				"crdt-live-binding",
+				`reconcile ${action.kind} failed for ${this.path}: ${String(err)}`,
+			);
 		}
 		this.goLive(text);
 	}
@@ -340,14 +356,13 @@ class LiveBindingValue implements PluginValue {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this
 				// transaction). Swallow and let the drift check re-adopt the doc.
-				ediagAlways(`[EDIAG] paint FAILED path=${this.path}: ${String(err)}`);
+				rlog().error("crdt-live-binding", `paint failed for ${this.path}: ${String(err)}`);
 				this.scheduleDriftCheck();
 			}
 		};
 		text.observe(this.observer);
 		this.ready = true;
 		this.scheduleDriftCheck();
-		ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text.length}`);
 	}
 
 	/** Periodic backstop (Relay's checkAndCorrectDrift): while bound, compare the
@@ -377,8 +392,12 @@ class LiveBindingValue implements PluginValue {
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = this.ytext.toJSON();
 		if (editorText !== docText) {
-			ediagAlways(
-				`[EDIAG] DRIFT path=${this.path} editorLen=${editorText.length} docLen=${docText.length} — re-adopting`,
+			// A tripwire, not routine: every delta and forward is supposed to keep these
+			// in lockstep, so drift means one was silently dropped. warn (not info) so it
+			// actually reaches Loki.
+			rlog().warn(
+				"crdt-live-binding",
+				`drift on ${this.path} (editor ${editorText.length} vs doc ${docText.length}) - re-adopting`,
 			);
 			try {
 				this.editor.dispatch({
@@ -386,7 +405,10 @@ class LiveBindingValue implements PluginValue {
 					annotations: [ySyncAnnotation.of(this.editor)],
 				});
 			} catch (err) {
-				ediagAlways(`[EDIAG] drift re-adopt FAILED path=${this.path}: ${String(err)}`);
+				rlog().error(
+					"crdt-live-binding",
+					`drift re-adopt failed for ${this.path}: ${String(err)}`,
+				);
 			}
 		}
 		this.scheduleDriftCheck();
