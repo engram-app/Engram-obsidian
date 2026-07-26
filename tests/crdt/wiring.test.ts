@@ -100,6 +100,12 @@ function makeDevice(
 		dbPrefix: id, // isolate the two devices' IndexedDB stores in one process
 	});
 
+	// Relay model: a device is "online" — the provider only sends frames while
+	// connected (production fires this on the crdt: topic join). The in-memory
+	// relay stands in for the fan-out below the WS layer, so both devices are
+	// always connected here.
+	wiring.manager.setConnected(true);
+
 	return { id, map, disk, flushedPaths, wiring, relayTo };
 }
 
@@ -113,7 +119,7 @@ function connect(a: Device, b: Device): void {
 async function destroy(...devices: Device[]): Promise<void> {
 	for (const d of devices) {
 		d.wiring.dispose();
-		await d.wiring.manager.destroy();
+		await d.wiring.manager.destroyAll();
 	}
 }
 
@@ -155,7 +161,7 @@ test("onCrdtDocReady does NOT enroll an idle (unbound) note — fan-out delivers
 	expect(sent).not.toContain("id-idle");
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });
 
 test("onCrdtDocReady DOES enroll a live-bound (open) note", async () => {
@@ -170,12 +176,13 @@ test("onCrdtDocReady DOES enroll a live-bound (open) note", async () => {
 		strandHealDebounceMs: 100_000,
 		dbPrefix: "docready-open",
 	});
+	wiring.manager.setConnected(true); // online — enroll can send STEP1
 
 	wiring.onCrdtDocReady("id-open");
 	await waitFor(() => sent.includes("id-open"), "STEP1 sent for the open note's room");
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });
 
 test("onCrdtDocReady with a path triggers per-note discovery (empty-note, test_27)", async () => {
@@ -205,7 +212,7 @@ test("onCrdtDocReady with a path triggers per-note discovery (empty-note, test_2
 	expect(discovered).toEqual([["id-empty", "Notes/Empty.md"]]);
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });
 
 test("onCrdtDocReady WITHOUT a path does not trigger discovery (pre-path backend)", async () => {
@@ -232,7 +239,7 @@ test("onCrdtDocReady WITHOUT a path does not trigger discovery (pre-path backend
 	expect(discovered).toEqual([]); // no path on the announce → no discovery
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });
 
 test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays unadvanced)", async () => {
@@ -267,7 +274,7 @@ test("#235: a flushFromCrdt write failure rejects applyRemoteUpdate (head stays 
 	await expect(wiring.manager.applyRemoteUpdate(noteId, update)).rejects.toThrow();
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });
 
 test("create on A materializes on B with genesis exactly once", async () => {
@@ -464,6 +471,10 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 		strandHealDebounceMs: 100_000,
 		dbPrefix: "forget-unsent",
 	});
+	// Relay model: connected, but every frame is REFUSED (topic not joined —
+	// `joined` is false). A refused send while connected is exactly what populates
+	// the unsent set (the provider also buffers the frame internally).
+	wiring.manager.setConnected(true);
 
 	// Offline edit: the update is produced but sendCrdt refuses it → id is tracked.
 	await wiring.manager.applyLocalEdit(noteId, "edited while offline\n");
@@ -485,5 +496,5 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 	enrollControl.mockRestore();
 
 	wiring.dispose();
-	await wiring.manager.destroy();
+	await wiring.manager.destroyAll();
 });

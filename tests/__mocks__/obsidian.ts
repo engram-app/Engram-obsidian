@@ -295,6 +295,12 @@ export class MarkdownView {
 	file: TFile | null = null;
 }
 
+/** Stub of Obsidian's CM6 StateField carrying the active MarkdownFileInfo. The
+ *  live-binding ViewPlugin reads it via `state.field(editorInfoField, false)`,
+ *  but unit tests never mount that plugin against a real editor, so this only
+ *  needs to exist so `import { editorInfoField } from "obsidian"` resolves. */
+export const editorInfoField = { __editorInfoField: true } as const;
+
 export const Platform = {
 	isMobile: false,
 	isMobileApp: false,

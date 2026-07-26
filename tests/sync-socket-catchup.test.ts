@@ -11,8 +11,8 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type SyncAttachmentChange, type SyncNoteChange } from "../src/types";
 
@@ -956,5 +956,56 @@ describe("catchUp identity-swap delete guard (#283)", () => {
 
 		expect(trashFile).not.toHaveBeenCalled();
 		expect(engine.exportSyncState()["Notes/gone.md"]).toBeDefined();
+	});
+});
+
+describe("validateFromManifest (E1 #1065) — hash-aware seq-stamp closes the no-progress stall", () => {
+	// Prod (device a75644e9): the manifest validator re-served the same 3-4 rows
+	// ~100x/24h ("still behind after a re-serve — not rewinding again"). The rows
+	// carried a NEWER server seq but the SAME content_hash the client already
+	// recorded (a meta/seq-only advance): not stale (newer seq), not diverged
+	// (hash matches), so catch-up fell through every branch and never stamped the
+	// seq — the validator re-served forever. Content is already converged; only
+	// the seq bookkeeping lagged.
+	function freshEngine(): SyncEngine {
+		const e = makeEngineWithCrdt({ closeDoc: () => {} });
+		e.setCatchupSeq(1000); // cursor well past the rows below (they're "consumed")
+		return e;
+	}
+
+	test("a converged row (manifest hash == recorded serverHash, newer seq) records seq instead of re-serving", () => {
+		const e = freshEngine();
+		const path = "Workflows/stuck.md";
+		(e as unknown as { syncState: Map<string, unknown> }).syncState.set(path, {
+			serverHash: "H1",
+			hash: 111,
+			version: 4,
+			seq: 800, // older than the manifest's 900
+		});
+
+		const behind = (
+			e as unknown as { validateFromManifest: (m: unknown) => number }
+		).validateFromManifest({ notes: [{ path, seq: 900, content_hash: "H1" }] });
+
+		expect(behind).toBe(0); // converged — do NOT flag/re-serve
+		expect(e.exportSyncState()[path]?.seq).toBe(900); // seq bookkeeping recorded
+	});
+
+	test("a genuinely-diverged row (manifest hash != recorded serverHash) is still flagged + not stamped", () => {
+		const e = freshEngine();
+		const path = "Workflows/diverged.md";
+		(e as unknown as { syncState: Map<string, unknown> }).syncState.set(path, {
+			serverHash: "H1",
+			hash: 111,
+			version: 4,
+			seq: 800,
+		});
+
+		const behind = (
+			e as unknown as { validateFromManifest: (m: unknown) => number }
+		).validateFromManifest({ notes: [{ path, seq: 900, content_hash: "H2" }] });
+
+		expect(behind).toBe(1); // real content divergence — must re-serve
+		expect(e.exportSyncState()[path]?.seq).toBe(800); // untouched
 	});
 });

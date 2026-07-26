@@ -78,4 +78,22 @@ describe("textDiffToChangeSpec", () => {
 		expect(specs.length).toBeGreaterThan(0);
 		expect(applySpec("hello world", specs)).toBe("hello there");
 	});
+
+	it("emits a replacement as ONE change, not a split delete+insert pair", () => {
+		// CM6 can silently drop a delete and an insert that butt against the same
+		// boundary (Relay's incrementalBufferChange hit this), so a replaced region
+		// must come out coalesced.
+		const specs = textDiffToChangeSpec("- [ ] task", "- [x] task");
+		expect(specs.length).toBe(1);
+		expect(specs[0].insert).not.toBe("");
+		expect(specs[0].to).toBeGreaterThan(specs[0].from);
+		expect(applySpec("- [ ] task", specs)).toBe("- [x] task");
+	});
+
+	it("still splits a delete and an insert that are NOT adjacent", () => {
+		const before = "keep AAA middle BBB keep";
+		const after = "keep middle BBB XX keep";
+		const specs = textDiffToChangeSpec(before, after);
+		expect(applySpec(before, specs)).toBe(after);
+	});
 });

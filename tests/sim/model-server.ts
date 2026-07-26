@@ -40,7 +40,7 @@ import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 // Import the SAME encode helpers the real client uses, so a frame the model
 // builds is byte-identical to one NoteChannel/CrdtChannel would.
-import { toB64 } from "../../src/crdt/channel";
+import { toB64 } from "../../src/crdt/wire";
 import type { Scheduler } from "./scheduler";
 
 /** y-protocols outer message-type tag — mirrors crdt/channel.ts MESSAGE_SYNC. */

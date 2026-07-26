@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test";
 import "fake-indexeddb/auto";
 import * as Y from "yjs";
-import { CrdtManager } from "../../src/crdt/manager";
+import { ProviderRegistry } from "../../src/crdt/provider-registry";
 
-// The manager learns a doc's kind once, via the docKind callback (sync.ts wires
+// The registry learns a doc's kind once, via the docKind callback (sync.ts wires
 // it from the note's path). A ".canvas" note must use the structural schema
 // (Y.Map nodes/edges), never the markdown content Y.Text.
 function makeCanvasManager(prefix: string) {
 	const flushed: Record<string, string> = {};
-	const mgr = new CrdtManager({
+	const mgr = new ProviderRegistry({
 		dbPrefix: prefix,
-		onUpdate: () => {},
+		send: () => true,
 		onFlushToDisk: async (p, c) => {
 			flushed[p] = c;
 		},
@@ -31,7 +31,7 @@ test("applyLocalEdit on a .canvas note seeds nodes map, NOT the markdown content
 	expect(doc.getMap("nodes").has("n1")).toBe(true);
 	// The markdown body must stay empty — the JSON was NOT char-ingested.
 	expect(doc.getText("content").toString()).toBe("");
-	await mgr.destroy();
+	await mgr.destroyAll();
 });
 
 test("remote update on a .canvas note flushes canvas JSON (projectCanvas) to disk", async () => {
@@ -40,7 +40,7 @@ test("remote update on a .canvas note flushes canvas JSON (projectCanvas) to dis
 	await mgr.applyLocalEdit("board.canvas", board([NODE]));
 
 	// Peer built from the same state moves n1, sends only the delta back →
-	// triggers the REMOTE_ORIGIN flush listener.
+	// triggers the REMOTE-origin flush listener.
 	const peer = new Y.Doc();
 	Y.applyUpdate(peer, await mgr.encodeStateAsUpdate("board.canvas"));
 	peer.getMap("nodes").set("n1", { ...NODE, x: 50, y: 50 });
@@ -49,7 +49,7 @@ test("remote update on a .canvas note flushes canvas JSON (projectCanvas) to dis
 
 	const written = JSON.parse(flushed["board.canvas"]);
 	expect(written.nodes[0].x).toBe(50);
-	await mgr.destroy();
+	await mgr.destroyAll();
 });
 
 test("hasHistory reflects canvas structure, not the (always-empty) body Y.Text", async () => {
@@ -58,7 +58,7 @@ test("hasHistory reflects canvas structure, not the (always-empty) body Y.Text",
 	expect(await mgr.hasHistory("board.canvas")).toBe(false);
 	await mgr.applyLocalEdit("board.canvas", board([NODE]));
 	expect(await mgr.hasHistory("board.canvas")).toBe(true);
-	await mgr.destroy();
+	await mgr.destroyAll();
 });
 
 test("encodeGenesisUpdate(canvas) seeds a peer STRUCTURALLY, not into the markdown body", () => {
@@ -83,5 +83,5 @@ test("projectedText returns the canvas JSON for a .canvas doc", async () => {
 		nodes: [NODE],
 		edges: [],
 	});
-	await mgr.destroy();
+	await mgr.destroyAll();
 });

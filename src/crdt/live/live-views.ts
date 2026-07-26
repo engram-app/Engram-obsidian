@@ -1,16 +1,12 @@
-import type { EditorView } from "@codemirror/view";
 import type { App } from "obsidian";
-import { MarkdownView as MdView, normalizePath } from "obsidian";
-import { Awareness } from "y-protocols/awareness";
+import { MarkdownView as MdView } from "obsidian";
 import type * as Y from "yjs";
-import * as YDoc from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
-import type { CrdtEnrollment } from "../enrollment";
-import type { CrdtManager } from "../manager";
-import { EditorController } from "./editor-controller";
+import type { ProviderRegistry } from "../provider-registry";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
-import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
+import type { LiveBindingCoordinator } from "./live-binding";
+import { getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
 
 /** Fix wave 6: trailing debounce window for `requestSaveForBoundPath` — a
@@ -63,8 +59,8 @@ export class ViewerRefcount {
 
 export interface CrdtLiveViewsDeps {
 	app: App;
-	manager: CrdtManager;
-	enrollment: CrdtEnrollment;
+	manager: ProviderRegistry;
+	enrollment: ProviderRegistry;
 	/**
 	 * Task 6 (note_id-keyed CRDT): resolve (minting if this path has never been
 	 * seen before) the note_id that keys the CRDT manager and channel for
@@ -81,23 +77,25 @@ export interface CrdtLiveViewsDeps {
 	onReleaseError?: (path: string, err: unknown) => void;
 }
 
-export class CrdtLiveViews {
+/** Owns the non-editor CRDT view concerns (frontmatter properties + reading-mode
+ *  render) and the viewer refcount, and serves as the LiveBindingCoordinator for
+ *  the editor ViewPlugin (live-binding.ts). The editor text binding itself lives
+ *  in the ViewPlugin now — a CM6-owned per-view lifecycle that cannot be wiped by
+ *  Obsidian's setViewData (the old Compartment-based wedge class). */
+export class CrdtLiveViews implements LiveBindingCoordinator {
 	private readonly deps: CrdtLiveViewsDeps;
 	private readonly refcount: ViewerRefcount;
 	private readonly frontmatter: CrdtFrontmatterHook;
 	private readonly reading: CrdtReadingView;
-	/** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
-	private readonly awarenessDoc = new YDoc.Doc();
-	/** Single local-only awareness instance shared across all editor controllers. */
-	private readonly localAwareness = new Awareness(this.awarenessDoc);
-	/** One EditorController per live CodeMirror EditorView. */
-	private readonly controllers = new Map<EditorView, EditorController>();
 	/** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
 	private readonly saveNudgeTimers = new Map<string, number>();
+	/** Last path each view's frontmatter/reading hooks were attached for, so a
+	 *  file switch that reuses the view detaches the stale hooks before re-attach. */
+	private readonly hookPaths = new WeakMap<MdView, string>();
 	/** Coalesce guard: one file switch fires active-leaf-change + file-open
 	 *  (± layout-change), each calling refresh(). Same-microtask duplicates
-	 *  observe identical workspace state, so only the first need do the
-	 *  O(open-leaves) rebind. Reset on the next microtask (see refresh). */
+	 *  observe identical workspace state, so only the first need do the work.
+	 *  Reset on the next microtask (see refresh). */
 	private refreshCoalescing = false;
 
 	constructor(deps: CrdtLiveViewsDeps) {
@@ -114,7 +112,31 @@ export class CrdtLiveViews {
 		this.reading = new CrdtReadingView({
 			getYText: (path) => this.getYText(path),
 			isReadingMode: (v) => v instanceof MdView && v.getMode() === "preview",
+			isBound: (path) => this.isBound(path),
+			onEditCaptured: (path) => this.requestSaveForBoundPath(path),
 		});
+	}
+
+	// --- LiveBindingCoordinator (for the editor ViewPlugin) ---------------------
+
+	resolveId(path: string): string {
+		return this.deps.resolveId(path);
+	}
+
+	residentText(noteId: string): { text: Y.Text; ready: Promise<void> } {
+		return this.deps.manager.residentText(noteId);
+	}
+
+	enroll(noteId: string): void {
+		this.deps.enrollment.enroll(noteId);
+	}
+
+	onBind(path: string, viewId: string): void {
+		this.refcount.bind(path, viewId);
+	}
+
+	onRelease(path: string, viewId: string): void {
+		this.refcount.release(path, viewId);
 	}
 
 	isBound(path: string): boolean {
@@ -132,10 +154,7 @@ export class CrdtLiveViews {
 	 *
 	 *  Debounced per path (trailing, `SAVE_NUDGE_DEBOUNCE_MS`) so a burst of
 	 *  deltas from one remote edit collapses to one save call. No-op when
-	 *  `path` has no active viewer — nothing to nudge, and no burst to
-	 *  coalesce (also means a note that closes mid-debounce simply never
-	 *  fires, which is correct: the last-viewer-release flush below already
-	 *  covers that case via `onLastViewerRelease`). Never throws. */
+	 *  `path` has no active viewer. Never throws. */
 	requestSaveForBoundPath(path: string): void {
 		if (!this.isBound(path)) return;
 		const existing = this.saveNudgeTimers.get(path);
@@ -173,18 +192,13 @@ export class CrdtLiveViews {
 		}
 	}
 
-	/** The last viewer of `path` left: persist the current Y.Text to disk, then
-	 *  free the doc so the resident set stays bounded by open notes (closeDoc was
-	 *  dead code before this — a Y.Doc leaked for every note ever visited in a
-	 *  session). The IndexedDB store is preserved, so the note re-hydrates on next
-	 *  open or remote update; no data loss. Skips the free if a new viewer bound
-	 *  during the async flush (re-open race) — destroying a doc the editor just
-	 *  re-bound to would break live sync. Returns the promise for tests. */
+	/** The last viewer of `path` left: persist the current Y.Text to disk. The doc
+	 *  stays resident (Relay persistent-doc model — closeDoc is a no-op), so the
+	 *  note keeps syncing and re-paints instantly on re-open. */
 	private async onLastViewerRelease(path: string): Promise<void> {
 		const noteId = this.deps.resolveId(path);
 		const text = await this.deps.manager.getText(noteId);
 		await this.deps.flushToDisk(path, text);
-		if (!this.refcount.isBound(path)) this.deps.manager.closeDoc(noteId);
 	}
 
 	/** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
@@ -194,101 +208,45 @@ export class CrdtLiveViews {
 		return (await this.deps.manager.getDoc(noteId)).getText("content");
 	}
 
-	/** Re-evaluate open markdown leaves: bind each editor's controller to its
-	 *  current path; release and drop controllers whose editor is gone.
-	 *  Detaches frontmatter + reading hooks for views whose path changed before
-	 *  re-attaching, so the idempotency guard does not block the rebind. */
+	/** Re-evaluate open markdown leaves: enroll each, and (re)attach the
+	 *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
+	 *  independently by the ViewPlugin (CM6-owned), so refresh() no longer binds
+	 *  editors — it only covers the concerns without a per-view CM lifecycle. */
 	refresh(): void {
-		// Coalesce duplicate same-tick calls (see refreshCoalescing). The FIRST
-		// call runs synchronously as before; a duplicate within the same microtask
-		// checkpoint is skipped. Reset via queueMicrotask so any later-turn refresh
-		// (observing genuinely new workspace state) always runs — this never defers
-		// or drops a refresh, it only elides a redundant re-run of identical state.
 		if (this.refreshCoalescing) return;
 		this.refreshCoalescing = true;
 		queueMicrotask(() => {
 			this.refreshCoalescing = false;
 		});
-		const seen = new Set<EditorView>();
 		for (const leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
 			const view = leaf.view;
 			if (!(view instanceof MdView)) continue;
 			const path = getMarkdownFilePath(view);
 			if (!path || !path.endsWith(".md")) continue;
-			const cm = getEditorViewForLeaf(view);
-			if (!cm) continue;
-			seen.add(cm);
-			let ctrl = this.controllers.get(cm);
-			if (!ctrl) {
-				ctrl = new EditorController({
-					getYText: (p) => this.getYText(p),
-					awareness: () => this.localAwareness,
-					onBind: (p, id) => this.refcount.bind(p, id),
-					onRelease: (p, id) => this.refcount.release(p, id),
-					// The MdView owning this cm is stable for the cm's lifetime, but the
-					// FILE it displays is not (Obsidian reuses views across note
-					// switches) — this closure always reports the currently shown file.
-					viewPath: () => getMarkdownFilePath(view),
-				});
-				this.controllers.set(cm, ctrl);
-			}
-			// If the controller is already bound to a different path (e.g. after a
-			// rename), detach the hooks for the old path so they are not stuck on
-			// the stale path and the re-attach below binds to the current path.
-			if (ctrl.currentPath() !== null && ctrl.currentPath() !== path) {
+			// If this view was showing a different note (rename / reuse), detach the
+			// stale hooks first so their idempotency guard does not block the rebind.
+			const prev = this.hookPaths.get(view);
+			if (prev !== undefined && prev !== path) {
 				this.frontmatter.detach(view);
 				this.reading.detach(view);
 			}
-			// The `.md` gate above (line ~112) is the extension check that used to
-			// live inside CrdtEnrollment.enroll — it now belongs here, at the one
-			// call site in this file that actually knows the path (Task 6).
+			this.hookPaths.set(view, path);
+			// Reading-only leaves have no CM editor (no ViewPlugin), so enroll here
+			// too. Idempotent + edge-guarded, so an already-enrolled note is ~free.
 			this.deps.enrollment.enroll(this.deps.resolveId(path));
-			void ctrl.bindTo(cm, path);
 			this.frontmatter.attach(view);
 			void this.reading.attach(view, path);
 		}
-		// Release controllers whose editor is no longer an open markdown leaf.
-		for (const [cm, ctrl] of this.controllers) {
-			if (!seen.has(cm)) {
-				ctrl.release(cm);
-				this.controllers.delete(cm);
-			}
-		}
 	}
 
-	/** Force any editor controller currently showing `path` to re-resolve its
-	 *  note_id and rebind. Used after a genesis ADOPT remaps path -> serverId:
-	 *  the path is unchanged so refresh()'s bindTo short-circuits and the editor
-	 *  stays on the orphaned mint doc. No-op when nothing shows the path. The
-	 *  caller pre-seeds the serverId doc from the mint content, so the rebind's
-	 *  reconcile is a no-op and no in-flight edit is lost. */
-	rebindPath(path: string): void {
-		const norm = normalizePath(path);
-		for (const [cm, ctrl] of this.controllers) {
-			const cur = ctrl.currentPath();
-			if (cur !== null && normalizePath(cur) === norm) ctrl.forceRebind(cm, path);
-		}
-	}
-
-	/** Release + drop every editor controller WITHOUT tearing down awareness or
-	 *  hooks — so no binding spans a Y.Doc teardown (replace-remote's crdtDelete
-	 *  destroys docs whose files stay open). The next refresh() re-binds current
-	 *  views with fresh controllers. */
-	detachAll(): void {
-		for (const [cm, ctrl] of this.controllers) {
-			ctrl.release(cm);
-			this.controllers.delete(cm);
-		}
-	}
-
-	destroy(): void {
-		// Release all editor controllers (sets their released flag, clears compartments).
-		for (const [cm, ctrl] of this.controllers) {
-			ctrl.release(cm);
-		}
-		this.controllers.clear();
-		// Fix wave 6: cancel any pending save-nudge timers — nothing to save
-		// into once the plugin is tearing down.
+	/** Flush any paths that still have live viewers (settings save / reconnect /
+	 *  unload), then resolve. Content is read SYNCHRONOUSLY from the resident doc
+	 *  BEFORE returning, so a caller that immediately destroys the manager
+	 *  (crdtManager.destroyAll()) cannot make a later toJSON() run on a dead doc and
+	 *  write empty over the note. The reconnect path awaits this; unload cannot, but
+	 *  the synchronous capture keeps it safe there too. */
+	destroy(): Promise<void> {
+		// Cancel any pending save-nudge timers — nothing to save into on teardown.
 		for (const timer of this.saveNudgeTimers.values()) {
 			window.clearTimeout(timer);
 		}
@@ -296,18 +254,19 @@ export class CrdtLiveViews {
 		// Detach all frontmatter + reading-view hooks.
 		this.frontmatter.detachAll();
 		this.reading.detachAll();
-		// Tear down the local-only awareness + its throwaway doc.
-		this.localAwareness.destroy();
-		this.awarenessDoc.destroy();
-		// Flush any paths that still have live viewers (mid-session settings save /
-		// reconnect). Without this, content typed since the last onLastRelease flush
-		// stays only in Y.Text and is never written to disk before the manager tears
-		// down.
+		const flushes: Array<Promise<void>> = [];
 		for (const path of this.refcount.boundPaths()) {
 			const noteId = this.deps.resolveId(path);
-			void this.deps.manager
-				.getText(noteId)
-				.then((content) => this.deps.flushToDisk(path, content));
+			// Only a resident doc can be flushed. Guard so we never materialize a fresh
+			// EMPTY doc for a torn-down path and clobber its file with "".
+			if (!this.deps.manager.hasDoc(noteId)) continue;
+			const content = this.deps.manager.residentText(noteId).text.toJSON();
+			flushes.push(
+				Promise.resolve(this.deps.flushToDisk(path, content)).catch((e) =>
+					this.deps.onReleaseError?.(path, e),
+				),
+			);
 		}
+		return Promise.all(flushes).then(() => {});
 	}
 }

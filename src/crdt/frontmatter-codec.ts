@@ -3,6 +3,36 @@
 // unit-testable under bun and reusable.
 
 import { parse as yamlParse, stringify as yamlStringify } from "yaml";
+import type * as Y from "yjs";
+
+// ---------------------------------------------------------------------------
+// Y.Doc shared-type keys + accessors — the single source of truth (was
+// duplicated across CrdtManager and the Relay-model registry). The keys must
+// match the backend CrdtBridge exactly so IndexedDB stores and wire frames stay
+// compatible.
+// ---------------------------------------------------------------------------
+
+/** Y.Doc shared-type key for the frontmatter key-value map. */
+export const FRONTMATTER_KEY = "frontmatter";
+/** Y.Doc shared-type key for the out-of-band degraded-key raw-passthrough map
+ *  (keys the backend could not parse as YAML → verbatim source spans). */
+export const RAW_FRONTMATTER_KEY = "frontmatter_raw";
+/** Y.Doc shared-type key for the ordered list of frontmatter keys. */
+export const ORDER_KEY = "frontmatter_order";
+/** Y.Doc shared-type key for the note body text. */
+export const CONTENT_KEY = "content";
+
+/** Read the frontmatter structure from a Y.Doc ({order:[],values:{}} when empty). */
+export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
+	const order = doc.getArray<string>(ORDER_KEY).toArray();
+	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
+	return { order, values };
+}
+
+/** Read the out-of-band degraded-key raw spans from a Y.Doc ({} when none). */
+export function rawFrontmatterOf(doc: Y.Doc): Record<string, string> {
+	return doc.getMap<string>(RAW_FRONTMATTER_KEY).toJSON();
+}
 
 const FENCE = "---";
 // Matches a closing fence line: --- with optional trailing spaces/tabs + optional CR.

@@ -15,9 +15,9 @@
  */
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
-import { toB64 } from "../src/crdt/channel";
-import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
+import { toB64 } from "../src/crdt/wire";
 import { createCrdtWiring } from "../src/crdt/wiring";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";

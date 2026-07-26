@@ -1,10 +1,9 @@
 import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
-import { CrdtChannel, fromB64 } from "./channel";
-import { CrdtEnrollment } from "./enrollment";
-import { CrdtManager } from "./manager";
 import type { NoteIdMap } from "./note-id-map";
+import { ProviderRegistry } from "./provider-registry";
+import { fromB64 } from "./wire";
 
 /** SyncEngine members the CRDT wiring actually touches. Structural so tests can
  *  pass a lightweight fake without standing up the whole engine. */
@@ -60,9 +59,10 @@ export interface CrdtWiringDeps {
 }
 
 export interface CrdtWiring {
-	manager: CrdtManager;
-	channel: CrdtChannel;
-	enrollment: CrdtEnrollment;
+	/** The Relay-model engine — plays the old manager/channel/enrollment roles. */
+	manager: ProviderRegistry;
+	channel: ProviderRegistry;
+	enrollment: ProviderRegistry;
 	/** Inbound CRDT frame handler (channel.onCrdtMessage). */
 	onCrdtMessage: (docId: string, b64: string) => void;
 	/** Remote room-open announce handler (channel.onCrdtDocReady). `path` is
@@ -248,82 +248,29 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		}, debounceMs);
 	}
 
-	// Box pattern: the manager's onUpdate references the channel, and the channel
-	// references the manager — a construction cycle main.ts breaks with a `this.`
-	// field read. Mirror that with a lazily-filled box.
-	const box = { channel: null as unknown as CrdtChannel };
-
-	// note_id-keyed CRDT (Task 6): docId on the wire is the bare note_id. Disk
-	// I/O is still path-keyed, so every callback resolves the path via noteIdMap.
-	const manager = new CrdtManager({
-		dbPrefix: deps.dbPrefix,
-		onUpdate: (docId, update) => box.channel.sendUpdateRaw(docId, update),
-		canSendLive: deps.canSendLive,
-		onFlushToDisk: async (noteId, content) => {
-			const path = noteIdMap.pathForId(noteId);
-			if (!path) {
-				// Unknown id: a crdt_msg/STEP2 arrived for a note this device hasn't
-				// learned a path for yet. Content is safe in the Y.Doc meanwhile;
-				// healUnknownNoteId re-resolves the id from the manifest and retries so
-				// a drift self-heals instead of stranding forever.
-				healUnknownNoteId(noteId, content);
-				return;
-			}
-			if (deps.isBound(path)) {
-				// The editor owns disk — but a remote update just painted into it,
-				// and headless/unfocused Obsidian may not save that buffer for a
-				// long time on its own (fix wave 6). Nudge it.
-				deps.onBoundUpdate?.(path);
-				return;
-			}
-			// Propagate a disk-write failure so applyRemoteUpdate rejects and the
-			// caller leaves crdtHead unadvanced (#235). flushFromCrdt returns false
-			// ONLY on an actual write failure; a skip (gate closed / idempotent) and
-			// a legacy void return both read as success.
-			if ((await syncEngine.flushFromCrdt(path, content)) === false) {
-				throw new Error(`flushFromCrdt reported a write failure for ${path}`);
-			}
-		},
-		// Adopt-first seed gate: never re-encode content the server already holds.
-		isUnchangedSynced: (noteId, content) => {
-			const path = noteIdMap.pathForId(noteId);
-			return path ? syncEngine.isUnchangedSynced(path, content) : false;
-		},
-		onPersistError: (noteId, err) => {
-			const path = noteIdMap.pathForId(noteId) ?? noteId;
-			rlog().warn(
-				"crdt",
-				`IndexedDB persist error for ${path} — sync continues in-memory: ${errMsg(err)}`,
-			);
-		},
-		// Fix wave 1: op-level convergence proof. Fires on every non-empty
-		// inbound frame; commitCrdtConvergence is idempotent (no-op when nothing
-		// is staged for this note_id), so fire-and-forget is safe here.
-		onSynced: (noteId) => void syncEngine.commitCrdtConvergence(noteId),
-		// Doc shape from the note's path. `.canvas` → the structural nodes/edges
-		// schema; everything else → markdown. Resolved once per doc at creation.
-		// The path is always mapped before a doc is minted in the normal push/pull
-		// flows; an unmapped id (rare heal path) safely defaults to markdown.
-		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
-	});
-
-	// Docs whose live update was refused because the crdt: topic was not joined
-	// (offline / mid-reconnect). Tracked so a note edited while the socket was
-	// down — then SWITCHED AWAY FROM before reconnect, so reEnrollOpenCrdtNotes
-	// (open leaves only) misses it — still gets re-enrolled on rejoin. The mutual
-	// STEP1 handshake then solicits the held struct and it converges (the #299
-	// recovery path, widened past still-open notes). Cleared once a later send
-	// for the doc succeeds (it reached the server).
+	// Docs whose live frame was refused (topic not joined, or create-ack held).
+	// Re-enrolled on rejoin so a note edited offline then switched-away-from still
+	// converges (the #299 switch-away recovery, widened past still-open notes).
 	const unsentDocIds = new Set<string>();
 
-	const channel = new CrdtChannel({
-		manager,
+	// The Relay-model engine plays all three old roles (manager + channel +
+	// enrollment) — see provider-registry.ts. Its `send` wraps deps.sendCrdt with
+	// the unsent-tracking + the create-ack gate; a refused frame buffers in the
+	// provider and flushes on rejoin. There is NO onUpdate/box indirection: the
+	// provider sends its own local updates through this `send`.
+	const registry = new ProviderRegistry({
+		dbPrefix: deps.dbPrefix,
 		send: (docId, frame) => {
-			const ok = deps.sendCrdt(docId, frame);
-			// sendCrdt returns false ONLY on a refused (topic-not-joined) frame.
-			if (ok === false) {
+			// Create-before-edit: hold frames until the note's server row exists.
+			if (deps.canSendLive && !deps.canSendLive(docId)) {
+				unsentDocIds.add(docId);
+				return false;
+			}
+			// sendCrdt's return is P1's delivered/dropped signal (unknown-typed on the
+			// dep); false === the socket refused the frame.
+			const ok = deps.sendCrdt(docId, frame) !== false;
+			if (!ok) {
 				if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS) {
-					// Evict the single oldest (Set preserves insertion order).
 					for (const oldest of unsentDocIds) {
 						unsentDocIds.delete(oldest);
 						break;
@@ -335,10 +282,40 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			return ok;
 		},
-		// An inbound STEP2 that leaves the doc empty is the server's authoritative
-		// "genuinely empty note" signal — materialize the file off the handshake
-		// (not a timer) so a slow content STEP2 can never race a premature empty
-		// file onto disk (#547).
+		onFlushToDisk: async (noteId, content) => {
+			const path = noteIdMap.pathForId(noteId);
+			if (!path) {
+				// Unknown id: content is safe in the Y.Doc; heal the id from the
+				// manifest and retry so a drift self-heals instead of stranding.
+				healUnknownNoteId(noteId, content);
+				return undefined;
+			}
+			// The editor owns disk for a bound path; a remote merge just painted in,
+			// so nudge Obsidian's own save (fix wave 6) instead of double-writing.
+			if (deps.isBound(path)) {
+				deps.onBoundUpdate?.(path);
+				return undefined;
+			}
+			// Return false on a real write failure so applyRemoteUpdate rejects and
+			// the caller leaves crdtHead unadvanced (#235).
+			return (await syncEngine.flushFromCrdt(path, content)) === false ? false : undefined;
+		},
+		// Adopt-first seed gate: never re-encode content the server already holds.
+		isUnchangedSynced: (noteId, content) => {
+			const path = noteIdMap.pathForId(noteId);
+			return path ? syncEngine.isUnchangedSynced(path, content) : false;
+		},
+		onPersistError: (noteId, err) => {
+			rlog().warn(
+				"crdt",
+				`IndexedDB persist error for ${noteIdMap.pathForId(noteId) ?? noteId} — sync continues in-memory: ${errMsg(err)}`,
+			);
+		},
+		// Convergence commit (idempotent; no-op when nothing staged). The text-verify
+		// gate inside is being retired — the provider already converged via STEP2.
+		onSynced: (noteId) => void syncEngine.commitCrdtConvergence(noteId),
+		// Empty first STEP2 = the server's "genuinely empty note" signal; materialize
+		// off the handshake so a slow content STEP2 can't race an empty file (#547).
 		onEmptyStep2: (noteId) => {
 			const path = noteIdMap.pathForId(noteId);
 			if (!path) {
@@ -350,25 +327,17 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			void syncEngine.materializeEmptyDiscovered(path, noteId);
 		},
+		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
 	});
-	box.channel = channel;
 
-	// Enrollment tracker: calls startSync(noteId) exactly once per note per
-	// channel session so the state-vector handshake fires and the note pulls
-	// remote CRDT state (the down-sync gap).
-	const enrollment = new CrdtEnrollment({
-		startSync: (noteId) => channel.startSync(noteId),
-		resetSync: (noteId) => channel.resetSync(noteId),
-		// After the handshake fires, compact any bloated docs. No-op below the AND
-		// threshold (>=500 KB and >=1000 client-IDs), safe to run on every open.
-		onAfterEnroll: async (noteId) => {
-			await manager.flattenIfBloated(noteId);
-		},
-	});
+	// The one engine plays all three old roles.
+	const manager = registry;
+	const channel = registry;
+	const enrollment = registry;
 
 	// docId is the bare note_id (Task 6) — forwarded to handleFrame directly.
 	const onCrdtMessage = (docId: string, b64: string): void => {
-		channel.handleFrame(docId, b64).catch((e) => {
+		channel.receive(docId, b64).catch((e) => {
 			// Malformed frame / doc-open failure: log + drop — never leak an
 			// unhandled rejection from the inbound hot path.
 			rlog().warn(

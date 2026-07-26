@@ -18,11 +18,12 @@ import { TFile } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import { encodeUpdateFrame, fromB64 } from "../src/crdt/channel";
 import { projectNote } from "../src/crdt/frontmatter-codec";
-import { CONTENT_KEY, CrdtManager, frontmatterOf, rawFrontmatterOf } from "../src/crdt/manager";
-import type { CrdtManager as CrdtManagerType } from "../src/crdt/manager";
+import { CONTENT_KEY, frontmatterOf, rawFrontmatterOf } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
+import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
+import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
 import { MAX_CRDT_NOTE_BYTES, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -354,8 +355,8 @@ describe("pushAll / pushModifiedFiles — genesis partition", () => {
 
 describe("encodeGenesisUpdate + encodeUpdateFrame — frame correctness", () => {
 	test("the genesis frame reconstructs the exact note content on a fresh peer doc", async () => {
-		const mgr = new CrdtManager({
-			onUpdate: () => {},
+		const mgr = new ProviderRegistry({
+			send: () => true,
 			onFlushToDisk: async () => {},
 		});
 		const content = "---\ntitle: Hello\n---\n\n# Body\n\nSome text.";
@@ -384,8 +385,8 @@ describe("encodeGenesisUpdate + encodeUpdateFrame — frame correctness", () => 
 	});
 
 	test("an EMPTY-content genesis note round-trips to empty content (no crash, no garbage) — historical flake class", async () => {
-		const mgr = new CrdtManager({
-			onUpdate: () => {},
+		const mgr = new ProviderRegistry({
+			send: () => true,
 			onFlushToDisk: async () => {},
 		});
 		const content = "";

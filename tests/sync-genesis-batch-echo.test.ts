@@ -18,8 +18,8 @@ import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -29,7 +29,7 @@ function makeGenesisEngine(dbPrefix: string) {
 	const disk = new Map<string, string>();
 	disk.set("a.md", CONTENT);
 
-	const mgr = new CrdtManager({ dbPrefix, onUpdate: () => {}, onFlushToDisk: async () => {} });
+	const mgr = new ProviderRegistry({ dbPrefix, send: () => true, onFlushToDisk: async () => {} });
 
 	const tfile = (p: string) => new TFile(p);
 	const app = {
@@ -94,7 +94,7 @@ describe("pushGenesisBatch — a note with a local CRDT lineage is not genesis",
 		expect(batchCalls).toHaveLength(0);
 		// It routes to pushFile (which pushes the note's real, single lineage).
 		expect(pushFile).toHaveBeenCalledWith(file, true);
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 
 	test("control: a genuinely history-less note IS minted via crdt_create_batch", async () => {
@@ -107,6 +107,6 @@ describe("pushGenesisBatch — a note with a local CRDT lineage is not genesis",
 		expect(out).toEqual({ pushed: 1, failed: 0 });
 		expect(batchCalls).toEqual([{ doc_id: "id-a", path: "a.md" }]);
 		expect(pushFile).not.toHaveBeenCalled();
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 });

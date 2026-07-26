@@ -2,22 +2,28 @@
  * Task 1 (crdt-rename-as-move): gate a note's live `crdt_msg` send on its
  * create-ack. A brand-new note's live editor edits currently stream a
  * crdt_msg to the server BEFORE its crdt_create has created the DB row, so
- * the server drops it (note_not_found). CrdtManagerOptions.canSendLive lets
- * the caller hold a local update in the Y.Doc (safe — never lost) until the
- * note is confirmed created; the default (`undefined` → always send) keeps
- * every pre-existing test unaffected.
+ * the server drops it (note_not_found). The `canSendLive` gate lets the caller
+ * hold a local update in the Y.Doc (safe — never lost) until the note is
+ * confirmed created; the default (`undefined` → always send) keeps every
+ * pre-existing test unaffected.
+ *
+ * Ported to the Relay-model ProviderRegistry: the old `onUpdate` outbound seam
+ * is the provider's `send` now, which only fires while connected — so every
+ * test marks the registry connected. The `canSendLive` gate lives in the
+ * registry's per-note send closure exactly as before. On create-ack the held
+ * state is delivered by `flushHeldState` (a syncStep1 re-advertise + buffered
+ * frame flush), which the caller opens the gate for by confirming first.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
-import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { CRDT_HEAD_CREATED, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** Minimal SyncEngine for flush tests — app/api are untouched by
- *  flushHeldEditsOnCreateAck, so bare stubs are enough (mirrors the lean
- *  construction other sync.ts test files use, e.g. sync-crdt-route.test.ts). */
+ *  flushHeldEditsOnCreateAck, so bare stubs are enough. */
 function makeEngine(): SyncEngine {
 	return new SyncEngine(
 		{} as any,
@@ -28,84 +34,101 @@ function makeEngine(): SyncEngine {
 }
 
 describe("create-ack gate on live send", () => {
-	test("a local edit for an UN-acked note does NOT call onUpdate", async () => {
-		const onUpdate = mock(() => {});
+	test("a local edit for an UN-acked note does NOT send", async () => {
+		const send = mock(() => true);
 		const acked = new Set<string>(); // nothing acked yet
-		const mgr = new CrdtManager({
+		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-unacked",
-			onUpdate,
+			send,
 			onFlushToDisk: async () => {},
 			canSendLive: (id: string) => acked.has(id),
 		});
+		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
-		expect(onUpdate).not.toHaveBeenCalled(); // edit held in the Y.Doc, not streamed
-		await mgr.destroy();
+		expect(send).not.toHaveBeenCalled(); // edit held in the Y.Doc, not streamed
+		await mgr.destroyAll();
 	});
 
-	test("a local edit for an ACKed note DOES call onUpdate", async () => {
-		const onUpdate = mock(() => {});
+	test("a local edit for an ACKed note DOES send", async () => {
+		const send = mock(() => true);
 		const acked = new Set<string>(["note-1"]);
-		const mgr = new CrdtManager({
+		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-acked",
-			onUpdate,
+			send,
 			onFlushToDisk: async () => {},
 			canSendLive: (id: string) => acked.has(id),
 		});
+		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
-		expect(onUpdate).toHaveBeenCalled();
-		await mgr.destroy();
+		expect(send).toHaveBeenCalled();
+		await mgr.destroyAll();
 	});
 
 	test("omitting canSendLive keeps the pre-existing always-send behavior", async () => {
-		const onUpdate = mock(() => {});
-		const mgr = new CrdtManager({
+		const send = mock(() => true);
+		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-default",
-			onUpdate,
+			send,
 			onFlushToDisk: async () => {},
 		});
+		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
-		expect(onUpdate).toHaveBeenCalled();
-		await mgr.destroy();
+		expect(send).toHaveBeenCalled();
+		await mgr.destroyAll();
 	});
 });
 
 describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
-	test("on create-ack, the note's held state is flushed once via crdt_msg", async () => {
+	test("on create-ack, the note's held state reaches the wire", async () => {
 		const sentMsgs: string[] = [];
-		const onUpdate = mock((docId: string) => sentMsgs.push(docId));
-		const engine = makeEngine();
-		const mgr = new CrdtManager({
-			dbPrefix: "flush-ack",
-			onUpdate,
-			onFlushToDisk: async () => {},
-			canSendLive: (id: string) => engine.isNoteConfirmed(id),
+		const send = mock((docId: string) => {
+			sentMsgs.push(docId);
+			return true;
 		});
+		const engine = makeEngine();
+		const confirmed = new Set<string>();
+		const mgr = new ProviderRegistry({
+			dbPrefix: "flush-ack",
+			send,
+			onFlushToDisk: async () => {},
+			canSendLive: (id: string) => confirmed.has(id),
+		});
+		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
 
 		await mgr.applyLocalEdit("note-1", "typed before ack");
 		expect(sentMsgs).toHaveLength(0); // gated (Task 1)
 
-		await engine.flushHeldEditsOnCreateAck("note-1", "n.md"); // create just acked
-		expect(sentMsgs).toEqual(["note-1"]); // exactly one flush of current state
+		confirmed.add("note-1"); // create just acked — the caller opens the gate
+		await engine.flushHeldEditsOnCreateAck("note-1", "n.md");
+		expect(sentMsgs).toContain("note-1"); // held state delivered on the wire
 
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 
-	test("a note with no edits flushes an empty state once without error", async () => {
+	test("a note with no held edits flushes nothing and opens NO room (create-ack is a SEND, not an enroll)", async () => {
 		const sentMsgs: string[] = [];
-		const onUpdate = mock((docId: string) => sentMsgs.push(docId));
+		const send = mock((docId: string) => {
+			sentMsgs.push(docId);
+			return true;
+		});
 		const engine = makeEngine();
-		const mgr = new CrdtManager({
+		const mgr = new ProviderRegistry({
 			dbPrefix: "flush-ack-empty",
-			onUpdate,
+			send,
 			onFlushToDisk: async () => {},
 		});
+		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
 
 		await expect(engine.flushHeldEditsOnCreateAck("note-2", "n2.md")).resolves.toBeUndefined();
-		expect(sentMsgs).toEqual(["note-2"]);
+		// Nothing was held, so nothing goes out — and crucially NO syncStep1: a
+		// freshly-created note stays room-free (fan-out invariant) until the editor
+		// binds it. A create-ack that enrolled would leak a permanent room.
+		expect(sentMsgs).toHaveLength(0);
+		expect(mgr.enrolled.has("note-2")).toBe(false);
 
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 
 	test("never throws into the caller when no CrdtManager is wired", async () => {
@@ -142,15 +165,12 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 // reconnect stayed held forever (mid-session sync stall). The fix wires
 // canSendLive to hasServerNote instead: it reads crdtHead, which is set once
 // by the create-ack and SURVIVES reconnect (clearConfirmedNoteIds never
-// touches syncState). This test wires the CrdtManager exactly as main.ts does
-// (mirrors the "nearest honest wire boundary" pattern from Task 3 below) —
-// literally isNoteConfirmed pre-fix, hasServerNote post-fix — so it fails
-// against the old wiring and passes against the new one.
+// touches syncState).
 // ---------------------------------------------------------------------------
 
 describe("Defect 1: gate must survive reconnect for server-known notes", () => {
-	test("a server-known but session-unconfirmed note's edit reaches onUpdate (post-reconnect regression)", async () => {
-		const onUpdate = mock(() => {});
+	test("a server-known but session-unconfirmed note's edit reaches the wire (post-reconnect regression)", async () => {
+		const send = mock(() => true);
 		const engine = makeEngine();
 		engine.setNoteIdMap(new NoteIdMap());
 		(engine as unknown as { noteIdMap: NoteIdMap }).noteIdMap.set(
@@ -170,33 +190,29 @@ describe("Defect 1: gate must survive reconnect for server-known notes", () => {
 		expect(engine.isNoteConfirmed("note-existing")).toBe(false);
 		expect(engine.hasServerNote("note-existing")).toBe(true);
 
-		const mgr = new CrdtManager({
+		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-reconnect",
-			onUpdate,
+			send,
 			onFlushToDisk: async () => {},
-			// main.ts createCrdtWiring's canSendLive — mirrors the production
-			// wiring at main.ts's crdtWiring call site (src/main.ts).
+			// main.ts createCrdtWiring's canSendLive — mirrors the production wiring.
 			canSendLive: (id: string) => engine.hasServerNote(id),
 		});
+		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
 
 		await mgr.applyLocalEdit("note-existing", "edited after reconnect");
-		expect(onUpdate).toHaveBeenCalled(); // must NOT stall: server already has this note
+		expect(send).toHaveBeenCalled(); // must NOT stall: server already has this note
 
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 });
 
 // ---------------------------------------------------------------------------
-// Task 3: ordering-invariant regression test. Tasks 1+2 above are unit-level
-// (CrdtManager / flushHeldEditsOnCreateAck in isolation) — this drives the
-// REAL pushFile -> crdtCreate -> ack-flush path (the genesis branch in
-// sync.ts, mirrors "Task 3: new-note genesis" in sync-crdt-route.test.ts) and
-// asserts the send ORDER a peer actually observes: crdt_create strictly
-// before any crdt_msg for that note_id. `onUpdate`/`crdtCreate` are the exact
-// transport seams CrdtChannel is wired to in production (main.ts
-// createCrdtWiring), so this is the nearest honest wire boundary without a
-// real socket.
+// Task 3: ordering-invariant regression test. Drives the REAL pushFile ->
+// crdtCreate -> ack-flush path (the genesis branch in sync.ts) and asserts the
+// send ORDER a peer actually observes: crdt_create strictly before any
+// crdt_msg for that note_id. `send`/`crdtCreate` are the exact transport seams
+// the registry is wired to in production (main.ts createCrdtWiring).
 // ---------------------------------------------------------------------------
 
 describe("Task 3: create-before-edit wire ordering (regression)", () => {
@@ -218,12 +234,16 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		);
 		engine.setNoteIdMap(noteIdMap);
 
-		const mgr = new CrdtManager({
+		const mgr = new ProviderRegistry({
 			dbPrefix: "order-genesis",
-			onUpdate: (docId: string) => wire.push({ kind: "msg", id: docId }),
+			send: (docId: string) => {
+				wire.push({ kind: "msg", id: docId });
+				return true;
+			},
 			onFlushToDisk: async () => {},
 			canSendLive: (id: string) => engine.isNoteConfirmed(id),
 		});
+		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
 		engine.setCrdtCreate(async (id: string, _path: string) => {
 			wire.push({ kind: "create", id });
@@ -231,9 +251,8 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		});
 
 		// Fast typing: a local edit lands in the Y.Doc BEFORE the note's
-		// crdt_create has even been requested, let alone acked. Without Task 1's
-		// canSendLive gate, this would call onUpdate synchronously right here —
-		// before pushFile (and its crdtCreate call) has run at all.
+		// crdt_create has even been requested, let alone acked. The canSendLive
+		// gate holds it (note-1 not confirmed) — no msg before create.
 		await mgr.applyLocalEdit("note-1", "fast typing");
 
 		const file = new TFile("n.md");
@@ -242,9 +261,7 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		).pushFile(file);
 		expect(result).toBe(true);
 
-		// A further edit once the note is confirmed — a genuinely post-ack send,
-		// so "then only msg sends" isn't trivially satisfied by the single
-		// create-ack flush alone.
+		// A further edit once the note is confirmed — a genuinely post-ack send.
 		await mgr.applyLocalEdit("note-1", "typed after ack");
 
 		const kinds = wire.filter((w) => w.id === "note-1").map((w) => w.kind);
@@ -252,6 +269,6 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 		expect(kinds.length).toBeGreaterThan(1); // at least one edit send observed
 		expect(kinds.slice(1).every((k) => k === "msg")).toBe(true); // then only edits
 
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 });

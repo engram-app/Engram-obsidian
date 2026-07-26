@@ -4,10 +4,10 @@
 import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
 import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
 import type { BaseStore } from "./base-store";
-import { encodeUpdateFrame } from "./crdt/channel";
-import type { CrdtManager, DocKind } from "./crdt/manager";
 import type { NoteIdMap } from "./crdt/note-id-map";
+import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
+import { encodeUpdateFrame } from "./crdt/wire";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
@@ -412,9 +412,9 @@ export class SyncEngine {
 	 *  of the full-document pushNote POST. dbPrefix must equal the active vaultId
 	 *  for IndexedDB namespacing; the CRDT doc itself is keyed by the note's bare
 	 *  note_id, matching the backend's note_id lookup. */
-	private crdt: CrdtManager | null = null;
+	private crdt: ProviderRegistry | null = null;
 
-	setCrdtManager(mgr: CrdtManager | null): void {
+	setCrdtManager(mgr: ProviderRegistry | null): void {
 		this.crdt = mgr;
 	}
 
@@ -975,6 +975,10 @@ export class SyncEngine {
 	async applyCrdtCreateAck(localId: string, serverId: string, path: string): Promise<void> {
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
+		// Set when we transferred the LIVE mint content into serverId below, so the
+		// disk-seed further down is skipped (re-diffing lagged disk would clobber the
+		// just-transferred in-flight keystrokes).
+		let transferredLiveContent = false;
 		if (serverId && serverId !== localId) {
 			this.noteIdMap?.set(normalized, serverId);
 			effectiveId = serverId;
@@ -982,6 +986,30 @@ export class SyncEngine {
 				"crdt",
 				`crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`,
 			);
+			// Live-bound adopt: the mint doc holds the user's live keystrokes (the
+			// editor forwards there), which lag disk. Transfer them into serverId
+			// (mirrors the live pushFile adopt) instead of seeding from disk below.
+			// The ViewPlugin re-resolves path -> serverId on its next update and
+			// re-attaches itself.
+			if (this.crdt && this.isLiveBound(normalized)) {
+				try {
+					const mintText = await this.crdt.projectedText(localId);
+					const consumed = await this.crdt.applyLocalEdit(serverId, mintText);
+					transferredLiveContent = true;
+					if (consumed !== null) {
+						this.syncState.set(normalized, {
+							...(this.syncState.get(normalized) ?? { hash: 0 }),
+							hash: fnv1a(consumed),
+							crdtHead: CRDT_HEAD_CREATED,
+						});
+					}
+				} catch (e) {
+					rlog().warn(
+						"crdt",
+						`crdt_create (queued) adopt: live transfer failed for ${localId} -> ${serverId}: ${errMsg(e)}`,
+					);
+				}
+			}
 			// Retire the orphaned mint doc + its enrollment (mirrors the live adopt).
 			try {
 				await this.crdt?.removeDoc(localId);
@@ -994,8 +1022,12 @@ export class SyncEngine {
 			this.crdtEnrollment?.reset(localId);
 		}
 		// Seed the body from disk under the effective id (mirrors the live genesis
-		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify.
-		const file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
+		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify. Skipped
+		// when we already transferred the live mint content above.
+		const file =
+			this.crdt && !transferredLiveContent
+				? this.app.vault.getAbstractFileByPath(normalized)
+				: null;
 		if (this.crdt && file instanceof TFile && this.isCrdtEligible(file)) {
 			try {
 				const consumed = await routeModify(
@@ -2656,24 +2688,25 @@ export class SyncEngine {
 							if (
 								serverId &&
 								serverId !== noteId &&
-								this.crdtEditorRebind &&
 								this.isLiveBound(normalizePath(pushedPath))
 							) {
 								// ADOPT under a LIVE editor. The editor is bound to the MINT
-								// doc, so ySync has propagated the user's live keystrokes
-								// (including any typed during the crdt_create round-trip, and
-								// any not yet flushed to disk) into the mint Y.Text — disk
-								// (cachedRead) can lag them. Seed the serverId doc from the
-								// mint's projected content via applyLocalEdit (DEFAULT origin,
-								// so the update FORWARDS to the server — applyRemoteUpdate's
-								// REMOTE_ORIGIN would keep the edits client-only and they'd
-								// still be lost server-side). THEN rebind the editor off the
-								// orphaned mint onto serverId: because serverId already holds
-								// the content, bindTo's reconcile is a no-op (no visible
-								// buffer change) and future keystrokes flow to serverId. THEN
-								// retire the mint doc. Skips the disk-seed routeModify below:
-								// re-diffing the (staler) disk snapshot into serverId would
-								// clobber the just-transferred in-flight chars.
+								// doc, so the user's live keystrokes (including any typed during
+								// the crdt_create round-trip, and any not yet flushed to disk)
+								// are in the mint Y.Text — disk (cachedRead) can lag them. Seed
+								// the serverId doc from the mint's projected content via
+								// applyLocalEdit (DEFAULT origin, so the update FORWARDS to the
+								// server — applyRemoteUpdate's REMOTE_ORIGIN would keep the edits
+								// client-only and they'd still be lost server-side). The live
+								// ViewPlugin then re-resolves path -> serverId on its next update
+								// and re-attaches itself (no external rebind needed); because
+								// serverId already holds the content, its reconcile is a no-op.
+								// THEN retire the mint doc. Skips the disk-seed routeModify
+								// below: re-diffing the (staler) disk snapshot into serverId
+								// would clobber the just-transferred in-flight chars.
+								// NOTE: this transfer is the load-bearing step; it used to be
+								// gated on the (now-removed) crdtEditorRebind wiring, which
+								// silently disabled it and made adopt seed from lagged disk.
 								// ponytail: two-lineage doubling is possible in a TRUE
 								// content collision (local new-note text vs the server row's
 								// pre-existing independent Y history) — accepted as
@@ -2695,12 +2728,17 @@ export class SyncEngine {
 								}
 								rlog().info(
 									"crdt",
-									`crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`,
+									`crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`,
 								);
+								// The ViewPlugin re-resolves path -> serverId on its next update
+								// and re-attaches itself; the reattach-triggering keystroke is
+								// forwarded (not reverted). crdtEditorRebind is now an optional
+								// no-op in prod (the ViewPlugin owns rebinding) — kept only for
+								// the commitCrdtConvergence phantom-binding repair + its tests.
 								// Keystroke-leak window: keystrokes landing in the mint doc
-								// between the projectedText read above and this synchronous
-								// detach are dropped by removeDoc. Microtask-scale; accepted.
-								this.crdtEditorRebind(pushedPath);
+								// between the projectedText read above and this removeDoc are
+								// dropped. Microtask-scale; accepted.
+								this.crdtEditorRebind?.(pushedPath);
 								await this.crdt.removeDoc(noteId);
 								this.crdtEnrollment?.reset(noteId);
 							} else {
@@ -3925,33 +3963,22 @@ export class SyncEngine {
 			return;
 		}
 		if (staged.content !== null) {
-			let matches = false;
-			if (this.crdt) {
-				try {
-					matches = (await this.crdt.projectedText(noteId)) === staged.content;
-				} catch (e) {
-					devLog().log(
-						"crdt",
-						`socket converge: projectedText failed for ${noteId}, deferring commit: ${errMsg(e)}`,
-					);
-				}
-			}
-			if (!matches) {
-				devLog().log("crdt", `commit deferred: doc not at staged row yet (${noteId})`);
-				return; // leave staged — the next inbound frame re-runs this check
-			}
-			// Fix wave 7 (#191 slice): the doc is content-verified converged, but a
-			// rejected STEP1 / unclean close during a rate-limited window can
-			// detach the editor's Yjs binding while isLiveBound stays true (CI run
-			// 29923077791) — onFlushToDisk then skips forever (thinks the editor
-			// owns disk) and nothing repaints the stale buffer, so the wave-6
-			// requestSave nudge just re-saves the same stale content. Detect it
-			// here: if the bound editor's actual buffer no longer matches the
-			// verified content, the binding is phantom — force a rebind through
-			// the existing bindEpoch-guarded machinery (never a raw setViewData,
-			// never spans an await between detach/rebind — see
-			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the
-			// save on the freshly-painted buffer.
+			// Relay model: the provider fired onSynced from readSyncMessage — the doc
+			// is ALREADY converged with the server (syncStep2 reconciled the full
+			// state vector), so there is NO text-verify defer here. The old
+			// `projectedText === staged.content` gate wedged permanently whenever the
+			// projection differed by a cosmetic byte (frontmatter key order, a
+			// trailing newline): the stage never committed, syncState never advanced,
+			// and the note re-handshaked forever. Converged means converged — commit.
+			//
+			// Phantom-binding repair still applies (#191 slice): a rejected STEP1 /
+			// unclean close during a rate-limited window can detach the editor's Yjs
+			// binding while isLiveBound stays true (CI run 29923077791) — onFlushToDisk
+			// then skips forever (thinks the editor owns disk) and nothing repaints the
+			// stale buffer. If the bound buffer no longer matches the converged
+			// content, force a rebind through the bindEpoch-guarded machinery (never a
+			// raw setViewData, never an await between detach/rebind — see
+			// crdt-editor-bind-race-pollution.md) so it repaints, then nudge the save.
 			const boundPath = this.noteIdMap?.pathForId(noteId);
 			if (boundPath && this.isLiveBound(boundPath)) {
 				const buffer = this.crdtBoundBufferText?.(boundPath) ?? null;
@@ -5080,9 +5107,24 @@ export class SyncEngine {
 		for (const entry of manifest.notes) {
 			const seq = entry.seq;
 			if (typeof seq !== "number" || !Number.isFinite(seq) || seq > cursor) continue;
-			const stored = this.syncState.get(normalizePath(entry.path));
+			const path = normalizePath(entry.path);
+			const stored = this.syncState.get(path);
 			const recorded = stored ? (stored.seq ?? Number.POSITIVE_INFINITY) : -1;
 			if (seq > recorded) {
+				// Content-hash-aware (mirrors the #296 equal-seq fence): a row can
+				// carry a NEWER server seq with the SAME content_hash we already
+				// recorded (a meta/seq-only advance). The content is converged; only
+				// the seq bookkeeping lagged. Stamp it rather than re-serve — catch-up
+				// would otherwise fall through (not stale because the seq is newer, not
+				// diverged because the hash matches) and never record it, so the
+				// validator re-served the same rows every poll forever (the prod
+				// no-progress stall on device a75644e9). A shared-seq FRESHER update
+				// carries a DIFFERENT content_hash, so this can never fence out unseen
+				// content — only a genuine hash mismatch is re-served.
+				if (stored?.serverHash !== undefined && stored.serverHash === entry.content_hash) {
+					this.syncState.set(path, { ...stored, seq });
+					continue;
+				}
 				behind++;
 				if (seq < minBehind) minBehind = seq;
 			}

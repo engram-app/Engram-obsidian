@@ -60,7 +60,14 @@ export function applyCmChangesToYText(
  *  Uses diff-match-patch (UTF-16 offsets, matches Y.Text's native model).
  *  Returns [] when before === after. Walk: EQUAL advances cursor; INSERT emits
  *  {cursor,cursor,text} without advancing cursor into `before`; DELETE emits
- *  {cursor,cursor+len,""} and advances cursor by len. */
+ *  {cursor,cursor+len,""} and advances cursor by len.
+ *
+ *  A replacement comes out of dmp as DELETE-then-INSERT (diff_cleanupSemantic
+ *  ends in diff_cleanupMerge, which orders deletions first), which would emit two
+ *  changes touching the same boundary. They are coalesced into ONE replacement:
+ *  Relay hit CM6 silently dropping the split pair (ViewHookPlugin
+ *  `incrementalBufferChange`), and a single replace is what both CM6 and
+ *  applyCmChangesToYText handle most predictably anyway. */
 export function textDiffToChangeSpec(before: string, after: string): CmChangeSpec[] {
 	if (before === after) return [];
 	const diffs = dmp.diff_main(before, after);
@@ -71,7 +78,13 @@ export function textDiffToChangeSpec(before: string, after: string): CmChangeSpe
 		if (op === 0) {
 			cursor += data.length; // EQUAL: advance cursor through `before`
 		} else if (op === 1) {
-			changes.push({ from: cursor, to: cursor, insert: data }); // INSERT: no cursor advance
+			const prev = changes[changes.length - 1];
+			// INSERT butted against the preceding DELETE -> fold into a replacement.
+			if (prev && prev.to === cursor && prev.insert === "") {
+				prev.insert = data;
+			} else {
+				changes.push({ from: cursor, to: cursor, insert: data }); // no cursor advance
+			}
 		} else {
 			changes.push({ from: cursor, to: cursor + data.length, insert: "" }); // DELETE
 			cursor += data.length;

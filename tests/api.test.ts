@@ -10,7 +10,7 @@ import {
 	base64ToArrayBuffer,
 } from "../src/api";
 import type { AuthProvider } from "../src/auth";
-import { toB64 } from "../src/crdt/channel";
+import { toB64 } from "../src/crdt/wire";
 import { LimitExceededError } from "../src/limit-error";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance

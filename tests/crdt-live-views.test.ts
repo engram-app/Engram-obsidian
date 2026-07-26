@@ -91,13 +91,16 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		return { lv, closed, flushed, releaseErrors };
 	}
 
-	it("flushes then frees the doc when the last viewer releases", async () => {
+	it("flushes but keeps the doc resident when the last viewer releases", async () => {
 		const { lv, closed, flushed } = makeLiveViews();
 		await (
 			lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 		).onLastViewerRelease("a.md");
 		expect(flushed).toEqual([{ path: "a.md", content: "text-of-id:a.md" }]);
-		expect(closed).toEqual(["id:a.md"]); // doc freed after the final flush
+		// Relay persistent-doc model: the doc is NOT freed on last release (closeDoc
+		// is a no-op). It stays resident so the note keeps syncing and re-paints
+		// instantly on re-open — no re-hydrate/re-handshake churn.
+		expect(closed).toEqual([]);
 	});
 
 	it("does NOT free the doc if a viewer re-binds during the flush (re-open race)", async () => {
@@ -256,5 +259,63 @@ describe("CrdtLiveViews.refresh() coalescing", () => {
 		await new Promise((r) => setTimeout(r, 0));
 		lv.refresh();
 		expect(getLeaves.mock.calls.length).toBe(2);
+	});
+});
+
+// destroy() runs on plugin unload and on a stack-swap reconnect, immediately
+// before crdtManager.destroyAll() synchronously destroys the Y.Docs. The flush
+// that is supposed to persist unsent edits must therefore read the doc content
+// SYNCHRONOUSLY (before any teardown) and be awaitable, or destroyAll wins the
+// race and toJSON() on a dead doc writes empty over the note on disk.
+describe("CrdtLiveViews.destroy() flush safety", () => {
+	function make(resident: Map<string, string>) {
+		const flushed: Array<{ path: string; content: string }> = [];
+		const manager = {
+			hasDoc: (id: string) => resident.has(id),
+			residentText: (id: string) => ({
+				text: { toJSON: () => resident.get(id) ?? "" },
+				ready: Promise.resolve(),
+			}),
+			getText: async (id: string) => resident.get(id) ?? "",
+			closeDoc: () => {},
+		};
+		const lv = new CrdtLiveViews({
+			app: { workspace: { getLeavesOfType: () => [] } } as never,
+			manager: manager as never,
+			enrollment: {} as never,
+			resolveId: (p: string) => `id:${p}`,
+			flushToDisk: async (path, content) => {
+				flushed.push({ path, content });
+			},
+		});
+		return { lv, flushed };
+	}
+
+	function bind(lv: CrdtLiveViews, path: string, viewId: string) {
+		(lv as unknown as { refcount: ViewerRefcount }).refcount.bind(path, viewId);
+	}
+
+	it("flushes each bound path's resident content and resolves after the writes", async () => {
+		const { lv, flushed } = make(new Map([["id:a.md", "hello"]]));
+		bind(lv, "a.md", "v1");
+		await lv.destroy();
+		expect(flushed).toEqual([{ path: "a.md", content: "hello" }]);
+	});
+
+	it("captures content synchronously, so a later doc teardown cannot empty the flush", async () => {
+		const resident = new Map([["id:a.md", "hello"]]);
+		const { lv, flushed } = make(resident);
+		bind(lv, "a.md", "v1");
+		const p = lv.destroy(); // must read "hello" NOW, synchronously
+		resident.set("id:a.md", ""); // simulate destroyAll emptying the doc afterwards
+		await p;
+		expect(flushed).toEqual([{ path: "a.md", content: "hello" }]);
+	});
+
+	it("does not flush (and cannot clobber) a bound path with no resident doc", async () => {
+		const { lv, flushed } = make(new Map()); // hasDoc is false for everything
+		bind(lv, "a.md", "v1");
+		await lv.destroy();
+		expect(flushed).toEqual([]);
 	});
 });

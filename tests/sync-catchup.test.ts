@@ -223,12 +223,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		// from the Y.Doc's projection (via the remote-merge listener), never
 		// from the feed's content field.
 		expect(mockApp.vault.modify).not.toHaveBeenCalledWith(localFile, staleSnapshot);
-		// And the content-verified commit DEFERS: the doc projects the fresher
-		// merge, not the checkpoint-lagged row, so this row never records —
-		// a later row carrying the true merged state commits instead
-		// (fix wave 1 (f): a fresh stage overwrites the old one).
+		// Relay model: convergence is the provider's syncStep2, not a text-verify —
+		// committing records the staged row unconditionally. The D2 guarantee under
+		// test is the DISK one above (the stale snapshot never lands); the Yjs merge
+		// is monotonic, so disk keeps the fresher content regardless of the commit.
 		await engine.commitCrdtConvergence("note-id-1");
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 
 	test("no note_id (legacy /notes/changes path): falls back to the content-snapshot backfill unchanged", async () => {
@@ -665,34 +665,11 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(closeDoc).not.toHaveBeenCalled();
 	});
 
-	test("heal-room release: a DEFERRED commit (doc not at staged row) does NOT release the in-flight heal", async () => {
-		const { engine, enroll, reset, closeDoc, projectedText } = crdtEngine();
-		const localFile = new TFile("owned.md");
-		mockApp.vault.getFileByPath.mockReturnValue(localFile);
-		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
-		mockApp.vault.cachedRead.mockResolvedValue("old base");
-		engine.setLiveBoundCheck(() => false);
-		engine.importSyncState({
-			"owned.md": { hash: fnv1a("old base"), version: 1, serverHash: "old-hash" },
-		});
-		await engine.applyChange({
-			path: "owned.md",
-			action: "upsert",
-			content: "new server body",
-			content_hash: "new-hash",
-			version: 2,
-			mtime: 50,
-		} as any);
-		expect(enroll).toHaveBeenCalledTimes(1);
-
-		// Doc has NOT integrated the staged row yet — commit must defer AND
-		// leave the room alone (the next frame re-runs the check).
-		projectedText.mockResolvedValue("stale partial");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		expect(reset).toHaveBeenCalledTimes(1); // only the heal's own reset
-		expect(closeDoc).not.toHaveBeenCalled();
-	});
+	// (Removed: "a DEFERRED commit does NOT release the in-flight heal" — the
+	// text-verify defer no longer exists in the Relay model. onSynced fires from
+	// the provider's syncStep2, so a commit is always for an already-converged
+	// doc; the idle-note release path is covered by the "verified commit for an
+	// IDLE note resets enrollment and hibernates the doc" test above.)
 
 	test("heal-room release: a frame with nothing staged and nothing queued stays a pure no-op", async () => {
 		const { engine, reset, closeDoc } = crdtEngine();
@@ -833,7 +810,7 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(nudges).toEqual([]);
 	});
 
-	test("fix wave 5 defect 2 (2): a mismatched projectedText defers the commit — stage retained; a later match commits it", async () => {
+	test("Relay: converged commit records the staged row on the first onSynced (no text-verify defer)", async () => {
 		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -853,24 +830,18 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
-		// An UNRELATED inbound frame fires onSynced before the staged row's own
-		// ops land (CI run 29920053637: committed 1ms after the re-handshake
-		// fired) — the doc doesn't project the staged text yet.
+		// Relay model: onSynced fires from the provider's syncStep2 — the doc is
+		// ALREADY converged with the server. The old `projectedText === staged.content`
+		// gate is gone (it wedged forever on a cosmetic byte diff), so the commit
+		// records the staged serverHash/version/seq on the first fire, no matter what
+		// the doc happens to project at this instant.
 		projectedText.mockResolvedValue("some other concurrent doc state");
-		await engine.commitCrdtConvergence("note-id-1");
-
-		// Deferred — nothing recorded, the stage is retained.
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
-
-		// The staged row's own ops arrive — the doc now projects the staged
-		// text. The next onSynced fire (this commit call) records it.
-		projectedText.mockResolvedValue("the real edit");
 		await engine.commitCrdtConvergence("note-id-1");
 
 		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 
-	test("fix wave 5 defect 2 (4): projectedText throwing at commit time defers — never commits on error", async () => {
+	test("Relay: converged commit records even if projectedText would throw (it is never read)", async () => {
 		const { engine, projectedText } = crdtEngine();
 		const localFile = new TFile("owned.md");
 		mockApp.vault.getFileByPath.mockReturnValue(localFile);
@@ -890,10 +861,12 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 			mtime: 50,
 		} as any);
 
+		// The commit no longer calls projectedText at all, so a dead IDB read can't
+		// block convergence — the staged row still records.
 		projectedText.mockRejectedValue(new Error("IDB dead"));
 		await expect(engine.commitCrdtConvergence("note-id-1")).resolves.toBeUndefined();
 
-		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("old-hash");
+		expect(engine.exportSyncState()["owned.md"]?.serverHash).toBe("new-hash");
 	});
 
 	test("fix wave 1 (d): per-note cooldown collapses two diverged rows to one handshake", async () => {
