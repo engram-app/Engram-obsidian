@@ -452,9 +452,22 @@ export class ProviderRegistry {
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
 
 	/** Relay: the doc is NEVER closed on a transport reconnect (that was the
-	 *  re-mint/re-push doubling). closeDoc is a no-op; teardown happens only on a
-	 *  real delete/rename via removeDoc, or destroyAll on unload. */
-	closeDoc(_noteId: string): void {}
+	 *  re-mint/re-push doubling). */
+	/** Idle eviction: free the Y.Doc + provider + its open IndexedDB connection
+	 *  WITHOUT clearing the persisted data, so ensureEntrySync rehydrates the full
+	 *  prior state on next access (no data loss, no re-push doubling). Best-effort +
+	 *  fire-and-forget: the caller (hibernateIfIdle) guards on !isLiveBound, so this
+	 *  never frees a doc an editor is bound to. Bounds memory over a long session /
+	 *  bulk cold-delta catch-up (the previously-neutered hibernate contract).
+	 *
+	 *  Evicts ONLY a fully-synced doc (provider.isFullySynced): a doc with unsent
+	 *  offline edits, or one that never handshook, stays resident so a reconnect
+	 *  re-advertises it — evicting such a doc would reintroduce the switch-away
+	 *  data-loss class ("moving between files, only some make it"). */
+	closeDoc(noteId: string): void {
+		const e = this.entries.get(noteId);
+		if (e && !e.destroyed && e.provider.isFullySynced()) void this.destroy(noteId, false);
+	}
 
 	/** No LRU eviction — the doc is persistent; protect/unprotect are no-ops. */
 	protect(_noteId: string): void {}

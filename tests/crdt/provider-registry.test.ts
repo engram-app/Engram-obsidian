@@ -85,6 +85,36 @@ describe("ProviderRegistry destroyed-doc guard", () => {
 		expect(flushed["gone.md"]).toBeUndefined();
 		expect(reg.hasDoc("gone.md")).toBe(false);
 	});
+
+	test("closeDoc evicts a FULLY-SYNCED idle doc; content rehydrates on next access", async () => {
+		const { A, B } = twoDevices();
+		A.setConnected(true);
+		B.setConnected(true);
+		await A.applyLocalEdit("idle.md", "persistent content");
+		await A.startSync("idle.md"); // advertise -> B replies syncStep2 -> A.synced
+		await flush();
+		expect(A.hasDoc("idle.md")).toBe(true);
+		A.closeDoc("idle.md"); // fully synced -> safe to evict
+		await flush();
+		expect(A.hasDoc("idle.md")).toBe(false);
+		// Not tombstoned — re-access rehydrates from IndexedDB (no data loss).
+		expect(await A.getText("idle.md")).toBe("persistent content");
+		expect(A.hasDoc("idle.md")).toBe(true);
+		await A.destroyAll();
+		await B.destroyAll();
+	});
+
+	test("closeDoc does NOT evict a doc with unsent offline edits (switch-away durability)", async () => {
+		const { A } = twoDevices(); // A never connects
+		await A.applyLocalEdit("offline.md", "offline edit");
+		await A.startSync("offline.md"); // buffers (not connected -> not synced)
+		await flush();
+		A.closeDoc("offline.md");
+		await flush();
+		// Stays resident so the buffered edit re-advertises on reconnect.
+		expect(A.hasDoc("offline.md")).toBe(true);
+		await A.destroyAll();
+	});
 });
 
 describe("ProviderRegistry (Relay-model engine)", () => {

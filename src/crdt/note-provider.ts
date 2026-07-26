@@ -105,6 +105,16 @@ export class NoteProvider {
 		this.active = true;
 	}
 
+	/** True when the server holds our latest state: connected, we have seen at
+	 *  least one inbound syncStep2, and nothing is waiting in the offline send
+	 *  buffer. Idle eviction (ProviderRegistry.closeDoc) is data-safe ONLY then — an
+	 *  offline/unsynced/buffered doc must stay resident so its edits re-advertise on
+	 *  reconnect (the switch-away recovery guarantee; evicting it would reintroduce
+	 *  the "moving between files, only some make it" data-loss class). */
+	isFullySynced(): boolean {
+		return this.connected && this.synced && this.buffer.length === 0;
+	}
+
 	/** Swap the transport (e.g. after a socket reconnect built a fresh channel).
 	 *  The doc + buffer are untouched. */
 	setSend(send: ProviderSend): void {

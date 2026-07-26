@@ -21172,6 +21172,15 @@ var NoteProvider = class {
   activate() {
     this.active = !0;
   }
+  /** True when the server holds our latest state: connected, we have seen at
+   *  least one inbound syncStep2, and nothing is waiting in the offline send
+   *  buffer. Idle eviction (ProviderRegistry.closeDoc) is data-safe ONLY then — an
+   *  offline/unsynced/buffered doc must stay resident so its edits re-advertise on
+   *  reconnect (the switch-away recovery guarantee; evicting it would reintroduce
+   *  the "moving between files, only some make it" data-loss class). */
+  isFullySynced() {
+    return this.connected && this.synced && this.buffer.length === 0;
+  }
   /** Swap the transport (e.g. after a socket reconnect built a fresh channel).
    *  The doc + buffer are untouched. */
   setSend(send) {
@@ -21537,9 +21546,21 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   // --- Lifecycle no-ops the persistent doc doesn't need -----------------------
   /** Relay: the doc is NEVER closed on a transport reconnect (that was the
-   *  re-mint/re-push doubling). closeDoc is a no-op; teardown happens only on a
-   *  real delete/rename via removeDoc, or destroyAll on unload. */
-  closeDoc(_noteId) {
+   *  re-mint/re-push doubling). */
+  /** Idle eviction: free the Y.Doc + provider + its open IndexedDB connection
+   *  WITHOUT clearing the persisted data, so ensureEntrySync rehydrates the full
+   *  prior state on next access (no data loss, no re-push doubling). Best-effort +
+   *  fire-and-forget: the caller (hibernateIfIdle) guards on !isLiveBound, so this
+   *  never frees a doc an editor is bound to. Bounds memory over a long session /
+   *  bulk cold-delta catch-up (the previously-neutered hibernate contract).
+   *
+   *  Evicts ONLY a fully-synced doc (provider.isFullySynced): a doc with unsent
+   *  offline edits, or one that never handshook, stays resident so a reconnect
+   *  re-advertises it — evicting such a doc would reintroduce the switch-away
+   *  data-loss class ("moving between files, only some make it"). */
+  closeDoc(noteId) {
+    let e = this.entries.get(noteId);
+    e && !e.destroyed && e.provider.isFullySynced() && this.destroy(noteId, !1);
   }
   /** No LRU eviction — the doc is persistent; protect/unprotect are no-ops. */
   protect(_noteId) {
