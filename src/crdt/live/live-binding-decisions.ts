@@ -3,6 +3,23 @@
 // editor. The ViewPlugin (live-binding.ts) executes whatever these return.
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
 
+/** Matches a leading YAML frontmatter block: `---` on line 1, closed by a line
+ *  that is exactly `---`, through the closing delimiter's trailing newline (or
+ *  end of doc). Non-greedy body so the FIRST closing `---` wins. */
+const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+
+/** The number of leading characters of the EDITOR's CM document occupied by a
+ *  frontmatter block, or 0 if none. The bound Y.Text is body-only; in Live Preview
+ *  the CM document is body-only too (prefix 0, everything below is a no-op), but in
+ *  Source mode (and Properties-in-document) the raw `---` block is IN the CM text,
+ *  so the editor offsets are shifted by this prefix relative to the body Y.Text.
+ *  Callers slice/offset by this to keep body edits mapping to the right Y.Text
+ *  position instead of corrupting at prefix-length offsets. */
+export function frontmatterPrefixLen(editorText: string): number {
+	const m = FRONTMATTER_RE.exec(editorText);
+	return m ? m[0].length : 0;
+}
+
 /** True when the editor must detach from its current doc and re-attach. Catches
  *  THREE cases:
  *   - path changed  -> Obsidian reused this editor for a different file.

@@ -15624,6 +15624,11 @@ function textDiffToChangeSpec(before, after) {
 }
 
 // src/crdt/live/live-binding-decisions.ts
+var FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
+function frontmatterPrefixLen(editorText) {
+  let m = FRONTMATTER_RE.exec(editorText);
+  return m ? m[0].length : 0;
+}
 function needsReattach(bound, path, noteId, coordinator2) {
   return path !== bound.path || noteId !== bound.noteId || coordinator2 !== bound.coordinator;
 }
@@ -15632,7 +15637,11 @@ function decideReconcile(editorText, docText, dirty) {
 }
 
 // src/crdt/live/live-binding.ts
-var DRIFT_CHECK_MS = 3e3, ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
+var DRIFT_CHECK_MS = 3e3;
+function shiftChanges(changes, n) {
+  return n === 0 ? changes : changes.map((c) => ({ from: c.from + n, to: c.to + n, insert: c.insert }));
+}
+var ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
 function setLiveBindingCoordinator(c) {
   coordinator = c;
 }
@@ -15686,15 +15695,21 @@ var LiveBindingValue = class {
     let ytext = this.ytext;
     for (let tr of u.transactions) {
       if (!tr.docChanged || tr.annotation(ySyncAnnotation) === this.editor) continue;
-      let changes = [];
+      let prefix = frontmatterPrefixLen(tr.startState.doc.toString()), changes = [], spansFrontmatter = !1;
       if (tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-        changes.push({
-          fromA,
-          toA,
-          insert: inserted.sliceString(0, inserted.length, `
+        if (!(toA <= prefix)) {
+          if (fromA < prefix) {
+            spansFrontmatter = !0;
+            return;
+          }
+          changes.push({
+            fromA: fromA - prefix,
+            toA: toA - prefix,
+            insert: inserted.sliceString(0, inserted.length, `
 `)
-        });
-      }), changes.length !== 0)
+          });
+        }
+      }), spansFrontmatter && this.scheduleDriftCheck(), changes.length !== 0)
         try {
           doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
         } catch (err) {
@@ -15719,7 +15734,7 @@ var LiveBindingValue = class {
    *  FORWARD the editor's edits into the doc when the user typed during hydration
    *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
   reconcileAndGoLive(text2) {
-    let editorText = this.editor.state.doc.toString(), docText = text2.toJSON(), action = decideReconcile(editorText, docText, this.dirtySinceAttach);
+    let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = text2.toJSON(), action = decideReconcile(editorText, docText, this.dirtySinceAttach);
     switch (action.kind) {
       case "defer":
         ediagAlways(
@@ -15728,7 +15743,7 @@ var LiveBindingValue = class {
         return;
       case "adopt":
         this.editor.dispatch({
-          changes: action.changes,
+          changes: shiftChanges(action.changes, prefix),
           annotations: [ySyncAnnotation.of(this.editor)]
         });
         break;
@@ -15765,7 +15780,11 @@ var LiveBindingValue = class {
       let changes = yDeltaToChangeSpec(event.delta);
       if (changes.length !== 0)
         try {
-          this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
+          let prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
+          this.editor.dispatch({
+            changes: shiftChanges(changes, prefix),
+            annotations: [ySyncAnnotation.of(this.editor)]
+          });
         } catch (err) {
           ediagAlways(`[EDIAG] paint FAILED path=${this.path}: ${String(err)}`), this.scheduleDriftCheck();
         }
@@ -15789,14 +15808,14 @@ var LiveBindingValue = class {
       this.scheduleDriftCheck();
       return;
     }
-    let editorText = this.editor.state.doc.toString(), docText = this.ytext.toJSON();
+    let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = this.ytext.toJSON();
     if (editorText !== docText) {
       ediagAlways(
         `[EDIAG] DRIFT path=${this.path} editorLen=${editorText.length} docLen=${docText.length} \u2014 re-adopting`
       );
       try {
         this.editor.dispatch({
-          changes: textDiffToChangeSpec(editorText, docText),
+          changes: shiftChanges(textDiffToChangeSpec(editorText, docText), prefix),
           annotations: [ySyncAnnotation.of(this.editor)]
         });
       } catch (err) {

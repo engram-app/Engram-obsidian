@@ -1,5 +1,39 @@
 import { describe, expect, it } from "bun:test";
-import { decideReconcile, needsReattach } from "../src/crdt/live/live-binding-decisions";
+import {
+	decideReconcile,
+	frontmatterPrefixLen,
+	needsReattach,
+} from "../src/crdt/live/live-binding-decisions";
+
+describe("frontmatterPrefixLen", () => {
+	it("is 0 when there is no frontmatter (Live Preview body-only doc)", () => {
+		expect(frontmatterPrefixLen("just body text")).toBe(0);
+		expect(frontmatterPrefixLen("")).toBe(0);
+	});
+
+	it("returns the prefix length through the closing --- (source mode)", () => {
+		const text = "---\nfoo: bar\n---\nbody here";
+		expect(frontmatterPrefixLen(text)).toBe("---\nfoo: bar\n---\n".length);
+		// The body slice is exactly the note body.
+		expect(text.slice(frontmatterPrefixLen(text))).toBe("body here");
+	});
+
+	it("covers the whole doc for a frontmatter-only note (no body, no trailing newline)", () => {
+		const text = "---\nfoo: bar\n---";
+		expect(frontmatterPrefixLen(text)).toBe(text.length);
+		expect(text.slice(frontmatterPrefixLen(text))).toBe("");
+	});
+
+	it("is 0 for an unterminated --- (not real frontmatter)", () => {
+		expect(frontmatterPrefixLen("--- not really\nfoo")).toBe(0);
+		expect(frontmatterPrefixLen("text with --- in the middle\n---\n")).toBe(0);
+	});
+
+	it("handles CRLF line endings", () => {
+		const text = "---\r\nfoo: bar\r\n---\r\nbody";
+		expect(text.slice(frontmatterPrefixLen(text))).toBe("body");
+	});
+});
 
 describe("needsReattach", () => {
 	const bound = { path: "a.md", noteId: "id-a", coordinator: {} };

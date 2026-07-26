@@ -25,15 +25,24 @@ import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { ediagAlways } from "../ediag";
 import {
+	type CmChangeSpec,
 	type YDeltaEntry,
 	applyCmChangesToYText,
 	textDiffToChangeSpec,
 	yDeltaToChangeSpec,
 } from "./cm-yjs-bridge";
-import { decideReconcile, needsReattach } from "./live-binding-decisions";
+import { decideReconcile, frontmatterPrefixLen, needsReattach } from "./live-binding-decisions";
 
 /** Interval for the drift backstop (Relay's DRIFT_CHECK_DELAY is 3000ms). */
 const DRIFT_CHECK_MS = 3000;
+
+/** Shift CM change offsets by `n` (0 leaves them untouched). Used to map body-Y.Text
+ *  coordinates to the editor's coordinates when a frontmatter block occupies the
+ *  first `n` chars of the CM document (Source mode). */
+function shiftChanges(changes: CmChangeSpec[], n: number): CmChangeSpec[] {
+	if (n === 0) return changes;
+	return changes.map((c) => ({ from: c.from + n, to: c.to + n, insert: c.insert }));
+}
 
 /** Marks editor dispatches that ORIGINATE from a Y.Text delta (or the initial
  *  reconcile) so update() does not echo them back into the Y.Text. Value = the
@@ -143,14 +152,26 @@ class LiveBindingValue implements PluginValue {
 		for (const tr of u.transactions) {
 			if (!tr.docChanged) continue;
 			if (tr.annotation(ySyncAnnotation) === this.editor) continue;
+			// Map editor (full-doc) offsets to body-Y.Text offsets. In Source mode the
+			// frontmatter block occupies the first `prefix` chars of the CM document,
+			// which the body-only Y.Text does not have. Offsets are against the
+			// PRE-change doc, so compute the prefix from the transaction's start state.
+			const prefix = frontmatterPrefixLen(tr.startState.doc.toString());
 			const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
+			let spansFrontmatter = false;
 			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+				if (toA <= prefix) return; // entirely inside frontmatter — the FM hook owns it
+				if (fromA < prefix) {
+					spansFrontmatter = true; // straddles the boundary — repair via drift, not a guess
+					return;
+				}
 				changes.push({
-					fromA,
-					toA,
+					fromA: fromA - prefix,
+					toA: toA - prefix,
 					insert: inserted.sliceString(0, inserted.length, "\n"),
 				});
 			});
+			if (spansFrontmatter) this.scheduleDriftCheck();
 			if (changes.length === 0) continue;
 			try {
 				doc.transact(() => applyCmChangesToYText(ytext, changes), this);
@@ -198,7 +219,11 @@ class LiveBindingValue implements PluginValue {
 	 *  FORWARD the editor's edits into the doc when the user typed during hydration
 	 *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
 	private reconcileAndGoLive(text: Y.Text): void {
-		const editorText = this.editor.state.doc.toString();
+		const fullText = this.editor.state.doc.toString();
+		// Compare/reconcile against the BODY only: in Source mode the CM document
+		// carries the raw frontmatter block, which the body-only Y.Text does not.
+		const prefix = frontmatterPrefixLen(fullText);
+		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = text.toJSON();
 		const action = decideReconcile(editorText, docText, this.dirtySinceAttach);
 		switch (action.kind) {
@@ -209,8 +234,9 @@ class LiveBindingValue implements PluginValue {
 				this.deferSeed(text);
 				return;
 			case "adopt":
+				// action.changes are BODY coordinates; shift into the editor's body region.
 				this.editor.dispatch({
-					changes: action.changes,
+					changes: shiftChanges(action.changes, prefix),
 					annotations: [ySyncAnnotation.of(this.editor)],
 				});
 				break;
@@ -256,7 +282,12 @@ class LiveBindingValue implements PluginValue {
 			const changes = yDeltaToChangeSpec(event.delta as YDeltaEntry[]);
 			if (changes.length === 0) return;
 			try {
-				this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
+				// Body-coordinate delta -> editor coordinates (offset past any frontmatter).
+				const prefix = frontmatterPrefixLen(this.editor.state.doc.toString());
+				this.editor.dispatch({
+					changes: shiftChanges(changes, prefix),
+					annotations: [ySyncAnnotation.of(this.editor)],
+				});
 			} catch (err) {
 				// A dispatch mid-update / offset disagreement throws here (inside a Y.Text
 				// observe callback, which would otherwise break painting for this
@@ -293,7 +324,9 @@ class LiveBindingValue implements PluginValue {
 			this.scheduleDriftCheck();
 			return;
 		}
-		const editorText = this.editor.state.doc.toString();
+		const fullText = this.editor.state.doc.toString();
+		const prefix = frontmatterPrefixLen(fullText);
+		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = this.ytext.toJSON();
 		if (editorText !== docText) {
 			ediagAlways(
@@ -301,7 +334,7 @@ class LiveBindingValue implements PluginValue {
 			);
 			try {
 				this.editor.dispatch({
-					changes: textDiffToChangeSpec(editorText, docText),
+					changes: shiftChanges(textDiffToChangeSpec(editorText, docText), prefix),
 					annotations: [ySyncAnnotation.of(this.editor)],
 				});
 			} catch (err) {
