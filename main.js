@@ -12289,24 +12289,37 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the seed is the note's own local disk content, not anything received from
    *  the server, so REMOTE_ORIGIN suppression is untouched. */
   async applyCrdtCreateAck(localId, serverId, path) {
-    var _a, _b, _c, _d;
-    let normalized = (0, import_obsidian20.normalizePath)(path), effectiveId = localId;
+    var _a, _b, _c, _d, _e;
+    let normalized = (0, import_obsidian20.normalizePath)(path), effectiveId = localId, transferredLiveContent = !1;
     if (serverId && serverId !== localId) {
-      (_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
+      if ((_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
         "crdt",
         `crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`
-      );
+      ), this.crdt && this.isLiveBound(normalized))
+        try {
+          let mintText = await this.crdt.projectedText(localId), consumed = await this.crdt.applyLocalEdit(serverId, mintText);
+          transferredLiveContent = !0, consumed !== null && this.syncState.set(normalized, {
+            ...(_b = this.syncState.get(normalized)) != null ? _b : { hash: 0 },
+            hash: fnv1a(consumed),
+            crdtHead: CRDT_HEAD_CREATED
+          });
+        } catch (e) {
+          rlog().warn(
+            "crdt",
+            `crdt_create (queued) adopt: live transfer failed for ${localId} -> ${serverId}: ${errMsg(e)}`
+          );
+        }
       try {
-        await ((_b = this.crdt) == null ? void 0 : _b.removeDoc(localId));
+        await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(localId));
       } catch (e) {
         rlog().warn(
           "crdt",
           `crdt_create (queued) adopt: mint removeDoc failed for ${localId}: ${errMsg(e)}`
         );
       }
-      (_c = this.crdtEnrollment) == null || _c.reset(localId);
+      (_d = this.crdtEnrollment) == null || _d.reset(localId);
     }
-    let file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
+    let file = this.crdt && !transferredLiveContent ? this.app.vault.getAbstractFileByPath(normalized) : null;
     if (this.crdt && file instanceof import_obsidian20.TFile && this.isCrdtEligible(file))
       try {
         let consumed = await routeModify(
@@ -12319,7 +12332,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           MAX_CRDT_NOTE_BYTES
         );
         consumed !== null && this.syncState.set(normalized, {
-          ...(_d = this.syncState.get(normalized)) != null ? _d : { hash: 0 },
+          ...(_e = this.syncState.get(normalized)) != null ? _e : { hash: 0 },
           hash: fnv1a(consumed),
           crdtHead: CRDT_HEAD_CREATED
         });
@@ -13014,7 +13027,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  pushModifiedFiles) pass force without this, so they stay quiet on
    *  plan-gated attachments. */
   async pushFile(file, force = !1, bypassPlanSkip = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v, _w, _x;
     if (this.pushing.has(file.path)) return !1;
     if (!bypassPlanSkip && this.isBinaryFile(file) && this.hasInformationalIssue(file.path))
       return devLog().log("push", `skip (plan-informational): ${file.path}`), !1;
@@ -13099,7 +13112,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             let serverId = await this.crdtCreate(noteId, pushedPath), effectiveId = noteId;
             try {
               let consumed;
-              if (serverId && serverId !== noteId && this.crdtEditorRebind && this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath))) {
+              if (serverId && serverId !== noteId && this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath))) {
                 (_l = this.noteIdMap) == null || _l.set((0, import_obsidian20.normalizePath)(pushedPath), serverId), effectiveId = serverId;
                 let mintText = await this.crdt.projectedText(noteId), serverHadContent = typeof this.crdt.hasHistory == "function" && await this.crdt.hasHistory(serverId);
                 consumed = await this.crdt.applyLocalEdit(serverId, mintText), mintText.length > 0 && serverHadContent && rlog().warn(
@@ -13107,10 +13120,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   `crdt_create ADOPT: transferred non-empty buffer into a non-empty server doc (possible two-lineage merge): ${pushedPath} ${noteId} -> ${serverId}`
                 ), rlog().info(
                   "crdt",
-                  `crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`
-                ), this.crdtEditorRebind(pushedPath), await this.crdt.removeDoc(noteId), (_m = this.crdtEnrollment) == null || _m.reset(noteId);
+                  `crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`
+                ), (_m = this.crdtEditorRebind) == null || _m.call(this, pushedPath), await this.crdt.removeDoc(noteId), (_n = this.crdtEnrollment) == null || _n.reset(noteId);
               } else
-                serverId && serverId !== noteId && ((_n = this.noteIdMap) == null || _n.set((0, import_obsidian20.normalizePath)(pushedPath), serverId), rlog().info(
+                serverId && serverId !== noteId && ((_o = this.noteIdMap) == null || _o.set((0, import_obsidian20.normalizePath)(pushedPath), serverId), rlog().info(
                   "crdt",
                   `crdt_create ADOPT: remapped ${pushedPath} ${noteId} -> ${serverId}`
                 ), effectiveId = serverId), consumed = await routeModify(
@@ -13129,7 +13142,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               }) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
-              ), this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
+              ), this.isLiveBound((0, import_obsidian20.normalizePath)(pushedPath)) && ((_p = this.crdtEnrollment) == null || _p.enroll(effectiveId)), devLog().log(
                 "push",
                 `crdt_create ok: ${pushedPath} (id=${effectiveId})`
               ), rlog().info(
@@ -13163,11 +13176,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian20.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian20.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian20.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian20.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian20.normalizePath)(serverPath), resp.note.id);
+          )), this.syncState.delete((0, import_obsidian20.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian20.normalizePath)(serverPath), { hash }), (_q = this.noteIdMap) == null || _q.delete((0, import_obsidian20.normalizePath)(pushedPath)), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian20.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian20.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian20.normalizePath)(file.path), resp.note.id);
+          this.syncState.set((0, import_obsidian20.normalizePath)(file.path), { hash }), (_s = this.noteIdMap) == null || _s.set((0, import_obsidian20.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
-          path: (_s = resp.note.path) != null ? _s : pushedPath,
+          path: (_t2 = resp.note.path) != null ? _t2 : pushedPath,
           parseStatus: resp.note.parse_status,
           parseReason: resp.note.parse_reason
         });
@@ -13196,8 +13209,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         lastFailedAt: now,
         attempts: 1
       });
-      let attempts = (_u = (_t2 = this.issues.get(file.path)) == null ? void 0 : _t2.attempts) != null ? _u : 1;
-      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_v = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
+      let attempts = (_v = (_u = this.issues.get(file.path)) == null ? void 0 : _u.attempts) != null ? _v : 1;
+      issueDisposition(classified.category) === "informational" ? this.attachmentLimitedThisBatch += 1 : (this.failuresThisBatch += 1, (_w = this.firstFailureMessageThisBatch) != null || (this.firstFailureMessageThisBatch = classified.message)), devLog().log("error", `push failed: ${file.path} \u2014 ${msg} (${classified.category})`), rlog().error(
         "push",
         `Push failed: ${file.path} \u2014 ${msg} | category=${classified.category}`,
         e instanceof Error ? e.stack : void 0
@@ -13207,7 +13220,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         kind: isBinary ? "attachment" : "note",
         mtime: file.stat.mtime / 1e3,
         timestamp: Date.now(),
-        vaultId: (_w = this.settings.vaultId) != null ? _w : void 0
+        vaultId: (_x = this.settings.vaultId) != null ? _x : void 0
       }), this.maybeGoOffline(e);
     } finally {
       this.pushing.delete(pushedPath), this.releasePushSlot(), success && this.markRecentlyPushed(pushedPath), this.emitStatus();
@@ -15657,7 +15670,8 @@ var LiveBindingValue = class {
     if (this.destroyed) return;
     let path = editorPath(this.editor), noteId = path && coordinator ? coordinator.resolveId(path) : null, bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
     if (needsReattach(bound, path, noteId, coordinator)) {
-      this.detach(), this.attach();
+      let carriedUserEdit = u.docChanged && u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
+      this.detach(), this.attach(), carriedUserEdit && (this.dirtySinceAttach = !0);
       return;
     }
     if (!u.docChanged) return;

@@ -98,8 +98,17 @@ class LiveBindingValue implements PluginValue {
 		const noteId = path && coordinator ? coordinator.resolveId(path) : null;
 		const bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
 		if (needsReattach(bound, path, noteId, coordinator)) {
+			// If this very update carried a user keystroke, it is in the editor but NOT
+			// in the new doc yet (e.g. a genesis ADOPT remap: the key landed in the mint
+			// doc after its content was transferred to serverId). Carry the dirty flag
+			// so the reconcile FORWARDS the editor into the new doc instead of reverting
+			// that keystroke. A programmatic file-load re-attach is not a user event.
+			const carriedUserEdit =
+				u.docChanged &&
+				u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
 			this.detach();
 			this.attach();
+			if (carriedUserEdit) this.dirtySinceAttach = true;
 			return;
 		}
 		if (!u.docChanged) return;

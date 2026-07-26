@@ -1024,15 +1024,18 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});
 
-	test("ADOPT: crdt_create returns a DIFFERENT id → note remapped to the server id, enroll + seed use it", async () => {
+	test("ADOPT: crdt_create returns a DIFFERENT id → note remapped, enroll + transfer use the server id", async () => {
 		const noteIdMap = new NoteIdMap();
 		const engine = createEngine(noteIdMap);
 		const applyLocalEdit = mock(async (_id: string, c: string) => c);
-		engine.setCrdtManager({ applyLocalEdit } as any);
+		const projectedText = mock(async (_id: string) => "body"); // mint live buffer
+		const removeDoc = mock(async (_id: string) => {});
+		const hasHistory = mock(async (_id: string) => false);
+		engine.setCrdtManager({ applyLocalEdit, projectedText, removeDoc, hasHistory } as any);
 		// A live-bound note is gated OUT of handleModify (the editor owns the
 		// disk-write echo), so it reaches pushFile's genesis only via a direct
-		// call (full-sync batch / rename). Call pushFile directly so the genesis
-		// enroll (live-bound only) is exercised.
+		// call (full-sync batch / rename). Live-bound adopt now TRANSFERS the mint
+		// buffer into serverId (no external rebind needed — the ViewPlugin self-heals).
 		engine.setLiveBoundCheck(() => true);
 		const enroll = mock((_id: string) => {});
 		engine.setCrdtEnrollment({ enroll, reset: mock(() => {}) } as any);
@@ -1047,13 +1050,10 @@ describe("Task 3: new-note genesis routes through crdt_create", () => {
 		// The local mint is replaced by the server's authoritative id: subsequent
 		// crdt_msg edits now address the row that actually exists.
 		expect(noteIdMap.get("Notes/collision.md")).toBe("server-owns-this");
-		// Body seeded AND enrolled under the SERVER id, never the orphaned mint.
-		expect(applyLocalEdit).toHaveBeenCalledWith(
-			"server-owns-this",
-			"body",
-			undefined,
-			expect.any(Function),
-		);
+		// Mint buffer transferred (2-arg forward, default origin) AND enrolled under
+		// the SERVER id, never the orphaned mint.
+		expect(applyLocalEdit.mock.calls[0]?.[0]).toBe("server-owns-this");
+		expect(applyLocalEdit.mock.calls[0]?.[1]).toBe("body");
 		expect(enroll).toHaveBeenCalledWith("server-owns-this");
 		expect(mockApi.pushNote).not.toHaveBeenCalled();
 	});

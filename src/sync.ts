@@ -975,6 +975,10 @@ export class SyncEngine {
 	async applyCrdtCreateAck(localId: string, serverId: string, path: string): Promise<void> {
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
+		// Set when we transferred the LIVE mint content into serverId below, so the
+		// disk-seed further down is skipped (re-diffing lagged disk would clobber the
+		// just-transferred in-flight keystrokes).
+		let transferredLiveContent = false;
 		if (serverId && serverId !== localId) {
 			this.noteIdMap?.set(normalized, serverId);
 			effectiveId = serverId;
@@ -982,6 +986,30 @@ export class SyncEngine {
 				"crdt",
 				`crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`,
 			);
+			// Live-bound adopt: the mint doc holds the user's live keystrokes (the
+			// editor forwards there), which lag disk. Transfer them into serverId
+			// (mirrors the live pushFile adopt) instead of seeding from disk below.
+			// The ViewPlugin re-resolves path -> serverId on its next update and
+			// re-attaches itself.
+			if (this.crdt && this.isLiveBound(normalized)) {
+				try {
+					const mintText = await this.crdt.projectedText(localId);
+					const consumed = await this.crdt.applyLocalEdit(serverId, mintText);
+					transferredLiveContent = true;
+					if (consumed !== null) {
+						this.syncState.set(normalized, {
+							...(this.syncState.get(normalized) ?? { hash: 0 }),
+							hash: fnv1a(consumed),
+							crdtHead: CRDT_HEAD_CREATED,
+						});
+					}
+				} catch (e) {
+					rlog().warn(
+						"crdt",
+						`crdt_create (queued) adopt: live transfer failed for ${localId} -> ${serverId}: ${errMsg(e)}`,
+					);
+				}
+			}
 			// Retire the orphaned mint doc + its enrollment (mirrors the live adopt).
 			try {
 				await this.crdt?.removeDoc(localId);
@@ -994,8 +1022,12 @@ export class SyncEngine {
 			this.crdtEnrollment?.reset(localId);
 		}
 		// Seed the body from disk under the effective id (mirrors the live genesis
-		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify.
-		const file = this.crdt ? this.app.vault.getAbstractFileByPath(normalized) : null;
+		// non-live-bound seed at sync.ts:2444). Cap-gated inside routeModify. Skipped
+		// when we already transferred the live mint content above.
+		const file =
+			this.crdt && !transferredLiveContent
+				? this.app.vault.getAbstractFileByPath(normalized)
+				: null;
 		if (this.crdt && file instanceof TFile && this.isCrdtEligible(file)) {
 			try {
 				const consumed = await routeModify(
@@ -2656,24 +2688,25 @@ export class SyncEngine {
 							if (
 								serverId &&
 								serverId !== noteId &&
-								this.crdtEditorRebind &&
 								this.isLiveBound(normalizePath(pushedPath))
 							) {
 								// ADOPT under a LIVE editor. The editor is bound to the MINT
-								// doc, so ySync has propagated the user's live keystrokes
-								// (including any typed during the crdt_create round-trip, and
-								// any not yet flushed to disk) into the mint Y.Text — disk
-								// (cachedRead) can lag them. Seed the serverId doc from the
-								// mint's projected content via applyLocalEdit (DEFAULT origin,
-								// so the update FORWARDS to the server — applyRemoteUpdate's
-								// REMOTE_ORIGIN would keep the edits client-only and they'd
-								// still be lost server-side). THEN rebind the editor off the
-								// orphaned mint onto serverId: because serverId already holds
-								// the content, bindTo's reconcile is a no-op (no visible
-								// buffer change) and future keystrokes flow to serverId. THEN
-								// retire the mint doc. Skips the disk-seed routeModify below:
-								// re-diffing the (staler) disk snapshot into serverId would
-								// clobber the just-transferred in-flight chars.
+								// doc, so the user's live keystrokes (including any typed during
+								// the crdt_create round-trip, and any not yet flushed to disk)
+								// are in the mint Y.Text — disk (cachedRead) can lag them. Seed
+								// the serverId doc from the mint's projected content via
+								// applyLocalEdit (DEFAULT origin, so the update FORWARDS to the
+								// server — applyRemoteUpdate's REMOTE_ORIGIN would keep the edits
+								// client-only and they'd still be lost server-side). The live
+								// ViewPlugin then re-resolves path -> serverId on its next update
+								// and re-attaches itself (no external rebind needed); because
+								// serverId already holds the content, its reconcile is a no-op.
+								// THEN retire the mint doc. Skips the disk-seed routeModify
+								// below: re-diffing the (staler) disk snapshot into serverId
+								// would clobber the just-transferred in-flight chars.
+								// NOTE: this transfer is the load-bearing step; it used to be
+								// gated on the (now-removed) crdtEditorRebind wiring, which
+								// silently disabled it and made adopt seed from lagged disk.
 								// ponytail: two-lineage doubling is possible in a TRUE
 								// content collision (local new-note text vs the server row's
 								// pre-existing independent Y history) — accepted as
@@ -2695,12 +2728,17 @@ export class SyncEngine {
 								}
 								rlog().info(
 									"crdt",
-									`crdt_create ADOPT: remapped + rebound live editor ${pushedPath} ${noteId} -> ${serverId}`,
+									`crdt_create ADOPT: remapped live editor ${pushedPath} ${noteId} -> ${serverId}`,
 								);
+								// The ViewPlugin re-resolves path -> serverId on its next update
+								// and re-attaches itself; the reattach-triggering keystroke is
+								// forwarded (not reverted). crdtEditorRebind is now an optional
+								// no-op in prod (the ViewPlugin owns rebinding) — kept only for
+								// the commitCrdtConvergence phantom-binding repair + its tests.
 								// Keystroke-leak window: keystrokes landing in the mint doc
-								// between the projectedText read above and this synchronous
-								// detach are dropped by removeDoc. Microtask-scale; accepted.
-								this.crdtEditorRebind(pushedPath);
+								// between the projectedText read above and this removeDoc are
+								// dropped. Microtask-scale; accepted.
+								this.crdtEditorRebind?.(pushedPath);
 								await this.crdt.removeDoc(noteId);
 								this.crdtEnrollment?.reset(noteId);
 							} else {
