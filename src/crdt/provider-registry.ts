@@ -13,7 +13,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { ediag } from "./ediag";
+import { ediag, installHangDiagnostics } from "./ediag";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -80,7 +80,11 @@ export class ProviderRegistry {
 	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediag("[EDIAG] BUILD=v5-socket-trace (ProviderRegistry created)");
+		ediag("[EDIAG] BUILD=v6-hang-catcher (ProviderRegistry created)");
+		installHangDiagnostics(() => ({
+			docs: this.entries.size,
+			enrolled: this.enrolledIds.size,
+		}));
 	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by

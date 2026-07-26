@@ -16050,7 +16050,24 @@ var outdatedTimeout = 3e4, Awareness = class extends Observable {
 };
 
 // src/crdt/ediag.ts
-var ediag = (...args2) => console.log(...args2);
+var ediag = (...args2) => console.log(...args2), hangDiagnosticsInstalled = !1;
+function installHangDiagnostics(snapshot) {
+  if (hangDiagnosticsInstalled || typeof window == "undefined") return;
+  hangDiagnosticsInstalled = !0, window.addEventListener("unhandledrejection", (e) => {
+    var _a, _b;
+    let r = e.reason;
+    ediag(`[EDIAG] UNHANDLED-REJECTION ${(_a = r == null ? void 0 : r.message) != null ? _a : r} :: ${(_b = r == null ? void 0 : r.stack) != null ? _b : "(no stack)"}`);
+  }), window.addEventListener("error", (e) => {
+    var _a, _b;
+    let ev = e;
+    ediag(`[EDIAG] WINDOW-ERROR ${ev.message} @ ${ev.filename}:${ev.lineno} :: ${(_b = (_a = ev.error) == null ? void 0 : _a.stack) != null ? _b : ""}`);
+  });
+  let hb = 0;
+  window.setInterval(() => {
+    let s = snapshot();
+    ediag(`[EDIAG] heartbeat #${++hb} docs=${s.docs} enrolled=${s.enrolled}`);
+  }, 5e3);
+}
 
 // src/crdt/live/ycollab-binding.ts
 var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
@@ -22207,7 +22224,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v5-socket-trace (ProviderRegistry created)");
+    ediag("[EDIAG] BUILD=v6-hang-catcher (ProviderRegistry created)"), installHangDiagnostics(() => ({ docs: this.entries.size, enrolled: this.enrolledIds.size }));
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -22405,7 +22422,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    ediag(`[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`), this.connected = connected;
+    ediag(
+      `[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`
+    ), this.connected = connected;
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
