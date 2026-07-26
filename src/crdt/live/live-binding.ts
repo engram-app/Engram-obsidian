@@ -300,6 +300,12 @@ class LiveBindingValue implements PluginValue {
 		doc.transact(() => applyCmChangesToYText(text, mapped), this);
 	}
 
+	/** Wait for the server seed, then reconcile. Reconciling on the FIRST non-empty
+	 *  observe cannot catch a half-applied doc: a seed arrives as one syncStep2,
+	 *  which `readSyncMessage` applies as a single Y.applyUpdate, and Yjs fires
+	 *  observers once at transaction cleanup with every delta already applied. A
+	 *  partial seed would need the server to split one document across separate
+	 *  transactions, which the sync protocol never does. */
 	private deferSeed(text: Y.Text): void {
 		const onSeed = (_event: Y.YTextEvent, _tr: Y.Transaction) => {
 			if (this.destroyed || this.ytext !== text) {

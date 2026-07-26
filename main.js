@@ -15810,6 +15810,12 @@ var LiveBindingValue = class {
     let mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
     doc2.transact(() => applyCmChangesToYText(text2, mapped), this);
   }
+  /** Wait for the server seed, then reconcile. Reconciling on the FIRST non-empty
+   *  observe cannot catch a half-applied doc: a seed arrives as one syncStep2,
+   *  which `readSyncMessage` applies as a single Y.applyUpdate, and Yjs fires
+   *  observers once at transaction cleanup with every delta already applied. A
+   *  partial seed would need the server to split one document across separate
+   *  transactions, which the sync protocol never does. */
   deferSeed(text2) {
     let onSeed = (_event, _tr) => {
       if (this.destroyed || this.ytext !== text2) {
@@ -16001,7 +16007,10 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
       this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
     };
     ytext.observe(handler);
-    let unpatch = patchPreviewEdit(view, (fullText) => this.captureEdit(path, ytext, fullText));
+    let unpatch = patchPreviewEdit(
+      view,
+      (fullText) => this.captureEdit(path, ytext, fullText)
+    );
     this.observers.set(view, () => {
       ytext.unobserve(handler), unpatch == null || unpatch();
     });
