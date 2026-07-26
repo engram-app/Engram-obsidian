@@ -868,6 +868,14 @@ export default class EngramSyncPlugin extends Plugin {
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
 		);
+		// Safety-net rebind poll. Obsidian rebuilds a leaf's CodeMirror instance on
+		// heavy file loads (the 34KB lag spike) WITHOUT firing file-open /
+		// active-leaf-change / layout-change, orphaning our binding: keystrokes go to
+		// the NEW editor and sync sees nothing (the file-switch wedge — bound view A,
+		// user types in view B). A periodic refresh() rebinds the leaf's CURRENT
+		// editor. Idempotent + cheap: an already-bound editor short-circuits in bindTo
+		// (this.path === path) and enroll is edge-guarded, so a no-change tick is ~free.
+		this.registerInterval(window.setInterval(() => this.crdtLiveViews?.refresh(), 1500));
 		// WebSocket live sync
 		this.setupNoteStream();
 

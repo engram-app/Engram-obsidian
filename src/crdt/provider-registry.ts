@@ -80,7 +80,7 @@ export class ProviderRegistry {
 	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediag("[EDIAG] BUILD=v7-keystroke-probe (ProviderRegistry created)");
+		ediag("[EDIAG] BUILD=v8-rebind-poll (ProviderRegistry created)");
 		installHangDiagnostics(() => ({
 			docs: this.entries.size,
 			enrolled: this.enrolledIds.size,

@@ -6,6 +6,7 @@ import type * as Y from "yjs";
 import * as YDoc from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
+import { ediag } from "../ediag";
 import type { ProviderRegistry } from "../provider-registry";
 import { EditorController } from "./editor-controller";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
@@ -219,6 +220,10 @@ export class CrdtLiveViews {
 			seen.add(cm);
 			let ctrl = this.controllers.get(cm);
 			if (!ctrl) {
+				// A cm we haven't seen = a fresh editor instance. On a heavy-load editor
+				// SWAP this is the orphan-recovery: the old bound cm is gone and Obsidian
+				// built a new one for the same path. Logged so the rebind is visible.
+				ediag(`[EDIAG] refresh: fresh editor instance for ${path} (binding)`);
 				ctrl = new EditorController({
 					getYText: (p) => this.getYText(p),
 					awareness: () => this.localAwareness,

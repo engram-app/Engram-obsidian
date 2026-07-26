@@ -16962,7 +16962,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       if (!cm) continue;
       seen.add(cm);
       let ctrl = this.controllers.get(cm);
-      ctrl || (ctrl = new EditorController({
+      ctrl || (ediag(`[EDIAG] refresh: fresh editor instance for ${path} (binding)`), ctrl = new EditorController({
         getYText: (p) => this.getYText(p),
         awareness: () => this.localAwareness,
         onBind: (p, id2) => this.refcount.bind(p, id2),
@@ -22229,7 +22229,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v7-keystroke-probe (ProviderRegistry created)"), installHangDiagnostics(() => ({
+    ediag("[EDIAG] BUILD=v8-rebind-poll (ProviderRegistry created)"), installHangDiagnostics(() => ({
       docs: this.entries.size,
       enrolled: this.enrolledIds.size
     }));
@@ -23297,7 +23297,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
       })
-    ), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
+    ), this.registerInterval(window.setInterval(() => {
+      var _a2;
+      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
+    }, 1500)), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
       var _a2, _b2, _c2;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
