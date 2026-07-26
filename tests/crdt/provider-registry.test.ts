@@ -113,4 +113,28 @@ describe("ProviderRegistry (Relay-model engine)", () => {
 		expect(await reg.hasHistory("n3")).toBe(false); // never seeded
 		await reg.destroyAll();
 	});
+
+	test("reset clears the synced mark so a re-handshake re-confirms (heal-room release)", async () => {
+		// The diverged-cold-note heal is reset+enroll; its release fires from
+		// onSynced on the re-handshake's syncStep2. The provider fires onSynced only
+		// on the FIRST syncStep2, so reset must clear synced or the heal room never
+		// releases (e2e wait_for_room_free timeout).
+		const { A, B } = twoDevices();
+		A.setConnected(true);
+		B.setConnected(true);
+		await A.applyLocalEdit("n4", "base");
+		await A.startSync("n4");
+		await B.startSync("n4"); // B enrolls → syncStep1/2 → synced
+		await flush();
+		expect(B.isSynced("n4")).toBe(true);
+
+		B.reset("n4");
+		expect(B.isSynced("n4")).toBe(false); // the fix: reset invalidates the mark
+
+		await B.startSync("n4"); // re-handshake
+		await flush();
+		expect(B.isSynced("n4")).toBe(true); // re-confirmed → onSynced re-fired
+		await A.destroyAll();
+		await B.destroyAll();
+	});
 });

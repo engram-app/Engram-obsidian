@@ -329,7 +329,17 @@ export class ProviderRegistry {
 	 *  out. reset+enroll = a fresh re-handshake. */
 	reset(noteId: string): void {
 		this.enrolledIds.delete(noteId);
-		this.entries.get(noteId)?.provider.setAdvertised(false);
+		const e = this.entries.get(noteId);
+		if (!e) return;
+		e.provider.setAdvertised(false);
+		// Invalidate the synced mark so a FOLLOWING re-handshake (enroll) re-fires
+		// onSynced when its syncStep2 lands. The provider fires onSynced only on the
+		// FIRST syncStep2 of a session; the diverged-cold-note heal (socketConverge
+		// = reset+enroll) depends on that fire to run commitCrdtConvergence ->
+		// releaseHealRoom, so without clearing it the transient heal room would
+		// never release (e2e wait_for_room_free times out). The old CrdtChannel
+		// fired convergence on every inbound frame, so this restores that behavior.
+		e.provider.synced = false;
 	}
 
 	resetSync(noteId: string): void {
