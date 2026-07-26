@@ -21272,6 +21272,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   constructor(opts) {
     this.opts = opts;
     this.entries = /* @__PURE__ */ new Map();
+    /** Tombstones for notes torn down via removeDoc (delete). A late fan-out
+     *  update or a stray edit for a deleted note must NOT re-materialize + re-flush
+     *  it (resurrection). A note_id is minted once and never reused, so a permanent
+     *  tombstone is safe; cleared on destroyAll (stack teardown). */
+    this.removed = /* @__PURE__ */ new Set();
     this.connected = !1;
     /** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
      *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
@@ -21348,10 +21353,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       kind,
       ready: Promise.resolve(),
       remoteSeq: 0,
-      pendingFlush: null
+      pendingFlush: null,
+      destroyed: !1
     };
     return doc2.on("update", (_u, origin) => {
-      if (origin !== provider && origin !== REMOTE) return;
+      if (entry.destroyed || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
       let flush = Promise.resolve(
         this.opts.onFlushToDisk(noteId, this.project(entry))
@@ -21400,7 +21406,10 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  the shared seedContentInto codec. */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
     var _a, _b;
-    let e = await this.entry(noteId), content = diskContent;
+    if (this.removed.has(noteId)) return null;
+    let e = await this.entry(noteId);
+    if (e.destroyed) return null;
+    let content = diskContent;
     if (reread) {
       let stable = !1;
       for (let attempt = 0; attempt < 3 && !stable; attempt++) {
@@ -21426,7 +21435,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   /** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
+    if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
+    if (e.destroyed) return;
     ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`), applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
@@ -21542,11 +21553,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   // --- True teardown (delete / rename / unload) -------------------------------
   async removeDoc(noteId) {
-    await this.destroy(noteId, !0);
+    this.removed.add(noteId), await this.destroy(noteId, !0);
   }
   async destroy(noteId, clearData) {
     let e = this.entries.get(noteId);
-    if (!e) {
+    if (e && (e.destroyed = !0), !e) {
       clearData && await new Promise((resolve) => {
         let req = indexedDB.deleteDatabase(this.storeName(noteId));
         req.onsuccess = req.onerror = req.onblocked = () => resolve();
@@ -21557,6 +21568,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   async destroyAll() {
     for (let noteId of [...this.entries.keys()]) await this.destroy(noteId, !1);
+    this.removed.clear();
   }
 };
 

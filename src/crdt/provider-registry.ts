@@ -39,6 +39,10 @@ interface Entry {
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
+	/** Set the instant removeDoc/destroy begins (before doc.destroy()), so an
+	 *  in-flight operation that captured this entry across an await bails instead
+	 *  of seeding/applying/flushing onto a dead doc (delete-note resurrection). */
+	destroyed: boolean;
 }
 
 export interface ProviderRegistryOpts {
@@ -72,6 +76,11 @@ export interface ProviderRegistryOpts {
 
 export class ProviderRegistry {
 	private readonly entries = new Map<string, Entry>();
+	/** Tombstones for notes torn down via removeDoc (delete). A late fan-out
+	 *  update or a stray edit for a deleted note must NOT re-materialize + re-flush
+	 *  it (resurrection). A note_id is minted once and never reused, so a permanent
+	 *  tombstone is safe; cleared on destroyAll (stack teardown). */
+	private readonly removed = new Set<string>();
 	private connected = false;
 	/** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
 	 *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
@@ -164,11 +173,13 @@ export class ProviderRegistry {
 			ready: Promise.resolve(),
 			remoteSeq: 0,
 			pendingFlush: null,
+			destroyed: false,
 		};
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
 		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
+			if (entry.destroyed) return; // deleted mid-flight — never flush a dead doc
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
 			const flush = Promise.resolve(
@@ -247,7 +258,9 @@ export class ProviderRegistry {
 		hasLca?: boolean,
 		reread?: () => Promise<string>,
 	): Promise<string | null> {
+		if (this.removed.has(noteId)) return null; // deleted — don't resurrect
 		const e = await this.entry(noteId);
+		if (e.destroyed) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
@@ -292,7 +305,9 @@ export class ProviderRegistry {
 	/** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
 	 *  its disk flush so a write failure can be surfaced (#235). */
 	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
+		if (this.removed.has(noteId)) return; // deleted — a late fan-out must not resurrect
 		const e = await this.entry(noteId);
+		if (e.destroyed) return; // destroyed while we awaited hydration
 		ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`);
 		// Apply with the PROVIDER as origin (NOT a distinct REMOTE symbol): the
 		// provider's update handler suppresses its own origin, so a fanned-out update
@@ -454,11 +469,13 @@ export class ProviderRegistry {
 	// --- True teardown (delete / rename / unload) -------------------------------
 
 	async removeDoc(noteId: string): Promise<void> {
+		this.removed.add(noteId); // tombstone: block any resurrection of a deleted note
 		await this.destroy(noteId, true);
 	}
 
 	private async destroy(noteId: string, clearData: boolean): Promise<void> {
 		const e = this.entries.get(noteId);
+		if (e) e.destroyed = true; // set BEFORE any await so in-flight ops bail
 		if (!e) {
 			if (clearData) {
 				await new Promise<void>((resolve) => {
@@ -477,5 +494,6 @@ export class ProviderRegistry {
 
 	async destroyAll(): Promise<void> {
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
+		this.removed.clear(); // fresh stack — tombstones do not outlive a teardown
 	}
 }

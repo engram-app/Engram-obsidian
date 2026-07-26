@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import "fake-indexeddb/auto";
+import * as YDoc from "yjs";
 import { ProviderRegistry } from "../../src/crdt/provider-registry";
 
 // Two "devices", each its own ProviderRegistry with an isolated IndexedDB store
@@ -46,6 +47,45 @@ function twoDevices() {
 }
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 15));
+
+describe("ProviderRegistry destroyed-doc guard", () => {
+	function oneDevice() {
+		const flushed: Record<string, string> = {};
+		const reg = new ProviderRegistry({
+			dbPrefix: "devGuard",
+			send: () => true,
+			onFlushToDisk: (id, content) => {
+				flushed[id] = content;
+			},
+		});
+		return { reg, flushed };
+	}
+
+	test("applyLocalEdit on a removed note bails (does not resurrect)", async () => {
+		const { reg } = oneDevice();
+		await reg.applyLocalEdit("gone.md", "original"); // materialize
+		await flush();
+		await reg.removeDoc("gone.md"); // delete
+		// A late edit for the just-deleted note must not re-create + re-seed it.
+		const result = await reg.applyLocalEdit("gone.md", "resurrected");
+		expect(result).toBeNull();
+		expect(reg.hasDoc("gone.md")).toBe(false);
+	});
+
+	test("applyRemoteUpdate on a removed note does not flush it back to disk", async () => {
+		const { reg, flushed } = oneDevice();
+		await reg.applyLocalEdit("gone.md", "original");
+		await flush();
+		await reg.removeDoc("gone.md");
+		// A late fan-out update for the deleted note must not resurrect the file.
+		const scratch = new YDoc.Doc();
+		scratch.getText("content").insert(0, "resurrected body");
+		await reg.applyRemoteUpdate("gone.md", YDoc.encodeStateAsUpdate(scratch));
+		await flush();
+		expect(flushed["gone.md"]).toBeUndefined();
+		expect(reg.hasDoc("gone.md")).toBe(false);
+	});
+});
 
 describe("ProviderRegistry (Relay-model engine)", () => {
 	test("genesis edit on A syncs to B and flushes B's disk (no text-verify)", async () => {
