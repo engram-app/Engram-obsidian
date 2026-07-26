@@ -13,6 +13,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
+import { ediag } from "./ediag";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -119,12 +120,15 @@ export class ProviderRegistry {
 		const kind = this.opts.docKind?.(noteId) ?? "note";
 		const text = doc.getText(CONTENT_KEY);
 		const provider = new NoteProvider(doc, {
+			label: noteId,
 			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
 			// the provider and flush once the server row exists.
-			send: (frame) =>
-				this.opts.canSendLive && !this.opts.canSendLive(noteId)
-					? false
-					: this.opts.send(noteId, frame),
+			send: (frame) => {
+				const gated = this.opts.canSendLive ? !this.opts.canSendLive(noteId) : false;
+				const ok = gated ? false : this.opts.send(noteId, frame);
+				ediag(`[EDIAG] providerSend note=${noteId} gated=${gated} sendOk=${ok}`);
+				return ok;
+			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely

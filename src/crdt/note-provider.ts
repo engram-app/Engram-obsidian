@@ -18,6 +18,7 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
+import { ediag } from "./ediag";
 import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
 
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
@@ -30,6 +31,8 @@ export interface NoteProviderOpts {
 	/** Fired the first time an inbound syncStep2 lands (Relay's `provider.synced`
 	 *  transition) — op-level proof the doc holds the peer's content. */
 	onSynced?: () => void;
+	/** Diagnostic label (the note_id) for [EDIAG] console breadcrumbs. */
+	label?: string;
 }
 
 export class NoteProvider {
@@ -46,6 +49,7 @@ export class NoteProvider {
 	private advertised = false;
 	private send: ProviderSend;
 	private readonly onSynced?: () => void;
+	private readonly label?: string;
 	/** Frames produced while the transport was down; flushed on reconnect. */
 	private readonly buffer: string[] = [];
 	private readonly updateHandler: (update: Uint8Array, origin: unknown) => void;
@@ -54,11 +58,15 @@ export class NoteProvider {
 		this.doc = doc;
 		this.send = opts.send ?? (() => false);
 		this.onSynced = opts.onSynced;
+		this.label = opts.label;
 		// Relay's _updateHandler: a LOCAL edit (origin !== this) becomes a sync
 		// UPDATE frame; a remote-applied op (origin === this, set by
 		// readSyncMessage below) is NOT re-sent — that's the echo guard.
 		this.updateHandler = (update, origin) => {
 			if (origin === this) return;
+			ediag(
+				`[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`,
+			);
 			const encoder = encoding.createEncoder();
 			encoding.writeVarUint(encoder, MESSAGE_SYNC);
 			syncProtocol.writeUpdate(encoder, update);
@@ -76,7 +84,11 @@ export class NoteProvider {
 	/** Relay's broadcastMessage: send now if connected, else buffer for the next
 	 *  onopen flush. A refused send (transport down mid-flight) also buffers. */
 	private broadcast(frame: string): void {
-		if (this.connected && this.send(frame)) return;
+		const sent = this.connected && this.send(frame);
+		ediag(
+			`[EDIAG] broadcast note=${this.label} connected=${this.connected} sent=${sent} bufLen=${this.buffer.length}`,
+		);
+		if (sent) return;
 		this.buffer.push(frame);
 	}
 

@@ -1,6 +1,7 @@
 import type { EditorView } from "@codemirror/view";
 import type { Awareness } from "y-protocols/awareness";
 import type * as Y from "yjs";
+import { ediag } from "../ediag";
 import {
 	type BindResult,
 	bindSpec,
@@ -79,8 +80,17 @@ export class EditorController {
 		// Epoch guard: if a newer bindTo starts while we await, this one is stale
 		// and must abort — otherwise a slow b.md bind can clobber a fast c.md one.
 		const epoch = ++this.bindEpoch;
+		const __t0 = Date.now();
 		const ytext = await this.deps.getYText(path);
-		if (this.released || epoch !== this.bindEpoch) return;
+		ediag(
+			`[EDIAG] bindTo getYText path=${path} epoch=${epoch} took=${Date.now() - __t0}ms ytextLen=${ytext.length}`,
+		);
+		if (this.released || epoch !== this.bindEpoch) {
+			ediag(
+				`[EDIAG] bindTo ABORT stale-epoch path=${path} epoch=${epoch} cur=${this.bindEpoch} released=${this.released}`,
+			);
+			return;
+		}
 		// View-identity guard (mirrors runDriftCheck's, at bind time). The await
 		// above — and, for a DEFERRED bind, the unbounded wait for the server seed
 		// (deferUntilSeeded → onSeed rebind, fired on a network event long after
@@ -90,7 +100,10 @@ export class EditorController {
 		// boundary (the 2026-07-07 cross-file pollution class). Never bind a view
 		// that no longer shows `path`; refresh() will bind whatever it now shows.
 		const shown = this.deps.viewPath?.();
-		if (shown !== undefined && shown !== path) return;
+		if (shown !== undefined && shown !== path) {
+			ediag(`[EDIAG] bindTo ABORT view-switched shown=${shown} path=${path}`);
+			return;
+		}
 		// Data-loss guard (deaf live-bound base loss, test_live_bound_both_ends):
 		// materialize writes base to DISK but leaves the Y.Doc EMPTY on purpose —
 		// the adopt-first gate has the server seed it on its OWN lineage (STEP2 /
@@ -108,6 +121,7 @@ export class EditorController {
 		// disk while the doc is still unseeded.
 		const editorText = view.state.doc.toString();
 		if (ytext.length === 0 && editorText.length > 0) {
+			ediag(`[EDIAG] bindTo DEFER unseeded path=${path} editorLen=${editorText.length}`);
 			this.deferUntilSeeded(view, path, ytext, epoch);
 			return;
 		}
@@ -124,6 +138,7 @@ export class EditorController {
 		this.path = path;
 		this.deps.onBind(path, this.viewId);
 		this.scheduleDriftCheck(view);
+		ediag(`[EDIAG] bindTo BOUND path=${path} epoch=${epoch} ytextLen=${ytext.length}`);
 	}
 
 	/** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
@@ -142,6 +157,7 @@ export class EditorController {
 			this.unhookPendingSeed();
 			// A newer bindTo or a release() supersedes this deferred bind.
 			if (this.released || epoch !== this.bindEpoch) return;
+			ediag(`[EDIAG] deferred onSeed REBIND path=${path} ytextLen=${ytext.length}`);
 			void this.bindTo(view, path);
 		};
 		this.pendingSeed = { ytext, onSeed };
@@ -185,6 +201,7 @@ export class EditorController {
 		this.bindResult = null;
 		this.boundYtext = null;
 		if (!this.path) return;
+		ediag(`[EDIAG] detach path=${this.path}`);
 		view.dispatch({ effects: crdtCompartment.reconfigure([]) });
 		this.deps.onRelease(this.path, this.viewId);
 		this.path = null;
@@ -215,6 +232,7 @@ export class EditorController {
 		// while it stays in live-views' map) and let the next refresh() re-bind.
 		const shown = this.deps.viewPath?.();
 		if (shown !== undefined && shown !== this.path) {
+			ediag(`[EDIAG] drift DETACH view-switched shown=${shown} bound=${this.path}`);
 			this.detach(view);
 			return;
 		}

@@ -16049,6 +16049,9 @@ var outdatedTimeout = 3e4, Awareness = class extends Observable {
   removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
 };
 
+// src/crdt/ediag.ts
+var ediag = (...args2) => console.log(...args2);
+
 // src/crdt/live/ycollab-binding.ts
 var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
 
@@ -16587,20 +16590,32 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
     var _a, _b;
     if (this.path === path) return;
     this.detach(view);
-    let epoch = ++this.bindEpoch, ytext = await this.deps.getYText(path);
-    if (this.released || epoch !== this.bindEpoch) return;
+    let epoch = ++this.bindEpoch, __t0 = Date.now(), ytext = await this.deps.getYText(path);
+    if (ediag(
+      `[EDIAG] bindTo getYText path=${path} epoch=${epoch} took=${Date.now() - __t0}ms ytextLen=${ytext.length}`
+    ), this.released || epoch !== this.bindEpoch) {
+      ediag(
+        `[EDIAG] bindTo ABORT stale-epoch path=${path} epoch=${epoch} cur=${this.bindEpoch} released=${this.released}`
+      );
+      return;
+    }
     let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
-    if (shown !== void 0 && shown !== path) return;
+    if (shown !== void 0 && shown !== path) {
+      ediag(`[EDIAG] bindTo ABORT view-switched shown=${shown} path=${path}`);
+      return;
+    }
     let editorText = view.state.doc.toString();
     if (ytext.length === 0 && editorText.length > 0) {
-      this.deferUntilSeeded(view, path, ytext, epoch);
+      ediag(
+        `[EDIAG] bindTo DEFER unseeded path=${path} editorLen=${editorText.length}`
+      ), this.deferUntilSeeded(view, path, ytext, epoch);
       return;
     }
     let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
     view.dispatch({
       changes,
       effects: crdtCompartment.reconfigure(result.extension)
-    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view);
+    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view), ediag(`[EDIAG] bindTo BOUND path=${path} epoch=${epoch} ytextLen=${ytext.length}`);
   }
   /** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
    *  server, then rebind. Never seeds the doc locally (that would double against
@@ -16608,7 +16623,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
    *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
   deferUntilSeeded(view, path, ytext, epoch) {
     let onSeed = () => {
-      ytext.length !== 0 && (this.unhookPendingSeed(), !(this.released || epoch !== this.bindEpoch) && this.bindTo(view, path));
+      ytext.length !== 0 && (this.unhookPendingSeed(), !(this.released || epoch !== this.bindEpoch) && (ediag(`[EDIAG] deferred onSeed REBIND path=${path} ytextLen=${ytext.length}`), this.bindTo(view, path)));
     };
     this.pendingSeed = { ytext, onSeed }, ytext.observe(onSeed);
   }
@@ -16633,7 +16648,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
    *  drift timer stopped. Unlike release(), the controller stays usable so
    *  bindTo can re-bind the same view to a new path. */
   detach(view) {
-    this.clearDriftTimer(), this.unhookPendingSeed(), this.bindResult = null, this.boundYtext = null, this.path && (view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
+    this.clearDriftTimer(), this.unhookPendingSeed(), this.bindResult = null, this.boundYtext = null, this.path && (ediag(`[EDIAG] detach path=${this.path}`), view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
   }
   clearDriftTimer() {
     this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
@@ -16649,7 +16664,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
     if (this.released || this.boundYtext === null || this.bindResult === null) return;
     let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
     if (shown !== void 0 && shown !== this.path) {
-      this.detach(view);
+      ediag(`[EDIAG] drift DETACH view-switched shown=${shown} bound=${this.path}`), this.detach(view);
       return;
     }
     let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
@@ -22058,11 +22073,21 @@ var NoteProvider = class {
     /** True once an inbound syncStep2 has been applied (Relay parity). */
     this.synced = !1;
     this.connected = !1;
+    /** True when this note has an OPEN room — it advertises syncStep1 (the
+     *  down-sync PULL request) on connect + reconnect. A note that only SENDS
+     *  (a cold edit to a closed note) or only RECEIVES (vault-channel fan-out)
+     *  stays un-advertised: it delivers/merges ops WITHOUT opening a room, so an
+     *  idle note never contributes to the server room fan-out (the connect-storm
+     *  the fan-out design avoids). Set via setAdvertised on enroll. */
+    this.advertised = !1;
     /** Frames produced while the transport was down; flushed on reconnect. */
     this.buffer = [];
     var _a;
-    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.updateHandler = (update, origin) => {
+    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.label = opts.label, this.updateHandler = (update, origin) => {
       if (origin === this) return;
+      ediag(
+        `[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`
+      );
       let encoder = createEncoder();
       writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)));
     }, this.doc.on("update", this.updateHandler);
@@ -22075,23 +22100,35 @@ var NoteProvider = class {
   /** Relay's broadcastMessage: send now if connected, else buffer for the next
    *  onopen flush. A refused send (transport down mid-flight) also buffers. */
   broadcast(frame) {
-    this.connected && this.send(frame) || this.buffer.push(frame);
+    let sent = this.connected && this.send(frame);
+    ediag(
+      `[EDIAG] broadcast note=${this.label} connected=${this.connected} sent=${sent} bufLen=${this.buffer.length}`
+    ), !sent && this.buffer.push(frame);
   }
-  /** Relay's onopen: advertise via syncStep1 and flush buffered updates. */
+  /** Relay's onopen: (re)connect the transport. */
   connect() {
     this.setConnected(!0);
+  }
+  /** Open (true) or close (false) this note's room. Advertising sends syncStep1
+   *  on connect + every reconnect (the down-sync pull). Un-advertising stops the
+   *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
+   *  work (idle notes converge over the fan-out without a room). */
+  setAdvertised(advertised) {
+    this.advertised = advertised, advertised && this.connected && this.sendSyncStep1();
   }
   setConnected(connected) {
     if (!connected) {
       this.connected = !1;
       return;
     }
-    this.connected = !0;
-    let encoder = createEncoder();
-    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)));
+    this.connected = !0, this.advertised && this.sendSyncStep1();
     let pending = this.buffer.splice(0);
     for (let frame of pending)
       this.send(frame) || this.buffer.push(frame);
+  }
+  sendSyncStep1() {
+    let encoder = createEncoder();
+    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)));
   }
   /** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
    *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
@@ -22144,6 +22181,22 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     this.opts = opts;
     this.entries = /* @__PURE__ */ new Map();
     this.connected = !1;
+    /** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
+     *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
+     *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
+     *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
+    this.enrolledIds = /* @__PURE__ */ new Set();
+  }
+  /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
+   *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
+  get enrolled() {
+    return this.enrolledIds;
+  }
+  /** Resident docs by note_id. `.has(id)` is the e2e `is_crdt_doc_resident`
+   *  probe; the persistent-doc model never frees an entry on reconnect, so this
+   *  only drops on a true delete/rename (removeDoc) or unload (destroyAll). */
+  get docs() {
+    return this.entries;
   }
   /** Wire key == note_id (matches the backend's bare-UUID crdt_msg). */
   docId(noteId) {
@@ -22163,9 +22216,13 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     if (cached)
       return await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), provider = new NoteProvider(doc2, {
+      label: noteId,
       // Create-ack gate: a held note reads as REFUSED so its frames buffer in
       // the provider and flush once the server row exists.
-      send: (frame) => this.opts.canSendLive && !this.opts.canSendLive(noteId) ? !1 : this.opts.send(noteId, frame),
+      send: (frame) => {
+        let gated = this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1, ok = gated ? !1 : this.opts.send(noteId, frame);
+        return ediag(`[EDIAG] providerSend note=${noteId} gated=${gated} sendOk=${ok}`), ok;
+      },
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -22275,9 +22332,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       doc2.destroy();
     }
   }
-  /** Relay: a fresh syncStep1 already delivers held ops as a state-vector diff,
-   *  so there is no separate full-state re-push (that was the doubling bug).
-   *  Re-advertise this note so the server pulls whatever it lacks. */
+  /** Create-ack flush: re-attempt the frames the create-gate (canSendLive) held
+   *  now that the server row exists. This is a SEND, not an enroll — a
+   *  newly-created note stays room-free (no syncStep1) exactly like a cold send;
+   *  it opens a room only when the editor binds it (enroll). setConnected re-runs
+   *  the buffered-frame flush without advertising. */
   async flushHeldState(noteId) {
     let e = await this.entry(noteId);
     this.connected && e.provider.setConnected(!0);
@@ -22288,27 +22347,31 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   async receive(noteId, frameB64) {
     (await this.entry(noteId)).provider.receive(frameB64);
   }
-  /** Begin/refresh sync for a note: ensure the provider exists and, if the
-   *  socket is up, advertise via syncStep1. (CrdtChannel.startSync +
+  /** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
+   *  pull) now and on every reconnect. Only open/live-bound notes call this; a
+   *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
+    this.enrolledIds.add(noteId);
     let e = await this.entry(noteId);
-    this.connected && e.provider.setConnected(!0);
+    e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
   enroll(noteId) {
-    this.startSync(noteId);
+    this.enrolledIds.add(noteId), this.startSync(noteId);
   }
-  /** Allow a fresh handshake (re-syncStep1 on next connect). With the persistent
-   *  provider this is a re-advertise, not a teardown. */
+  /** Close the room: stop advertising syncStep1 on reconnect. SEND/RECEIVE of
+   *  ops still work (the note converges over the fan-out); the server room idles
+   *  out. reset+enroll = a fresh re-handshake. */
   reset(noteId) {
+    this.enrolledIds.delete(noteId);
     let e = this.entries.get(noteId);
-    e && this.connected && e.provider.setConnected(!0);
+    e && (e.provider.setAdvertised(!1), e.provider.synced = !1);
   }
   resetSync(noteId) {
     this.reset(noteId);
   }
   resetAll() {
-    if (this.connected) for (let e of this.entries.values()) e.provider.setConnected(!0);
+    for (let id2 of [...this.enrolledIds]) this.reset(id2);
   }
   /** Socket (re)connected/dropped: fan out to every resident provider. On
    *  connect each re-advertises via syncStep1 — the reason the doc layer
