@@ -33,6 +33,14 @@ export interface NoteProviderOpts {
 	onSynced?: () => void;
 	/** Diagnostic label (the note_id) for [EDIAG] console breadcrumbs. */
 	label?: string;
+	/** Start MUTED: the doc's update handler ignores local updates until activate()
+	 *  is called. The registry sets this so the IndexedDB replay (y-indexeddb applies
+	 *  stored updates with no origin, which otherwise reads as a fresh local edit) is
+	 *  NOT re-broadcast to the server — the replayed state is already covered by the
+	 *  syncStep1 the provider sends on connect. Canonical y-websocket + y-indexeddb
+	 *  ordering: hydrate local persistence FIRST, then start network sync. Direct
+	 *  (no-persistence) callers omit this and broadcast immediately. */
+	deferActivation?: boolean;
 }
 
 export class NoteProvider {
@@ -47,6 +55,10 @@ export class NoteProvider {
 	 *  idle note never contributes to the server room fan-out (the connect-storm
 	 *  the fan-out design avoids). Set via setAdvertised on enroll. */
 	private advertised = false;
+	/** False while local persistence is still replaying into the doc: the update
+	 *  handler drops those (already-persisted) updates instead of broadcasting them.
+	 *  Flipped true by activate() once IndexedDB has finished loading. */
+	private active: boolean;
 	private send: ProviderSend;
 	private readonly onSynced?: () => void;
 	private readonly label?: string;
@@ -59,11 +71,15 @@ export class NoteProvider {
 		this.send = opts.send ?? (() => false);
 		this.onSynced = opts.onSynced;
 		this.label = opts.label;
+		this.active = !opts.deferActivation;
 		// Relay's _updateHandler: a LOCAL edit (origin !== this) becomes a sync
 		// UPDATE frame; a remote-applied op (origin === this, set by
-		// readSyncMessage below) is NOT re-sent — that's the echo guard.
+		// readSyncMessage below) is NOT re-sent — that's the echo guard. While
+		// inactive (IndexedDB still replaying), drop the update too: the replay is
+		// already-persisted state the server has, and re-broadcasting it forks the
+		// lineage into a non-converging storm (the file-switch wedge).
 		this.updateHandler = (update, origin) => {
-			if (origin === this) return;
+			if (origin === this || !this.active) return;
 			ediag(
 				`[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`,
 			);
@@ -73,6 +89,14 @@ export class NoteProvider {
 			this.broadcast(toB64(encoding.toUint8Array(encoder)));
 		};
 		this.doc.on("update", this.updateHandler);
+	}
+
+	/** Enable broadcasting of local doc updates. Call ONLY after local persistence
+	 *  has finished replaying (IndexedDB whenSynced), so the replayed state is not
+	 *  re-broadcast — syncStep1 on connect already advertises it. No-op if the
+	 *  provider started active (a direct, no-persistence caller). */
+	activate(): void {
+		this.active = true;
 	}
 
 	/** Swap the transport (e.g. after a socket reconnect built a fresh channel).

@@ -16606,9 +16606,7 @@ var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
     }
     let editorText = view.state.doc.toString();
     if (ytext.length === 0 && editorText.length > 0) {
-      ediag(
-        `[EDIAG] bindTo DEFER unseeded path=${path} editorLen=${editorText.length}`
-      ), this.deferUntilSeeded(view, path, ytext, epoch);
+      ediag(`[EDIAG] bindTo DEFER unseeded path=${path} editorLen=${editorText.length}`), this.deferUntilSeeded(view, path, ytext, epoch);
       return;
     }
     let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
@@ -22083,14 +22081,21 @@ var NoteProvider = class {
     /** Frames produced while the transport was down; flushed on reconnect. */
     this.buffer = [];
     var _a;
-    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.label = opts.label, this.updateHandler = (update, origin) => {
-      if (origin === this) return;
+    this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.label = opts.label, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
+      if (origin === this || !this.active) return;
       ediag(
         `[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`
       );
       let encoder = createEncoder();
       writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)));
     }, this.doc.on("update", this.updateHandler);
+  }
+  /** Enable broadcasting of local doc updates. Call ONLY after local persistence
+   *  has finished replaying (IndexedDB whenSynced), so the replayed state is not
+   *  re-broadcast — syncStep1 on connect already advertises it. No-op if the
+   *  provider started active (a direct, no-persistence caller). */
+  activate() {
+    this.active = !0;
   }
   /** Swap the transport (e.g. after a socket reconnect built a fresh channel).
    *  The doc + buffer are untouched. */
@@ -22217,6 +22222,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       return await cached.ready, cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), provider = new NoteProvider(doc2, {
       label: noteId,
+      // Start MUTED until IndexedDB replay finishes (activate() below): the
+      // replayed persisted state must NOT be re-broadcast as a fresh local edit
+      // (it forks the lineage → non-converging storm → the file-switch wedge).
+      // syncStep1 on connect advertises the hydrated state instead.
+      deferActivation: !0,
       // Create-ack gate: a held note reads as REFUSED so its frames buffer in
       // the provider and flush once the server row exists.
       send: (frame) => {
@@ -22255,7 +22265,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
         entry.pendingFlush === flush && (entry.pendingFlush = null);
       });
     }), entry.ready = persistence.whenSynced.then(() => {
-      this.connected && provider.setConnected(!0);
+      provider.activate(), this.connected && provider.setConnected(!0);
     }), this.entries.set(noteId, entry), await entry.ready, entry;
   }
   // --- Doc access (editor + sync engine) --------------------------------------

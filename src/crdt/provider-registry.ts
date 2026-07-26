@@ -121,6 +121,11 @@ export class ProviderRegistry {
 		const text = doc.getText(CONTENT_KEY);
 		const provider = new NoteProvider(doc, {
 			label: noteId,
+			// Start MUTED until IndexedDB replay finishes (activate() below): the
+			// replayed persisted state must NOT be re-broadcast as a fresh local edit
+			// (it forks the lineage → non-converging storm → the file-switch wedge).
+			// syncStep1 on connect advertises the hydrated state instead.
+			deferActivation: true,
 			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
 			// the provider and flush once the server row exists.
 			send: (frame) => {
@@ -172,6 +177,11 @@ export class ProviderRegistry {
 				});
 		});
 		entry.ready = persistence.whenSynced.then(() => {
+			// IndexedDB replay is done: the doc holds the persisted state and the
+			// replay updates were dropped (provider was muted). NOW start broadcasting
+			// local edits, then connect — setConnected sends syncStep1 (the state
+			// vector of the hydrated doc), so the server returns only the diff.
+			provider.activate();
 			if (this.connected) provider.setConnected(true);
 		});
 		this.entries.set(noteId, entry);
