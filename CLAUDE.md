@@ -173,5 +173,6 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - Editor-binding stale-buffer race (note content copied into a DIFFERENT file on file-switch, PR #194 — bindTo await gap, sync-detach-before-await + bindEpoch + drift view-identity-guard fix) → `docs/context/crdt-editor-bind-race-pollution.md`
 - Missed CRDT delivery healing (catch-up convergence: id adoption parity, base_hash CAS 409, pull backfill, socket vault-catchup via `catchupViaSocket()`) → `docs/context/sync-catchup-convergence.md`
 - Convergence sim tier fidelity gaps (`tests/sim/` — differential gate pays rent; seeded random-op suite does NOT converge, kept as a runnable tool not a test) → `docs/context/crdt-convergence-sim-fidelity-gaps.md`
+- A note that logs `re-handshake fired` and then goes silent forever (the create-ack gate swallowing syncStep1; plus how to read `ci-debug` client logs without misordering them) → `docs/context/crdt-pull-gated-by-create-ack.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
