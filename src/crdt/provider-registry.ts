@@ -13,15 +13,8 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { diffIntoYText, seedOnce } from "./bridge";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { projectNote } from "./frontmatter-codec";
+import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
-
-// Y.Doc shared-type keys — must match the backend + the old CrdtManager exactly
-// so IndexedDB stores and wire frames stay compatible during the cutover.
-const CONTENT_KEY = "content";
-const FRONTMATTER_KEY = "frontmatter";
-const RAW_FRONTMATTER_KEY = "frontmatter_raw";
-const ORDER_KEY = "frontmatter_order";
 
 export type DocKind = "note" | "canvas";
 
@@ -64,13 +57,8 @@ export class ProviderRegistry {
 
 	private project(entry: Entry): string {
 		if (entry.kind === "canvas") return projectCanvas(entry.doc);
-		const order = entry.doc.getArray<string>(ORDER_KEY).toArray();
-		const values = entry.doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
-		const raws = entry.doc.getMap<string>(RAW_FRONTMATTER_KEY).toJSON() as Record<
-			string,
-			string
-		>;
-		return projectNote(order, values, entry.text.toJSON(), raws);
+		const { order, values } = frontmatterOf(entry.doc);
+		return projectNote(order, values, entry.text.toJSON(), rawFrontmatterOf(entry.doc));
 	}
 
 	/** Open (or return the cached) provider for `noteId`, IndexedDB-hydrated. */

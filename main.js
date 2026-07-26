@@ -16671,6 +16671,14 @@ function stringify3(value, replacer, options) {
 }
 
 // src/crdt/frontmatter-codec.ts
+var FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
+function frontmatterOf(doc2) {
+  let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
+  return { order, values };
+}
+function rawFrontmatterOf(doc2) {
+  return doc2.getMap(RAW_FRONTMATTER_KEY).toJSON();
+}
 var FENCE = "---", CLOSE_MID = /\n---[ \t]*\r?\n/, CLOSE_EOF = /\n---[ \t]*\r?$/;
 function splitFrontmatter(raw) {
   if (!raw.startsWith(`${FENCE}
@@ -16750,15 +16758,7 @@ ${body}`;
 }
 
 // src/crdt/manager.ts
-var REMOTE_ORIGIN = "remote", FRONTMATTER_KEY = "frontmatter", RAW_FRONTMATTER_KEY = "frontmatter_raw", ORDER_KEY = "frontmatter_order", CONTENT_KEY = "content";
-function frontmatterOf(doc2) {
-  let order = doc2.getArray(ORDER_KEY).toArray(), values = doc2.getMap(FRONTMATTER_KEY).toJSON();
-  return { order, values };
-}
-function rawFrontmatterOf(doc2) {
-  return doc2.getMap(RAW_FRONTMATTER_KEY).toJSON();
-}
-var _CrdtManager = class _CrdtManager {
+var REMOTE_ORIGIN = "remote", _CrdtManager = class _CrdtManager {
   constructor(opts) {
     /** Keyed by docId (= the bare note_id — see `docId`). Every public method
      *  below takes a `noteId` parameter; since Task 6, callers pass the note's
@@ -17259,7 +17259,7 @@ var _CrdtManager = class _CrdtManager {
 _CrdtManager.MAX_CONTENT_BYTES = 5e5, _CrdtManager.MAX_CLIENT_IDS = 1e3;
 var CrdtManager = _CrdtManager;
 
-// src/crdt/channel.ts
+// src/crdt/wire.ts
 var MESSAGE_SYNC = 0;
 function toB64(bytes) {
   return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
@@ -17271,6 +17271,8 @@ function encodeUpdateFrame(update) {
   let encoder = createEncoder();
   return writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), toB64(toUint8Array(encoder));
 }
+
+// src/crdt/channel.ts
 var CrdtChannel = class {
   constructor(opts) {
     /**

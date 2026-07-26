@@ -18,19 +18,7 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
-
-/** Outer y-protocols message-type tag — we only speak messageSync (like Relay's
- *  messageSync = 0). Matches CrdtChannel's MESSAGE_SYNC so frames are wire-
- *  compatible with the existing backend. */
-const MESSAGE_SYNC = 0;
-
-function toB64(bytes: Uint8Array): string {
-	return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
-}
-
-function fromB64(b64: string): Uint8Array {
-	return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-}
+import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
 
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
  *  the frame could NOT be delivered (socket not joined) so the provider holds it

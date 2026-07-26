@@ -2,9 +2,12 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import { type CrdtManager, REMOTE_ORIGIN } from "./manager";
+// The frame codec lives in wire.ts (shared with the Relay-model NoteProvider).
+// Import for local use AND re-export the public names so existing importers of
+// `{ toB64 } from channel` keep working through the cutover.
+import { MESSAGE_SYNC, encodeUpdateFrame, fromB64, toB64 } from "./wire";
 
-/** Outer y-protocols message-type tag — we only speak `messageSync`. */
-const MESSAGE_SYNC = 0;
+export { encodeUpdateFrame, fromB64, toB64 };
 
 export interface CrdtChannelOptions {
 	manager: CrdtManager;
@@ -20,26 +23,6 @@ export interface CrdtChannelOptions {
 	 * wall-clock timer (the #547 down-sync race).
 	 */
 	onEmptyStep2?: (noteId: string) => void;
-}
-
-export function toB64(bytes: Uint8Array): string {
-	// Avoid spread-into-String.fromCharCode which stack-overflows on large updates.
-	return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(""));
-}
-
-export function fromB64(b64: string): Uint8Array {
-	return Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-}
-
-/** Wrap a raw Yjs v1 update as a base64 `messageSync` update frame — the EXACT
- *  encoding `sendUpdateRaw` puts on the wire. Shared so a batch genesis frame
- *  (`crdt_create_batch`) is byte-identical to a live `crdt_msg`, and both decode
- *  through the server's `SharedDoc.send_yjs_message` the same way. */
-export function encodeUpdateFrame(update: Uint8Array): string {
-	const encoder = encoding.createEncoder();
-	encoding.writeVarUint(encoder, MESSAGE_SYNC);
-	syncProtocol.writeUpdate(encoder, update);
-	return toB64(encoding.toUint8Array(encoder));
 }
 
 export class CrdtChannel {

@@ -3,7 +3,29 @@ import * as Y from "yjs";
 import { rlog } from "../remote-log";
 import { diffIntoYText, seedOnce } from "./bridge";
 import { canvasIsEmpty, projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { parseFrontmatter, projectNote, splitFrontmatter } from "./frontmatter-codec";
+import {
+	CONTENT_KEY,
+	FRONTMATTER_KEY,
+	ORDER_KEY,
+	RAW_FRONTMATTER_KEY,
+	frontmatterOf,
+	parseFrontmatter,
+	projectNote,
+	rawFrontmatterOf,
+	splitFrontmatter,
+} from "./frontmatter-codec";
+
+// Doc-key constants + frontmatter accessors now live in frontmatter-codec.ts
+// (single source of truth, shared with the Relay-model registry). Re-export so
+// this module's many importers are unaffected.
+export {
+	CONTENT_KEY,
+	FRONTMATTER_KEY,
+	frontmatterOf,
+	ORDER_KEY,
+	RAW_FRONTMATTER_KEY,
+	rawFrontmatterOf,
+};
 
 /**
  * A note's CRDT doc shape. `"note"` = markdown (frontmatter Y.Map + body
@@ -22,40 +44,6 @@ export type DocKind = "note" | "canvas";
  * marker without magic strings at the call sites.
  */
 export const REMOTE_ORIGIN = "remote";
-
-/** Y.Doc shared-type key for the frontmatter key-value map. */
-export const FRONTMATTER_KEY = "frontmatter";
-/**
- * Y.Doc shared-type key for the out-of-band raw-passthrough map: DEGRADED
- * frontmatter keys (ones the backend could not parse as YAML) mapped to their
- * verbatim source spans. Kept separate from FRONTMATTER_KEY so a normal
- * client-written value is never mis-read as a raw-passthrough marker. Mirrors
- * the backend CrdtBridge `@raw_frontmatter_name`.
- */
-export const RAW_FRONTMATTER_KEY = "frontmatter_raw";
-/** Y.Doc shared-type key for the ordered list of frontmatter keys. */
-export const ORDER_KEY = "frontmatter_order";
-/** Y.Doc shared-type key for the note body text. */
-export const CONTENT_KEY = "content";
-
-/**
- * Read the frontmatter structure from a Y.Doc.
- * Returns `{ order: [], values: {} }` for a fresh doc with no frontmatter data.
- */
-export function frontmatterOf(doc: Y.Doc): { order: string[]; values: Record<string, string> } {
-	const order = doc.getArray<string>(ORDER_KEY).toArray();
-	const values = doc.getMap<string>(FRONTMATTER_KEY).toJSON() as Record<string, string>;
-	return { order, values };
-}
-
-/**
- * Read the out-of-band degraded-key raw spans from a Y.Doc.
- * Returns `{}` for a doc with no degraded keys. Mirrors the backend
- * CrdtBridge.raw_frontmatter_of/1.
- */
-export function rawFrontmatterOf(doc: Y.Doc): Record<string, string> {
-	return doc.getMap<string>(RAW_FRONTMATTER_KEY).toJSON();
-}
 
 export interface CrdtManagerOptions {
 	/**
