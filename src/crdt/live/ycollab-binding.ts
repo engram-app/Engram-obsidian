@@ -20,6 +20,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { YSyncConfig, yCollab, yUndoManagerKeymap } from "y-codemirror.next";
 import type { Awareness } from "y-protocols/awareness";
 import * as Y from "yjs";
+import { ediag } from "../ediag";
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
 
 /** The single Compartment that holds the active note's yCollab binding. The
@@ -208,7 +209,17 @@ export function bindSpec(ytext: Y.Text, awareness: Awareness): BindResult {
 		}),
 	);
 
+	// DIAGNOSTIC: fires on every change in the BOUND view. Pairs with [EDIAG]
+	// localEdit (which fires when the Y.Text changes). Typing 5 chars should log 5
+	// editorDocChanged AND 5 localEdit. If editorDocChanged fires but localEdit does
+	// NOT, ySync is not forwarding this view's edits into the Y.Text (dead binding).
+	// If NEITHER fires, the typed editor is a different view than the bound one.
+	const keystrokeProbe = EditorView.updateListener.of((u) => {
+		if (u.docChanged) ediag(`[EDIAG] editorDocChanged ytextLen=${ytext.length}`);
+	});
+
 	const extension: Extension = [
+		keystrokeProbe,
 		captureExt,
 		ycollabExt,
 		// Layer 1: Prec.highest so this keymap beats Obsidian's built-in history

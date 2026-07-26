@@ -16060,7 +16060,9 @@ function installHangDiagnostics(snapshot) {
   }), window.addEventListener("error", (e) => {
     var _a, _b;
     let ev = e;
-    ediag(`[EDIAG] WINDOW-ERROR ${ev.message} @ ${ev.filename}:${ev.lineno} :: ${(_b = (_a = ev.error) == null ? void 0 : _a.stack) != null ? _b : ""}`);
+    ediag(
+      `[EDIAG] WINDOW-ERROR ${ev.message} @ ${ev.filename}:${ev.lineno} :: ${(_b = (_a = ev.error) == null ? void 0 : _a.stack) != null ? _b : ""}`
+    );
   });
   let hb = 0;
   window.setInterval(() => {
@@ -16562,6 +16564,9 @@ function bindSpec(ytext, awareness) {
   );
   return {
     extension: [
+      import_view.EditorView.updateListener.of((u) => {
+        u.docChanged && ediag(`[EDIAG] editorDocChanged ytextLen=${ytext.length}`);
+      }),
       captureExt,
       ycollabExt,
       // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
@@ -22224,7 +22229,10 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v6-hang-catcher (ProviderRegistry created)"), installHangDiagnostics(() => ({ docs: this.entries.size, enrolled: this.enrolledIds.size }));
+    ediag("[EDIAG] BUILD=v7-keystroke-probe (ProviderRegistry created)"), installHangDiagnostics(() => ({
+      docs: this.entries.size,
+      enrolled: this.enrolledIds.size
+    }));
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
