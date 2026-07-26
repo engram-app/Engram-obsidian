@@ -112,6 +112,8 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		this.reading = new CrdtReadingView({
 			getYText: (path) => this.getYText(path),
 			isReadingMode: (v) => v instanceof MdView && v.getMode() === "preview",
+			isBound: (path) => this.isBound(path),
+			onEditCaptured: (path) => this.requestSaveForBoundPath(path),
 		});
 	}
 

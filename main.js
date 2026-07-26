@@ -15619,7 +15619,13 @@ function textDiffToChangeSpec(before, after) {
   dmp.diff_cleanupSemantic(diffs);
   let changes = [], cursor = 0;
   for (let [op, data] of diffs)
-    op === 0 ? cursor += data.length : op === 1 ? changes.push({ from: cursor, to: cursor, insert: data }) : (changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length);
+    if (op === 0)
+      cursor += data.length;
+    else if (op === 1) {
+      let prev = changes[changes.length - 1];
+      prev && prev.to === cursor && prev.insert === "" ? prev.insert = data : changes.push({ from: cursor, to: cursor, insert: data });
+    } else
+      changes.push({ from: cursor, to: cursor + data.length, insert: "" }), cursor += data.length;
   return changes;
 }
 
@@ -15908,6 +15914,19 @@ function setPreviewRendered(view, text2) {
     return !1;
   }
 }
+function patchPreviewEdit(view, consume) {
+  let v = view, preview = v.previewMode, original = preview == null ? void 0 : preview.edit;
+  return !preview || typeof original != "function" || typeof v.getMode != "function" ? null : (preview.edit = (data) => {
+    var _a;
+    try {
+      if (((_a = v.getMode) == null ? void 0 : _a.call(v)) === "preview" && consume(data)) return;
+    } catch (e) {
+    }
+    original.call(preview, data);
+  }, () => {
+    preview.edit = original;
+  });
+}
 function patchFrontmatterSave(view, onSave) {
   let v = view;
   if (typeof v.saveFrontmatter != "function") return null;
@@ -15964,7 +15983,7 @@ var CrdtFrontmatterHook = class {
 };
 
 // src/crdt/live/reading-view.ts
-var CrdtReadingView = class {
+var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = class {
   constructor(deps) {
     this.observers = /* @__PURE__ */ new WeakMap();
     /** Strong-reference set so detachAll() can iterate all attached views.
@@ -15981,7 +16000,27 @@ var CrdtReadingView = class {
     let handler = () => {
       this.deps.isReadingMode(view) && setPreviewRendered(view, ytext.toJSON());
     };
-    ytext.observe(handler), this.observers.set(view, () => ytext.unobserve(handler));
+    ytext.observe(handler);
+    let unpatch = patchPreviewEdit(view, (fullText) => this.captureEdit(path, ytext, fullText));
+    this.observers.set(view, () => {
+      ytext.unobserve(handler), unpatch == null || unpatch();
+    });
+  }
+  /** Route an in-preview edit (checkbox toggle) into the Y.Text. Only takes the
+   *  edit when an editor pane also holds the path: without one, Obsidian's own
+   *  write reaches disk and the ordinary modify path routes it, so intercepting
+   *  would be a second write path for no gain. `fullText` is the whole file, so
+   *  the frontmatter block is sliced off to reach the body-only Y.Text. */
+  captureEdit(path, ytext, fullText) {
+    if (!this.deps.isBound(path)) return !1;
+    let doc2 = ytext.doc;
+    if (!doc2) return !1;
+    let body = fullText.slice(frontmatterPrefixLen(fullText)), changes = textDiffToChangeSpec(ytext.toJSON(), body);
+    if (changes.length > 0) {
+      let mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
+      doc2.transact(() => applyCmChangesToYText(ytext, mapped), READING_EDIT_ORIGIN), this.deps.onEditCaptured(path);
+    }
+    return !0;
   }
   detach(view) {
     if (typeof view != "object" || view === null) return;
@@ -16040,7 +16079,9 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       getYText: (path) => this.getYText(path)
     }), this.reading = new CrdtReadingView({
       getYText: (path) => this.getYText(path),
-      isReadingMode: (v) => v instanceof import_obsidian23.MarkdownView && v.getMode() === "preview"
+      isReadingMode: (v) => v instanceof import_obsidian23.MarkdownView && v.getMode() === "preview",
+      isBound: (path) => this.isBound(path),
+      onEditCaptured: (path) => this.requestSaveForBoundPath(path)
     });
   }
   // --- LiveBindingCoordinator (for the editor ViewPlugin) ---------------------

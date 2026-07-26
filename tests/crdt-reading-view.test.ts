@@ -8,6 +8,10 @@ function fakeView(): object {
 	return {};
 }
 
+/** Defaults for the preview-edit capture deps: no editor pane holds the path, so
+ *  the hook declines and Obsidian's own write runs (the pre-#6 behavior). */
+const noBinding = { isBound: () => false, onEditCaptured: () => {} };
+
 describe("CrdtReadingView", () => {
 	it("attach() registers the Y.Text observer exactly once even when called twice", async () => {
 		const doc = new Y.Doc();
@@ -24,6 +28,7 @@ describe("CrdtReadingView", () => {
 		const rv = new CrdtReadingView({
 			getYText: async () => ytext,
 			isReadingMode: () => true,
+			...noBinding,
 		});
 
 		await rv.attach(view, "n.md");
@@ -62,6 +67,7 @@ describe("CrdtReadingView", () => {
 				return callCount === 1 ? promiseA : promiseB;
 			},
 			isReadingMode: () => true,
+			...noBinding,
 		});
 
 		// Launch both attaches before either getYText resolves.
@@ -96,6 +102,7 @@ describe("CrdtReadingView", () => {
 		const rv = new CrdtReadingView({
 			getYText: async () => ytext,
 			isReadingMode: () => true,
+			...noBinding,
 		});
 
 		await rv.attach(view, "n.md");
@@ -130,6 +137,7 @@ describe("CrdtReadingView", () => {
 		const rv = new CrdtReadingView({
 			getYText: async () => ytext,
 			isReadingMode: () => true,
+			...noBinding,
 		});
 
 		await rv.attach(view1, "n1.md");
@@ -144,5 +152,107 @@ describe("CrdtReadingView", () => {
 		// (which would register observers again if the old ones were working).
 		await rv.attach(view1, "n1.md");
 		expect(observeCount).toBe(3); // fresh observer, not the old one
+	});
+});
+
+/** A reading view with the internals the preview-edit hook patches. */
+function fakePreviewView() {
+	const diskWrites: string[] = [];
+	return {
+		diskWrites,
+		getMode: () => "preview",
+		previewMode: {
+			edit(data: string) {
+				diskWrites.push(data);
+			},
+		},
+	};
+}
+
+describe("CrdtReadingView — preview-edit capture (#6)", () => {
+	it("routes a checkbox toggle into the Y.Text when an editor pane holds the path", async () => {
+		// THE BUG: with an editor pane bound, Obsidian's direct write is dropped as
+		// binding-owned, so the toggle never reached the Y.Text and got reverted.
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] task\nrest\n");
+
+		const saved: string[] = [];
+		const view = fakePreviewView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => true,
+			isBound: () => true,
+			onEditCaptured: (p) => saved.push(p),
+		});
+		await rv.attach(view, "n.md");
+
+		view.previewMode.edit("- [x] task\nrest\n");
+
+		expect(ytext.toJSON()).toBe("- [x] task\nrest\n");
+		expect(view.diskWrites).toEqual([]); // Obsidian's own write must not also run
+		expect(saved).toEqual(["n.md"]); // and the bound editor gets nudged to save
+	});
+
+	it("strips frontmatter before diffing into the body-only Y.Text", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] task\n");
+
+		const view = fakePreviewView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => true,
+			isBound: () => true,
+			onEditCaptured: () => {},
+		});
+		await rv.attach(view, "n.md");
+
+		// previewMode.edit hands over the WHOLE file, frontmatter included.
+		view.previewMode.edit("---\ntags: [a]\n---\n- [x] task\n");
+
+		expect(ytext.toJSON()).toBe("- [x] task\n");
+	});
+
+	it("leaves Obsidian's own write alone when no editor pane holds the path", async () => {
+		// Unbound: the disk write lands and the ordinary modify path routes it.
+		// Intercepting here would be a second write path for no gain.
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] task\n");
+
+		const view = fakePreviewView();
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => true,
+			isBound: () => false,
+			onEditCaptured: () => {},
+		});
+		await rv.attach(view, "n.md");
+
+		view.previewMode.edit("- [x] task\n");
+
+		expect(view.diskWrites).toEqual(["- [x] task\n"]);
+		expect(ytext.toJSON()).toBe("- [ ] task\n"); // untouched by us
+	});
+
+	it("detach() restores Obsidian's original previewMode.edit", async () => {
+		const doc = new Y.Doc();
+		const ytext = doc.getText("content");
+		ytext.insert(0, "- [ ] task\n");
+
+		const view = fakePreviewView();
+		const original = view.previewMode.edit;
+		const rv = new CrdtReadingView({
+			getYText: async () => ytext,
+			isReadingMode: () => true,
+			isBound: () => true,
+			onEditCaptured: () => {},
+		});
+		await rv.attach(view, "n.md");
+		expect(view.previewMode.edit).not.toBe(original);
+
+		rv.detach(view);
+		expect(view.previewMode.edit).toBe(original);
 	});
 });

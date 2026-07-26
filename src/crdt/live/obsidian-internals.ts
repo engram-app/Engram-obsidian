@@ -35,6 +35,38 @@ export function setPreviewRendered(view: unknown, text: string): boolean {
 	}
 }
 
+/** Obsidian's READING view applies in-preview edits — a checkbox toggle, an edited
+ *  embedded task — by calling `previewMode.edit(fullText)`, which writes the file
+ *  directly. For a note that is ALSO open in an editor pane the disk write is then
+ *  skipped as binding-owned, so the toggle never reaches the Y.Text and the next
+ *  paint reverts it. Relay's ViewHookPlugin Hook 3 patches the same method.
+ *
+ *  `consume` receives the view's full new text and returns true when it took the
+ *  edit (Obsidian's own write is then skipped) or false to fall through — which is
+ *  what a note with no live binding must do, since its ordinary disk-modify path
+ *  already routes the change correctly. Returns null when the internals are not the
+ *  expected shape, so an Obsidian change degrades to "no hook", never a crash. */
+export function patchPreviewEdit(
+	view: unknown,
+	consume: (fullText: string) => boolean,
+): (() => void) | null {
+	const v = view as { getMode?: () => string; previewMode?: { edit?: (data: string) => void } };
+	const preview = v.previewMode;
+	const original = preview?.edit;
+	if (!preview || typeof original !== "function" || typeof v.getMode !== "function") return null;
+	preview.edit = (data: string) => {
+		try {
+			if (v.getMode?.() === "preview" && consume(data)) return;
+		} catch {
+			// swallow: a hook failure must not break Obsidian's own edit path.
+		}
+		original.call(preview, data);
+	};
+	return () => {
+		preview.edit = original;
+	};
+}
+
 export function patchFrontmatterSave(
 	view: unknown,
 	onSave: (newText: string) => void,
