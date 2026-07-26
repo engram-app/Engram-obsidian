@@ -21376,7 +21376,7 @@ var NoteProvider = class {
   /** Relay's broadcastMessage: send now if connected, else buffer for the next
    *  onopen flush. A refused send (transport down mid-flight) also buffers. */
   broadcast(frame) {
-    this.connected && this.send(frame) || this.buffer.push(frame);
+    this.connected && this.send(frame, "op") || this.buffer.push(frame);
   }
   /** Relay's onopen: (re)connect the transport. */
   connect() {
@@ -21406,11 +21406,11 @@ var NoteProvider = class {
     this.connected = !0, this.advertised && !wasConnected && this.sendSyncStep1();
     let pending = this.buffer.splice(0);
     for (let frame of pending)
-      this.send(frame) || this.buffer.push(frame);
+      this.send(frame, "op") || this.buffer.push(frame);
   }
   sendSyncStep1() {
     let encoder = createEncoder();
-    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)));
+    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)), "pull");
   }
   /** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
    *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
@@ -21516,8 +21516,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // syncStep1 on connect advertises the hydrated state instead.
       deferActivation: !0,
       // Create-ack gate: a held note reads as REFUSED so its frames buffer in
-      // the provider and flush once the server row exists.
-      send: (frame) => (this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1) ? !1 : this.opts.send(noteId, frame),
+      // the provider and flush once the server row exists. OPS only — a
+      // "pull" (syncStep1) carries no content and is the sole way a note whose
+      // fan-out this device missed can converge, so gating it made the
+      // diverged-note heal a permanent no-op (#1130).
+      send: (frame, kind2) => (kind2 === "op" && this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1) ? !1 : this.opts.send(noteId, frame, kind2),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -21826,8 +21829,8 @@ function createCrdtWiring(deps) {
   }
   let unsentDocIds = /* @__PURE__ */ new Set(), registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
-    send: (docId, frame) => {
-      if (deps.canSendLive && !deps.canSendLive(docId))
+    send: (docId, frame, kind) => {
+      if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId))
         return unsentDocIds.add(docId), !1;
       let ok = deps.sendCrdt(docId, frame) !== !1;
       if (ok)

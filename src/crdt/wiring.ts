@@ -260,9 +260,16 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
-		send: (docId, frame) => {
-			// Create-before-edit: hold frames until the note's server row exists.
-			if (deps.canSendLive && !deps.canSendLive(docId)) {
+		send: (docId, frame, kind) => {
+			// Create-before-edit: hold OPS until the note's server row exists. Never
+			// hold a "pull" (syncStep1) — it carries no content, the server answers an
+			// unknown doc_id with note_not_found, and it is the only way a note this
+			// device holds no crdtHead for can converge. Holding it made
+			// socketConverge's diverged-note re-handshake a silent no-op for every
+			// note discovered via note_changed whose Yjs fan-out was missed (#1130,
+			// e2e test_48): hasServerNote stayed false forever, so the heal frame was
+			// dropped and the note never caught up.
+			if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId)) {
 				unsentDocIds.add(docId);
 				return false;
 			}

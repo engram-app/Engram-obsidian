@@ -20,10 +20,18 @@ import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
 import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
 
+/** What a frame is FOR, so a transport can gate the two classes differently:
+ *  `"pull"` is syncStep1 — a bare state vector requesting the peer's ops, no
+ *  content. `"op"` is everything else (local updates, syncStep2 replies) —
+ *  content leaving this device. The create-before-edit gate holds `"op"` only:
+ *  holding a `"pull"` makes a note that missed its fan-out permanently deaf
+ *  (#1130). */
+export type FrameKind = "pull" | "op";
+
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
  *  the frame could NOT be delivered (socket not joined) so the provider holds it
  *  and flushes on reconnect — mirroring Relay's `wsconnected` buffer gate. */
-export type ProviderSend = (frame: string) => boolean;
+export type ProviderSend = (frame: string, kind: FrameKind) => boolean;
 
 export interface NoteProviderOpts {
 	send?: ProviderSend;
@@ -115,7 +123,7 @@ export class NoteProvider {
 	/** Relay's broadcastMessage: send now if connected, else buffer for the next
 	 *  onopen flush. A refused send (transport down mid-flight) also buffers. */
 	private broadcast(frame: string): void {
-		const sent = this.connected && this.send(frame);
+		const sent = this.connected && this.send(frame, "op");
 		if (sent) return;
 		this.buffer.push(frame);
 	}
@@ -159,8 +167,10 @@ export class NoteProvider {
 		if (this.advertised && !wasConnected) this.sendSyncStep1();
 		// Flush anything buffered while offline; re-buffer whatever is still refused.
 		const pending = this.buffer.splice(0);
+		// Only `broadcast` buffers, and it only ever buffers ops — syncStep1 is
+		// re-derived from the live state vector on each connect edge, never replayed.
 		for (const frame of pending) {
-			if (!this.send(frame)) this.buffer.push(frame);
+			if (!this.send(frame, "op")) this.buffer.push(frame);
 		}
 	}
 
@@ -168,7 +178,7 @@ export class NoteProvider {
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
-		this.send(toB64(encoding.toUint8Array(encoder)));
+		this.send(toB64(encoding.toUint8Array(encoder)), "pull");
 	}
 
 	/** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an

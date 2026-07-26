@@ -17,7 +17,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
+import * as Y from "yjs";
+import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { NoteProvider } from "../src/crdt/note-provider";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { CRDT_HEAD_CREATED, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
@@ -74,6 +77,89 @@ describe("create-ack gate on live send", () => {
 		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
 		expect(send).toHaveBeenCalled();
+		await mgr.destroyAll();
+	});
+
+	// #1130 (e2e test_48): the gate is CREATE-BEFORE-EDIT — it holds outbound
+	// OPS for a note whose server row may not exist yet. syncStep1 is a PULL
+	// (a bare state vector, no content), and it is the ONLY way a diverged
+	// note whose Yjs fan-out this device missed can ever converge. Gating it
+	// made `socketConverge`'s re-handshake a silent no-op for exactly those
+	// notes: a REST-created note discovered via note_changed sets no crdtHead,
+	// so hasServerNote stays false forever and the heal never reaches the wire.
+	// The server answers an unknown doc_id with note_not_found, so an
+	// un-acked pull is harmless.
+	test("enroll's syncStep1 PULL is NOT held by the create-ack gate", async () => {
+		const send = mock(() => true);
+		const mgr = new ProviderRegistry({
+			dbPrefix: "gate-step1-pull",
+			send,
+			onFlushToDisk: async () => {},
+			canSendLive: () => false, // no crdtHead recorded for this note
+		});
+		mgr.setConnected(true);
+		await mgr.startSync("note-1");
+		expect(send).toHaveBeenCalled();
+		await mgr.destroyAll();
+	});
+
+	// The whole #1130 shape end-to-end through the real sync protocol: this
+	// device holds no crdtHead for the note (its Yjs fan-out landed while the
+	// socket was down), the op-log row says the server's copy diverged, and the
+	// only recovery is socketConverge's reset+enroll. With the pull gated the
+	// server never hears the handshake and disk stays stale forever.
+	test("a headless note heals from the server over the enroll handshake", async () => {
+		const server = new Y.Doc();
+		server.getText(CONTENT_KEY).insert(0, "# V2\nUpdated while disconnected");
+		const peer = new NoteProvider(server);
+		const flushed: string[] = [];
+		const mgr = new ProviderRegistry({
+			dbPrefix: "gate-step1-heal",
+			send: (_id, frame) => {
+				queueMicrotask(() => peer.receive(frame));
+				return true;
+			},
+			onFlushToDisk: async (_id, content) => {
+				flushed.push(content);
+			},
+			canSendLive: () => false, // no crdtHead — the note is "unknown" to the gate
+		});
+		peer.setSend((frame) => {
+			void mgr.receive("note-1", frame);
+			return true;
+		});
+		peer.connect(); // the stand-in server's transport is up (it never advertises)
+		mgr.setConnected(true);
+
+		await mgr.startSync("note-1"); // socketConverge's enroll
+		await new Promise<void>((r) => setTimeout(r, 20));
+
+		expect(await mgr.projectedText("note-1")).toContain("Updated while disconnected");
+		expect(flushed.at(-1)).toContain("Updated while disconnected");
+		await mgr.destroyAll();
+		peer.destroy();
+	});
+
+	test("a held note still pulls on reconnect while its ops stay held", async () => {
+		const frames: string[] = [];
+		const send = mock((_id: string, frame: string) => {
+			frames.push(frame);
+			return true;
+		});
+		const mgr = new ProviderRegistry({
+			dbPrefix: "gate-step1-reconnect",
+			send,
+			onFlushToDisk: async () => {},
+			canSendLive: () => false,
+		});
+		mgr.setConnected(true);
+		await mgr.startSync("note-1");
+		const afterEnroll = frames.length;
+		await mgr.applyLocalEdit("note-1", "local edit"); // op — still held
+		expect(frames.length).toBe(afterEnroll);
+		mgr.setConnected(false);
+		mgr.setConnected(true); // reconnect re-advertises
+		expect(frames.length).toBeGreaterThan(afterEnroll);
 		await mgr.destroyAll();
 	});
 });
