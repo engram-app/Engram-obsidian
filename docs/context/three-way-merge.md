@@ -1,30 +1,78 @@
-# 3-Way Merge Conflict Resolution (v0.6.0)
+# 3-Way Merge — where an LCA still exists, and which one to use
 
-_Last verified: 2026-04-03_
+_Last verified: 2026-07-26_
 
-## How It Works
+**Read this before wiring `BaseStore` into anything.** Its content is stale for
+CRDT-synced notes, and the previous version of this doc said the opposite.
 
-When a conflict is detected (both local and remote changed since lastSync), the plugin attempts automatic 3-way merge before showing the conflict modal.
+## The CRDT era: there is normally no textual merge
 
-### Components
+`src/three-way-merge.ts` and `src/diff.ts` were **deleted** in #322 (Phase C,
+"commit to CRDT-only"). The legacy flow — detect conflict, `threeWayMerge(base,
+local, remote)`, else show the conflict modal — is gone. Yjs is the merge: a disk
+edit is diffed into the Y.Doc as a local edit (`applyLocalEdit`) and the CRDT
+converges it with remote history. See `reconcileColdStart` and
+`captureDiskDriftBeforeRemote` in `sync.ts`.
 
-1. **BaseStore** (`base-store.ts`) — Persists the "base" content (last-synced version) of each note. Stored via plugin data persistence.
-2. **threeWayMerge()** (`three-way-merge.ts`) — Uses `diff-match-patch` to merge local and remote against the base. Returns merged text or signals overlap.
-3. **diff engine** (`diff.ts`) — Myers' algorithm for line-level diffs, used by the conflict modal's visual diff display.
+So if you think you need a textual 3-way merge, first check whether the edit can
+just be routed into the Y.Doc instead. Usually it can.
 
-### Flow
+## BaseStore content is STALE for CRDT-synced notes
 
-```
-conflict detected
-  → baseStore.get(path) → has base content?
-    → yes: threeWayMerge(base, local, remote)
-      → clean merge: apply automatically, no modal
-      → overlap: show conflict modal with diff view
-    → no base: show conflict modal (can't 3-way merge without base)
-```
+`BaseStore` (`base-store.ts`) still exists and still stores last-synced content
+per path, but **only the REST paths refresh it**:
 
-### Edge Cases
+- `baseStore.set(...)` is called from the pull/push paths only (`sync.ts` ~5762,
+  5782, 5810, 7335), and each call is gated on `change.version != null`.
+- CRDT-delivered content goes through `recordCrdtBaseline()` (`sync.ts:1217`),
+  which updates **`syncState.hash` alone** — never the base content.
 
-- First sync has no base content — all conflicts go to modal
-- BaseStore is updated after every successful push or pull
-- If base content is stale (e.g., plugin was disabled during edits), merge may produce unexpected results — overlap detection catches most of these
+Consequence: for a note that is actively syncing over the CRDT socket, the stored
+base can be arbitrarily old. Building a patch from a stale base and applying it to
+current doc text re-creates the content-doubling class this repo has fought
+repeatedly (#846, #188, #234). `syncState.hash` *is* fresh — use
+`needsColdReconcile(path, content)` when a boolean "does disk diverge from the
+last-synced baseline" is all you need.
+
+## The one place a real LCA is still needed: the live-bind reconcile
+
+`decideReconcile` (`src/crdt/live/live-binding-decisions.ts`) runs once when a
+note's editor binds to its resident Y.Doc. If the user typed during the async
+hydration window, those keystrokes are in the CM buffer but not in the doc, while
+the doc may have hydrated from IndexedDB with server-newer content the editor
+never saw. Forwarding a whole-text `diff(docText -> editorText)` there deletes
+that remote content.
+
+The LCA used is **not** `BaseStore`. It is `LiveBindingValue.preEditText` — the
+editor's own full text immediately before the user's first keystroke this attach,
+tracked in the ViewPlugin:
+
+- set in `attach()`, and refreshed on every *programmatic* doc change while
+  `!ready` (Obsidian's file load is not a user event, and often lands after the
+  ViewPlugin was constructed against an empty editor);
+- frozen at the first `input`/`delete` user event;
+- rewound to `u.startState` on a same-path re-attach that carried a keystroke
+  (the genesis-adopt remap), and dropped to `null` across a real file switch.
+
+It is always fresh by construction, and it is exactly the ancestor of "what the
+user typed" and "what the doc already held".
+
+`mergeTypedEdits(base, editorText, docText)` then does `patch_make(base,
+editorText)` + `patch_apply(..., docText)`, so only the typed hunks land and every
+untouched region of the doc survives; the patch context re-locates hunks that
+remote text shifted. The dedicated `diff_match_patch` instance runs
+`Match_Threshold`/`Patch_DeleteThreshold` at **0.2** (vs the 0.5 defaults): in a
+note-sync path a misplaced hunk is silent corruption while a rejected hunk merely
+falls back, so it must reject early rather than guess.
+
+Fallback to the old two-way forward (user's keystrokes win) when there is no base,
+when the doc has not diverged from the base, or when **any** hunk fails to apply.
+
+## Gotchas
+
+- A "3-way merge" that reaches for `BaseStore` is almost certainly wrong now. Ask
+  what the true common ancestor is and whether it is fresh.
+- `dirty` (user typed during hydration) and "disk diverges from the baseline" are
+  different questions. The reconcile only answers the first; the second is
+  `needsColdReconcile`, and the disk-drift class is already handled by
+  `reconcileColdStart` / `captureDiskDriftBeforeRemote`.
