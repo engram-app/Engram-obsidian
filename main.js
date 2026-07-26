@@ -733,7 +733,7 @@ __export(main_exports, {
   shouldReuseLiveStream: () => shouldReuseLiveStream
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian25 = require("obsidian");
+var import_obsidian26 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
@@ -1969,8 +1969,8 @@ var _NoteChannel = class _NoteChannel {
       return;
     }
     if (event === "note_yjs_update" && payload) {
-      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq3 = Number.isInteger(rawSeq) ? rawSeq : void 0;
-      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq3));
+      let noteId = payload.note_id, b64 = payload.b64, head = payload.head, rawSeq = payload.seq, seq2 = Number.isInteger(rawSeq) ? rawSeq : void 0;
+      noteId && b64 && head && ((_j = this.onNoteYjsUpdate) == null || _j.call(this, noteId, b64, head, seq2));
       return;
     }
     if (event === "crdt_doc_ready" && payload) {
@@ -2324,8 +2324,8 @@ var import_obsidian3 = require("obsidian"), WidthMatchedInputSuggest = class ext
 };
 
 // src/folder-suggest.ts
-function folderSuggestions(allFolders, fragment2) {
-  let frag = fragment2.trim().toLowerCase();
+function folderSuggestions(allFolders, fragment) {
+  let frag = fragment.trim().toLowerCase();
   return allFolders.filter((f) => frag === "" || f.toLowerCase().includes(frag)).slice(0, 50);
 }
 var FolderInputSuggest = class extends WidthMatchedInputSuggest {
@@ -2531,8 +2531,8 @@ async function searchHybrid(query, ctx, opts, fuzzy) {
 }
 
 // src/tag-suggest.ts
-function tagSuggestions(allTags, fragment2, selected) {
-  let frag = fragment2.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
+function tagSuggestions(allTags, fragment, selected) {
+  let frag = fragment.trim().replace(/^#/, "").toLowerCase(), chosen = new Set(selected.map((t) => t.replace(/^#/, "").toLowerCase()));
   return allTags.filter((t) => {
     let lc = t.replace(/^#/, "").toLowerCase();
     return !chosen.has(lc) && (frag === "" || lc.includes(frag));
@@ -4606,9 +4606,9 @@ function renderEngramUrlSetting(ctx) {
       status.removeClasses(STATUS_CLASSES), status.setText("");
       return;
     }
-    let seq3 = ++probeSeq;
+    let seq2 = ++probeSeq;
     status.removeClasses(STATUS_CLASSES), status.addClass("is-checking"), status.setText("Checking server\u2026"), EngramApi.probeHealth(value).then((result) => {
-      seq3 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
+      seq2 === probeSeq && (status.removeClass("is-checking"), renderStatus(result));
     });
   };
   setting.addText((text2) => {
@@ -5805,7 +5805,6 @@ var Pair = class {
     this.left = left, this.right = right;
   }
 }, create5 = (left, right) => new Pair(left, right);
-var forEach2 = (arr, f) => arr.forEach((p) => f(p.left, p.right));
 
 // node_modules/lib0/prng.js
 var bool = (gen) => gen.next() >= 0.5, int53 = (gen, min2, max2) => floor(gen.next() * (max2 + 1 - min2) + min2);
@@ -6417,23 +6416,16 @@ ${err.toString()}`);
 var doc = (
   /** @type {Document} */
   typeof document != "undefined" ? document : {}
-), createElement = (name) => doc.createElement(name), createDocumentFragment = () => doc.createDocumentFragment(), $fragment = $custom((el) => el.nodeType === DOCUMENT_FRAGMENT_NODE), createTextNode = (text2) => doc.createTextNode(text2), domParser = (
+);
+var $fragment = $custom((el) => el.nodeType === DOCUMENT_FRAGMENT_NODE);
+var domParser = (
   /** @type {DOMParser} */
   typeof DOMParser != "undefined" ? new DOMParser() : null
 );
-var setAttributes = (el, attrs) => (forEach2(attrs, (key, value) => {
-  value === !1 ? el.removeAttribute(key) : value === !0 ? el.setAttribute(key, "") : el.setAttribute(key, value);
-}), el);
-var fragment = (children) => {
-  let fragment2 = createDocumentFragment();
-  for (let i = 0; i < children.length; i++)
-    appendChild(fragment2, children[i]);
-  return fragment2;
-}, append = (parent, nodes) => (appendChild(parent, fragment(nodes)), parent);
-var element = (name, attrs = [], children = []) => append(setAttributes(createElement(name), attrs), children), $element = $custom((el) => el.nodeType === ELEMENT_NODE);
-var text = createTextNode, $text = $custom((el) => el.nodeType === TEXT_NODE);
+var $element = $custom((el) => el.nodeType === ELEMENT_NODE);
+var $text = $custom((el) => el.nodeType === TEXT_NODE);
 var mapToStyleString = (m) => map(m, (value, key) => `${key}:${value};`).join("");
-var appendChild = (parent, child) => parent.appendChild(child), ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
+var ELEMENT_NODE = doc.ELEMENT_NODE, TEXT_NODE = doc.TEXT_NODE, CDATA_SECTION_NODE = doc.CDATA_SECTION_NODE, COMMENT_NODE = doc.COMMENT_NODE, DOCUMENT_NODE = doc.DOCUMENT_NODE, DOCUMENT_TYPE_NODE = doc.DOCUMENT_TYPE_NODE, DOCUMENT_FRAGMENT_NODE = doc.DOCUMENT_FRAGMENT_NODE, $node = $custom((el) => el.nodeType === DOCUMENT_NODE);
 
 // node_modules/lib0/symbol.js
 var create6 = Symbol;
@@ -7522,100 +7514,8 @@ var findRootTypeKey = (type) => {
     if (value === type)
       return key;
   throw unexpectedCase();
-}, isParentOf = (parent, child) => {
-  for (; child !== null; ) {
-    if (child.parent === parent)
-      return !0;
-    child = /** @type {AbstractType<any>} */
-    child.parent._item;
-  }
-  return !1;
 };
-var RelativePosition = class {
-  /**
-   * @param {ID|null} type
-   * @param {string|null} tname
-   * @param {ID|null} item
-   * @param {number} assoc
-   */
-  constructor(type, tname, item, assoc = 0) {
-    this.type = type, this.tname = tname, this.item = item, this.assoc = assoc;
-  }
-}, relativePositionToJSON = (rpos) => {
-  let json = {};
-  return rpos.type && (json.type = rpos.type), rpos.tname && (json.tname = rpos.tname), rpos.item && (json.item = rpos.item), rpos.assoc != null && (json.assoc = rpos.assoc), json;
-}, createRelativePositionFromJSON = (json) => {
-  var _a;
-  return new RelativePosition(json.type == null ? null : createID(json.type.client, json.type.clock), (_a = json.tname) != null ? _a : null, json.item == null ? null : createID(json.item.client, json.item.clock), json.assoc == null ? 0 : json.assoc);
-}, AbsolutePosition = class {
-  /**
-   * @param {AbstractType<any>} type
-   * @param {number} index
-   * @param {number} [assoc]
-   */
-  constructor(type, index, assoc = 0) {
-    this.type = type, this.index = index, this.assoc = assoc;
-  }
-}, createAbsolutePosition = (type, index, assoc = 0) => new AbsolutePosition(type, index, assoc), createRelativePosition = (type, item, assoc) => {
-  let typeid = null, tname = null;
-  return type._item === null ? tname = findRootTypeKey(type) : typeid = createID(type._item.id.client, type._item.id.clock), new RelativePosition(typeid, tname, item, assoc);
-}, createRelativePositionFromTypeIndex = (type, index, assoc = 0) => {
-  let t = type._start;
-  if (assoc < 0) {
-    if (index === 0)
-      return createRelativePosition(type, null, assoc);
-    index--;
-  }
-  for (; t !== null; ) {
-    if (!t.deleted && t.countable) {
-      if (t.length > index)
-        return createRelativePosition(type, createID(t.id.client, t.id.clock + index), assoc);
-      index -= t.length;
-    }
-    if (t.right === null && assoc < 0)
-      return createRelativePosition(type, t.lastId, assoc);
-    t = t.right;
-  }
-  return createRelativePosition(type, null, assoc);
-};
-var getItemWithOffset = (store, id2) => {
-  let item = getItem(store, id2), diff = id2.clock - item.id.clock;
-  return {
-    item,
-    diff
-  };
-}, createAbsolutePositionFromRelativePosition = (rpos, doc2, followUndoneDeletions = !0) => {
-  let store = doc2.store, rightID = rpos.item, typeID = rpos.type, tname = rpos.tname, assoc = rpos.assoc, type = null, index = 0;
-  if (rightID !== null) {
-    if (getState(store, rightID.client) <= rightID.clock)
-      return null;
-    let res = followUndoneDeletions ? followRedone(store, rightID) : getItemWithOffset(store, rightID), right = res.item;
-    if (!(right instanceof Item))
-      return null;
-    if (type = /** @type {AbstractType<any>} */
-    right.parent, type._item === null || !type._item.deleted) {
-      index = right.deleted || !right.countable ? 0 : res.diff + (assoc >= 0 ? 0 : 1);
-      let n = right.left;
-      for (; n !== null; )
-        !n.deleted && n.countable && (index += n.length), n = n.left;
-    }
-  } else {
-    if (tname !== null)
-      type = doc2.get(tname);
-    else if (typeID !== null) {
-      if (getState(store, typeID.client) <= typeID.clock)
-        return null;
-      let { item } = followUndoneDeletions ? followRedone(store, typeID) : { item: getItem(store, typeID) };
-      if (item instanceof Item && item.content instanceof ContentType)
-        type = item.content.type;
-      else
-        return null;
-    } else
-      throw unexpectedCase();
-    assoc >= 0 ? index = type._length : index = 0;
-  }
-  return createAbsolutePosition(type, index, rpos.assoc);
-}, compareRelativePositions = (a, b) => a === b || a !== null && b !== null && a.tname === b.tname && compareIDs(a.item, b.item) && compareIDs(a.type, b.type) && a.assoc === b.assoc, Snapshot = class {
+var Snapshot = class {
   /**
    * @param {DeleteSet} ds
    * @param {Map<number,number>} sv state map
@@ -7829,222 +7729,6 @@ var cleanupTransactions = (transactionCleanups, i) => {
     }
   }
   return result;
-}, StackItem = class {
-  /**
-   * @param {DeleteSet} deletions
-   * @param {DeleteSet} insertions
-   */
-  constructor(deletions, insertions) {
-    this.insertions = insertions, this.deletions = deletions, this.meta = /* @__PURE__ */ new Map();
-  }
-}, clearUndoManagerStackItem = (tr, um, stackItem) => {
-  iterateDeletedStructs(tr, stackItem.deletions, (item) => {
-    item instanceof Item && um.scope.some((type) => type === tr.doc || isParentOf(
-      /** @type {AbstractType<any>} */
-      type,
-      item
-    )) && keepItem(item, !1);
-  });
-}, popStackItem = (undoManager, stack, eventType) => {
-  let _tr = null, doc2 = undoManager.doc, scope = undoManager.scope;
-  transact(doc2, (transaction) => {
-    for (; stack.length > 0 && undoManager.currStackItem === null; ) {
-      let store = doc2.store, stackItem = (
-        /** @type {StackItem} */
-        stack.pop()
-      ), itemsToRedo = /* @__PURE__ */ new Set(), itemsToDelete = [], performedChange = !1;
-      iterateDeletedStructs(transaction, stackItem.insertions, (struct) => {
-        if (struct instanceof Item) {
-          if (struct.redone !== null) {
-            let { item, diff } = followRedone(store, struct.id);
-            diff > 0 && (item = getItemCleanStart(transaction, createID(item.id.client, item.id.clock + diff))), struct = item;
-          }
-          !struct.deleted && scope.some((type) => type === transaction.doc || isParentOf(
-            /** @type {AbstractType<any>} */
-            type,
-            /** @type {Item} */
-            struct
-          )) && itemsToDelete.push(struct);
-        }
-      }), iterateDeletedStructs(transaction, stackItem.deletions, (struct) => {
-        struct instanceof Item && scope.some((type) => type === transaction.doc || isParentOf(
-          /** @type {AbstractType<any>} */
-          type,
-          struct
-        )) && // Never redo structs in stackItem.insertions because they were created and deleted in the same capture interval.
-        !isDeleted(stackItem.insertions, struct.id) && itemsToRedo.add(struct);
-      }), itemsToRedo.forEach((struct) => {
-        performedChange = redoItem(transaction, struct, itemsToRedo, stackItem.insertions, undoManager.ignoreRemoteMapChanges, undoManager) !== null || performedChange;
-      });
-      for (let i = itemsToDelete.length - 1; i >= 0; i--) {
-        let item = itemsToDelete[i];
-        undoManager.deleteFilter(item) && (item.delete(transaction), performedChange = !0);
-      }
-      undoManager.currStackItem = performedChange ? stackItem : null;
-    }
-    transaction.changed.forEach((subProps, type) => {
-      subProps.has(null) && type._searchMarker && (type._searchMarker.length = 0);
-    }), _tr = transaction;
-  }, undoManager);
-  let res = undoManager.currStackItem;
-  if (res != null) {
-    let changedParentTypes = _tr.changedParentTypes;
-    undoManager.emit("stack-item-popped", [{ stackItem: res, type: eventType, changedParentTypes, origin: undoManager }, undoManager]), undoManager.currStackItem = null;
-  }
-  return res;
-}, UndoManager = class extends ObservableV2 {
-  /**
-   * @param {Doc|AbstractType<any>|Array<AbstractType<any>>} typeScope Limits the scope of the UndoManager. If this is set to a ydoc instance, all changes on that ydoc will be undone. If set to a specific type, only changes on that type or its children will be undone. Also accepts an array of types.
-   * @param {UndoManagerOptions} options
-   */
-  constructor(typeScope, {
-    captureTimeout = 500,
-    captureTransaction = (_tr) => !0,
-    deleteFilter = () => !0,
-    trackedOrigins = /* @__PURE__ */ new Set([null]),
-    ignoreRemoteMapChanges = !1,
-    doc: doc2 = (
-      /** @type {Doc} */
-      isArray(typeScope) ? typeScope[0].doc : typeScope instanceof Doc ? typeScope : typeScope.doc
-    )
-  } = {}) {
-    super(), this.scope = [], this.doc = doc2, this.addToScope(typeScope), this.deleteFilter = deleteFilter, trackedOrigins.add(this), this.trackedOrigins = trackedOrigins, this.captureTransaction = captureTransaction, this.undoStack = [], this.redoStack = [], this.undoing = !1, this.redoing = !1, this.currStackItem = null, this.lastChange = 0, this.ignoreRemoteMapChanges = ignoreRemoteMapChanges, this.captureTimeout = captureTimeout, this.afterTransactionHandler = (transaction) => {
-      if (!this.captureTransaction(transaction) || !this.scope.some((type) => transaction.changedParentTypes.has(
-        /** @type {AbstractType<any>} */
-        type
-      ) || type === this.doc) || !this.trackedOrigins.has(transaction.origin) && (!transaction.origin || !this.trackedOrigins.has(transaction.origin.constructor)))
-        return;
-      let undoing = this.undoing, redoing = this.redoing, stack = undoing ? this.redoStack : this.undoStack;
-      undoing ? this.stopCapturing() : redoing || this.clear(!1, !0);
-      let insertions = new DeleteSet();
-      transaction.afterState.forEach((endClock, client) => {
-        let startClock = transaction.beforeState.get(client) || 0, len = endClock - startClock;
-        len > 0 && addToDeleteSet(insertions, client, startClock, len);
-      });
-      let now = getUnixTime(), didAdd = !1;
-      if (this.lastChange > 0 && now - this.lastChange < this.captureTimeout && stack.length > 0 && !undoing && !redoing) {
-        let lastOp = stack[stack.length - 1];
-        lastOp.deletions = mergeDeleteSets([lastOp.deletions, transaction.deleteSet]), lastOp.insertions = mergeDeleteSets([lastOp.insertions, insertions]);
-      } else
-        stack.push(new StackItem(transaction.deleteSet, insertions)), didAdd = !0;
-      !undoing && !redoing && (this.lastChange = now), iterateDeletedStructs(
-        transaction,
-        transaction.deleteSet,
-        /** @param {Item|GC} item */
-        (item) => {
-          item instanceof Item && this.scope.some((type) => type === transaction.doc || isParentOf(
-            /** @type {AbstractType<any>} */
-            type,
-            item
-          )) && keepItem(item, !0);
-        }
-      );
-      let changeEvent = [{ stackItem: stack[stack.length - 1], origin: transaction.origin, type: undoing ? "redo" : "undo", changedParentTypes: transaction.changedParentTypes }, this];
-      didAdd ? this.emit("stack-item-added", changeEvent) : this.emit("stack-item-updated", changeEvent);
-    }, this.doc.on("afterTransaction", this.afterTransactionHandler), this.doc.on("destroy", () => {
-      this.destroy();
-    });
-  }
-  /**
-   * Extend the scope.
-   *
-   * @param {Array<AbstractType<any> | Doc> | AbstractType<any> | Doc} ytypes
-   */
-  addToScope(ytypes) {
-    let tmpSet = new Set(this.scope);
-    ytypes = isArray(ytypes) ? ytypes : [ytypes], ytypes.forEach((ytype) => {
-      tmpSet.has(ytype) || (tmpSet.add(ytype), (ytype instanceof AbstractType ? ytype.doc !== this.doc : ytype !== this.doc) && warn("[yjs#509] Not same Y.Doc"), this.scope.push(ytype));
-    });
-  }
-  /**
-   * @param {any} origin
-   */
-  addTrackedOrigin(origin) {
-    this.trackedOrigins.add(origin);
-  }
-  /**
-   * @param {any} origin
-   */
-  removeTrackedOrigin(origin) {
-    this.trackedOrigins.delete(origin);
-  }
-  clear(clearUndoStack = !0, clearRedoStack = !0) {
-    (clearUndoStack && this.canUndo() || clearRedoStack && this.canRedo()) && this.doc.transact((tr) => {
-      clearUndoStack && (this.undoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item)), this.undoStack = []), clearRedoStack && (this.redoStack.forEach((item) => clearUndoManagerStackItem(tr, this, item)), this.redoStack = []), this.emit("stack-cleared", [{ undoStackCleared: clearUndoStack, redoStackCleared: clearRedoStack }]);
-    });
-  }
-  /**
-   * UndoManager merges Undo-StackItem if they are created within time-gap
-   * smaller than `options.captureTimeout`. Call `um.stopCapturing()` so that the next
-   * StackItem won't be merged.
-   *
-   *
-   * @example
-   *     // without stopCapturing
-   *     ytext.insert(0, 'a')
-   *     ytext.insert(1, 'b')
-   *     um.undo()
-   *     ytext.toString() // => '' (note that 'ab' was removed)
-   *     // with stopCapturing
-   *     ytext.insert(0, 'a')
-   *     um.stopCapturing()
-   *     ytext.insert(0, 'b')
-   *     um.undo()
-   *     ytext.toString() // => 'a' (note that only 'b' was removed)
-   *
-   */
-  stopCapturing() {
-    this.lastChange = 0;
-  }
-  /**
-   * Undo last changes on type.
-   *
-   * @return {StackItem?} Returns StackItem if a change was applied
-   */
-  undo() {
-    this.undoing = !0;
-    let res;
-    try {
-      res = popStackItem(this, this.undoStack, "undo");
-    } finally {
-      this.undoing = !1;
-    }
-    return res;
-  }
-  /**
-   * Redo last undo operation.
-   *
-   * @return {StackItem?} Returns StackItem if a change was applied
-   */
-  redo() {
-    this.redoing = !0;
-    let res;
-    try {
-      res = popStackItem(this, this.redoStack, "redo");
-    } finally {
-      this.redoing = !1;
-    }
-    return res;
-  }
-  /**
-   * Are undo steps available?
-   *
-   * @return {boolean} `true` if undo is possible
-   */
-  canUndo() {
-    return this.undoStack.length > 0;
-  }
-  /**
-   * Are redo steps available?
-   *
-   * @return {boolean} `true` if redo is possible
-   */
-  canRedo() {
-    return this.redoStack.length > 0;
-  }
-  destroy() {
-    this.trackedOrigins.delete(this), this.doc.off("afterTransaction", this.afterTransactionHandler), super.destroy();
-  }
 };
 function* lazyStructReaderGenerator(decoder) {
   let numOfStateUpdates = readVarUint(decoder.restDecoder);
@@ -10046,10 +9730,10 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
    * @public
    */
   toDOM(_document = document, hooks = {}, binding) {
-    let fragment2 = _document.createDocumentFragment();
-    return binding !== void 0 && binding._createAssociation(fragment2, this), typeListForEach(this, (xmlType) => {
-      fragment2.insertBefore(xmlType.toDOM(_document, hooks, binding), null);
-    }), fragment2;
+    let fragment = _document.createDocumentFragment();
+    return binding !== void 0 && binding._createAssociation(fragment, this), typeListForEach(this, (xmlType) => {
+      fragment.insertBefore(xmlType.toDOM(_document, hooks, binding), null);
+    }), fragment;
   }
   /**
    * Inserts new content at an index.
@@ -11330,20 +11014,8 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
   getRef() {
     return 7;
   }
-}, readContentType = (decoder) => new ContentType(typeRefs[decoder.readTypeRef()](decoder)), followRedone = (store, id2) => {
-  let nextID = id2, diff = 0, item;
-  do
-    diff > 0 && (nextID = createID(nextID.client, nextID.clock + diff)), item = getItem(store, nextID), diff = nextID.clock - item.id.clock, nextID = item.redone;
-  while (nextID !== null && item instanceof Item);
-  return {
-    item,
-    diff
-  };
-}, keepItem = (item, keep) => {
-  for (; item !== null && item.keep !== keep; )
-    item.keep = keep, item = /** @type {AbstractType<any>} */
-    item.parent._item;
-}, splitItem = (transaction, leftItem, diff) => {
+}, readContentType = (decoder) => new ContentType(typeRefs[decoder.readTypeRef()](decoder));
+var splitItem = (transaction, leftItem, diff) => {
   let { client, clock } = leftItem.id, rightItem = new Item(
     createID(client, clock + diff),
     leftItem,
@@ -11355,79 +11027,8 @@ var typeMapGetAllSnapshot = (parent, snapshot) => {
     leftItem.content.splice(diff)
   );
   return leftItem.deleted && rightItem.markDeleted(), leftItem.keep && (rightItem.keep = !0), leftItem.redone !== null && (rightItem.redone = createID(leftItem.redone.client, leftItem.redone.clock + diff)), leftItem.right = rightItem, rightItem.right !== null && (rightItem.right.left = rightItem), transaction._mergeStructs.push(rightItem), rightItem.parentSub !== null && rightItem.right === null && rightItem.parent._map.set(rightItem.parentSub, rightItem), leftItem.length = diff, rightItem;
-}, isDeletedByUndoStack = (stack, id2) => some(
-  stack,
-  /** @param {StackItem} s */
-  (s) => isDeleted(s.deletions, id2)
-), redoItem = (transaction, item, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) => {
-  let doc2 = transaction.doc, store = doc2.store, ownClientID = doc2.clientID, redone = item.redone;
-  if (redone !== null)
-    return getItemCleanStart(transaction, redone);
-  let parentItem = (
-    /** @type {AbstractType<any>} */
-    item.parent._item
-  ), left = null, right;
-  if (parentItem !== null && parentItem.deleted === !0) {
-    if (parentItem.redone === null && (!redoitems.has(parentItem) || redoItem(transaction, parentItem, redoitems, itemsToDelete, ignoreRemoteMapChanges, um) === null))
-      return null;
-    for (; parentItem.redone !== null; )
-      parentItem = getItemCleanStart(transaction, parentItem.redone);
-  }
-  let parentType = parentItem === null ? (
-    /** @type {AbstractType<any>} */
-    item.parent
-  ) : (
-    /** @type {ContentType} */
-    parentItem.content.type
-  );
-  if (item.parentSub === null) {
-    for (left = item.left, right = item; left !== null; ) {
-      let leftTrace = left;
-      for (; leftTrace !== null && /** @type {AbstractType<any>} */
-      leftTrace.parent._item !== parentItem; )
-        leftTrace = leftTrace.redone === null ? null : getItemCleanStart(transaction, leftTrace.redone);
-      if (leftTrace !== null && /** @type {AbstractType<any>} */
-      leftTrace.parent._item === parentItem) {
-        left = leftTrace;
-        break;
-      }
-      left = left.left;
-    }
-    for (; right !== null; ) {
-      let rightTrace = right;
-      for (; rightTrace !== null && /** @type {AbstractType<any>} */
-      rightTrace.parent._item !== parentItem; )
-        rightTrace = rightTrace.redone === null ? null : getItemCleanStart(transaction, rightTrace.redone);
-      if (rightTrace !== null && /** @type {AbstractType<any>} */
-      rightTrace.parent._item === parentItem) {
-        right = rightTrace;
-        break;
-      }
-      right = right.right;
-    }
-  } else {
-    if (right = null, item.right && !ignoreRemoteMapChanges) {
-      for (left = item; left !== null && left.right !== null && (left.right.redone || isDeleted(itemsToDelete, left.right.id) || isDeletedByUndoStack(um.undoStack, left.right.id) || isDeletedByUndoStack(um.redoStack, left.right.id)); )
-        for (left = left.right; left.redone; ) left = getItemCleanStart(transaction, left.redone);
-      if (left && left.right !== null)
-        return null;
-    } else
-      left = parentType._map.get(item.parentSub) || null;
-    left !== null && /** @type {AbstractType<any>} */
-    left.parent._item !== parentItem && (left = parentType._map.get(item.parentSub) || null);
-  }
-  let nextClock = getState(store, ownClientID), nextId = createID(ownClientID, nextClock), redoneItem = new Item(
-    nextId,
-    left,
-    left && left.lastId,
-    right,
-    right && right.id,
-    parentType,
-    item.parentSub,
-    item.content.copy()
-  );
-  return item.redone = nextId, keepItem(redoneItem, !0), redoneItem.integrate(transaction, 0), redoneItem;
-}, Item = class _Item extends AbstractStruct {
+};
+var Item = class _Item extends AbstractStruct {
   /**
    * @param {ID} id
    * @param {Item | null} left
@@ -12999,8 +12600,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   getCatchupSeq() {
     return this.catchupSeq;
   }
-  setCatchupSeq(seq3) {
-    this.catchupSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
+  setCatchupSeq(seq2) {
+    this.catchupSeq = Number.isFinite(seq2) && seq2 >= 0 ? seq2 : 0;
   }
   getCatchupId() {
     return this.catchupId;
@@ -13011,8 +12612,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   getManifestSeq() {
     return this.manifestSeq;
   }
-  setManifestSeq(seq3) {
-    this.manifestSeq = Number.isFinite(seq3) && seq3 >= 0 ? seq3 : 0;
+  setManifestSeq(seq2) {
+    this.manifestSeq = Number.isFinite(seq2) && seq2 >= 0 ? seq2 : 0;
   }
   /** Gap-heal decision for a live op carrying the backend's vault `seq`.
    *  `apply()` ALWAYS runs first, in every branch — Yjs updates are
@@ -13051,14 +12652,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  firing a replay round-trip per op raced the live path suite-wide. The
    *  trailing throttle keeps the heal guarantee (a true miss replays within
    *  SEQ_HEAL_COOLDOWN_MS) while bounding replay rate to one per window. */
-  async applyLiveOpWithSeq(noteId, seq3, apply) {
+  async applyLiveOpWithSeq(noteId, seq2, apply) {
     var _a;
     let landed = await apply();
-    if (landed === "applied" && Number.isInteger(seq3)) {
+    if (landed === "applied" && Number.isInteger(seq2)) {
       let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId), st = path ? this.syncState.get(path) : void 0;
-      path && st && (st.seq === void 0 || seq3 > st.seq) && this.syncState.set(path, { ...st, seq: seq3 });
+      path && st && (st.seq === void 0 || seq2 > st.seq) && this.syncState.set(path, { ...st, seq: seq2 });
     }
-    return !Number.isInteger(seq3) || seq3 <= this.catchupSeq ? landed === "applied" ? "applied" : "deferred" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq3} cursor=${this.catchupSeq}`), this.scheduleSeqHeal(), "healing");
+    return !Number.isInteger(seq2) || seq2 <= this.catchupSeq ? landed === "applied" ? "applied" : "deferred" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq2} cursor=${this.catchupSeq}`), this.scheduleSeqHeal(), "healing");
   }
   /** Trailing-edge throttle for heal-triggered seq replays: the first
    *  trigger fires immediately; triggers inside the cooldown coalesce into
@@ -14704,10 +14305,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!((_a = manifest == null ? void 0 : manifest.notes) != null && _a.length)) return 0;
     let cursor = this.getCatchupSeq(), minBehind = Number.POSITIVE_INFINITY, behind = 0;
     for (let entry of manifest.notes) {
-      let seq3 = entry.seq;
-      if (typeof seq3 != "number" || !Number.isFinite(seq3) || seq3 > cursor) continue;
+      let seq2 = entry.seq;
+      if (typeof seq2 != "number" || !Number.isFinite(seq2) || seq2 > cursor) continue;
       let stored = this.syncState.get((0, import_obsidian20.normalizePath)(entry.path)), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
-      seq3 > recorded && (behind++, seq3 < minBehind && (minBehind = seq3));
+      seq2 > recorded && (behind++, seq2 < minBehind && (minBehind = seq2));
     }
     if (behind === 0) return 0;
     let target = minBehind - 1;
@@ -15968,548 +15569,37 @@ var BaseStore = class {
   }
 };
 
-// src/crdt/live/live-views.ts
-var import_obsidian22 = require("obsidian");
-
-// node_modules/y-protocols/awareness.js
-var outdatedTimeout = 3e4, Awareness = class extends Observable {
-  /**
-   * @param {Y.Doc} doc
-   */
-  constructor(doc2) {
-    super(), this.doc = doc2, this.clientID = doc2.clientID, this.states = /* @__PURE__ */ new Map(), this.meta = /* @__PURE__ */ new Map(), this._checkInterval = /** @type {any} */
-    setInterval(() => {
-      let now = getUnixTime();
-      this.getLocalState() !== null && outdatedTimeout / 2 <= now - /** @type {{lastUpdated:number}} */
-      this.meta.get(this.clientID).lastUpdated && this.setLocalState(this.getLocalState());
-      let remove = [];
-      this.meta.forEach((meta, clientid) => {
-        clientid !== this.clientID && outdatedTimeout <= now - meta.lastUpdated && this.states.has(clientid) && remove.push(clientid);
-      }), remove.length > 0 && removeAwarenessStates(this, remove, "timeout");
-    }, floor(outdatedTimeout / 10)), doc2.on("destroy", () => {
-      this.destroy();
-    }), this.setLocalState({});
-  }
-  destroy() {
-    this.emit("destroy", [this]), this.setLocalState(null), super.destroy(), clearInterval(this._checkInterval);
-  }
-  /**
-   * @return {Object<string,any>|null}
-   */
-  getLocalState() {
-    return this.states.get(this.clientID) || null;
-  }
-  /**
-   * @param {Object<string,any>|null} state
-   */
-  setLocalState(state) {
-    let clientID = this.clientID, currLocalMeta = this.meta.get(clientID), clock = currLocalMeta === void 0 ? 0 : currLocalMeta.clock + 1, prevState = this.states.get(clientID);
-    state === null ? this.states.delete(clientID) : this.states.set(clientID, state), this.meta.set(clientID, {
-      clock,
-      lastUpdated: getUnixTime()
-    });
-    let added = [], updated = [], filteredUpdated = [], removed = [];
-    state === null ? removed.push(clientID) : prevState == null ? state != null && added.push(clientID) : (updated.push(clientID), equalityDeep(prevState, state) || filteredUpdated.push(clientID)), (added.length > 0 || filteredUpdated.length > 0 || removed.length > 0) && this.emit("change", [{ added, updated: filteredUpdated, removed }, "local"]), this.emit("update", [{ added, updated, removed }, "local"]);
-  }
-  /**
-   * @param {string} field
-   * @param {any} value
-   */
-  setLocalStateField(field, value) {
-    let state = this.getLocalState();
-    state !== null && this.setLocalState({
-      ...state,
-      [field]: value
-    });
-  }
-  /**
-   * @return {Map<number,Object<string,any>>}
-   */
-  getStates() {
-    return this.states;
-  }
-}, removeAwarenessStates = (awareness, clients, origin) => {
-  let removed = [];
-  for (let i = 0; i < clients.length; i++) {
-    let clientID = clients[i];
-    if (awareness.states.has(clientID)) {
-      if (awareness.states.delete(clientID), clientID === awareness.clientID) {
-        let curMeta = (
-          /** @type {MetaClientState} */
-          awareness.meta.get(clientID)
-        );
-        awareness.meta.set(clientID, {
-          clock: curMeta.clock + 1,
-          lastUpdated: getUnixTime()
-        });
-      }
-      removed.push(clientID);
-    }
-  }
-  removed.length > 0 && (awareness.emit("change", [{ added: [], updated: [], removed }, origin]), awareness.emit("update", [{ added: [], updated: [], removed }, origin]));
-};
+// src/crdt/live/live-binding.ts
+var import_state = require("@codemirror/state"), import_view = require("@codemirror/view"), import_obsidian22 = require("obsidian");
 
 // src/crdt/ediag.ts
-var ediag = (...args2) => console.log(...args2), hangDiagnosticsInstalled = !1;
-function installHangDiagnostics(snapshot) {
-  if (hangDiagnosticsInstalled || typeof window == "undefined") return;
-  hangDiagnosticsInstalled = !0, window.addEventListener("unhandledrejection", (e) => {
-    var _a, _b;
-    let r = e.reason;
-    ediag(`[EDIAG] UNHANDLED-REJECTION ${(_a = r == null ? void 0 : r.message) != null ? _a : r} :: ${(_b = r == null ? void 0 : r.stack) != null ? _b : "(no stack)"}`);
+var clog = (...args2) => console.log(...args2), ediag = (...args2) => {
+}, ediagAlways = (...args2) => clog(...args2), hangDiagnosticsInstalled = !1;
+function installHangDiagnostics(_snapshot) {
+  hangDiagnosticsInstalled || typeof window == "undefined" || (hangDiagnosticsInstalled = !0, window.addEventListener("unhandledrejection", (e) => {
+    let r = e.reason, msg = r instanceof Error ? r.message : String(r), stack = r instanceof Error ? r.stack : void 0;
+    ediagAlways(`[EDIAG] UNHANDLED-REJECTION ${msg} :: ${stack != null ? stack : "(no stack)"}`);
   }), window.addEventListener("error", (e) => {
-    var _a, _b;
-    let ev = e;
-    ediag(
-      `[EDIAG] WINDOW-ERROR ${ev.message} @ ${ev.filename}:${ev.lineno} :: ${(_b = (_a = ev.error) == null ? void 0 : _a.stack) != null ? _b : ""}`
+    let stack = e.error instanceof Error ? e.error.stack : void 0;
+    ediagAlways(
+      `[EDIAG] WINDOW-ERROR ${e.message} @ ${e.filename}:${e.lineno} :: ${stack != null ? stack : ""}`
     );
-  });
-  let hb = 0;
-  window.setInterval(() => {
-    let s = snapshot();
-    ediag(`[EDIAG] heartbeat #${++hb} docs=${s.docs} enrolled=${s.enrolled}`);
-  }, 5e3);
+  }));
 }
-
-// src/crdt/live/ycollab-binding.ts
-var import_state = require("@codemirror/state"), import_view = require("@codemirror/view");
-
-// node_modules/y-codemirror.next/src/index.js
-var cmView4 = __toESM(require("@codemirror/view"), 1), cmState4 = require("@codemirror/state");
-
-// node_modules/y-codemirror.next/src/y-range.js
-var YRange = class _YRange {
-  /**
-   * @param {Y.RelativePosition} yanchor
-   * @param {Y.RelativePosition} yhead
-   */
-  constructor(yanchor, yhead) {
-    this.yanchor = yanchor, this.yhead = yhead;
-  }
-  /**
-   * @returns {any}
-   */
-  toJSON() {
-    return {
-      yanchor: relativePositionToJSON(this.yanchor),
-      yhead: relativePositionToJSON(this.yhead)
-    };
-  }
-  /**
-   * @param {any} json
-   * @return {YRange}
-   */
-  static fromJSON(json) {
-    return new _YRange(createRelativePositionFromJSON(json.yanchor), createRelativePositionFromJSON(json.yhead));
-  }
-};
-
-// node_modules/y-codemirror.next/src/y-sync.js
-var cmState = __toESM(require("@codemirror/state"), 1), cmView = __toESM(require("@codemirror/view"), 1);
-var YSyncConfig = class {
-  constructor(ytext, awareness) {
-    this.ytext = ytext, this.awareness = awareness, this.undoManager = new UndoManager(ytext);
-  }
-  /**
-   * Helper function to transform an absolute index position to a Yjs-based relative position
-   * (https://docs.yjs.dev/api/relative-positions).
-   *
-   * A relative position can be transformed back to an absolute position even after the document has changed. The position is
-   * automatically adapted. This does not require any position transformations. Relative positions are computed based on
-   * the internal Yjs document model. Peers that share content through Yjs are guaranteed that their positions will always
-   * synced up when using relatve positions.
-   *
-   * ```js
-   * import { ySyncFacet } from 'y-codemirror'
-   *
-   * ..
-   * const ysync = view.state.facet(ySyncFacet)
-   * // transform an absolute index position to a ypos
-   * const ypos = ysync.getYPos(3)
-   * // transform the ypos back to an absolute position
-   * ysync.fromYPos(ypos) // => 3
-   * ```
-   *
-   * It cannot be guaranteed that absolute index positions can be synced up between peers.
-   * This might lead to undesired behavior when implementing features that require that all peers see the
-   * same marked range (e.g. a comment plugin).
-   *
-   * @param {number} pos
-   * @param {number} [assoc]
-   */
-  toYPos(pos, assoc = 0) {
-    return createRelativePositionFromTypeIndex(this.ytext, pos, assoc);
-  }
-  /**
-   * @param {Y.RelativePosition | Object} rpos
-   */
-  fromYPos(rpos) {
-    let pos = createAbsolutePositionFromRelativePosition(createRelativePositionFromJSON(rpos), this.ytext.doc);
-    if (pos == null || pos.type !== this.ytext)
-      throw new Error("[y-codemirror] The position you want to retrieve was created by a different document");
-    return {
-      pos: pos.index,
-      assoc: pos.assoc
-    };
-  }
-  /**
-   * @param {cmState.SelectionRange} range
-   * @return {YRange}
-   */
-  toYRange(range) {
-    let assoc = range.assoc, yanchor = this.toYPos(range.anchor, assoc), yhead = this.toYPos(range.head, assoc);
-    return new YRange(yanchor, yhead);
-  }
-  /**
-   * @param {YRange} yrange
-   */
-  fromYRange(yrange) {
-    let anchor = this.fromYPos(yrange.yanchor), head = this.fromYPos(yrange.yhead);
-    return anchor.pos === head.pos ? cmState.EditorSelection.cursor(head.pos, head.assoc) : cmState.EditorSelection.range(anchor.pos, head.pos);
-  }
-}, ySyncFacet = cmState.Facet.define({
-  combine(inputs) {
-    return inputs[inputs.length - 1];
-  }
-}), ySyncAnnotation = cmState.Annotation.define(), YSyncPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.view = view, this.conf = view.state.facet(ySyncFacet), this._observer = (event, tr) => {
-      if (tr.origin !== this.conf) {
-        let delta = event.delta, changes = [], pos = 0;
-        for (let i = 0; i < delta.length; i++) {
-          let d = delta[i];
-          d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : pos += d.retain;
-        }
-        view.dispatch({ changes, annotations: [ySyncAnnotation.of(this.conf)] });
-      }
-    }, this._ytext = this.conf.ytext, this._ytext.observe(this._observer);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    if (!update.docChanged || update.transactions.length > 0 && update.transactions[0].annotation(ySyncAnnotation) === this.conf)
-      return;
-    let ytext = this.conf.ytext;
-    ytext.doc.transact(() => {
-      let adj = 0;
-      update.changes.iterChanges((fromA, toA, fromB, toB, insert) => {
-        let insertText2 = insert.sliceString(0, insert.length, `
-`);
-        fromA !== toA && ytext.delete(fromA + adj, toA - fromA), insertText2.length > 0 && ytext.insert(fromA + adj, insertText2), adj += insertText2.length - (toA - fromA);
-      });
-    }, this.conf);
-  }
-  destroy() {
-    this._ytext.unobserve(this._observer);
-  }
-}, ySync = cmView.ViewPlugin.fromClass(YSyncPluginValue);
-
-// node_modules/y-codemirror.next/src/y-remote-selections.js
-var cmView2 = __toESM(require("@codemirror/view"), 1), cmState2 = __toESM(require("@codemirror/state"), 1);
-var yRemoteSelectionsTheme = cmView2.EditorView.baseTheme({
-  ".cm-ySelection": {},
-  ".cm-yLineSelection": {
-    padding: 0,
-    margin: "0px 2px 0px 4px"
-  },
-  ".cm-ySelectionCaret": {
-    position: "relative",
-    borderLeft: "1px solid black",
-    borderRight: "1px solid black",
-    marginLeft: "-1px",
-    marginRight: "-1px",
-    boxSizing: "border-box",
-    display: "inline"
-  },
-  ".cm-ySelectionCaretDot": {
-    borderRadius: "50%",
-    position: "absolute",
-    width: ".4em",
-    height: ".4em",
-    top: "-.2em",
-    left: "-.2em",
-    backgroundColor: "inherit",
-    transition: "transform .3s ease-in-out",
-    boxSizing: "border-box"
-  },
-  ".cm-ySelectionCaret:hover > .cm-ySelectionCaretDot": {
-    transformOrigin: "bottom center",
-    transform: "scale(0)"
-  },
-  ".cm-ySelectionInfo": {
-    position: "absolute",
-    top: "-1.05em",
-    left: "-1px",
-    fontSize: ".75em",
-    fontFamily: "serif",
-    fontStyle: "normal",
-    fontWeight: "normal",
-    lineHeight: "normal",
-    userSelect: "none",
-    color: "white",
-    paddingLeft: "2px",
-    paddingRight: "2px",
-    zIndex: 101,
-    transition: "opacity .3s ease-in-out",
-    backgroundColor: "inherit",
-    // these should be separate
-    opacity: 0,
-    transitionDelay: "0s",
-    whiteSpace: "nowrap"
-  },
-  ".cm-ySelectionCaret:hover > .cm-ySelectionInfo": {
-    opacity: 1,
-    transitionDelay: "0s"
-  }
-}), yRemoteSelectionsAnnotation = cmState2.Annotation.define(), YRemoteCaretWidget = class extends cmView2.WidgetType {
-  /**
-   * @param {string} color
-   * @param {string} name
-   */
-  constructor(color, name) {
-    super(), this.color = color, this.name = name;
-  }
-  toDOM() {
-    return (
-      /** @type {HTMLElement} */
-      element("span", [create5("class", "cm-ySelectionCaret"), create5("style", `background-color: ${this.color}; border-color: ${this.color}`)], [
-        text("\u2060"),
-        element("div", [
-          create5("class", "cm-ySelectionCaretDot")
-        ]),
-        text("\u2060"),
-        element("div", [
-          create5("class", "cm-ySelectionInfo")
-        ], [
-          text(this.name)
-        ]),
-        text("\u2060")
-      ])
-    );
-  }
-  eq(widget) {
-    return widget.color === this.color;
-  }
-  compare(widget) {
-    return widget.color === this.color;
-  }
-  updateDOM() {
-    return !1;
-  }
-  get estimatedHeight() {
-    return -1;
-  }
-  ignoreEvent() {
-    return !0;
-  }
-}, YRemoteSelectionsPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.conf = view.state.facet(ySyncFacet), this._listener = ({ added, updated, removed }, s, t) => {
-      added.concat(updated).concat(removed).findIndex((id2) => id2 !== this.conf.awareness.doc.clientID) >= 0 && view.dispatch({ annotations: [yRemoteSelectionsAnnotation.of([])] });
-    }, this._awareness = this.conf.awareness, this._awareness.on("change", this._listener), this.decorations = cmState2.RangeSet.of([]);
-  }
-  destroy() {
-    this._awareness.off("change", this._listener);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    let ytext = this.conf.ytext, ydoc = (
-      /** @type {Y.Doc} */
-      ytext.doc
-    ), awareness = this.conf.awareness, decorations = [], localAwarenessState = this.conf.awareness.getLocalState();
-    if (localAwarenessState != null) {
-      let hasFocus = update.view.hasFocus && update.view.dom.ownerDocument.hasFocus(), sel = hasFocus ? update.state.selection.main : null, currentAnchor = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.anchor), currentHead = localAwarenessState.cursor == null ? null : createRelativePositionFromJSON(localAwarenessState.cursor.head);
-      if (sel != null) {
-        let anchor = createRelativePositionFromTypeIndex(ytext, sel.anchor), head = createRelativePositionFromTypeIndex(ytext, sel.head);
-        (localAwarenessState.cursor == null || !compareRelativePositions(currentAnchor, anchor) || !compareRelativePositions(currentHead, head)) && awareness.setLocalStateField("cursor", {
-          anchor,
-          head
-        });
-      } else localAwarenessState.cursor != null && hasFocus && awareness.setLocalStateField("cursor", null);
-    }
-    awareness.getStates().forEach((state, clientid) => {
-      if (clientid === awareness.doc.clientID)
-        return;
-      let cursor = state.cursor;
-      if (cursor == null || cursor.anchor == null || cursor.head == null)
-        return;
-      let anchor = createAbsolutePositionFromRelativePosition(cursor.anchor, ydoc), head = createAbsolutePositionFromRelativePosition(cursor.head, ydoc);
-      if (anchor == null || head == null || anchor.type !== ytext || head.type !== ytext)
-        return;
-      let { color = "#30bced", name = "Anonymous" } = state.user || {}, colorLight = state.user && state.user.colorLight || color + "33", start = min(anchor.index, head.index), end = max(anchor.index, head.index), startLine = update.view.state.doc.lineAt(start), endLine = update.view.state.doc.lineAt(end);
-      if (startLine.number === endLine.number)
-        decorations.push({
-          from: start,
-          to: end,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        });
-      else {
-        decorations.push({
-          from: start,
-          to: startLine.from + startLine.length,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        }), decorations.push({
-          from: endLine.from,
-          to: end,
-          value: cmView2.Decoration.mark({
-            attributes: { style: `background-color: ${colorLight}` },
-            class: "cm-ySelection"
-          })
-        });
-        for (let i = startLine.number + 1; i < endLine.number; i++) {
-          let linePos = update.view.state.doc.line(i).from;
-          decorations.push({
-            from: linePos,
-            to: linePos,
-            value: cmView2.Decoration.line({
-              attributes: { style: `background-color: ${colorLight}`, class: "cm-yLineSelection" }
-            })
-          });
-        }
-      }
-      decorations.push({
-        from: head.index,
-        to: head.index,
-        value: cmView2.Decoration.widget({
-          side: head.index - anchor.index > 0 ? -1 : 1,
-          // the local cursor should be rendered outside the remote selection
-          block: !1,
-          widget: new YRemoteCaretWidget(color, name)
-        })
-      });
-    }), this.decorations = cmView2.Decoration.set(decorations, !0);
-  }
-}, yRemoteSelections = cmView2.ViewPlugin.fromClass(YRemoteSelectionsPluginValue, {
-  decorations: (v) => v.decorations
-});
-
-// node_modules/y-codemirror.next/src/y-undomanager.js
-var cmState3 = __toESM(require("@codemirror/state"), 1), cmView3 = __toESM(require("@codemirror/view"), 1);
-
-// node_modules/lib0/mutex.js
-var createMutex = () => {
-  let token = !0;
-  return (f, g) => {
-    if (token) {
-      token = !1;
-      try {
-        f();
-      } finally {
-        token = !0;
-      }
-    } else g !== void 0 && g();
-  };
-};
-
-// node_modules/y-codemirror.next/src/y-undomanager.js
-var YUndoManagerConfig = class {
-  /**
-   * @param {Y.UndoManager} undoManager
-   */
-  constructor(undoManager) {
-    this.undoManager = undoManager;
-  }
-  /**
-   * @param {any} origin
-   */
-  addTrackedOrigin(origin) {
-    this.undoManager.addTrackedOrigin(origin);
-  }
-  /**
-   * @param {any} origin
-   */
-  removeTrackedOrigin(origin) {
-    this.undoManager.removeTrackedOrigin(origin);
-  }
-  /**
-   * @return {boolean} Whether a change was undone.
-   */
-  undo() {
-    return this.undoManager.undo() != null;
-  }
-  /**
-   * @return {boolean} Whether a change was redone.
-   */
-  redo() {
-    return this.undoManager.redo() != null;
-  }
-}, yUndoManagerFacet = cmState3.Facet.define({
-  combine(inputs) {
-    return inputs[inputs.length - 1];
-  }
-}), yUndoManagerAnnotation = cmState3.Annotation.define(), YUndoManagerPluginValue = class {
-  /**
-   * @param {cmView.EditorView} view
-   */
-  constructor(view) {
-    this.view = view, this.conf = view.state.facet(yUndoManagerFacet), this._undoManager = this.conf.undoManager, this.syncConf = view.state.facet(ySyncFacet), this._beforeChangeSelection = null, this._mux = createMutex(), this._onStackItemAdded = ({ stackItem, changedParentTypes }) => {
-      changedParentTypes.has(this.syncConf.ytext) && this._beforeChangeSelection && !stackItem.meta.has(this) && stackItem.meta.set(this, this._beforeChangeSelection);
-    }, this._onStackItemPopped = ({ stackItem }) => {
-      let sel = stackItem.meta.get(this);
-      if (sel) {
-        let selection = this.syncConf.fromYRange(sel);
-        view.dispatch(view.state.update({
-          selection,
-          effects: [cmView3.EditorView.scrollIntoView(selection)]
-        })), this._storeSelection();
-      }
-    }, this._storeSelection = () => {
-      this._beforeChangeSelection = this.syncConf.toYRange(this.view.state.selection.main);
-    }, this._undoManager.on("stack-item-added", this._onStackItemAdded), this._undoManager.on("stack-item-popped", this._onStackItemPopped), this._undoManager.addTrackedOrigin(this.syncConf);
-  }
-  /**
-   * @param {cmView.ViewUpdate} update
-   */
-  update(update) {
-    update.selectionSet && (update.transactions.length === 0 || update.transactions[0].annotation(ySyncAnnotation) !== this.syncConf) && this._storeSelection();
-  }
-  destroy() {
-    this._undoManager.off("stack-item-added", this._onStackItemAdded), this._undoManager.off("stack-item-popped", this._onStackItemPopped), this._undoManager.removeTrackedOrigin(this.syncConf);
-  }
-}, yUndoManager = cmView3.ViewPlugin.fromClass(YUndoManagerPluginValue), undo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).undo() || !0, redo = ({ state, dispatch }) => state.facet(yUndoManagerFacet).redo() || !0;
-var yUndoManagerKeymap = [
-  { key: "Mod-z", run: undo, preventDefault: !0 },
-  { key: "Mod-y", mac: "Mod-Shift-z", run: redo, preventDefault: !0 },
-  { key: "Mod-Shift-z", run: redo, preventDefault: !0 }
-];
-
-// node_modules/y-codemirror.next/src/index.js
-var yCollab = (ytext, awareness, { undoManager = new UndoManager(ytext) } = {}) => {
-  let ySyncConfig = new YSyncConfig(ytext, awareness), plugins = [
-    ySyncFacet.of(ySyncConfig),
-    ySync
-  ];
-  return awareness && plugins.push(
-    yRemoteSelectionsTheme,
-    yRemoteSelections
-  ), undoManager !== !1 && plugins.push(
-    yUndoManagerFacet.of(new YUndoManagerConfig(undoManager)),
-    yUndoManager,
-    cmView4.EditorView.domEventHandlers({
-      beforeinput(e, view) {
-        return e.inputType === "historyUndo" ? undo(view) : e.inputType === "historyRedo" ? redo(view) : !1;
-      }
-    })
-  ), plugins;
-};
 
 // src/crdt/live/cm-yjs-bridge.ts
 var import_diff_match_patch = __toESM(require_diff_match_patch(), 1), dmp = new import_diff_match_patch.diff_match_patch();
+function yDeltaToChangeSpec(delta) {
+  let changes = [], pos = 0;
+  for (let d of delta)
+    d.insert != null ? changes.push({ from: pos, to: pos, insert: d.insert }) : d.delete != null ? (changes.push({ from: pos, to: pos + d.delete, insert: "" }), pos += d.delete) : d.retain != null && (pos += d.retain);
+  return changes;
+}
+function applyCmChangesToYText(ytext, changes) {
+  let adj = 0;
+  for (let c of changes)
+    c.fromA !== c.toA && ytext.delete(c.fromA + adj, c.toA - c.fromA), c.insert.length > 0 && ytext.insert(c.fromA + adj, c.insert), adj += c.insert.length - (c.toA - c.fromA);
+}
 function textDiffToChangeSpec(before, after) {
   if (before === after) return [];
   let diffs = dmp.diff_main(before, after);
@@ -16520,184 +15610,105 @@ function textDiffToChangeSpec(before, after) {
   return changes;
 }
 
-// src/crdt/live/ycollab-binding.ts
-var crdtCompartment = new import_state.Compartment();
-function ycollabExtension() {
-  return crdtCompartment.of([]);
+// src/crdt/live/live-binding.ts
+var ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
+function setLiveBindingCoordinator(c) {
+  coordinator = c;
 }
-function makeSyncAnnotationCapture(onCapture) {
-  let captured = !1;
-  return import_view.EditorView.updateListener.of((update) => {
-    if (!captured)
-      for (let tr of update.transactions) {
-        let rawAnnotations = tr.annotations;
-        if (rawAnnotations) {
-          for (let ann of rawAnnotations)
-            if (ann.value instanceof YSyncConfig) {
-              captured = !0, onCapture({ type: ann.type, conf: ann.value });
-              return;
-            }
-        }
-      }
-  });
+var viewSeq = 0;
+function editorPath(editor) {
+  var _a, _b;
+  let info = editor.state.field(import_obsidian22.editorInfoField, !1), path = (_b = (_a = info == null ? void 0 : info.file) == null ? void 0 : _a.path) != null ? _b : null;
+  return path != null && path.endsWith(".md") ? path : null;
 }
-function rerouteUndoFilter(router) {
-  return import_state.EditorState.transactionFilter.of((tr) => tr.isUserEvent("undo") ? (queueMicrotask(() => router.undo()), []) : tr.isUserEvent("redo") ? (queueMicrotask(() => router.redo()), []) : tr);
-}
-function handleUndoBeforeInput(inputType, router) {
-  return inputType === "historyUndo" ? (router.undo(), !0) : inputType === "historyRedo" ? (router.redo(), !0) : !1;
-}
-function bindSpec(ytext, awareness) {
-  let undoManager = new UndoManager(ytext, {
-    trackedOrigins: /* @__PURE__ */ new Set()
-  }), capturedAnnotation = null, captureExt = makeSyncAnnotationCapture((captured) => {
-    capturedAnnotation = captured;
-  }), ycollabExt = yCollab(ytext, awareness, { undoManager }), router = {
-    undo: () => undoManager.undo(),
-    redo: () => undoManager.redo()
-  }, beforeInputHandler = import_state.Prec.highest(
-    import_view.EditorView.domEventHandlers({
-      beforeinput(e) {
-        return handleUndoBeforeInput(e.inputType, router) ? (e.preventDefault(), !0) : !1;
-      }
-    })
-  );
-  return {
-    extension: [
-      import_view.EditorView.updateListener.of((u) => {
-        u.docChanged && ediag(`[EDIAG] editorDocChanged ytextLen=${ytext.length}`);
-      }),
-      captureExt,
-      ycollabExt,
-      // Layer 1: Prec.highest so this keymap beats Obsidian's built-in history
-      // Mod-z. yUndoManagerKeymap's handlers return true (preventDefault), so the
-      // native history does not also fire on the keyboard path.
-      import_state.Prec.highest(import_view.keymap.of(yUndoManagerKeymap)),
-      beforeInputHandler,
-      // Layer 3: catch any native-history transaction that beat Layers 1-2.
-      rerouteUndoFilter(router)
-    ],
-    getSyncAnnotation: () => capturedAnnotation
-  };
-}
-function reconcileEditorToYText(currentDoc, ytext) {
-  return textDiffToChangeSpec(currentDoc, ytext.toJSON());
-}
-
-// src/crdt/live/editor-controller.ts
-var DRIFT_CHECK_INTERVAL_MS = 3e3, seq = 0, EditorController = class {
-  constructor(deps) {
-    this.viewId = `cm-${seq++}`;
+var LiveBindingValue = class {
+  constructor(editor) {
+    this.viewId = `lb-${viewSeq++}`;
     this.path = null;
-    /** Set by release() (or destroy()) to cancel any in-flight bindTo awaiting
-     *  getYText. Once released, the controller is permanently inert: refresh()
-     *  drops it from the map and mints a fresh one on next refresh. */
-    this.released = !1;
-    /** Monotonic bind counter; a bindTo whose epoch is stale after its await
-     *  (a newer bindTo started meanwhile) aborts instead of clobbering it. */
-    this.bindEpoch = 0;
-    this.bindResult = null;
-    this.boundYtext = null;
-    this.driftTimer = null;
-    /** Set while a bind is deferred waiting for an unseeded Y.Doc to be seeded
-     *  by the server (see bindTo's data-loss guard). Holds the observed Y.Text +
-     *  its one-shot observer so detach()/release() can unhook it. */
-    this.pendingSeed = null;
-    this.deps = deps;
+    this.noteId = null;
+    this.ytext = null;
+    /** Forwarding local edits + painting deltas is active (post-reconcile). */
+    this.ready = !1;
+    this.destroyed = !1;
+    /** The permanent delta->editor observer, once live. */
+    this.observer = null;
+    /** One-shot observer waiting for an unseeded doc to receive its server seed. */
+    this.deferObserver = null;
+    this.editor = editor, this.attach();
   }
-  currentPath() {
-    return this.path;
-  }
-  async bindTo(view, path) {
-    var _a, _b;
-    if (this.path === path) return;
-    this.detach(view);
-    let epoch = ++this.bindEpoch, __t0 = Date.now(), ytext = await this.deps.getYText(path);
-    if (ediag(
-      `[EDIAG] bindTo getYText path=${path} epoch=${epoch} took=${Date.now() - __t0}ms ytextLen=${ytext.length}`
-    ), this.released || epoch !== this.bindEpoch) {
-      ediag(
-        `[EDIAG] bindTo ABORT stale-epoch path=${path} epoch=${epoch} cur=${this.bindEpoch} released=${this.released}`
-      );
+  update(u) {
+    if (this.destroyed) return;
+    let path = editorPath(this.editor), noteId = path && coordinator ? coordinator.resolveId(path) : null;
+    if (path !== this.path || noteId !== this.noteId) {
+      this.detach(), this.attach();
       return;
     }
-    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
-    if (shown !== void 0 && shown !== path) {
-      ediag(`[EDIAG] bindTo ABORT view-switched shown=${shown} path=${path}`);
-      return;
-    }
-    let editorText = view.state.doc.toString();
-    if (ytext.length === 0 && editorText.length > 0) {
-      ediag(`[EDIAG] bindTo DEFER unseeded path=${path} editorLen=${editorText.length}`), this.deferUntilSeeded(view, path, ytext, epoch);
-      return;
-    }
-    let changes = reconcileEditorToYText(editorText, ytext), result = bindSpec(ytext, this.deps.awareness());
-    view.dispatch({
-      changes,
-      effects: crdtCompartment.reconfigure(result.extension)
-    }), this.bindResult = result, this.boundYtext = ytext, this.path = path, this.deps.onBind(path, this.viewId), this.scheduleDriftCheck(view), ediag(`[EDIAG] bindTo BOUND path=${path} epoch=${epoch} ytextLen=${ytext.length}`);
+    if (!this.ready || !this.ytext || !u.docChanged || u.transactions.some((tr) => tr.annotation(ySyncAnnotation) === this.editor)) return;
+    let doc2 = this.ytext.doc;
+    if (!doc2) return;
+    let changes = [];
+    u.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+      changes.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, `
+`) });
+    });
+    let ytext = this.ytext;
+    doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
   }
-  /** Wait (one-shot) for an unseeded Y.Doc to receive its first content from the
-   *  server, then rebind. Never seeds the doc locally (that would double against
-   *  the server's lineage — the reason the doc is empty in the first place). A
-   *  newer bindTo (epoch bump) or release() unhooks this via detach(). */
-  deferUntilSeeded(view, path, ytext, epoch) {
-    let onSeed = () => {
-      ytext.length !== 0 && (this.unhookPendingSeed(), !(this.released || epoch !== this.bindEpoch) && (ediag(`[EDIAG] deferred onSeed REBIND path=${path} ytextLen=${ytext.length}`), this.bindTo(view, path)));
+  destroy() {
+    this.destroyed = !0, this.detach(), this.editor = null;
+  }
+  attach() {
+    let path = editorPath(this.editor);
+    if (this.path = path, this.noteId = null, this.ytext = null, this.ready = !1, !path || !coordinator) return;
+    let noteId = coordinator.resolveId(path), { text: text2, ready } = coordinator.residentText(noteId);
+    this.noteId = noteId, this.ytext = text2, coordinator.enroll(noteId), coordinator.onBind(path, this.viewId), ready.then(() => this.onReady(noteId, text2));
+  }
+  onReady(noteId, text2) {
+    this.destroyed || this.noteId !== noteId || this.ytext !== text2 || this.reconcileAndGoLive(text2);
+  }
+  /** Initial reconcile then activate. The doc is authoritative:
+   *  - doc has content         -> snap the editor to it (adopt), go live.
+   *  - doc empty, editor empty -> genuinely-empty note, go live.
+   *  - doc empty, editor body  -> NOT seeded yet. Do NOT seed locally (that forks
+   *    a second lineage against the server's -> #846 doubling / base loss). Defer
+   *    until the sync engine/server seeds the doc, then adopt. */
+  reconcileAndGoLive(text2) {
+    let editorText = this.editor.state.doc.toString(), docText = text2.toJSON();
+    if (docText.length === 0 && editorText.length > 0) {
+      ediagAlways(
+        `[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`
+      ), this.deferSeed(text2);
+      return;
+    }
+    editorText !== docText && this.editor.dispatch({
+      changes: textDiffToChangeSpec(editorText, docText),
+      annotations: [ySyncAnnotation.of(this.editor)]
+    }), this.goLive(text2);
+  }
+  deferSeed(text2) {
+    let onSeed = (_event, _tr) => {
+      if (this.destroyed || this.ytext !== text2) {
+        text2.unobserve(onSeed), this.deferObserver = null;
+        return;
+      }
+      text2.length !== 0 && (text2.unobserve(onSeed), this.deferObserver = null, this.reconcileAndGoLive(text2));
     };
-    this.pendingSeed = { ytext, onSeed }, ytext.observe(onSeed);
+    this.deferObserver = onSeed, text2.observe(onSeed);
   }
-  unhookPendingSeed() {
-    this.pendingSeed && (this.pendingSeed.ytext.unobserve(this.pendingSeed.onSeed), this.pendingSeed = null);
+  goLive(text2) {
+    this.observer = (event, tr) => {
+      if (this.destroyed || tr.origin === this) return;
+      let changes = yDeltaToChangeSpec(event.delta);
+      changes.length > 0 && this.editor.dispatch({ changes, annotations: [ySyncAnnotation.of(this.editor)] });
+    }, text2.observe(this.observer), this.ready = !0, ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text2.length}`);
   }
-  /** Force a rebind even when this.path already equals `path`. detach() clears
-   *  this.path SYNCHRONOUSLY (stopping keystrokes reaching the now-orphaned
-   *  doc immediately), so the subsequent bindTo does not short-circuit on the
-   *  path-equality guard and re-resolves getYText to the note's current id.
-   *  Used after a genesis ADOPT remaps path -> serverId under a live editor:
-   *  the PATH is unchanged (only the id under it moved), so refresh()'s bindTo
-   *  would no-op. The caller pre-seeds the serverId Y.Text with the editor's
-   *  content, so bindTo's reconcile is a no-op (no visible buffer change). */
-  forceRebind(view, path) {
-    this.detach(view), this.bindTo(view, path);
+  detach() {
+    this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && coordinator && coordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.path = null;
   }
-  release(view) {
-    this.released = !0, this.detach(view);
-  }
-  /** Clears the active binding NOW: compartment emptied, refcount released,
-   *  drift timer stopped. Unlike release(), the controller stays usable so
-   *  bindTo can re-bind the same view to a new path. */
-  detach(view) {
-    this.clearDriftTimer(), this.unhookPendingSeed(), this.bindResult = null, this.boundYtext = null, this.path && (ediag(`[EDIAG] detach path=${this.path}`), view.dispatch({ effects: crdtCompartment.reconfigure([]) }), this.deps.onRelease(this.path, this.viewId), this.path = null);
-  }
-  clearDriftTimer() {
-    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null);
-  }
-  scheduleDriftCheck(view) {
-    var _a;
-    this.clearDriftTimer(), this.driftTimer = window.setTimeout(() => {
-      this.driftTimer = null, this.runDriftCheck(view);
-    }, (_a = this.deps.driftIntervalMs) != null ? _a : DRIFT_CHECK_INTERVAL_MS);
-  }
-  runDriftCheck(view) {
-    var _a, _b;
-    if (this.released || this.boundYtext === null || this.bindResult === null) return;
-    let shown = (_b = (_a = this.deps).viewPath) == null ? void 0 : _b.call(_a);
-    if (shown !== void 0 && shown !== this.path) {
-      ediag(`[EDIAG] drift DETACH view-switched shown=${shown} bound=${this.path}`), this.detach(view);
-      return;
-    }
-    let changes = reconcileEditorToYText(view.state.doc.toString(), this.boundYtext);
-    if (changes.length > 0) {
-      let captured = this.bindResult.getSyncAnnotation();
-      captured !== null && view.dispatch({
-        changes,
-        annotations: [captured.type.of(captured.conf)]
-      });
-    }
-    this.scheduleDriftCheck(view);
-  }
-};
+}, liveBindingPlugin = import_view.ViewPlugin.fromClass(LiveBindingValue);
+
+// src/crdt/live/live-views.ts
+var import_obsidian23 = require("obsidian");
 
 // src/crdt/bridge.ts
 var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
@@ -16720,11 +15731,6 @@ function diffIntoYText(text2, incoming) {
 }
 
 // src/crdt/live/obsidian-internals.ts
-function getEditorViewForLeaf(view) {
-  var _a;
-  let cm = (_a = view == null ? void 0 : view.editor) == null ? void 0 : _a.cm;
-  return cm && typeof cm.dispatch == "function" ? cm : null;
-}
 function getMarkdownFilePath(view) {
   var _a;
   let path = (_a = view == null ? void 0 : view.file) == null ? void 0 : _a.path;
@@ -16852,18 +15858,15 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   }
 }, CrdtLiveViews = class {
   constructor(deps) {
-    /** Throwaway Y.Doc whose sole purpose is hosting the local-only Awareness. */
-    this.awarenessDoc = new Doc();
-    /** Single local-only awareness instance shared across all editor controllers. */
-    this.localAwareness = new Awareness(this.awarenessDoc);
-    /** One EditorController per live CodeMirror EditorView. */
-    this.controllers = /* @__PURE__ */ new Map();
     /** Fix wave 6: per-path trailing-debounce timers for `requestSaveForBoundPath`. */
     this.saveNudgeTimers = /* @__PURE__ */ new Map();
+    /** Last path each view's frontmatter/reading hooks were attached for, so a
+     *  file switch that reuses the view detaches the stale hooks before re-attach. */
+    this.hookPaths = /* @__PURE__ */ new WeakMap();
     /** Coalesce guard: one file switch fires active-leaf-change + file-open
      *  (± layout-change), each calling refresh(). Same-microtask duplicates
-     *  observe identical workspace state, so only the first need do the
-     *  O(open-leaves) rebind. Reset on the next microtask (see refresh). */
+     *  observe identical workspace state, so only the first need do the work.
+     *  Reset on the next microtask (see refresh). */
     this.refreshCoalescing = !1;
     this.deps = deps, this.refcount = new ViewerRefcount((path) => {
       this.onLastViewerRelease(path).catch((e) => {
@@ -16875,8 +15878,24 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       getYText: (path) => this.getYText(path)
     }), this.reading = new CrdtReadingView({
       getYText: (path) => this.getYText(path),
-      isReadingMode: (v) => v instanceof import_obsidian22.MarkdownView && v.getMode() === "preview"
+      isReadingMode: (v) => v instanceof import_obsidian23.MarkdownView && v.getMode() === "preview"
     });
+  }
+  // --- LiveBindingCoordinator (for the editor ViewPlugin) ---------------------
+  resolveId(path) {
+    return this.deps.resolveId(path);
+  }
+  residentText(noteId) {
+    return this.deps.manager.residentText(noteId);
+  }
+  enroll(noteId) {
+    this.deps.enrollment.enroll(noteId);
+  }
+  onBind(path, viewId) {
+    this.refcount.bind(path, viewId);
+  }
+  onRelease(path, viewId) {
+    this.refcount.release(path, viewId);
   }
   isBound(path) {
     return this.refcount.isBound(path);
@@ -16892,10 +15911,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *
    *  Debounced per path (trailing, `SAVE_NUDGE_DEBOUNCE_MS`) so a burst of
    *  deltas from one remote edit collapses to one save call. No-op when
-   *  `path` has no active viewer — nothing to nudge, and no burst to
-   *  coalesce (also means a note that closes mid-debounce simply never
-   *  fires, which is correct: the last-viewer-release flush below already
-   *  covers that case via `onLastViewerRelease`). Never throws. */
+   *  `path` has no active viewer. Never throws. */
   requestSaveForBoundPath(path) {
     if (!this.isBound(path)) return;
     let existing = this.saveNudgeTimers.get(path);
@@ -16911,7 +15927,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   boundBufferText(path) {
     for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (view instanceof import_obsidian22.MarkdownView && getMarkdownFilePath(view) === path)
+      if (view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path)
         return view.getViewData();
     }
     return null;
@@ -16920,22 +15936,18 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     try {
       for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
         let view = leaf.view;
-        view instanceof import_obsidian22.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
+        view instanceof import_obsidian23.MarkdownView && getMarkdownFilePath(view) === path && view.requestSave();
       }
     } catch (e) {
       devLog().log("crdt", `requestSaveForBoundPath failed for ${path}: ${errMsg(e)}`);
     }
   }
-  /** The last viewer of `path` left: persist the current Y.Text to disk, then
-   *  free the doc so the resident set stays bounded by open notes (closeDoc was
-   *  dead code before this — a Y.Doc leaked for every note ever visited in a
-   *  session). The IndexedDB store is preserved, so the note re-hydrates on next
-   *  open or remote update; no data loss. Skips the free if a new viewer bound
-   *  during the async flush (re-open race) — destroying a doc the editor just
-   *  re-bound to would break live sync. Returns the promise for tests. */
+  /** The last viewer of `path` left: persist the current Y.Text to disk. The doc
+   *  stays resident (Relay persistent-doc model — closeDoc is a no-op), so the
+   *  note keeps syncing and re-paints instantly on re-open. */
   async onLastViewerRelease(path) {
     let noteId = this.deps.resolveId(path), text2 = await this.deps.manager.getText(noteId);
-    await this.deps.flushToDisk(path, text2), this.refcount.isBound(path) || this.deps.manager.closeDoc(noteId);
+    await this.deps.flushToDisk(path, text2);
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
@@ -16943,72 +15955,35 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     let noteId = this.deps.resolveId(path);
     return (await this.deps.manager.getDoc(noteId)).getText("content");
   }
-  /** Re-evaluate open markdown leaves: bind each editor's controller to its
-   *  current path; release and drop controllers whose editor is gone.
-   *  Detaches frontmatter + reading hooks for views whose path changed before
-   *  re-attaching, so the idempotency guard does not block the rebind. */
+  /** Re-evaluate open markdown leaves: enroll each, and (re)attach the
+   *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
+   *  independently by the ViewPlugin (CM6-owned), so refresh() no longer binds
+   *  editors — it only covers the concerns without a per-view CM lifecycle. */
   refresh() {
-    if (this.refreshCoalescing) return;
-    this.refreshCoalescing = !0, queueMicrotask(() => {
-      this.refreshCoalescing = !1;
-    });
-    let seen = /* @__PURE__ */ new Set();
-    for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
-      let view = leaf.view;
-      if (!(view instanceof import_obsidian22.MarkdownView)) continue;
-      let path = getMarkdownFilePath(view);
-      if (!path || !path.endsWith(".md")) continue;
-      let cm = getEditorViewForLeaf(view);
-      if (!cm) continue;
-      seen.add(cm);
-      let ctrl = this.controllers.get(cm);
-      ctrl || (ediag(`[EDIAG] refresh: fresh editor instance for ${path} (binding)`), ctrl = new EditorController({
-        getYText: (p) => this.getYText(p),
-        awareness: () => this.localAwareness,
-        onBind: (p, id2) => this.refcount.bind(p, id2),
-        onRelease: (p, id2) => this.refcount.release(p, id2),
-        // The MdView owning this cm is stable for the cm's lifetime, but the
-        // FILE it displays is not (Obsidian reuses views across note
-        // switches) — this closure always reports the currently shown file.
-        viewPath: () => getMarkdownFilePath(view)
-      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path));
-      let compartment = crdtCompartment.get(cm.state);
-      ctrl.currentPath() === path && (!compartment || Array.isArray(compartment) && compartment.length === 0) ? (ediag(`[EDIAG] refresh: binding DROPPED (compartment empty) for ${path} \u2014 force rebind`), ctrl.forceRebind(cm, path)) : ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+    if (!this.refreshCoalescing) {
+      this.refreshCoalescing = !0, queueMicrotask(() => {
+        this.refreshCoalescing = !1;
+      });
+      for (let leaf of this.deps.app.workspace.getLeavesOfType("markdown")) {
+        let view = leaf.view;
+        if (!(view instanceof import_obsidian23.MarkdownView)) continue;
+        let path = getMarkdownFilePath(view);
+        if (!path || !path.endsWith(".md")) continue;
+        let prev = this.hookPaths.get(view);
+        prev !== void 0 && prev !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.hookPaths.set(view, path), this.deps.enrollment.enroll(this.deps.resolveId(path)), this.frontmatter.attach(view), this.reading.attach(view, path);
+      }
     }
-    for (let [cm, ctrl] of this.controllers)
-      seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
-  }
-  /** Force any editor controller currently showing `path` to re-resolve its
-   *  note_id and rebind. Used after a genesis ADOPT remaps path -> serverId:
-   *  the path is unchanged so refresh()'s bindTo short-circuits and the editor
-   *  stays on the orphaned mint doc. No-op when nothing shows the path. The
-   *  caller pre-seeds the serverId doc from the mint content, so the rebind's
-   *  reconcile is a no-op and no in-flight edit is lost. */
-  rebindPath(path) {
-    let norm = (0, import_obsidian22.normalizePath)(path);
-    for (let [cm, ctrl] of this.controllers) {
-      let cur = ctrl.currentPath();
-      cur !== null && (0, import_obsidian22.normalizePath)(cur) === norm && ctrl.forceRebind(cm, path);
-    }
-  }
-  /** Release + drop every editor controller WITHOUT tearing down awareness or
-   *  hooks — so no binding spans a Y.Doc teardown (replace-remote's crdtDelete
-   *  destroys docs whose files stay open). The next refresh() re-binds current
-   *  views with fresh controllers. */
-  detachAll() {
-    for (let [cm, ctrl] of this.controllers)
-      ctrl.release(cm), this.controllers.delete(cm);
   }
   destroy() {
-    for (let [cm, ctrl] of this.controllers)
-      ctrl.release(cm);
-    this.controllers.clear();
     for (let timer of this.saveNudgeTimers.values())
       window.clearTimeout(timer);
-    this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll(), this.localAwareness.destroy(), this.awarenessDoc.destroy();
+    this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll();
     for (let path of this.refcount.boundPaths()) {
       let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content));
+      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content)).catch((e) => {
+        var _a, _b;
+        return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
+      });
     }
   }
 };
@@ -18776,12 +17751,12 @@ var YAMLSeq = class extends Collection {
     isScalar(prev) && isScalarValue(value) ? prev.value = value : this.items[idx] = value;
   }
   toJSON(_, ctx) {
-    let seq3 = [];
-    ctx != null && ctx.onCreate && ctx.onCreate(seq3);
+    let seq2 = [];
+    ctx != null && ctx.onCreate && ctx.onCreate(seq2);
     let i = 0;
     for (let item of this.items)
-      seq3.push(toJS(item, String(i++), ctx));
-    return seq3;
+      seq2.push(toJS(item, String(i++), ctx));
+    return seq2;
   }
   toString(ctx, onComment, onChompKeep) {
     return ctx ? stringifyCollection(this, ctx, {
@@ -18793,7 +17768,7 @@ var YAMLSeq = class extends Collection {
     }) : JSON.stringify(this);
   }
   static from(schema4, obj, ctx) {
-    let { replacer } = ctx, seq3 = new this(schema4);
+    let { replacer } = ctx, seq2 = new this(schema4);
     if (obj && Symbol.iterator in Object(obj)) {
       let i = 0;
       for (let it of obj) {
@@ -18801,10 +17776,10 @@ var YAMLSeq = class extends Collection {
           let key = obj instanceof Set ? it : String(i++);
           it = replacer.call(obj, key, it);
         }
-        seq3.items.push(createNode(it, void 0, ctx));
+        seq2.items.push(createNode(it, void 0, ctx));
       }
     }
-    return seq3;
+    return seq2;
   }
 };
 function asItemIndex(key) {
@@ -18813,13 +17788,13 @@ function asItemIndex(key) {
 }
 
 // node_modules/yaml/browser/dist/schema/common/seq.js
-var seq2 = {
+var seq = {
   collection: "seq",
   default: !0,
   nodeClass: YAMLSeq,
   tag: "tag:yaml.org,2002:seq",
-  resolve(seq3, onError) {
-    return isSeq(seq3) || onError("Expected a sequence for this tag"), seq3;
+  resolve(seq2, onError) {
+    return isSeq(seq2) || onError("Expected a sequence for this tag"), seq2;
   },
   createNode: (schema4, obj, ctx) => YAMLSeq.from(schema4, obj, ctx)
 };
@@ -18946,7 +17921,7 @@ var intOct = {
 // node_modules/yaml/browser/dist/schema/core/schema.js
 var schema = [
   map2,
-  seq2,
+  seq,
   string,
   nullTag,
   boolTag,
@@ -19010,7 +17985,7 @@ var stringifyJSON = ({ value }) => JSON.stringify(value), jsonScalars = [
   resolve(str, onError) {
     return onError(`Unresolved plain scalar ${JSON.stringify(str)}`), str;
   }
-}, schema2 = [map2, seq2].concat(jsonScalars, jsonError);
+}, schema2 = [map2, seq].concat(jsonScalars, jsonError);
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/binary.js
 var binary = {
@@ -19058,11 +18033,11 @@ var binary = {
 };
 
 // node_modules/yaml/browser/dist/schema/yaml-1.1/pairs.js
-function resolvePairs(seq3, onError) {
+function resolvePairs(seq2, onError) {
   var _a;
-  if (isSeq(seq3))
-    for (let i = 0; i < seq3.items.length; ++i) {
-      let item = seq3.items[i];
+  if (isSeq(seq2))
+    for (let i = 0; i < seq2.items.length; ++i) {
+      let item = seq2.items[i];
       if (!isPair(item)) {
         if (isMap(item)) {
           item.items.length > 1 && onError("Each pair must have its own sequence indicator");
@@ -19075,12 +18050,12 @@ ${cn.comment}` : item.comment;
           }
           item = pair;
         }
-        seq3.items[i] = isPair(item) ? item : new Pair2(item);
+        seq2.items[i] = isPair(item) ? item : new Pair2(item);
       }
     }
   else
     onError("Expected a sequence for this tag");
-  return seq3;
+  return seq2;
 }
 function createPairs(schema4, iterable, ctx) {
   let { replacer } = ctx, pairs2 = new YAMLSeq(schema4);
@@ -19149,8 +18124,8 @@ var omap = {
   nodeClass: YAMLOMap,
   default: !1,
   tag: "tag:yaml.org,2002:omap",
-  resolve(seq3, onError) {
-    let pairs2 = resolvePairs(seq3, onError), seenKeys = [];
+  resolve(seq2, onError) {
+    let pairs2 = resolvePairs(seq2, onError), seenKeys = [];
     for (let { key } of pairs2.items)
       isScalar(key) && (seenKeys.includes(key.value) ? onError(`Ordered maps must not include duplicate keys: ${key.value}`) : seenKeys.push(key.value));
     return Object.assign(new YAMLOMap(), pairs2);
@@ -19396,7 +18371,7 @@ var intTime = {
 // node_modules/yaml/browser/dist/schema/yaml-1.1/schema.js
 var schema3 = [
   map2,
-  seq2,
+  seq,
   string,
   nullTag,
   trueTag,
@@ -19421,7 +18396,7 @@ var schema3 = [
 // node_modules/yaml/browser/dist/schema/tags.js
 var schemas = /* @__PURE__ */ new Map([
   ["core", schema],
-  ["failsafe", [map2, seq2, string]],
+  ["failsafe", [map2, seq, string]],
   ["json", schema2],
   ["yaml11", schema3],
   ["yaml-1.1", schema3]
@@ -19441,7 +18416,7 @@ var schemas = /* @__PURE__ */ new Map([
   null: nullTag,
   omap,
   pairs,
-  seq: seq2,
+  seq,
   set,
   timestamp
 }, coreKnownTags = {
@@ -19481,7 +18456,7 @@ function getTags(customTags, schemaName, addMergeTag) {
 // node_modules/yaml/browser/dist/schema/Schema.js
 var sortMapEntriesByKey = (a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0, Schema2 = class _Schema {
   constructor({ compat, customTags, merge: merge2, resolveKnownTags, schema: schema4, sortMapEntries, toStringDefaults }) {
-    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq2 }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
+    this.compat = Array.isArray(compat) ? getTags(compat, "compat") : compat ? getTags(null, compat) : null, this.name = typeof schema4 == "string" && schema4 || "core", this.knownTags = resolveKnownTags ? coreKnownTags : {}, this.tags = getTags(customTags, this.name, merge2), this.toStringOptions = toStringDefaults != null ? toStringDefaults : null, Object.defineProperty(this, MAP, { value: map2 }), Object.defineProperty(this, SCALAR, { value: string }), Object.defineProperty(this, SEQ, { value: seq }), this.sortMapEntries = typeof sortMapEntries == "function" ? sortMapEntries : sortMapEntries === !0 ? sortMapEntriesByKey : null;
   }
   clone() {
     let copy2 = Object.create(_Schema.prototype, Object.getOwnPropertyDescriptors(this));
@@ -19950,7 +18925,7 @@ function resolveBlockMap({ composeNode: composeNode2, composeEmptyNode: composeE
 // node_modules/yaml/browser/dist/compose/resolve-block-seq.js
 function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeEmptyNode2 }, ctx, bs, onError, tag) {
   var _a;
-  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq3 = new NodeClass(ctx.schema);
+  let NodeClass = (_a = tag == null ? void 0 : tag.nodeClass) != null ? _a : YAMLSeq, seq2 = new NodeClass(ctx.schema);
   ctx.atRoot && (ctx.atRoot = !1), ctx.atKey && (ctx.atKey = !1);
   let offset = bs.offset, commentEnd = null;
   for (let { start, value } of bs.items) {
@@ -19966,13 +18941,13 @@ function resolveBlockSeq({ composeNode: composeNode2, composeEmptyNode: composeE
       if (props.anchor || props.tag || value)
         (value == null ? void 0 : value.type) === "block-seq" ? onError(props.end, "BAD_INDENT", "All sequence items must start at the same column") : onError(offset, "MISSING_CHAR", "Sequence item without - indicator");
       else {
-        commentEnd = props.end, props.comment && (seq3.comment = props.comment);
+        commentEnd = props.end, props.comment && (seq2.comment = props.comment);
         continue;
       }
     let node = value ? composeNode2(ctx, value, props, onError) : composeEmptyNode2(ctx, props.end, start, null, props, onError);
-    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq3.items.push(node);
+    ctx.schema.compat && flowIndentCheck(bs.indent, value, onError), offset = node.range[2], seq2.items.push(node);
   }
-  return seq3.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq3;
+  return seq2.range = [bs.offset, offset, commentEnd != null ? commentEnd : offset], seq2;
 }
 
 // node_modules/yaml/browser/dist/compose/resolve-end.js
@@ -21759,26 +20734,26 @@ var Parser = class {
     }
     yield* this.pop(), yield* this.step();
   }
-  *blockSequence(seq3) {
+  *blockSequence(seq2) {
     var _a;
-    let it = seq3.items[seq3.items.length - 1];
+    let it = seq2.items[seq2.items.length - 1];
     switch (this.type) {
       case "newline":
         if (it.value) {
           let end = "end" in it.value ? it.value.end : void 0, last2 = Array.isArray(end) ? end[end.length - 1] : void 0;
-          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq3.items.push({ start: [this.sourceToken] });
+          (last2 == null ? void 0 : last2.type) === "comment" ? end == null || end.push(this.sourceToken) : seq2.items.push({ start: [this.sourceToken] });
         } else
           it.start.push(this.sourceToken);
         return;
       case "space":
       case "comment":
         if (it.value)
-          seq3.items.push({ start: [this.sourceToken] });
+          seq2.items.push({ start: [this.sourceToken] });
         else {
-          if (this.atIndentedComment(it.start, seq3.indent)) {
-            let prev = seq3.items[seq3.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
+          if (this.atIndentedComment(it.start, seq2.indent)) {
+            let prev = seq2.items[seq2.items.length - 2], end = (_a = prev == null ? void 0 : prev.value) == null ? void 0 : _a.end;
             if (Array.isArray(end)) {
-              arrayPushArray(end, it.start), end.push(this.sourceToken), seq3.items.pop();
+              arrayPushArray(end, it.start), end.push(this.sourceToken), seq2.items.pop();
               return;
             }
           }
@@ -21787,18 +20762,18 @@ var Parser = class {
         return;
       case "anchor":
       case "tag":
-        if (it.value || this.indent <= seq3.indent)
+        if (it.value || this.indent <= seq2.indent)
           break;
         it.start.push(this.sourceToken);
         return;
       case "seq-item-ind":
-        if (this.indent !== seq3.indent)
+        if (this.indent !== seq2.indent)
           break;
-        it.value || includesToken(it.start, "seq-item-ind") ? seq3.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
+        it.value || includesToken(it.start, "seq-item-ind") ? seq2.items.push({ start: [this.sourceToken] }) : it.start.push(this.sourceToken);
         return;
     }
-    if (this.indent > seq3.indent) {
-      let bv = this.startBlockValue(seq3);
+    if (this.indent > seq2.indent) {
+      let bv = this.startBlockValue(seq2);
       if (bv) {
         this.stack.push(bv);
         return;
@@ -22231,7 +21206,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v9-dropped-binding-detect (ProviderRegistry created)"), installHangDiagnostics(() => ({
+    ediagAlways("[EDIAG] BUILD=relay-viewplugin (ProviderRegistry created)"), installHangDiagnostics(() => ({
       docs: this.entries.size,
       enrolled: this.enrolledIds.size
     }));
@@ -22260,10 +21235,17 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
   }
   async entry(noteId) {
+    let e = this.ensureEntrySync(noteId);
+    return await e.ready, e;
+  }
+  /** Synchronously get-or-create the resident entry WITHOUT awaiting IndexedDB
+   *  hydration. The Y.Doc + Y.Text exist immediately (empty until hydrated);
+   *  `entry.ready` resolves once hydration completes and the provider activates.
+   *  Lets the live-editor ViewPlugin bind instantly and paint as the doc loads. */
+  ensureEntrySync(noteId) {
     var _a, _b, _c;
     let cached = this.entries.get(noteId);
-    if (cached)
-      return await cached.ready, cached;
+    if (cached) return cached;
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), provider = new NoteProvider(doc2, {
       label: noteId,
       // Start MUTED until IndexedDB replay finishes (activate() below): the
@@ -22310,7 +21292,15 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       });
     }), entry.ready = persistence.whenSynced.then(() => {
       provider.activate(), this.connected && provider.setConnected(!0);
-    }), this.entries.set(noteId, entry), await entry.ready, entry;
+    }), this.entries.set(noteId, entry), entry;
+  }
+  /** Sync handle for the live-editor ViewPlugin: the resident Y.Text now (empty
+   *  until hydrated) + a ready promise that resolves after IndexedDB hydration.
+   *  The editor binds immediately and the doc paints in as it loads — Relay's
+   *  async model, where the open never blocks on the doc. */
+  residentText(noteId) {
+    let e = this.ensureEntrySync(noteId);
+    return { text: e.text, ready: e.ready };
   }
   // --- Doc access (editor + sync engine) --------------------------------------
   async getDoc(noteId) {
@@ -22342,7 +21332,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     if (reread) {
       let stable = !1;
       for (let attempt = 0; attempt < 3 && !stable; attempt++) {
-        let seq3 = e.remoteSeq, flushOk = !0;
+        let seq2 = e.remoteSeq, flushOk = !0;
         if (e.pendingFlush)
           try {
             await e.pendingFlush;
@@ -22354,7 +21344,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
         } catch (e2) {
           return null;
         }
-        stable = flushOk && e.remoteSeq === seq3;
+        stable = flushOk && e.remoteSeq === seq2;
       }
       if (!stable) return null;
     }
@@ -22631,10 +21621,10 @@ function createCrdtWiring(deps) {
         `handleFrame failed for note_id=${docId}: ${errMsg(e)} \u2014 frame dropped`
       );
     });
-  }, onNoteYjsUpdate = (noteId, b64, head, seq3) => {
+  }, onNoteYjsUpdate = (noteId, b64, head, seq2) => {
     syncEngine.applyLiveOpWithSeq(
       noteId,
-      seq3,
+      seq2,
       () => syncEngine.applyPushedNoteUpdate(noteId, fromB64(b64), head)
     );
   }, onCrdtDocReady = (docId, announcedPath) => {
@@ -22669,7 +21659,7 @@ function createCrdtWiring(deps) {
 }
 
 // src/diagnostics.ts
-var import_obsidian23 = require("obsidian");
+var import_obsidian24 = require("obsidian");
 function formatVaultEvent(kind, path, extra) {
   let parts = [`${kind}`, `path=${path}`];
   if (extra)
@@ -22682,15 +21672,15 @@ function registerDiagnostics(plugin) {
   };
   plugin.registerEvent(
     plugin.app.vault.on("modify", (file) => {
-      file instanceof import_obsidian23.TFile && emit("modify", file.path, { bytes: file.stat.size });
+      file instanceof import_obsidian24.TFile && emit("modify", file.path, { bytes: file.stat.size });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("create", (file) => {
-      file instanceof import_obsidian23.TFile && emit("create", file.path, { bytes: file.stat.size });
+      file instanceof import_obsidian24.TFile && emit("create", file.path, { bytes: file.stat.size });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("delete", (file) => {
-      emit("delete", file.path, { kind: file instanceof import_obsidian23.TFolder ? "folder" : "file" });
+      emit("delete", file.path, { kind: file instanceof import_obsidian24.TFolder ? "folder" : "file" });
     })
   ), plugin.registerEvent(
     plugin.app.vault.on("rename", (file, oldPath) => {
@@ -22698,12 +21688,12 @@ function registerDiagnostics(plugin) {
     })
   ), plugin.registerEvent(
     plugin.app.workspace.on("file-open", (file) => {
-      file instanceof import_obsidian23.TFile && emit("file-open", file.path);
+      file instanceof import_obsidian24.TFile && emit("file-open", file.path);
     })
   ), plugin.registerEvent(
     plugin.app.workspace.on("active-leaf-change", () => {
       let file = plugin.app.workspace.getActiveFile();
-      file instanceof import_obsidian23.TFile && emit("leaf-change", file.path);
+      file instanceof import_obsidian24.TFile && emit("leaf-change", file.path);
     })
   );
 }
@@ -22845,14 +21835,14 @@ var SyncLog = class {
 };
 
 // src/sync-log-modal.ts
-var import_obsidian24 = require("obsidian"), ACTION_ICONS = {
+var import_obsidian25 = require("obsidian"), ACTION_ICONS = {
   push: "\u2191",
   pull: "\u2193",
   delete: "\u2715",
   conflict: "\u26A1",
   skip: "\u23ED",
   error: "\u2717"
-}, SyncLogModal = class extends import_obsidian24.Modal {
+}, SyncLogModal = class extends import_obsidian25.Modal {
   constructor(app, syncLog) {
     super(app), this.syncLog = syncLog;
   }
@@ -22889,7 +21879,7 @@ var import_obsidian24 = require("obsidian"), ACTION_ICONS = {
 
 // src/main.ts
 async function generateClientId(app) {
-  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian25.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
+  let adapter = app.vault.adapter, input = (adapter instanceof import_obsidian26.FileSystemAdapter ? adapter.getBasePath() : void 0) || app.vault.getName(), data = new TextEncoder().encode(input), hashBuffer = await crypto.subtle.digest("SHA-256", data), hashArray = new Uint8Array(hashBuffer);
   return Array.from(hashArray).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChannelKey) {
@@ -22898,7 +21888,7 @@ function shouldReuseLiveStream(hasStream, everConnected, connectionKey, liveChan
 function channelIdentityMatches(expectedEmail, authenticatedEmail) {
   return !expectedEmail || !authenticatedEmail ? !0 : expectedEmail.toLowerCase() === authenticatedEmail.toLowerCase();
 }
-var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin {
+var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin {
   constructor() {
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
@@ -23027,7 +22017,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     frag.append(`Engram Vault Sync ${latest} is available. `);
     let link = frag.createEl("a", { text: "Update in settings", href: "#" });
     frag.append(".");
-    let notice = new import_obsidian25.Notice(frag, 15e3);
+    let notice = new import_obsidian26.Notice(frag, 15e3);
     link.addEventListener("click", (e) => {
       e.preventDefault(), this.openCommunityPluginsUpdate(), notice.hide();
     });
@@ -23057,22 +22047,16 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     remoteLogger.configure(
       (entries) => this.api.pushLogs(entries),
       this.manifest.version,
-      import_obsidian25.Platform.isMobile ? "mobile" : "desktop"
+      import_obsidian26.Platform.isMobile ? "mobile" : "desktop"
     ), remoteLogger.setEnabled(this.settings.diagnosticsEnabled), remoteLogger.setClientContext(this.deviceId, this.settings.vaultId), rlog().info(
       "lifecycle",
-      `Plugin loading | v${this.manifest.version} | ${import_obsidian25.Platform.isMobile ? "mobile" : "desktop"}`
+      `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
     }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
-    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtEditorDetach(() => {
-      var _a2;
-      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.detachAll();
-    }), this.syncEngine.setCrdtEditorRebind((path) => {
-      var _a2;
-      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.rebindPath(path);
-    }), this.syncEngine.setCrdtBoundBufferText(
+    }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtBoundBufferText(
       (path) => {
         var _a2, _b2;
         return (_b2 = (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.boundBufferText(path)) != null ? _b2 : null;
@@ -23146,12 +22130,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         var _a2;
         if (this.syncEngine.isSyncBlocked()) return;
         let file = this.app.workspace.getActiveFile();
-        file instanceof import_obsidian25.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
+        file instanceof import_obsidian26.TFile && file.extension === "md" && ((_a2 = this.crdtEnrollment) == null || _a2.enroll(this.noteIdMap.getOrMint(file.path)));
       })
     ), this.registerEvent(
       this.app.vault.on("delete", (file) => {
         var _a2;
-        if (file instanceof import_obsidian25.TFolder)
+        if (file instanceof import_obsidian26.TFolder)
           this.syncEngine.handleFolderDelete(file);
         else {
           let noteId = this.noteIdMap.get(file.path);
@@ -23170,50 +22154,50 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian25.Notice("Engram sync: syncing...");
+        new import_obsidian26.Notice("Engram sync: syncing...");
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       }
     }), this.addCommand({
       id: "disconnect",
       name: "Disconnect (clear login)",
       callback: async () => {
-        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian25.Notice("Engram: disconnected. Open Engram settings to reconnect.");
+        await this.clearAuthAndPromptRelink("manual disconnect command", !1), new import_obsidian26.Notice("Engram: disconnected. Open Engram settings to reconnect.");
       }
     }), this.addCommand({
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
         let count2 = await this.syncEngine.pushAll();
-        new import_obsidian25.Notice(`Engram Sync: pushed ${count2} files`);
+        new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian25.Notice("Engram sync: checking...");
+        new import_obsidian26.Notice("Engram sync: checking...");
         let result = await this.syncEngine.reconcile();
         if (!result) {
-          new import_obsidian25.Notice(
+          new import_obsidian26.Notice(
             "Engram sync: server does not support reconciliation (update backend)"
           );
           return;
         }
         let { missing, diverged, extraOnServer } = result;
         if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian25.Notice("Engram sync: everything in sync");
+          new import_obsidian26.Notice("Engram sync: everything in sync");
         else {
           let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian25.Notice(`Engram Sync: ${parts.join(", ")}`);
+          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian25.Notice("Engram sync: pulling all from server...");
+        new import_obsidian26.Notice("Engram sync: pulling all from server...");
         let count2 = await this.syncEngine.pullAll();
-        new import_obsidian25.Notice(`Engram Sync: pulled ${count2} files from server`);
+        new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -23272,8 +22256,8 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           this.doSyncWithFirstSyncCheck();
           return;
         }
-        new import_obsidian25.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
-          new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        new import_obsidian26.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
+          new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
         }).catch((e) => {
           if (e instanceof LimitExceededError) {
             notifyLimitExceeded(e), rlog().info(
@@ -23286,10 +22270,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
             "lifecycle",
             `Manual sync failed: ${errMsg(e)}`,
             e instanceof Error ? e.stack : void 0
-          ), new import_obsidian25.Notice("Engram sync: sync failed");
+          ), new import_obsidian26.Notice("Engram sync: sync failed");
         });
       }
-    }), this.registerEditorExtension([ycollabExtension()]), this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file))), this.registerEvent(
+    }), this.registerEditorExtension([liveBindingPlugin]), this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file))), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
@@ -23299,14 +22283,11 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         var _a2;
         return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
       })
-    ), this.registerInterval(window.setInterval(() => {
-      var _a2;
-      return (_a2 = this.crdtLiveViews) == null ? void 0 : _a2.refresh();
-    }, 1500)), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
+    ), this.setupNoteStream(), this.app.workspace.onLayoutReady(async () => {
       var _a2, _b2, _c2;
       devLog().log("lifecycle", "layout ready \u2014 starting initial sync"), rlog().info("lifecycle", "Layout ready \u2014 starting initial sync"), this.registerEvent(
         this.app.vault.on("create", (file) => {
-          file instanceof import_obsidian25.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
+          file instanceof import_obsidian26.TFolder ? this.syncEngine.handleFolderCreate(file) : this.syncEngine.handleModify(file);
         })
       ), await ((_a2 = this.baseStore) == null ? void 0 : _a2.load()), await ((_b2 = this.explicitFolders) == null ? void 0 : _b2.load());
       let registered = !1, gateOpen = !1;
@@ -23356,7 +22337,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
                     rlog().warn(
                       "crdt",
                       `reconcileColdStart: Y.Doc corrupted for ${file.path} \u2014 falling back to disk content`
-                    ), new import_obsidian25.Notice(
+                    ), new import_obsidian26.Notice(
                       `Engram Sync: sync state for "${file.path.split("/").pop()}" was unreadable \u2014 using the on-disk copy.`,
                       8e3
                     );
@@ -23374,7 +22355,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           try {
             (_c2 = this.noteStream) != null && _c2.isCrdtConnected() && await this.syncEngine.catchupViaSeqReplay();
             let pushed = await this.syncEngine.pushModifiedFiles();
-            pushed > 0 && new import_obsidian25.Notice(`Engram Sync: pushed ${pushed}`);
+            pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
             if (e instanceof LimitExceededError) {
               notifyLimitExceeded(e), rlog().info(
@@ -23392,7 +22373,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -23425,7 +22406,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         return this.doSyncWithFirstSyncCheck();
       try {
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        (pulled > 0 || pushed > 0) && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        (pulled > 0 || pushed > 0) && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
         if (e instanceof LimitExceededError) {
           notifyLimitExceeded(e), rlog().info(
@@ -23465,7 +22446,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
   /** Absolute (vault-relative) path of the plugin's data.json. Matches the
    *  path Obsidian's own loadData()/saveData() use. */
   pluginDataPath() {
-    return (0, import_obsidian25.normalizePath)(`${this.manifest.dir}/data.json`);
+    return (0, import_obsidian26.normalizePath)(`${this.manifest.dir}/data.json`);
   }
   /** Resilient replacement for this.loadData(). Reads data.json, falling back
    *  to the .bak/.tmp sidecars if the primary was truncated or corrupted (the
@@ -23492,13 +22473,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
             `Failed to heal data.json after recovery: ${errMsg(e)}`
           );
         }
-      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
+      this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian26.Notice(
         "Engram: recovered plugin settings from a backup after a corrupted save."
       ));
     } else source === "corrupt" && (rlog().error(
       "lifecycle",
       "data.json and its backups were all unreadable; falling back to defaults"
-    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian25.Notice(
+    ), this.dataRecoveryNotified || (this.dataRecoveryNotified = !0, new import_obsidian26.Notice(
       "Engram: plugin settings file was corrupted and could not be recovered. You may need to reconnect in settings."
     )));
     return data;
@@ -23549,7 +22530,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
    */
   async clearAuthAndPromptRelink(reason, notify) {
     var _a;
-    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian25.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
+    !this.settings.refreshToken && !this.settings.apiKey || (rlog().info("auth", `Clearing auth + prompting re-link (${reason})`), Object.assign(this.settings, withClearedAuth(this.settings)), this.api.setAuthProvider(null), this.authProvider = null, (_a = this.noteStream) == null || _a.disconnect(), this.noteStream = null, this.liveConnected = !1, this.everConnected = !1, await this.savePluginData(this.syncEngine.getLastSync()), this.updateStatusBar(this.syncEngine.getStatus()), notify && new import_obsidian26.Notice("Engram: your login expired \u2014 open Engram settings to reconnect."));
   }
   /**
    * Fired by OAuthAuth when the server DEFINITIVELY rejects the stored refresh
@@ -23577,7 +22558,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     if (this.settings.refreshToken) {
       let refreshFn = async (token) => {
         let base = this.settings.apiUrl.replace(/\/+$/, ""), apiUrl = base.endsWith("/api") ? base : `${base}/api`, resp = await withTimeout(
-          (0, import_obsidian25.requestUrl)({
+          (0, import_obsidian26.requestUrl)({
             url: `${apiUrl}/auth/token/refresh`,
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -23626,7 +22607,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       this.liveChannelKey
     ))
       return;
-    this.liveChannelKey = connectionKey, this.everConnected = !1, connectionKey !== this.crdtStackKey && ((_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroyAll(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.crdtStackKey = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1), (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
+    this.liveChannelKey = connectionKey, this.everConnected = !1, connectionKey !== this.crdtStackKey && (setLiveBindingCoordinator(null), (_a = this.crdtLiveViews) == null || _a.destroy(), this.crdtLiveViews = null, (_b = this.crdtWiring) == null || _b.dispose(), this.crdtWiring = null, (_c = this.crdtManager) == null || _c.destroyAll(), this.crdtManager = null, (_d = this.crdtEnrollment) == null || _d.resetAll(), this.crdtEnrollment = null, this.crdtStackKey = null, this.syncEngine.setCrdtManager(null), this.syncEngine.setCrdtEnrollment(null), this.crdtEverJoined = !1), (_e = this.noteStream) == null || _e.disconnect(), this.noteStream = null, this.channelEpoch++, rlog().setClientContext(this.deviceId, this.settings.vaultId);
     let hasAuth = this.settings.apiKey || this.settings.refreshToken;
     if (!this.settings.apiUrl || !hasAuth) {
       this.liveConnected = !1, this.updateStatusBar(this.syncEngine.getStatus());
@@ -23649,9 +22630,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
     let seen = /* @__PURE__ */ new Set();
     for (let leaf of this.app.workspace.getLeavesOfType("markdown")) {
       let view = leaf.view;
-      if (!(view instanceof import_obsidian25.MarkdownView)) continue;
+      if (!(view instanceof import_obsidian26.MarkdownView)) continue;
       let file = view.file;
-      if (!(file instanceof import_obsidian25.TFile) || file.extension !== "md" || seen.has(file.path)) continue;
+      if (!(file instanceof import_obsidian26.TFile) || file.extension !== "md" || seen.has(file.path)) continue;
       seen.add(file.path);
       let noteId = this.noteIdMap.getOrMint(file.path);
       enrollment.reset(noteId), enrollment.enroll(noteId);
@@ -23733,7 +22714,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
         )), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1));
       }, channel.onVaultDeleted = () => {
         var _a3;
-        new import_obsidian25.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
+        new import_obsidian26.Notice("Engram: This vault has been deleted on the server."), rlog().info("lifecycle", "Vault deleted on server \u2014 clearing vaultId"), this.settings.vaultId = null, this.api.setVaultId(null), this.savePluginData(this.syncEngine.getLastSync()), (_a3 = this.noteStream) == null || _a3.disconnect();
       }, channel.onFoldersChanged = () => {
         this.syncEngine.resyncFolders().catch((e) => {
           rlog().warn("pull", `Live folder resync failed: ${errMsg(e)}`);
@@ -23801,7 +22782,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
               "crdt",
               `Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`
             )
-          }), this.syncEngine.setLiveBoundCheck(
+          }), setLiveBindingCoordinator(this.crdtLiveViews), this.syncEngine.setLiveBoundCheck(
             (path) => {
               var _a3, _b2;
               return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.isBound(path)) != null ? _b2 : !1;
@@ -23824,7 +22805,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           rlog().warn(
             "crdt",
             `crdt: topic join rejected (reason=${reason != null ? reason : "unknown"}) \u2014 degrading to legacy pushNote path`
-          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian25.Notice(
+          ), this.crdtEverJoined = !1, this.syncEngine.setCrdtManager(null), (_a3 = this.crdtManager) == null || _a3.clearSynced(), (_b2 = this.crdtManager) == null || _b2.setConnected(!1), (_c2 = this.crdtEnrollment) == null || _c2.resetAll(), reason === "crdt_proto_too_old" && (this.crdtProtoTooOldNoticeShown || (this.crdtProtoTooOldNoticeShown = !0, new import_obsidian26.Notice(
             "Engram sync: live sync requires a plugin update \u2014 please update the Engram vault sync plugin.",
             1e4
           ), rlog().warn(
@@ -23857,17 +22838,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
       case "smart-merge": {
         await this.markSyncGateAccepted();
         let { pulled, pushed } = await this.syncEngine.fullSync();
-        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
+        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`), !0;
       }
       case "pull-all-delete-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !0 });
-        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
+        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} (local extras deleted)`), !0;
       }
       case "pull-all-keep-local": {
         await this.markSyncGateAccepted();
         let pulled = await this.syncEngine.pullAll({ deleteLocalExtras: !1 });
-        return new import_obsidian25.Notice(`Engram Sync: pulled ${pulled}`), !0;
+        return new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}`), !0;
       }
       case "push-all-delete-remote": {
         let localSnapshot = this.syncEngine.snapshotLocalPaths();
@@ -23876,12 +22857,12 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           replaceRemote: !0,
           localSnapshot
         });
-        return new import_obsidian25.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
+        return new import_obsidian26.Notice(`Engram Sync: replaced remote with local (${pushed} uploaded)`), !0;
       }
       case "push-all-keep-remote": {
         await this.markSyncGateAccepted();
         let pushed = await this.syncEngine.pushAll({ replaceRemote: !1 });
-        return new import_obsidian25.Notice(`Engram Sync: pushed ${pushed}`), !0;
+        return new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`), !0;
       }
     }
   }
@@ -23979,7 +22960,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian25.Plugin
           firstSync: context === "first-time"
         });
       } catch (e) {
-        console.error("Engram Sync: sync preview failed", e), new import_obsidian25.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
+        console.error("Engram Sync: sync preview failed", e), new import_obsidian26.Notice("Engram sync: preview failed \u2014 check connection"), rlog().error("lifecycle", `Sync preview failed: ${errMsg(e)}`);
       }
     });
   }
@@ -24015,7 +22996,7 @@ Last sync: ${date.toLocaleString()}`;
       (async () => {
         try {
           let pulled = await this.syncEngine.catchUp();
-          pulled > 0 && new import_obsidian25.Notice(`Engram Sync: pulled ${pulled} changes`);
+          pulled > 0 && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled} changes`);
         } catch (e) {
           console.error("Engram Sync: periodic catch-up failed", e);
         }

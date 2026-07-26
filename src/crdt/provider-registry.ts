@@ -13,7 +13,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { ediag, installHangDiagnostics } from "./ediag";
+import { ediag, ediagAlways, installHangDiagnostics } from "./ediag";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -80,7 +80,7 @@ export class ProviderRegistry {
 	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediag("[EDIAG] BUILD=v9-dropped-binding-detect (ProviderRegistry created)");
+		ediagAlways("[EDIAG] BUILD=relay-viewplugin (ProviderRegistry created)");
 		installHangDiagnostics(() => ({
 			docs: this.entries.size,
 			enrolled: this.enrolledIds.size,
@@ -116,11 +116,18 @@ export class ProviderRegistry {
 	}
 
 	private async entry(noteId: string): Promise<Entry> {
+		const e = this.ensureEntrySync(noteId);
+		await e.ready;
+		return e;
+	}
+
+	/** Synchronously get-or-create the resident entry WITHOUT awaiting IndexedDB
+	 *  hydration. The Y.Doc + Y.Text exist immediately (empty until hydrated);
+	 *  `entry.ready` resolves once hydration completes and the provider activates.
+	 *  Lets the live-editor ViewPlugin bind instantly and paint as the doc loads. */
+	private ensureEntrySync(noteId: string): Entry {
 		const cached = this.entries.get(noteId);
-		if (cached) {
-			await cached.ready;
-			return cached;
-		}
+		if (cached) return cached;
 		const doc = new Y.Doc();
 		const persistence = new IndexeddbPersistence(this.storeName(noteId), doc);
 		const kind = this.opts.docKind?.(noteId) ?? "note";
@@ -191,8 +198,16 @@ export class ProviderRegistry {
 			if (this.connected) provider.setConnected(true);
 		});
 		this.entries.set(noteId, entry);
-		await entry.ready;
 		return entry;
+	}
+
+	/** Sync handle for the live-editor ViewPlugin: the resident Y.Text now (empty
+	 *  until hydrated) + a ready promise that resolves after IndexedDB hydration.
+	 *  The editor binds immediately and the doc paints in as it loads — Relay's
+	 *  async model, where the open never blocks on the doc. */
+	residentText(noteId: string): { text: Y.Text; ready: Promise<void> } {
+		const e = this.ensureEntrySync(noteId);
+		return { text: e.text, ready: e.ready };
 	}
 
 	// --- Doc access (editor + sync engine) --------------------------------------

@@ -91,13 +91,16 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		return { lv, closed, flushed, releaseErrors };
 	}
 
-	it("flushes then frees the doc when the last viewer releases", async () => {
+	it("flushes but keeps the doc resident when the last viewer releases", async () => {
 		const { lv, closed, flushed } = makeLiveViews();
 		await (
 			lv as unknown as { onLastViewerRelease(p: string): Promise<void> }
 		).onLastViewerRelease("a.md");
 		expect(flushed).toEqual([{ path: "a.md", content: "text-of-id:a.md" }]);
-		expect(closed).toEqual(["id:a.md"]); // doc freed after the final flush
+		// Relay persistent-doc model: the doc is NOT freed on last release (closeDoc
+		// is a no-op). It stays resident so the note keeps syncing and re-paints
+		// instantly on re-open — no re-hydrate/re-handshake churn.
+		expect(closed).toEqual([]);
 	});
 
 	it("does NOT free the doc if a viewer re-binds during the flush (re-open race)", async () => {

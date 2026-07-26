@@ -56,8 +56,8 @@ import {
 import { checkForPluginUpdate } from "./update-check";
 
 import { BaseStore } from "./base-store";
+import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
 import { CrdtLiveViews } from "./crdt/live/live-views";
-import { ycollabExtension } from "./crdt/live/ycollab-binding";
 import { NoteIdMap } from "./crdt/note-id-map";
 import type { ProviderRegistry } from "./crdt/provider-registry";
 import { ensureDocSchema } from "./crdt/schema";
@@ -440,16 +440,11 @@ export default class EngramSyncPlugin extends Plugin {
 		// deletes (#970).
 		this.syncEngine.setDeviceId(this.deviceId);
 
-		// Replace-remote (push-all-delete-remote) destroys Y.Docs via crdtDelete
-		// for files that stay open on disk — detach all live editor bindings
-		// first so none spans the teardown. Rebind happens via the existing
-		// file-open/leaf/layout refresh events.
-		this.syncEngine.setCrdtEditorDetach(() => this.crdtLiveViews?.detachAll());
-
-		// Genesis ADOPT under a live editor: rebind the editor off the orphaned
-		// mint doc onto the server's authoritative id (the serverId doc is
-		// pre-seeded with the editor's content, so no in-flight edit is lost).
-		this.syncEngine.setCrdtEditorRebind((path) => this.crdtLiveViews?.rebindPath(path));
+		// NOTE: the old setCrdtEditorDetach / setCrdtEditorRebind wiring is gone.
+		// The editor binding is now a CM6 ViewPlugin (live-binding.ts) that owns its
+		// own per-view lifecycle and re-resolves its note_id on every update, so a
+		// genesis ADOPT (path -> serverId remap) is picked up automatically and no
+		// doc is ever torn down under an open editor (persistent-doc model).
 
 		// Fix wave 7 (#191 slice): commitCrdtConvergence's phantom-binding
 		// check reads the bound editor's live buffer, and (on a rebind)
@@ -855,27 +850,22 @@ export default class EngramSyncPlugin extends Plugin {
 				});
 		});
 
-		// CRDT editor extension; registered ONCE for the plugin's lifetime so that
-		// repeated setupNoteStream() calls (settings save / reconnect) never stack
-		// additional ViewPlugin instances or workspace event listeners. The
-		// ycollabExtension holds an empty Compartment until CrdtLiveViews.refresh()
-		// reconfigures it for each open note via EditorController.bindTo().
-		this.registerEditorExtension([ycollabExtension()]);
+		// The live editor<->Y.Text binding, registered ONCE for the plugin's
+		// lifetime. CodeMirror creates one ViewPlugin instance per EditorView and
+		// re-creates it whenever Obsidian rebuilds a leaf's editor, so the binding
+		// survives file switches / heavy-load editor rebuilds with no poll and no
+		// re-bind race (the old Compartment wedge class is gone). It reaches the
+		// ProviderRegistry + noteIdMap through the coordinator set at stack build.
+		this.registerEditorExtension([liveBindingPlugin]);
 		this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file)));
+		// Frontmatter + reading-mode hooks (NOT the editor text binding) still key
+		// off leaf/layout changes; refresh() re-attaches them for the current leaves.
 		this.registerEvent(
 			this.app.workspace.on("active-leaf-change", () => this.crdtLiveViews?.refresh()),
 		);
 		this.registerEvent(
 			this.app.workspace.on("layout-change", () => this.crdtLiveViews?.refresh()),
 		);
-		// Safety-net rebind poll. Obsidian rebuilds a leaf's CodeMirror instance on
-		// heavy file loads (the 34KB lag spike) WITHOUT firing file-open /
-		// active-leaf-change / layout-change, orphaning our binding: keystrokes go to
-		// the NEW editor and sync sees nothing (the file-switch wedge — bound view A,
-		// user types in view B). A periodic refresh() rebinds the leaf's CURRENT
-		// editor. Idempotent + cheap: an already-bound editor short-circuits in bindTo
-		// (this.path === path) and enroll is edge-guarded, so a no-change tick is ~free.
-		this.registerInterval(window.setInterval(() => this.crdtLiveViews?.refresh(), 1500));
 		// WebSocket live sync
 		this.setupNoteStream();
 
@@ -1073,6 +1063,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
+		setLiveBindingCoordinator(null);
 		this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
 		void this.crdtManager?.destroyAll();
@@ -1597,6 +1588,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// re-push that doubled the lineage server-side, and no LRU/doc-level fix
 		// could survive the whole manager being nuked.
 		if (connectionKey !== this.crdtStackKey) {
+			setLiveBindingCoordinator(null);
 			this.crdtLiveViews?.destroy();
 			this.crdtLiveViews = null;
 			this.crdtWiring?.dispose();
@@ -2007,6 +1999,10 @@ export default class EngramSyncPlugin extends Plugin {
 									`Last-release flush failed for ${path} (doc left resident): ${err instanceof Error ? err.message : String(err)}`,
 								),
 						});
+						// Point the editor ViewPlugin at this stack's coordinator. Set on the
+						// module singleton the plugin reads (Relay's getConnectionManager
+						// pattern); cleared to null on teardown so a stale stack can't be hit.
+						setLiveBindingCoordinator(this.crdtLiveViews);
 						// Tell the sync engine which paths have a live editor binding so its
 						// disk-modify handler skips re-feeding disk content into the Y.Text
 						// for open notes (the binding owns them).
