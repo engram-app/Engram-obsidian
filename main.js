@@ -15672,8 +15672,12 @@ var LiveBindingValue = class {
       if (!tr.docChanged || tr.annotation(ySyncAnnotation) === this.editor) continue;
       let changes = [];
       tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-        changes.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, `
-`) });
+        changes.push({
+          fromA,
+          toA,
+          insert: inserted.sliceString(0, inserted.length, `
+`)
+        });
       }), changes.length > 0 && doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
     }
   }
@@ -16013,17 +16017,32 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
       }
     }
   }
+  /** Flush any paths that still have live viewers (settings save / reconnect /
+   *  unload), then resolve. Content is read SYNCHRONOUSLY from the resident doc
+   *  BEFORE returning, so a caller that immediately destroys the manager
+   *  (crdtManager.destroyAll()) cannot make a later toJSON() run on a dead doc and
+   *  write empty over the note. The reconnect path awaits this; unload cannot, but
+   *  the synchronous capture keeps it safe there too. */
   destroy() {
     for (let timer of this.saveNudgeTimers.values())
       window.clearTimeout(timer);
     this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll();
+    let flushes = [];
     for (let path of this.refcount.boundPaths()) {
       let noteId = this.deps.resolveId(path);
-      this.deps.manager.getText(noteId).then((content) => this.deps.flushToDisk(path, content)).catch((e) => {
-        var _a, _b;
-        return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
-      });
+      if (!this.deps.manager.hasDoc(noteId)) continue;
+      let content = this.deps.manager.residentText(noteId).text.toJSON();
+      flushes.push(
+        Promise.resolve(this.deps.flushToDisk(path, content)).catch(
+          (e) => {
+            var _a, _b;
+            return (_b = (_a = this.deps).onReleaseError) == null ? void 0 : _b.call(_a, path, e);
+          }
+        )
+      );
     }
+    return Promise.all(flushes).then(() => {
+    });
   }
 };
 

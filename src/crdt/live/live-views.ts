@@ -237,7 +237,13 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		}
 	}
 
-	destroy(): void {
+	/** Flush any paths that still have live viewers (settings save / reconnect /
+	 *  unload), then resolve. Content is read SYNCHRONOUSLY from the resident doc
+	 *  BEFORE returning, so a caller that immediately destroys the manager
+	 *  (crdtManager.destroyAll()) cannot make a later toJSON() run on a dead doc and
+	 *  write empty over the note. The reconnect path awaits this; unload cannot, but
+	 *  the synchronous capture keeps it safe there too. */
+	destroy(): Promise<void> {
 		// Cancel any pending save-nudge timers — nothing to save into on teardown.
 		for (const timer of this.saveNudgeTimers.values()) {
 			window.clearTimeout(timer);
@@ -246,15 +252,19 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		// Detach all frontmatter + reading-view hooks.
 		this.frontmatter.detachAll();
 		this.reading.detachAll();
-		// Flush any paths that still have live viewers (mid-session settings save /
-		// reconnect). Without this, content typed since the last release flush stays
-		// only in Y.Text and is never written to disk before the manager tears down.
+		const flushes: Array<Promise<void>> = [];
 		for (const path of this.refcount.boundPaths()) {
 			const noteId = this.deps.resolveId(path);
-			void this.deps.manager
-				.getText(noteId)
-				.then((content) => this.deps.flushToDisk(path, content))
-				.catch((e) => this.deps.onReleaseError?.(path, e));
+			// Only a resident doc can be flushed. Guard so we never materialize a fresh
+			// EMPTY doc for a torn-down path and clobber its file with "".
+			if (!this.deps.manager.hasDoc(noteId)) continue;
+			const content = this.deps.manager.residentText(noteId).text.toJSON();
+			flushes.push(
+				Promise.resolve(this.deps.flushToDisk(path, content)).catch((e) =>
+					this.deps.onReleaseError?.(path, e),
+				),
+			);
 		}
+		return Promise.all(flushes).then(() => {});
 	}
 }

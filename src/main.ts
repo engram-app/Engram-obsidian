@@ -1064,7 +1064,11 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
 		setLiveBindingCoordinator(null);
-		this.crdtLiveViews?.destroy();
+		// destroy() captures each bound doc's content SYNCHRONOUSLY before it
+		// returns, so it is safe to fire destroyAll() right after even though we
+		// cannot await here (onunload is synchronous) — the flush already holds the
+		// real content, not an empty read of a torn-down doc.
+		void this.crdtLiveViews?.destroy();
 		this.crdtLiveViews = null;
 		void this.crdtManager?.destroyAll();
 		// CrdtChannel has no teardown — it is a stateless frame dispatcher with no
@@ -1589,7 +1593,9 @@ export default class EngramSyncPlugin extends Plugin {
 		// could survive the whole manager being nuked.
 		if (connectionKey !== this.crdtStackKey) {
 			setLiveBindingCoordinator(null);
-			this.crdtLiveViews?.destroy();
+			// Sync content capture (see onunload) makes destroy-then-destroyAll safe
+			// without an await here (setupNoteStream is synchronous).
+			void this.crdtLiveViews?.destroy();
 			this.crdtLiveViews = null;
 			this.crdtWiring?.dispose();
 			this.crdtWiring = null;
