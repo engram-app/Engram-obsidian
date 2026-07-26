@@ -22119,23 +22119,33 @@ var NoteProvider = class {
     this.setConnected(!0);
   }
   /** Open (true) or close (false) this note's room. Advertising sends syncStep1
-   *  on connect + every reconnect (the down-sync pull). Un-advertising stops the
+   *  on the false->true EDGE only (the down-sync pull). Un-advertising stops the
    *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
-   *  work (idle notes converge over the fan-out without a room). */
+   *  work (idle notes converge over the fan-out without a room).
+   *
+   *  Transition-guarded: a redundant setAdvertised(true) on an ALREADY-advertised
+   *  note must NOT re-fire syncStep1. The server answers every inbound syncStep1
+   *  with a fresh [syncStep2, syncStep1] pair, so a re-enroll on every
+   *  `crdt_doc_ready` announce (which the server also sends to the sender) turned
+   *  into an endless re-handshake storm. Relay sends syncStep1 once per
+   *  connection; a real re-handshake goes reset()->enroll() (advertised flips
+   *  false then true, so this edge fires again). */
   setAdvertised(advertised) {
-    this.advertised = advertised, advertised && this.connected && this.sendSyncStep1();
+    this.advertised !== advertised && (this.advertised = advertised, advertised && this.connected && this.sendSyncStep1());
   }
   setConnected(connected) {
     if (!connected) {
       this.connected = !1;
       return;
     }
-    this.connected = !0, this.advertised && this.sendSyncStep1();
+    let wasConnected = this.connected;
+    this.connected = !0, this.advertised && !wasConnected && this.sendSyncStep1();
     let pending = this.buffer.splice(0);
     for (let frame of pending)
       this.send(frame) || this.buffer.push(frame);
   }
   sendSyncStep1() {
+    ediag(`[EDIAG] sendStep1 note=${this.label}`);
     let encoder = createEncoder();
     writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)));
   }
@@ -22197,7 +22207,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v3-mute-hydrate (ProviderRegistry created)");
+    ediag("[EDIAG] BUILD=v4-step1-idempotent (ProviderRegistry created)");
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */

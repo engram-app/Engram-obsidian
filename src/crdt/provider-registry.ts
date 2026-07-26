@@ -80,7 +80,7 @@ export class ProviderRegistry {
 	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediag("[EDIAG] BUILD=v3-mute-hydrate (ProviderRegistry created)");
+		ediag("[EDIAG] BUILD=v4-step1-idempotent (ProviderRegistry created)");
 	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by

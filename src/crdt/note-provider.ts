@@ -128,10 +128,19 @@ export class NoteProvider {
 	}
 
 	/** Open (true) or close (false) this note's room. Advertising sends syncStep1
-	 *  on connect + every reconnect (the down-sync pull). Un-advertising stops the
+	 *  on the false->true EDGE only (the down-sync pull). Un-advertising stops the
 	 *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
-	 *  work (idle notes converge over the fan-out without a room). */
+	 *  work (idle notes converge over the fan-out without a room).
+	 *
+	 *  Transition-guarded: a redundant setAdvertised(true) on an ALREADY-advertised
+	 *  note must NOT re-fire syncStep1. The server answers every inbound syncStep1
+	 *  with a fresh [syncStep2, syncStep1] pair, so a re-enroll on every
+	 *  `crdt_doc_ready` announce (which the server also sends to the sender) turned
+	 *  into an endless re-handshake storm. Relay sends syncStep1 once per
+	 *  connection; a real re-handshake goes reset()->enroll() (advertised flips
+	 *  false then true, so this edge fires again). */
 	setAdvertised(advertised: boolean): void {
+		if (this.advertised === advertised) return; // no edge -> no redundant step1
 		this.advertised = advertised;
 		if (advertised && this.connected) this.sendSyncStep1();
 	}
@@ -141,12 +150,15 @@ export class NoteProvider {
 			this.connected = false;
 			return;
 		}
+		const wasConnected = this.connected;
 		this.connected = true;
-		// syncStep1 (state vector) — ONLY when this note holds an open room. A
-		// connect that isn't advertised just flushes: a cold SEND / fan-out RECEIVE
-		// must not open a room ("STEP1 is only the down-sync pull, never required
-		// to SEND" — sync.ts). NEVER a full-state push.
-		if (this.advertised) this.sendSyncStep1();
+		// syncStep1 (state vector) ONLY on the disconnected->connected EDGE, and only
+		// when advertised. A connect that isn't advertised just flushes; a REDUNDANT
+		// setConnected(true) (already connected — e.g. flushHeldState re-flushing the
+		// create-ack buffer, or a re-enroll) must NOT re-fire syncStep1 (that fed the
+		// re-handshake storm). The buffer flush below still runs unconditionally so
+		// held frames always deliver. NEVER a full-state push.
+		if (this.advertised && !wasConnected) this.sendSyncStep1();
 		// Flush anything buffered while offline; re-buffer whatever is still refused.
 		const pending = this.buffer.splice(0);
 		for (const frame of pending) {
@@ -155,6 +167,7 @@ export class NoteProvider {
 	}
 
 	private sendSyncStep1(): void {
+		ediag(`[EDIAG] sendStep1 note=${this.label}`);
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
