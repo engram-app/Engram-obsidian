@@ -4,8 +4,8 @@ import { ProviderRegistry } from "../../src/crdt/provider-registry";
 
 // Two "devices", each its own ProviderRegistry with an isolated IndexedDB store
 // (dbPrefix). An in-memory relay routes every frame one device sends for a
-// note_id to the other device's `receive`, so this exercises the full Relay
-// exchange (syncStep1/2 + updates) with no server double.
+// note_id to the other device's `receive`, exercising the full Relay exchange
+// (syncStep1/2 + updates) with no server double.
 function twoDevices() {
 	const flushedA: Record<string, string> = {};
 	const flushedB: Record<string, string> = {};
@@ -47,19 +47,20 @@ function twoDevices() {
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 15));
 
-describe("ProviderRegistry (Relay model)", () => {
-	test("genesis seed on device A syncs to B and flushes B's disk (no text-verify)", async () => {
+describe("ProviderRegistry (Relay-model engine)", () => {
+	test("genesis edit on A syncs to B and flushes B's disk (no text-verify)", async () => {
 		const { A, B, flushedB } = twoDevices();
 		A.setConnected(true);
 		B.setConnected(true);
 
-		// A is the origin of a brand-new note: seed (adoptFirst=false).
-		await A.seedFromDisk("n1", "hello from A", false);
+		// A is the origin of a brand-new note: applyLocalEdit seeds (empty doc).
+		await A.applyLocalEdit("n1", "hello from A");
+		await A.startSync("n1"); // advertise (a live edit normally rides an open note)
 		await flush();
 
-		// B never seeded; it adopted A's lineage via syncStep2, and the remote
-		// merge flushed to B's disk.
-		expect((await B.getText("n1")).toString()).toBe("hello from A");
+		// B adopted A's lineage via syncStep2 (never seeded); the remote merge
+		// flushed to B's disk.
+		expect(await B.getText("n1")).toBe("hello from A");
 		expect(flushedB.n1).toContain("hello from A");
 		await A.destroyAll();
 		await B.destroyAll();
@@ -70,17 +71,18 @@ describe("ProviderRegistry (Relay model)", () => {
 		const { A, B } = dev;
 		A.setConnected(true);
 		B.setConnected(true);
-		await A.seedFromDisk("n2", "base", false);
+		await A.applyLocalEdit("n2", "base");
+		await A.startSync("n2");
 		await flush();
-		expect((await B.getText("n2")).toString()).toBe("base");
+		expect(await B.getText("n2")).toBe("base");
 
 		// Socket drops on A. A edits offline (held in the provider buffer).
 		dev.setUp(false);
 		A.setConnected(false);
-		const aText = await A.getText("n2");
-		aText.insert(aText.length, " + offline");
+		const aDoc = await A.getDoc("n2");
+		aDoc.getText("content").insert(4, " + offline");
 		await flush();
-		expect((await B.getText("n2")).toString()).toBe("base"); // B hasn't seen it
+		expect(await B.getText("n2")).toBe("base"); // B hasn't seen it
 
 		// Reconnect: syncStep1 + buffered flush. Convergence must NOT double.
 		dev.setUp(true);
@@ -88,26 +90,27 @@ describe("ProviderRegistry (Relay model)", () => {
 		B.setConnected(true);
 		await flush();
 
-		expect((await A.getText("n2")).toString()).toBe("base + offline");
-		expect((await B.getText("n2")).toString()).toBe("base + offline");
+		expect(await A.getText("n2")).toBe("base + offline");
+		expect(await B.getText("n2")).toBe("base + offline");
 		await A.destroyAll();
 		await B.destroyAll();
 	});
 
-	test("a note the server already holds is ADOPTED, never re-seeded (adoptFirst)", async () => {
-		const { A, B } = twoDevices();
-		A.setConnected(true);
-		B.setConnected(true);
-		// A creates it.
-		await A.seedFromDisk("n3", "server content", false);
-		await flush();
-		// B already has the same bytes on disk (from a prior sync) and opens it
-		// with adoptFirst=true → must NOT seed a second lineage; adopts A's.
-		await B.seedFromDisk("n3", "server content", true);
-		await flush();
-
-		expect((await B.getText("n3")).toString()).toBe("server content"); // adopted, not doubled
-		await A.destroyAll();
-		await B.destroyAll();
+	test("adopt-first: a note whose disk bytes are already synced is NOT re-seeded", async () => {
+		let synced = false;
+		const reg = new ProviderRegistry({
+			dbPrefix: "devAdopt",
+			send: () => true,
+			onFlushToDisk: () => {},
+			isUnchangedSynced: (_id, content) => synced && content === "server body",
+		});
+		reg.setConnected(true);
+		// The server already holds "server body"; the adopt-first gate must decline
+		// to seed a second lineage — the doc stays empty (adopts via STEP2).
+		synced = true;
+		const consumed = await reg.applyLocalEdit("n3", "server body");
+		expect(consumed).toBe("server body"); // "handled, nothing to push"
+		expect(await reg.hasHistory("n3")).toBe(false); // never seeded
+		await reg.destroyAll();
 	});
 });

@@ -1,22 +1,29 @@
-// The Relay-model replacement for CrdtManager + CrdtChannel + CrdtEnrollment:
-// one persistent NoteProvider (+ IndexeddbPersistence) per note, keyed by the
-// bare note_id. The registry OUTLIVES the socket — a reconnect calls
+// The Relay-model engine: one persistent NoteProvider (+ IndexeddbPersistence)
+// per note, keyed by the bare note_id. Replaces CrdtManager + CrdtChannel +
+// CrdtEnrollment. The registry OUTLIVES the socket — a reconnect calls
 // setConnected(true), which re-advertises every resident doc via syncStep1 (a
-// state-vector diff, never a full re-push). Convergence is the provider's
-// readSyncMessage; there is NO text-verify gate, NO staged commit-deferred.
+// state-vector diff, NEVER a full re-push, so no lineage doubling). Convergence
+// is the provider's readSyncMessage; there is NO text-verify gate.
 //
-// Two doc listeners, one per direction (mirrors Relay + the old manager):
-//   - NoteProvider's own update handler forwards LOCAL edits to the wire.
-//   - the registry's flush listener writes REMOTE merges (origin === provider)
-//     back to disk.
+// It exposes the CrdtManager/CrdtEnrollment/CrdtChannel call surface (getDoc,
+// applyLocalEdit, applyRemoteUpdate, projectedText, closeDoc, enroll, receive,
+// …) so the SyncEngine + CrdtLiveViews route through it unchanged. Methods that
+// only made sense for the old churny lifecycle (hibernation, flatten, gap
+// re-handshake) become no-ops the persistent doc doesn't need.
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
-import { diffIntoYText, seedOnce } from "./bridge";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { NoteProvider } from "./note-provider";
+import { docHasHistory, seedContentInto } from "./note-seed";
 
 export type DocKind = "note" | "canvas";
+
+/** Applied to remote merges so the provider suppresses re-send AND the registry
+ *  flush listener writes them to disk. The NoteProvider stamps itself as the
+ *  origin on readSyncMessage; a raw applyRemoteUpdate (vault-channel fan-out)
+ *  uses this shared marker so the same listener fires. */
+const REMOTE = Symbol("remote");
 
 interface Entry {
 	doc: Y.Doc;
@@ -25,23 +32,32 @@ interface Entry {
 	text: Y.Text;
 	kind: DocKind;
 	ready: Promise<void>;
+	/** Ticks on every remote merge — the stale-snapshot guard in applyLocalEdit
+	 *  uses it to detect a merge that interleaved a disk reread. */
+	remoteSeq: number;
+	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
+	 *  it so a write failure can leave crdtHead unadvanced (#235). */
+	pendingFlush: Promise<void> | null;
 }
 
 export interface ProviderRegistryOpts {
-	/** IndexedDB store namespace (vault id) — keeps two vaults' stores apart. */
 	dbPrefix?: string;
-	/** Transport: hand a base64 frame to the wire for `noteId`. Returns false
-	 *  when the socket isn't joined so the provider buffers + flushes on rejoin.
-	 *  Reads the CURRENT socket at call time (indirect) so a reconnect is
-	 *  transparent — the registry never rebuilds. */
+	/** Transport: base64 frame → wire for `noteId`. False when the socket isn't
+	 *  joined (provider buffers + flushes on rejoin). Read the CURRENT socket at
+	 *  call time so a reconnect is transparent. */
 	send: (noteId: string, frame: string) => boolean;
-	/** Write a REMOTE-merged doc back to disk (echo-suppressed: never re-sent). */
-	onFlushToDisk: (noteId: string, content: string) => Promise<void> | void;
-	/** Fired on the first inbound syncStep2 for a note (op-level "has content"). */
+	/** Write a REMOTE-merged doc back to disk (echo-suppressed). Returns false /
+	 *  throws on a real write failure so applyRemoteUpdate can propagate it. */
+	onFlushToDisk: (
+		noteId: string,
+		content: string,
+	) => Promise<boolean | undefined> | boolean | undefined;
+	/** Adopt-first gate: content byte-identical to the last-synced content must
+	 *  NOT seed (would fork a second lineage → #846 doubling). */
+	isUnchangedSynced?: (noteId: string, content: string) => boolean;
+	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
-	/** Markdown vs canvas, resolved once per doc at creation. */
 	docKind?: (noteId: string) => DocKind;
-	/** Surface IndexedDB quota / persistence errors (sync continues in-memory). */
 	onPersistError?: (noteId: string, err: unknown) => void;
 }
 
@@ -51,17 +67,21 @@ export class ProviderRegistry {
 
 	constructor(private readonly opts: ProviderRegistryOpts) {}
 
+	/** Wire key == note_id (matches the backend's bare-UUID crdt_msg). */
+	docId(noteId: string): string {
+		return noteId;
+	}
+
 	private storeName(noteId: string): string {
 		return this.opts.dbPrefix ? `${this.opts.dbPrefix}/${noteId}` : noteId;
 	}
 
-	private project(entry: Entry): string {
-		if (entry.kind === "canvas") return projectCanvas(entry.doc);
-		const { order, values } = frontmatterOf(entry.doc);
-		return projectNote(order, values, entry.text.toJSON(), rawFrontmatterOf(entry.doc));
+	private project(e: Entry): string {
+		if (e.kind === "canvas") return projectCanvas(e.doc);
+		const { order, values } = frontmatterOf(e.doc);
+		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
 
-	/** Open (or return the cached) provider for `noteId`, IndexedDB-hydrated. */
 	private async entry(noteId: string): Promise<Entry> {
 		const cached = this.entries.get(noteId);
 		if (cached) {
@@ -77,86 +97,260 @@ export class ProviderRegistry {
 			onSynced: () => this.opts.onSynced?.(noteId),
 		});
 		persistence.on("error", (err: unknown) => this.opts.onPersistError?.(noteId, err));
-		// Disk-flush listener: a REMOTE merge (origin === provider, stamped by
-		// readSyncMessage) writes back to disk. Local edits (editor origin) and
-		// IndexedDB replay (persistence origin) do NOT flush here.
+		const entry: Entry = {
+			doc,
+			provider,
+			persistence,
+			text,
+			kind,
+			ready: Promise.resolve(),
+			remoteSeq: 0,
+			pendingFlush: null,
+		};
+		// Disk-flush listener: a REMOTE merge (origin === provider from
+		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
+		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
-			if (origin !== provider) return;
-			void this.opts.onFlushToDisk(
-				noteId,
-				this.project({ doc, provider, persistence, text, kind, ready }),
-			);
+			if (origin !== provider && origin !== REMOTE) return;
+			entry.remoteSeq += 1;
+			const flush = Promise.resolve(
+				this.opts.onFlushToDisk(noteId, this.project(entry)),
+			).then((ok) => {
+				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
+			});
+			entry.pendingFlush = flush;
+			void flush.catch(() => undefined);
 		});
-		const ready: Promise<void> = persistence.whenSynced.then(() => {
-			// Advertise state as soon as IndexedDB has rehydrated, if the socket is
-			// already up (syncStep1 → server replies syncStep2 with the diff).
+		entry.ready = persistence.whenSynced.then(() => {
 			if (this.connected) provider.setConnected(true);
 		});
-		const entry: Entry = { doc, provider, persistence, text, kind, ready };
 		this.entries.set(noteId, entry);
-		await ready;
+		await entry.ready;
 		return entry;
 	}
 
-	/** The doc's body Y.Text — the editor binds to this. Mints + hydrates on first
-	 *  access, exactly like opening a note. */
-	async getText(noteId: string): Promise<Y.Text> {
-		return (await this.entry(noteId)).text;
-	}
+	// --- Doc access (editor + sync engine) --------------------------------------
 
 	async getDoc(noteId: string): Promise<Y.Doc> {
 		return (await this.entry(noteId)).doc;
 	}
 
-	/** True once the doc holds shared history (server content adopted or seeded). */
+	/** Note body as a string (frontmatter excluded) — matches CrdtManager.getText. */
+	async getText(noteId: string): Promise<string> {
+		return (await this.entry(noteId)).text.toJSON();
+	}
+
+	/** Full reconstructed file (frontmatter + body, or canvas JSON). */
+	async projectedText(noteId: string): Promise<string> {
+		return this.project(await this.entry(noteId));
+	}
+
 	async hasHistory(noteId: string): Promise<boolean> {
-		return (await this.entry(noteId)).text.length > 0;
-	}
-
-	/** Route an inbound wire frame to its provider (creating it if a fan-out
-	 *  announced a note this device hasn't opened yet). */
-	async receive(noteId: string, frameB64: string): Promise<void> {
 		const e = await this.entry(noteId);
-		e.provider.receive(frameB64);
-	}
-
-	/** Socket (re)connected/dropped: fan out to every resident provider. On
-	 *  connect each re-advertises via syncStep1 — the whole reason the doc layer
-	 *  outlives the socket. */
-	setConnected(connected: boolean): void {
-		this.connected = connected;
-		for (const e of this.entries.values()) e.provider.setConnected(connected);
-	}
-
-	/** Seed a brand-new note's disk content into the doc — ONLY when the doc has
-	 *  no shared history yet (genesis). A note the server already knows adopts its
-	 *  lineage via syncStep2 instead (never re-seeded → never doubled). Returns
-	 *  the content the doc now holds. Mirrors the adopt-first gate, minus the
-	 *  bespoke convergence machinery. */
-	async seedFromDisk(noteId: string, diskContent: string, adoptFirst: boolean): Promise<void> {
-		const e = await this.entry(noteId);
-		if (e.text.length > 0) {
-			// Already has history: diff the change in (an edit to a synced note).
-			if (e.kind === "note") diffIntoYText(e.text, diskContent);
-			return;
-		}
-		// Genesis. adoptFirst = "the server already holds this exact content on its
-		// own lineage" → do NOT seed (that would fork a second lineage); wait for
-		// syncStep2 to deliver it. Otherwise this device is the origin: seed.
-		if (adoptFirst) return;
-		if (e.kind === "canvas") seedCanvasInto(e.doc, diskContent);
-		else seedOnce(e.text, diskContent, false);
+		return docHasHistory(e.doc, e.kind);
 	}
 
 	hasDoc(noteId: string): boolean {
 		return this.entries.has(noteId);
 	}
 
-	/** Tear a note's provider + doc down. Call ONLY on note delete / rename / true
-	 *  close — NEVER on a transport reconnect (that's the doubling bug). */
-	async destroy(noteId: string, clearData = false): Promise<void> {
+	// --- Local edits (disk → doc) -----------------------------------------------
+
+	/** Ingest disk content into the doc (frontmatter + body). Returns the content
+	 *  the doc consumed, or null when NOT consumed (caller's REST path owns it).
+	 *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
+	 *  the shared seedContentInto codec. */
+	async applyLocalEdit(
+		noteId: string,
+		diskContent: string,
+		hasLca?: boolean,
+		reread?: () => Promise<string>,
+	): Promise<string | null> {
+		const e = await this.entry(noteId);
+		let content = diskContent;
+
+		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
+		// this resolved; a remote merge in that window is absent from it, and
+		// diffing would DELETE the remote ops. Re-read across a doc-stable window.
+		if (reread) {
+			let stable = false;
+			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
+				const seq = e.remoteSeq;
+				let flushOk = true;
+				if (e.pendingFlush) {
+					try {
+						await e.pendingFlush;
+					} catch {
+						flushOk = false;
+					}
+				}
+				try {
+					content = await reread();
+				} catch {
+					return null; // cap-exceeded / unreadable — REST owns it, never diff stale
+				}
+				stable = flushOk && e.remoteSeq === seq;
+			}
+			if (!stable) return null; // live remote storm — skip the stale diff
+		}
+
+		const lca = hasLca ?? docHasHistory(e.doc, e.kind);
+
+		// Adopt-first: history-less doc whose disk bytes == last-synced content has
+		// nothing local to preserve; leave it empty and let STEP2 populate it on the
+		// server's lineage (avoids the #846 doubling). "Consumed, nothing to push".
+		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) return content;
+
+		if (e.kind === "canvas") {
+			return seedCanvasInto(e.doc, content) ? content : null;
+		}
+		seedContentInto(e.doc, e.text, content, lca);
+		return content;
+	}
+
+	/** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
+	 *  its disk flush so a write failure can be surfaced (#235). */
+	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
+		const e = await this.entry(noteId);
+		Y.applyUpdate(e.doc, update, REMOTE);
+		const flush = e.pendingFlush;
+		if (flush) {
+			e.pendingFlush = null;
+			await flush;
+		}
+	}
+
+	// --- Yjs encoding helpers (handshake / genesis) -----------------------------
+
+	async encodeStateVector(noteId: string): Promise<Uint8Array> {
+		return Y.encodeStateVector((await this.entry(noteId)).doc);
+	}
+
+	async encodeStateAsUpdate(noteId: string, sv?: Uint8Array): Promise<Uint8Array> {
+		return Y.encodeStateAsUpdate((await this.entry(noteId)).doc, sv);
+	}
+
+	/** Encode brand-new content as a standalone genesis update (throwaway doc, no
+	 *  persistence / listeners) — byte-identical to a live seed via seedContentInto. */
+	encodeGenesisUpdate(content: string, kind: DocKind = "note"): Uint8Array {
+		const doc = new Y.Doc();
+		try {
+			if (kind === "canvas") seedCanvasInto(doc, content);
+			else seedContentInto(doc, doc.getText(CONTENT_KEY), content, false);
+			return Y.encodeStateAsUpdate(doc);
+		} finally {
+			doc.destroy();
+		}
+	}
+
+	/** Relay: a fresh syncStep1 already delivers held ops as a state-vector diff,
+	 *  so there is no separate full-state re-push (that was the doubling bug).
+	 *  Re-advertise this note so the server pulls whatever it lacks. */
+	async flushHeldState(noteId: string): Promise<void> {
+		const e = await this.entry(noteId);
+		if (this.connected) e.provider.setConnected(true);
+	}
+
+	// --- Sync lifecycle (was CrdtChannel + CrdtEnrollment) ----------------------
+
+	/** Route an inbound wire frame to its provider (creating it if a fan-out
+	 *  announced a note this device hasn't opened). */
+	async receive(noteId: string, frameB64: string): Promise<void> {
+		(await this.entry(noteId)).provider.receive(frameB64);
+	}
+
+	/** Begin/refresh sync for a note: ensure the provider exists and, if the
+	 *  socket is up, advertise via syncStep1. (CrdtChannel.startSync +
+	 *  CrdtEnrollment.enroll collapse to this.) */
+	async startSync(noteId: string): Promise<void> {
+		const e = await this.entry(noteId);
+		if (this.connected) e.provider.setConnected(true);
+	}
+
+	enroll(noteId: string): void {
+		void this.startSync(noteId);
+	}
+
+	/** Allow a fresh handshake (re-syncStep1 on next connect). With the persistent
+	 *  provider this is a re-advertise, not a teardown. */
+	reset(noteId: string): void {
 		const e = this.entries.get(noteId);
-		if (!e) return;
+		if (e && this.connected) e.provider.setConnected(true);
+	}
+
+	resetSync(noteId: string): void {
+		this.reset(noteId);
+	}
+
+	resetAll(): void {
+		if (this.connected) for (const e of this.entries.values()) e.provider.setConnected(true);
+	}
+
+	/** Socket (re)connected/dropped: fan out to every resident provider. On
+	 *  connect each re-advertises via syncStep1 — the reason the doc layer
+	 *  outlives the socket. */
+	setConnected(connected: boolean): void {
+		this.connected = connected;
+		for (const e of this.entries.values()) e.provider.setConnected(connected);
+	}
+
+	// --- Synced bookkeeping -----------------------------------------------------
+	// The provider owns its own `synced` flag (set on syncStep2), so markSynced is
+	// a no-op kept for call-surface compatibility; isSynced reads the provider.
+
+	markSynced(noteId: string): void {
+		this.opts.onSynced?.(noteId);
+	}
+
+	isSynced(noteId: string): boolean {
+		return this.entries.get(noteId)?.provider.synced ?? false;
+	}
+
+	clearSynced(): void {
+		for (const e of this.entries.values()) e.provider.synced = false;
+	}
+
+	/** No gap concept in the Relay model — syncStep1/2 always reconciles the full
+	 *  state vector, so the doc never sits behind pending structs the way the old
+	 *  incremental-delta path could. */
+	async hasPendingGap(_noteId: string): Promise<boolean> {
+		return false;
+	}
+
+	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
+
+	/** Relay: the doc is NEVER closed on a transport reconnect (that was the
+	 *  re-mint/re-push doubling). closeDoc is a no-op; teardown happens only on a
+	 *  real delete/rename via removeDoc, or destroyAll on unload. */
+	closeDoc(_noteId: string): void {}
+
+	/** No LRU eviction — the doc is persistent; protect/unprotect are no-ops. */
+	protect(_noteId: string): void {}
+	unprotect(_noteId: string): void {}
+
+	/** No structural flatten — Relay's syncStep1 diff keeps the wire bounded
+	 *  without re-pushing full state. */
+	async flattenIfBloated(_noteId: string): Promise<boolean> {
+		return false;
+	}
+
+	// --- True teardown (delete / rename / unload) -------------------------------
+
+	async removeDoc(noteId: string): Promise<void> {
+		await this.destroy(noteId, true);
+	}
+
+	private async destroy(noteId: string, clearData: boolean): Promise<void> {
+		const e = this.entries.get(noteId);
+		if (!e) {
+			if (clearData) {
+				await new Promise<void>((resolve) => {
+					const req = indexedDB.deleteDatabase(this.storeName(noteId));
+					req.onsuccess = req.onerror = req.onblocked = () => resolve();
+				});
+			}
+			return;
+		}
 		this.entries.delete(noteId);
 		e.provider.destroy();
 		e.doc.destroy();
@@ -165,6 +359,6 @@ export class ProviderRegistry {
 	}
 
 	async destroyAll(): Promise<void> {
-		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId);
+		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 	}
 }
