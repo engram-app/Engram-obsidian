@@ -80,7 +80,7 @@ export class ProviderRegistry {
 	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {
-		ediag("[EDIAG] BUILD=v4-step1-idempotent (ProviderRegistry created)");
+		ediag("[EDIAG] BUILD=v5-socket-trace (ProviderRegistry created)");
 	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
@@ -370,6 +370,7 @@ export class ProviderRegistry {
 	}
 
 	resetAll(): void {
+		ediag(`[EDIAG] resetAll (re-handshake ${this.enrolledIds.size} enrolled notes)`);
 		for (const id of [...this.enrolledIds]) this.reset(id);
 	}
 
@@ -377,6 +378,9 @@ export class ProviderRegistry {
 	 *  connect each re-advertises via syncStep1 — the reason the doc layer
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
+		ediag(
+			`[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`,
+		);
 		this.connected = connected;
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}

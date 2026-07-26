@@ -22207,7 +22207,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v4-step1-idempotent (ProviderRegistry created)");
+    ediag("[EDIAG] BUILD=v5-socket-trace (ProviderRegistry created)");
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
@@ -22398,13 +22398,14 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     this.reset(noteId);
   }
   resetAll() {
+    ediag(`[EDIAG] resetAll (re-handshake ${this.enrolledIds.size} enrolled notes)`);
     for (let id2 of [...this.enrolledIds]) this.reset(id2);
   }
   /** Socket (re)connected/dropped: fan out to every resident provider. On
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    this.connected = connected;
+    ediag(`[EDIAG] SOCKET ${connected ? "CONNECTED" : "DISCONNECTED"} (docs=${this.entries.size})`), this.connected = connected;
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
