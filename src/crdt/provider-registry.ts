@@ -79,7 +79,9 @@ export class ProviderRegistry {
 	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
 	private readonly enrolledIds = new Set<string>();
 
-	constructor(private readonly opts: ProviderRegistryOpts) {}
+	constructor(private readonly opts: ProviderRegistryOpts) {
+		ediag("[EDIAG] BUILD=v3-mute-hydrate (ProviderRegistry created)");
+	}
 
 	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
 	 *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */

@@ -79,7 +79,13 @@ export class NoteProvider {
 		// already-persisted state the server has, and re-broadcasting it forks the
 		// lineage into a non-converging storm (the file-switch wedge).
 		this.updateHandler = (update, origin) => {
-			if (origin === this || !this.active) return;
+			if (origin === this) return;
+			if (!this.active) {
+				// The fix in action: IndexedDB replay (or any pre-hydration update) is
+				// dropped instead of broadcast. Seeing this on open = new build running.
+				ediag(`[EDIAG] MUTED-DROP note=${this.label} updateLen=${update.length}`);
+				return;
+			}
 			ediag(
 				`[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`,
 			);

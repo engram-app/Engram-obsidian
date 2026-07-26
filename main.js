@@ -22082,7 +22082,11 @@ var NoteProvider = class {
     this.buffer = [];
     var _a;
     this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.label = opts.label, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
-      if (origin === this || !this.active) return;
+      if (origin === this) return;
+      if (!this.active) {
+        ediag(`[EDIAG] MUTED-DROP note=${this.label} updateLen=${update.length}`);
+        return;
+      }
       ediag(
         `[EDIAG] localEdit note=${this.label} updateLen=${update.length} connected=${this.connected} advertised=${this.advertised}`
       );
@@ -22191,6 +22195,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
+    ediag("[EDIAG] BUILD=v3-mute-hydrate (ProviderRegistry created)");
   }
   /** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
    *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
