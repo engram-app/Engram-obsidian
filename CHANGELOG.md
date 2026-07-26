@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.18.1](https://github.com/engram-app/Engram-obsidian/compare/1.18.0...1.18.1) (2026-07-26)
+
+
+### Bug Fixes
+
+* **auth:** never send a request with an empty bearer token ([#336](https://github.com/engram-app/Engram-obsidian/issues/336)) ([ffe55b9](https://github.com/engram-app/Engram-obsidian/commit/ffe55b992a221c7c01eb68ca14e6263daa3e89cc))
+* **crdt:** never gate the syncStep1 pull on the create-ack ([#335](https://github.com/engram-app/Engram-obsidian/issues/335)) ([cba7e14](https://github.com/engram-app/Engram-obsidian/commit/cba7e14b23fba1c57db32176b8d83c252396f665))
+* **crdt:** rebuild client on Relay's model ([#331](https://github.com/engram-app/Engram-obsidian/issues/331)) ([6a0e81d](https://github.com/engram-app/Engram-obsidian/commit/6a0e81da33285748f75e02670f02a05c19ceb858))
+* **crdt:** recover offline edits after switch-away ([#325](https://github.com/engram-app/Engram-obsidian/issues/325)) ([3b87e48](https://github.com/engram-app/Engram-obsidian/commit/3b87e4877e8b18077f1018c833207dd2733276b7))
+
 ## [1.18.0](https://github.com/engram-app/Engram-obsidian/compare/1.17.0...1.18.0) (2026-07-25)
 
 
