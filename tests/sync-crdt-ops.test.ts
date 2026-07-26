@@ -6,8 +6,8 @@ import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -347,9 +347,9 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 				throw new Error("must not legacy-push a crdt entry when ops are available");
 			},
 		};
-		const realCrdt = new CrdtManager({
+		const realCrdt = new ProviderRegistry({
 			dbPrefix: "flush-roundtrip",
-			onUpdate: () => {},
+			send: () => true,
 			onFlushToDisk: async () => {},
 		});
 		const e = engine({ api, crdt: realCrdt });
@@ -382,7 +382,7 @@ describe("runFlushQueue: durable crdt queue entry delivery over the socket", () 
 		await e.commitCrdtConvergence("id-1");
 		expect(e.queue.size).toBe(0);
 
-		await realCrdt.destroy();
+		await realCrdt.destroyAll();
 	});
 
 	test("channel down: the entry stays queued (no REST side-channel) and no re-handshake fires", async () => {

@@ -11,8 +11,8 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import type { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import type { ProviderRegistry as CrdtManager } from "../src/crdt/provider-registry";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type SyncAttachmentChange, type SyncNoteChange } from "../src/types";
 

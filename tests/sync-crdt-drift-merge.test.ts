@@ -15,8 +15,8 @@ import "fake-indexeddb/auto";
 import { TFile } from "obsidian";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import { CrdtManager } from "../src/crdt/manager";
 import { NoteIdMap } from "../src/crdt/note-id-map";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { SyncEngine, fnv1a } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -36,9 +36,9 @@ function markConfirmed(engine: SyncEngine, noteId: string): void {
  *  same base, plus the disk drift "BASE local" and its recorded baseline. */
 async function scenario(dbPrefix: string) {
 	let lastFlushed: string | null = null;
-	const mgr = new CrdtManager({
+	const mgr = new ProviderRegistry({
 		dbPrefix,
-		onUpdate: () => {},
+		send: () => true,
 		onFlushToDisk: async (_id, content) => {
 			lastFlushed = content;
 		},
@@ -110,9 +110,9 @@ async function historyLessScenario(opts: {
 	const sinceCalls: string[] = []; // every getUpdates `since` arg, in order
 
 	const box = { e: null as unknown as SyncEngine };
-	const mgr = new CrdtManager({
+	const mgr = new ProviderRegistry({
 		dbPrefix: opts.dbPrefix,
-		onUpdate: () => {},
+		send: () => true,
 		onFlushToDisk: async (id, content) => {
 			// Mirror production wiring: route the manager flush through the engine's
 			// flushFromCrdt so it lands on the shared fake disk with baseline recording.
@@ -205,7 +205,7 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		expect(disk.get("a.md")?.match(/BASE/g)?.length).toBe(1); // NOT doubled
 		expect((e as any).getCrdtHead("a.md")).toBe("SRV"); // history-full, head recorded
 		expect(enroll).not.toHaveBeenCalled(); // room-free — no connect-storm contribution
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 
 	test("(ii) INCREMENTAL delta (note predates this device) → pends, defers, and fires ONE cooldown-gated socket converge", async () => {
@@ -240,7 +240,7 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		expect(enroll).toHaveBeenCalledWith("id-a");
 		expect(disk.get("a.md")).toBe("BASE"); // untouched until STEP2 lands
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined(); // unadvanced
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 
 	test("(iii) drift + full-lineage delta → keep-both copy BEFORE the apply, server content lands, nothing lost", async () => {
@@ -264,7 +264,7 @@ describe("#234 (Phase E3 storm-safe): history-less note applies the delta direct
 		expect(enroll).not.toHaveBeenCalled();
 		const state = (e as any).syncState as Map<string, { hash: number }>;
 		expect(state.get(conflictKey as string)?.hash).toBe(fnv1a("BASE local"));
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 });
 
@@ -286,7 +286,7 @@ describe("I1: keep-both preserves the local edit even if the copy write fails", 
 		expect(result).toBe("deferred");
 		expect(disk.get("a.md")).toBe("BASE local");
 		expect((e as any).getCrdtHead("a.md")).toBeUndefined();
-		await mgr.destroy();
+		await mgr.destroyAll();
 	});
 });
 

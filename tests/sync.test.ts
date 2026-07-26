@@ -587,7 +587,7 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 				return Promise.resolve();
 			},
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		return { engine, removed };
 	}
 
@@ -664,7 +664,7 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 		engine.setCrdtManager({
 			removeDoc: () => Promise.resolve(),
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const path = "Notes/Drift306.md";
 
 		const map = new NoteIdMap();
@@ -713,7 +713,7 @@ describe("SyncEngine.applySyncChange (apply behavior)", () => {
 		engine.setCrdtManager({
 			removeDoc: () => Promise.resolve(),
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const path = "Notes/Clean306.md";
 
 		const map = new NoteIdMap();
@@ -947,7 +947,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 				return Promise.resolve();
 			},
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		engine.setCrdtEnrollment({
 			enroll: () => {},
 			reset: (id: string) => {
@@ -986,7 +986,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 				return Promise.resolve();
 			},
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("E2E/Live.md", "id-live"); // id lives at THIS path
 		engine.setNoteIdMap(noteIdMap);
@@ -1025,7 +1025,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 			// prove event.content (not the doc projection) is what gets written.
 			isSynced: () => true,
 			projectedText: () => Promise.resolve("STALE DOC PROJECTION"),
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const noteIdMap = new NoteIdMap();
 		noteIdMap.set("E2E/RenameNew.md", "id-reloc"); // id already relocated here
 		engine.setNoteIdMap(noteIdMap);
@@ -1066,7 +1066,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 				return Promise.resolve();
 			},
 			closeDoc: () => {},
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		engine.setCrdtEnrollment({
 			enroll: () => {},
 			reset: (id: string) => {
@@ -1112,7 +1112,7 @@ describe("SyncEngine.handleStreamEvent", () => {
 			closeDoc: () => {},
 			isSynced: () => true,
 			projectedText: () => Promise.resolve("DOC BODY"),
-		} as unknown as import("../src/crdt/manager").CrdtManager);
+		} as unknown as import("../src/crdt/provider-registry").ProviderRegistry);
 		const stubMap = {
 			get: () => null,
 			set: () => {

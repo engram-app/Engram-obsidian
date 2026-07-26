@@ -10,7 +10,7 @@ import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 // Real encode helpers — the SAME ones NoteChannel/CrdtChannel put on the wire.
-import { encodeUpdateFrame, fromB64, toB64 } from "../../src/crdt/channel";
+import { encodeUpdateFrame, fromB64, toB64 } from "../../src/crdt/wire";
 import { SimClock } from "./clock";
 import { ModelServer } from "./model-server";
 import { Scheduler } from "./scheduler";

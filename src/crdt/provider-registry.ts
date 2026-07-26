@@ -137,7 +137,17 @@ export class ProviderRegistry {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
 			entry.pendingFlush = flush;
-			void flush.catch(() => undefined);
+			// Clear pendingFlush once it SETTLES (success or failure) so it only ever
+			// reflects an in-flight flush. The room path (readSyncMessage) has no
+			// applyRemoteUpdate caller to consume it, so without this a single
+			// rejected room-path flush would stay pending forever and poison every
+			// later applyLocalEdit's stale-snapshot guard (test_83 poison case).
+			// Guarded by identity so a newer flush (or applyRemoteUpdate's null) wins.
+			void flush
+				.catch(() => undefined)
+				.finally(() => {
+					if (entry.pendingFlush === flush) entry.pendingFlush = null;
+				});
 		});
 		entry.ready = persistence.whenSynced.then(() => {
 			if (this.connected) provider.setConnected(true);
@@ -328,11 +338,18 @@ export class ProviderRegistry {
 		for (const e of this.entries.values()) e.provider.synced = false;
 	}
 
-	/** No gap concept in the Relay model — syncStep1/2 always reconciles the full
-	 *  state vector, so the doc never sits behind pending structs the way the old
-	 *  incremental-delta path could. */
-	async hasPendingGap(_noteId: string): Promise<boolean> {
-		return false;
+	/** True when the doc holds Yjs pending structs — a delta whose causal deps are
+	 *  missing. The syncStep1/2 handshake never leaves this set (it reconciles the
+	 *  full state vector), but the vault-fan-out path (applyPushedNoteUpdate)
+	 *  applies RAW incremental deltas outside that handshake, so an "incremental
+	 *  delta arrived before its base" gap can still occur there. The caller defers
+	 *  + fires a re-handshake so syncStep1/2 delivers the base and the pended ops
+	 *  integrate (history-less fan-out convergence). */
+	async hasPendingGap(noteId: string): Promise<boolean> {
+		const e = this.entries.get(noteId);
+		if (!e) return false;
+		const store = e.doc.store as unknown as { pendingStructs: unknown };
+		return store.pendingStructs != null;
 	}
 
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------

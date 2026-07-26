@@ -8,7 +8,7 @@
 // once and not reproducible is worse than not caught at all.
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { toB64 } from "../../src/crdt/channel";
+import { toB64 } from "../../src/crdt/wire";
 import type { ModelServer } from "./model-server";
 import type { Replica } from "./replica";
 import type { Scheduler } from "./scheduler";
