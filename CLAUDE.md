@@ -172,6 +172,7 @@ Required status checks on `main`: `build-and-test`, `version-check / version-che
 - V8 OOM prevention on large-vault operations → `docs/context/v8-oom-prevention.md`
 - Editor-binding stale-buffer race (note content copied into a DIFFERENT file on file-switch, PR #194 — bindTo await gap, sync-detach-before-await + bindEpoch + drift view-identity-guard fix) → `docs/context/crdt-editor-bind-race-pollution.md`
 - Missed CRDT delivery healing (catch-up convergence: id adoption parity, base_hash CAS 409, pull backfill, socket vault-catchup via `catchupViaSocket()`) → `docs/context/sync-catchup-convergence.md`
+- Prod `auth-failure-burst` alert traced to our own client (`Bearer ` with an empty token logs `reason=no_auth`, not `signature_error`; unlinked installs loop 401s and the log push re-reports them) → `docs/context/empty-bearer-no-auth-401-loop.md`
 - Convergence sim tier fidelity gaps (`tests/sim/` — differential gate pays rent; seeded random-op suite does NOT converge, kept as a runnable tool not a test) → `docs/context/crdt-convergence-sim-fidelity-gaps.md`
 
 @/home/open-claw/documents/code-projects/ops-agent/docs/self-updating-docs.md
