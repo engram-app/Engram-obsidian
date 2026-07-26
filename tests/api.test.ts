@@ -841,6 +841,49 @@ describe("EngramApi", () => {
 			expect(opts.headers.Authorization).toBe(`Bearer ${TEST_KEY}`);
 		});
 
+		// An empty credential produces `Authorization: Bearer ` — the HTTP layer
+		// strips the trailing space, so the server sees a bare `Bearer` and logs
+		// reason=no_auth. An unlinked install used to loop those forever (prod
+		// 2026-07-26: 890 no_auth 401s/24h from 3 installs, tripping the
+		// auth-failure-burst alert). Never spend a request we know is a 401.
+		test("request refuses to send when the api key is empty", async () => {
+			const unauthed = new EngramApi(TEST_SERVER, "");
+			await expect(unauthed.getMe()).rejects.toThrow(/not authenticated/i);
+			expect(mockRequestUrl).not.toHaveBeenCalled();
+		});
+
+		test("request refuses to send when the provider yields an empty token", async () => {
+			const provider: AuthProvider = {
+				getToken: mock(() => Promise.resolve("")),
+				getVaultId: mock(() => null),
+				isAuthenticated: mock(() => false),
+				signOut: mock(() => {}),
+			};
+			api.setAuthProvider(provider);
+			await expect(api.getMe()).rejects.toThrow(/not authenticated/i);
+			expect(mockRequestUrl).not.toHaveBeenCalled();
+		});
+
+		test("beacon drops spans instead of posting them unauthenticated", () => {
+			const calls: any[] = [];
+			(global as any).fetch = (url: string, opts: unknown) => {
+				calls.push({ url, opts });
+				return Promise.resolve();
+			};
+			const unauthed = new EngramApi(TEST_SERVER, "");
+			unauthed.setTracingEnabled(true);
+			unauthed.beacon.enqueue({
+				trace_id: "1".repeat(32),
+				parent_span_id: "2".repeat(16),
+				name: "obsidian.push",
+				start_us: 1,
+				end_us: 2,
+				attributes: {},
+			});
+			unauthed.beacon.flush();
+			expect(calls).toHaveLength(0);
+		});
+
 		test("on 401, invalidates access token and retries once with refreshed token", async () => {
 			let callCount = 0;
 			const invalidate = mock(() => {});

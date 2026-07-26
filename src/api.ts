@@ -93,7 +93,9 @@ export class EngramApi {
 	) {
 		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
 		this.beacon = new BeaconBuffer(() => {
-			if (!this.tracingEnabled) return null;
+			// No credential = drop the batch. The beacon posts with window.fetch,
+			// so it bypasses the getAuthToken guard and would 401 on its own.
+			if (!this.tracingEnabled || !this.lastToken) return null;
 			return {
 				baseUrl: this.baseUrl,
 				token: this.lastToken,
@@ -130,11 +132,23 @@ export class EngramApi {
 		return this.vaultId;
 	}
 
+	/** The credential for the next request, or a throw when there isn't one.
+	 *
+	 *  An empty token would go out as `Authorization: Bearer ` — the HTTP layer
+	 *  strips trailing whitespace from field values, so the server receives a
+	 *  bare `Bearer`, fails the `"Bearer " <> token` match in the Auth plug and
+	 *  logs `reason=no_auth`. An unlinked install (authProvider nulled by
+	 *  clearAuthAndPromptRelink / a backend switch, empty apiKey) otherwise
+	 *  loops those 401s forever across folder pushes, log pushes and beacons —
+	 *  including the log push carrying the complaint about the 401s. Failing
+	 *  here instead keeps every one of those off the wire; a single guard in the
+	 *  shared path covers all callers. */
 	private async getAuthToken(): Promise<string> {
-		if (this.authProvider) {
-			return this.authProvider.getToken();
+		const token = this.authProvider ? await this.authProvider.getToken() : this.apiKey;
+		if (!token) {
+			throw new Error("Not authenticated: no API key or access token");
 		}
-		return this.apiKey;
+		return token;
 	}
 
 	/** Strip trailing slashes and append /api if not already present. */
