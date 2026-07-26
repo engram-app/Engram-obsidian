@@ -274,7 +274,15 @@ export class ProviderRegistry {
 	 *  its disk flush so a write failure can be surfaced (#235). */
 	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
 		const e = await this.entry(noteId);
-		Y.applyUpdate(e.doc, update, REMOTE);
+		ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`);
+		// Apply with the PROVIDER as origin (NOT a distinct REMOTE symbol): the
+		// provider's update handler suppresses its own origin, so a fanned-out update
+		// is NOT re-broadcast to the server. Applying it as a foreign origin (the old
+		// REMOTE symbol) made the handler re-send every received update -> the server
+		// fanned it back -> an infinite echo storm. The disk-flush listener fires for
+		// the provider origin too, so the merge still writes to disk. (Relay parity:
+		// everything the sync machinery applies uses the provider as origin.)
+		Y.applyUpdate(e.doc, update, e.provider);
 		const flush = e.pendingFlush;
 		if (flush) {
 			e.pendingFlush = null;

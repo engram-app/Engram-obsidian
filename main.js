@@ -22151,7 +22151,9 @@ var NoteProvider = class {
     let reply = createEncoder();
     writeVarUint(reply, MESSAGE_SYNC);
     let syncType = readSyncMessage(decoder, reply, this.doc, this);
-    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply))), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
+    ediag(
+      `[EDIAG] recv note=${this.label} syncType=${syncType} replyLen=${length(reply)}`
+    ), length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply))), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
   }
   /** Detach the update listener. Call ONLY when the note truly closes / on
    *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
@@ -22326,7 +22328,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
     let e = await this.entry(noteId);
-    applyUpdate(e.doc, update, REMOTE);
+    ediag(`[EDIAG] applyRemote note=${noteId} len=${update.length}`), applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }

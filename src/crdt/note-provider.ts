@@ -172,6 +172,11 @@ export class NoteProvider {
 		const reply = encoding.createEncoder();
 		encoding.writeVarUint(reply, MESSAGE_SYNC);
 		const syncType = syncProtocol.readSyncMessage(decoder, reply, this.doc, this);
+		// syncType: 0=step1(server pulling → we reply step2), 1=step2(we caught up),
+		// 2=update(live op). A storm of type-0 = server re-pulling in a loop.
+		ediag(
+			`[EDIAG] recv note=${this.label} syncType=${syncType} replyLen=${encoding.length(reply)}`,
+		);
 		if (encoding.length(reply) > 1) {
 			this.broadcast(toB64(encoding.toUint8Array(reply)));
 		}
