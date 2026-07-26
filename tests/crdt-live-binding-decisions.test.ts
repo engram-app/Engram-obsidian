@@ -104,6 +104,89 @@ describe("decideReconcile", () => {
 	});
 });
 
+describe("decideReconcile — base-aware 3-way merge (#3)", () => {
+	// The pre-edit base = the editor's text right before the user's first keystroke
+	// (captured by the ViewPlugin at attach / on each programmatic load). It is the
+	// LCA of "what the user typed" and "what the doc already held".
+
+	it("merges typed edits into a server-newer doc instead of deleting the remote text", () => {
+		// THE BUG: doc hydrated from IndexedDB with a remote paragraph the editor
+		// never saw; the user typed at the top during hydration. Old behavior
+		// forwarded diff(doc -> editor), DELETING "remote line". Both sides must
+		// converge on the union.
+		const base = "line one\nline two\n";
+		const editorText = "line one EDITED\nline two\n";
+		const docText = "line one\nline two\nremote line\n";
+
+		const d = decideReconcile(editorText, docText, true, base);
+		expect(d.kind).toBe("merge");
+		if (d.kind !== "merge") return;
+		const merged = "line one EDITED\nline two\nremote line\n";
+		expect(applyCm(docText, d.toDoc)).toBe(merged);
+		expect(applyCm(editorText, d.toEditor)).toBe(merged);
+	});
+
+	it("merges a remote edit made ABOVE the user's typing (offset shift)", () => {
+		// Whole-text forwarding is offset-blind; the patch carries context so the
+		// user's tail edit still lands correctly after the doc grew at the top.
+		const base = "alpha\nbravo\ncharlie\n";
+		const editorText = "alpha\nbravo\ncharlie TYPED\n";
+		const docText = "REMOTE\nalpha\nbravo\ncharlie\n";
+
+		const d = decideReconcile(editorText, docText, true, base);
+		expect(d.kind).toBe("merge");
+		if (d.kind !== "merge") return;
+		const merged = "REMOTE\nalpha\nbravo\ncharlie TYPED\n";
+		expect(applyCm(docText, d.toDoc)).toBe(merged);
+		expect(applyCm(editorText, d.toEditor)).toBe(merged);
+	});
+
+	it("falls back to plain forward when the doc has NOT diverged from the base", () => {
+		// base === docText: nothing unseen to preserve, so the cheap whole-text
+		// forward is already exactly right (and stays the common path).
+		const d = decideReconcile("base+typed", "base", true, "base");
+		expect(d.kind).toBe("forward");
+		if (d.kind === "forward") expect(applyCm("base", d.changes)).toBe("base+typed");
+	});
+
+	it("falls back to plain forward on a CONFLICT (user's keystrokes win)", () => {
+		// Both sides rewrote the same region: no clean merge exists. Keep today's
+		// behavior — the user's live keystrokes win — rather than guessing.
+		const base = "the quick brown fox\n";
+		const editorText = "the quick RED fox\n";
+		const docText = "the quick GREEN fox\n";
+
+		const d = decideReconcile(editorText, docText, true, base);
+		expect(d.kind).toBe("forward");
+		if (d.kind === "forward") expect(applyCm(docText, d.changes)).toBe(editorText);
+	});
+
+	it("falls back to plain forward when the base is unavailable (null)", () => {
+		expect(decideReconcile("base+typed", "base", true, null).kind).toBe("forward");
+		expect(decideReconcile("base+typed", "base", true).kind).toBe("forward");
+	});
+
+	it("ignores the base when the user did NOT type (adopt is unchanged)", () => {
+		// dirty=false means the editor is just stale disk; the doc is authoritative.
+		const d = decideReconcile("old", "old and new", false, "whatever");
+		expect(d.kind).toBe("adopt");
+	});
+
+	it("still defers an unseeded doc regardless of base", () => {
+		expect(decideReconcile("typed", "", true, "base")).toEqual({ kind: "defer" });
+	});
+
+	it("adopts (empty toDoc) when the typed text is already present in the doc", () => {
+		// The doc independently received the same edit. A clean merge collapses to
+		// docText: nothing to forward, editor snaps to the doc.
+		const base = "one\ntwo\n";
+		const editorText = "one\ntwo\nthree\n";
+		const docText = "one\ntwo\nthree\n";
+		// editorText === docText short-circuits to noop before the merge runs.
+		expect(decideReconcile(editorText, docText, true, base)).toEqual({ kind: "noop" });
+	});
+});
+
 /** Apply CmChangeSpec[] (from/to against the pre-image) to a string, for assertions. */
 function applyCm(
 	before: string,

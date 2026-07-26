@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch3 = function() {
+    var diff_match_patch4 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch3.Diff = function(op, text2) {
+    diff_match_patch4.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch3.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch3.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch3.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch3.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch3.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch3.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch3.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch3.Diff(
+          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch4.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch3.Diff(DIFF_DELETE, text1),
-          new diff_match_patch3.Diff(DIFF_INSERT, text2)
+          new diff_match_patch4.Diff(DIFF_DELETE, text1),
+          new diff_match_patch4.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch3.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch3.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch3.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch3.Diff(DIFF_DELETE, text1),
-        new diff_match_patch3.Diff(DIFF_INSERT, text2)
+        new diff_match_patch4.Diff(DIFF_DELETE, text1),
+        new diff_match_patch4.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch3.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch3.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch3.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch3.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch3.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,7 +224,7 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch3.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch3.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch3.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch3.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch3.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch3.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch3.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch3.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch3.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch3.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch3.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch3.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch3.whitespaceRegex_ = /\s/;
-    diff_match_patch3.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch3.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch3.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch3.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch4.whitespaceRegex_ = /\s/;
+    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch3.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, ""));
+    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch3.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch3.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch3.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch3.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch3.prototype.diff_text1 = function(diffs) {
+    diff_match_patch4.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_text2 = function(diffs) {
+    diff_match_patch4.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch3.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch3.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch3.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch3.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,12 +454,12 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch3.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch3.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
       var s = this.match_alphabet_(pattern), dmp3 = this;
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch3.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch3.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch3.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch3.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch3.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch3.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch3.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch3.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch3.prototype.patch_addPadding = function(patches) {
+    diff_match_patch4.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch3.prototype.patch_splitMax = function(patches) {
+    diff_match_patch4.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch3.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch4.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch3.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch3.prototype.patch_toText = function(patches) {
+    diff_match_patch4.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch3.prototype.patch_fromText = function(textline) {
+    diff_match_patch4.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch3.patch_obj();
+        var patch = new diff_match_patch4.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch3.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch3.patch_obj = function() {
+    diff_match_patch4.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch3.patch_obj.prototype.toString = function() {
+    diff_match_patch4.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch3;
-    module2.exports.diff_match_patch = diff_match_patch3;
+    module2.exports = diff_match_patch4;
+    module2.exports.diff_match_patch = diff_match_patch4;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -15624,6 +15624,10 @@ function textDiffToChangeSpec(before, after) {
 }
 
 // src/crdt/live/live-binding-decisions.ts
+var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1);
+var merger = new import_diff_match_patch2.diff_match_patch();
+merger.Match_Threshold = 0.2;
+merger.Patch_DeleteThreshold = 0.2;
 var FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
 function frontmatterPrefixLen(editorText) {
   let m = FRONTMATTER_RE.exec(editorText);
@@ -15632,8 +15636,28 @@ function frontmatterPrefixLen(editorText) {
 function needsReattach(bound, path, noteId, coordinator2) {
   return path !== bound.path || noteId !== bound.noteId || coordinator2 !== bound.coordinator;
 }
-function decideReconcile(editorText, docText, dirty) {
-  return docText.length === 0 && editorText.length > 0 ? { kind: "defer" } : editorText === docText ? { kind: "noop" } : dirty ? { kind: "forward", changes: textDiffToChangeSpec(docText, editorText) } : { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
+function mergeTypedEdits(base, editorText, docText) {
+  let patches = merger.patch_make(base, editorText);
+  if (patches.length === 0) return docText;
+  let [merged, applied] = merger.patch_apply(patches, docText);
+  return applied.every(Boolean) ? merged : null;
+}
+function decideReconcile(editorText, docText, dirty, base = null) {
+  if (docText.length === 0 && editorText.length > 0) return { kind: "defer" };
+  if (editorText === docText) return { kind: "noop" };
+  if (dirty) {
+    if (base !== null && base !== docText) {
+      let merged = mergeTypedEdits(base, editorText, docText);
+      if (merged !== null)
+        return {
+          kind: "merge",
+          toDoc: textDiffToChangeSpec(docText, merged),
+          toEditor: textDiffToChangeSpec(editorText, merged)
+        };
+    }
+    return { kind: "forward", changes: textDiffToChangeSpec(docText, editorText) };
+  }
+  return { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
 }
 
 // src/crdt/live/live-binding.ts
@@ -15668,6 +15692,15 @@ var LiveBindingValue = class {
      *  (edits are in the CM buffer but NOT yet in the doc). Drives the reconcile:
      *  such edits must be FORWARDED into the doc, never reverted. */
     this.dirtySinceAttach = !1;
+    /** The editor's FULL text as it stood right before the user's first keystroke
+     *  this attach — i.e. the plain on-disk content Obsidian loaded. It is the LCA
+     *  the reconcile needs to forward ONLY the typed hunks into a doc that hydrated
+     *  with remote content the editor never saw, instead of a whole-text diff that
+     *  would delete it. Tracked here rather than read from the SyncEngine's
+     *  BaseStore because that store is only refreshed on the REST push/pull paths
+     *  (CRDT delivery advances the syncState hash alone), so it goes stale for
+     *  live-synced notes. Null = unknown -> two-way fallback. */
+    this.preEditText = null;
     this.destroyed = !1;
     /** The permanent delta->editor observer, once live. */
     this.observer = null;
@@ -15682,12 +15715,12 @@ var LiveBindingValue = class {
     let path = editorPath(this.editor), noteId = path && coordinator ? coordinator.resolveId(path) : null, bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
     if (needsReattach(bound, path, noteId, coordinator)) {
       let carriedUserEdit = u.docChanged && u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
-      this.detach(), this.attach(), carriedUserEdit && (this.dirtySinceAttach = !0);
+      this.detach(), this.attach(), carriedUserEdit && (this.dirtySinceAttach = !0, this.preEditText = path === bound.path ? u.startState.doc.toString() : null);
       return;
     }
     if (!u.docChanged) return;
     if (!this.ready || !this.ytext) {
-      u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete")) && (this.dirtySinceAttach = !0);
+      u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete")) ? this.dirtySinceAttach = !0 : this.dirtySinceAttach || (this.preEditText = u.state.doc.toString());
       return;
     }
     let doc2 = this.ytext.doc;
@@ -15722,7 +15755,7 @@ var LiveBindingValue = class {
   }
   attach() {
     let path = editorPath(this.editor);
-    if (this.path = path, this.noteId = null, this.ytext = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = coordinator, !path || !coordinator) return;
+    if (this.path = path, this.noteId = null, this.ytext = null, this.ready = !1, this.dirtySinceAttach = !1, this.preEditText = this.editor.state.doc.toString(), this.boundCoordinator = coordinator, !path || !coordinator) return;
     let noteId = coordinator.resolveId(path), { text: text2, ready } = coordinator.residentText(noteId);
     this.noteId = noteId, this.ytext = text2, coordinator.enroll(noteId), coordinator.onBind(path, this.viewId), ready.then(() => this.onReady(noteId, text2));
   }
@@ -15734,7 +15767,7 @@ var LiveBindingValue = class {
    *  FORWARD the editor's edits into the doc when the user typed during hydration
    *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
   reconcileAndGoLive(text2) {
-    let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = text2.toJSON(), action = decideReconcile(editorText, docText, this.dirtySinceAttach);
+    let fullText = this.editor.state.doc.toString(), prefix = frontmatterPrefixLen(fullText), editorText = prefix > 0 ? fullText.slice(prefix) : fullText, docText = text2.toJSON(), base = this.preEditText === null ? null : this.preEditText.slice(frontmatterPrefixLen(this.preEditText)), action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
     switch (action.kind) {
       case "defer":
         ediagAlways(
@@ -15742,27 +15775,34 @@ var LiveBindingValue = class {
         ), this.deferSeed(text2);
         return;
       case "adopt":
-        this.editor.dispatch({
-          changes: shiftChanges(action.changes, prefix),
-          annotations: [ySyncAnnotation.of(this.editor)]
-        });
+        this.paintEditor(action.changes, prefix);
         break;
-      case "forward": {
-        let doc2 = text2.doc;
-        if (doc2) {
-          let changes = action.changes.map((c) => ({
-            fromA: c.from,
-            toA: c.to,
-            insert: c.insert
-          }));
-          doc2.transact(() => applyCmChangesToYText(text2, changes), this);
-        }
+      case "forward":
+        this.writeYText(text2, action.changes);
         break;
-      }
+      case "merge":
+        this.writeYText(text2, action.toDoc), this.paintEditor(action.toEditor, prefix);
+        break;
       case "noop":
         break;
     }
     this.goLive(text2);
+  }
+  /** Dispatch BODY-coordinate changes into the editor, shifted past any
+   *  frontmatter block, annotated so update() does not echo them back. */
+  paintEditor(changes, prefix) {
+    changes.length !== 0 && this.editor.dispatch({
+      changes: shiftChanges(changes, prefix),
+      annotations: [ySyncAnnotation.of(this.editor)]
+    });
+  }
+  /** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
+   *  observer suppresses a repaint and the provider broadcasts them). */
+  writeYText(text2, changes) {
+    let doc2 = text2.doc;
+    if (!doc2 || changes.length === 0) return;
+    let mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
+    doc2.transact(() => applyCmChangesToYText(text2, mapped), this);
   }
   deferSeed(text2) {
     let onSeed = (_event, _tr) => {
@@ -15825,7 +15865,7 @@ var LiveBindingValue = class {
     this.scheduleDriftCheck();
   }
   detach() {
-    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null), this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && this.boundCoordinator && this.boundCoordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = null, this.path = null;
+    this.driftTimer !== null && (window.clearTimeout(this.driftTimer), this.driftTimer = null), this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && this.boundCoordinator && this.boundCoordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.dirtySinceAttach = !1, this.preEditText = null, this.boundCoordinator = null, this.path = null;
   }
 }, liveBindingPlugin = import_view.ViewPlugin.fromClass(LiveBindingValue);
 
@@ -15833,7 +15873,7 @@ var LiveBindingValue = class {
 var import_obsidian23 = require("obsidian");
 
 // src/crdt/bridge.ts
-var import_diff_match_patch2 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch2.diff_match_patch();
+var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch3.diff_match_patch();
 function seedOnce(text2, disk, hasLca) {
   if (hasLca) return !1;
   let current = text2.toJSON();

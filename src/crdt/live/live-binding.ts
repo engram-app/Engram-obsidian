@@ -93,6 +93,15 @@ class LiveBindingValue implements PluginValue {
 	 *  (edits are in the CM buffer but NOT yet in the doc). Drives the reconcile:
 	 *  such edits must be FORWARDED into the doc, never reverted. */
 	private dirtySinceAttach = false;
+	/** The editor's FULL text as it stood right before the user's first keystroke
+	 *  this attach — i.e. the plain on-disk content Obsidian loaded. It is the LCA
+	 *  the reconcile needs to forward ONLY the typed hunks into a doc that hydrated
+	 *  with remote content the editor never saw, instead of a whole-text diff that
+	 *  would delete it. Tracked here rather than read from the SyncEngine's
+	 *  BaseStore because that store is only refreshed on the REST push/pull paths
+	 *  (CRDT delivery advances the syncState hash alone), so it goes stale for
+	 *  live-synced notes. Null = unknown -> two-way fallback. */
+	private preEditText: string | null = null;
 	private destroyed = false;
 	/** The permanent delta->editor observer, once live. */
 	private observer: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
@@ -127,7 +136,15 @@ class LiveBindingValue implements PluginValue {
 				u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"));
 			this.detach();
 			this.attach();
-			if (carriedUserEdit) this.dirtySinceAttach = true;
+			if (carriedUserEdit) {
+				this.dirtySinceAttach = true;
+				// attach() snapshotted the base AFTER that keystroke, which would make
+				// the merge see "nothing typed" and adopt the doc over it. Rewind to the
+				// pre-update text. Only valid when the FILE is the same (a genesis-adopt
+				// remap); across a real file switch the old text is not this note's base,
+				// so drop it and let the two-way fallback handle it.
+				this.preEditText = path === bound.path ? u.startState.doc.toString() : null;
+			}
 			return;
 		}
 		if (!u.docChanged) return;
@@ -137,6 +154,12 @@ class LiveBindingValue implements PluginValue {
 			// user edits count — Obsidian's programmatic file load is not a user event.
 			if (u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
 				this.dirtySinceAttach = true;
+			} else if (!this.dirtySinceAttach) {
+				// Obsidian's programmatic file load lands here (it is not a user event),
+				// often AFTER the ViewPlugin was constructed against an empty editor.
+				// Keep the base tracking it until the user's first keystroke, so the
+				// merge diffs against what they actually saw.
+				this.preEditText = u.state.doc.toString();
 			}
 			return;
 		}
@@ -197,6 +220,7 @@ class LiveBindingValue implements PluginValue {
 		this.ytext = null;
 		this.ready = false;
 		this.dirtySinceAttach = false;
+		this.preEditText = this.editor.state.doc.toString();
 		this.boundCoordinator = coordinator;
 		if (!path || !coordinator) return;
 		const noteId = coordinator.resolveId(path);
@@ -225,7 +249,12 @@ class LiveBindingValue implements PluginValue {
 		const prefix = frontmatterPrefixLen(fullText);
 		const editorText = prefix > 0 ? fullText.slice(prefix) : fullText;
 		const docText = text.toJSON();
-		const action = decideReconcile(editorText, docText, this.dirtySinceAttach);
+		// Body-align the base the same way (Source mode carries the frontmatter block).
+		const base =
+			this.preEditText === null
+				? null
+				: this.preEditText.slice(frontmatterPrefixLen(this.preEditText));
+		const action = decideReconcile(editorText, docText, this.dirtySinceAttach, base);
 		switch (action.kind) {
 			case "defer":
 				ediagAlways(
@@ -234,28 +263,41 @@ class LiveBindingValue implements PluginValue {
 				this.deferSeed(text);
 				return;
 			case "adopt":
-				// action.changes are BODY coordinates; shift into the editor's body region.
-				this.editor.dispatch({
-					changes: shiftChanges(action.changes, prefix),
-					annotations: [ySyncAnnotation.of(this.editor)],
-				});
+				this.paintEditor(action.changes, prefix);
 				break;
-			case "forward": {
-				const doc = text.doc;
-				if (doc) {
-					const changes = action.changes.map((c) => ({
-						fromA: c.from,
-						toA: c.to,
-						insert: c.insert,
-					}));
-					doc.transact(() => applyCmChangesToYText(text, changes), this);
-				}
+			case "forward":
+				this.writeYText(text, action.changes);
 				break;
-			}
+			case "merge":
+				// Both sides diverged and merged cleanly: converge each onto the merge
+				// result. The doc write comes first so the editor paint is never the
+				// state that briefly wins if the second step throws.
+				this.writeYText(text, action.toDoc);
+				this.paintEditor(action.toEditor, prefix);
+				break;
 			case "noop":
 				break;
 		}
 		this.goLive(text);
+	}
+
+	/** Dispatch BODY-coordinate changes into the editor, shifted past any
+	 *  frontmatter block, annotated so update() does not echo them back. */
+	private paintEditor(changes: CmChangeSpec[], prefix: number): void {
+		if (changes.length === 0) return;
+		this.editor.dispatch({
+			changes: shiftChanges(changes, prefix),
+			annotations: [ySyncAnnotation.of(this.editor)],
+		});
+	}
+
+	/** Apply BODY-coordinate changes into the Y.Text under our own origin (so the
+	 *  observer suppresses a repaint and the provider broadcasts them). */
+	private writeYText(text: Y.Text, changes: CmChangeSpec[]): void {
+		const doc = text.doc;
+		if (!doc || changes.length === 0) return;
+		const mapped = changes.map((c) => ({ fromA: c.from, toA: c.to, insert: c.insert }));
+		doc.transact(() => applyCmChangesToYText(text, mapped), this);
 	}
 
 	private deferSeed(text: Y.Text): void {
@@ -362,6 +404,7 @@ class LiveBindingValue implements PluginValue {
 		this.noteId = null;
 		this.ready = false;
 		this.dirtySinceAttach = false;
+		this.preEditText = null;
 		this.boundCoordinator = null;
 		this.path = null;
 	}
