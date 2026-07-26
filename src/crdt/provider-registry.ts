@@ -48,8 +48,9 @@ export interface ProviderRegistryOpts {
 	dbPrefix?: string;
 	/** Transport: base64 frame → wire for `noteId`. False when the socket isn't
 	 *  joined (provider buffers + flushes on rejoin). Read the CURRENT socket at
-	 *  call time so a reconnect is transparent. `kind` distinguishes a content-less
-	 *  `"pull"` (syncStep1) from an `"op"` so the create-ack gate holds ops only. */
+	 *  call time so a reconnect is transparent. `kind` separates peer-vouched
+	 *  `"handshake"` traffic from an originated `"op"` so the create-ack gate
+	 *  holds ops only. */
 	send: (noteId: string, frame: string, kind: FrameKind) => boolean;
 	/** Write a REMOTE-merged doc back to disk (echo-suppressed). Returns false /
 	 *  throws on a real write failure so applyRemoteUpdate can propagate it. */
@@ -142,13 +143,11 @@ export class ProviderRegistry {
 			// syncStep1 on connect advertises the hydrated state instead.
 			deferActivation: true,
 			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
-			// the provider and flush once the server row exists. OPS only — a
-			// "pull" (syncStep1) carries no content and is the sole way a note whose
-			// fan-out this device missed can converge, so gating it made the
-			// diverged-note heal a permanent no-op (#1130).
+			// the provider and flush once the server row exists. OPS only —
+			// "handshake" frames are tied to a doc the peer already vouched for
+			// (see FrameKind), and gating them broke the diverged-note heal (#1130).
 			send: (frame, kind) => {
-				const gated =
-					kind === "op" && this.opts.canSendLive ? !this.opts.canSendLive(noteId) : false;
+				const gated = kind === "op" && this.opts.canSendLive?.(noteId) === false;
 				return gated ? false : this.opts.send(noteId, frame, kind);
 			},
 			onSynced: () => {

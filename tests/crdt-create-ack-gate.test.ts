@@ -81,15 +81,15 @@ describe("create-ack gate on live send", () => {
 	});
 
 	// #1130 (e2e test_48): the gate is CREATE-BEFORE-EDIT — it holds outbound
-	// OPS for a note whose server row may not exist yet. syncStep1 is a PULL
-	// (a bare state vector, no content), and it is the ONLY way a diverged
-	// note whose Yjs fan-out this device missed can ever converge. Gating it
-	// made `socketConverge`'s re-handshake a silent no-op for exactly those
-	// notes: a REST-created note discovered via note_changed sets no crdtHead,
-	// so hasServerNote stays false forever and the heal never reaches the wire.
+	// OPS for a note whose server row may not exist yet. syncStep1 is a bare
+	// state vector carrying no content, and it is the ONLY way a diverged note
+	// whose Yjs fan-out this device missed can ever converge. Gating it made
+	// `socketConverge`'s re-handshake a silent no-op for exactly those notes:
+	// a REST-created note discovered via note_changed sets no crdtHead, so
+	// hasServerNote stays false forever and the heal never reaches the wire.
 	// The server answers an unknown doc_id with note_not_found, so an
-	// un-acked pull is harmless.
-	test("enroll's syncStep1 PULL is NOT held by the create-ack gate", async () => {
+	// un-acked handshake is harmless.
+	test("enroll's syncStep1 is NOT held by the create-ack gate", async () => {
 		const send = mock(() => true);
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-step1-pull",
@@ -138,6 +138,51 @@ describe("create-ack gate on live send", () => {
 		expect(flushed.at(-1)).toContain("Updated while disconnected");
 		await mgr.destroyAll();
 		peer.destroy();
+	});
+
+	// The reply half. When the PEER advertises, its syncStep1 reaches us and
+	// readSyncMessage writes a syncStep2 back. That reply must NOT be gated:
+	// the server only sends a syncStep1 for a doc_id it already resolved through
+	// `note_in_vault?`, so the row provably exists. Gating it also never drains
+	// the provider buffer, which pins isFullySynced false and makes closeDoc a
+	// permanent no-op — the doc can never be evicted for the rest of the session.
+	test("the syncStep2 REPLY is not held, and the buffer drains", async () => {
+		const local = new Y.Doc();
+		const peerDoc = new Y.Doc();
+		const peer = new NoteProvider(peerDoc);
+		const registrySend = mock((_id: string, frame: string) => {
+			queueMicrotask(() => peer.receive(frame));
+			return true;
+		});
+		const mgr = new ProviderRegistry({
+			dbPrefix: "gate-step2-reply",
+			send: registrySend,
+			onFlushToDisk: async () => {},
+			canSendLive: () => false, // ops held for the whole test
+		});
+		peer.setSend((frame) => {
+			void mgr.receive("note-1", frame);
+			return true;
+		});
+		// Seed OUR doc so the reply carries real ops, then hand it to the registry.
+		local.getText(CONTENT_KEY).insert(0, "local state the peer lacks");
+		await mgr.applyRemoteUpdate("note-1", Y.encodeStateAsUpdate(local));
+		mgr.setConnected(true);
+		peer.setAdvertised(true);
+		peer.connect(); // fires the peer's syncStep1 at us
+
+		await new Promise<void>((r) => setTimeout(r, 20));
+
+		// Our reply landed: the peer converged on content it never had.
+		expect(peerDoc.getText(CONTENT_KEY).toJSON()).toContain("local state the peer lacks");
+		// ...and a local EDIT is still held, so the gate is intact.
+		const before = registrySend.mock.calls.length;
+		await mgr.applyLocalEdit("note-1", "a brand new local edit");
+		expect(registrySend.mock.calls.length).toBe(before);
+
+		await mgr.destroyAll();
+		peer.destroy();
+		local.destroy();
 	});
 
 	test("a held note still pulls on reconnect while its ops stay held", async () => {
