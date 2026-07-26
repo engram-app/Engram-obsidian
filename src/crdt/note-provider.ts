@@ -37,6 +37,13 @@ export class NoteProvider {
 	/** True once an inbound syncStep2 has been applied (Relay parity). */
 	synced = false;
 	private connected = false;
+	/** True when this note has an OPEN room — it advertises syncStep1 (the
+	 *  down-sync PULL request) on connect + reconnect. A note that only SENDS
+	 *  (a cold edit to a closed note) or only RECEIVES (vault-channel fan-out)
+	 *  stays un-advertised: it delivers/merges ops WITHOUT opening a room, so an
+	 *  idle note never contributes to the server room fan-out (the connect-storm
+	 *  the fan-out design avoids). Set via setAdvertised on enroll. */
+	private advertised = false;
 	private send: ProviderSend;
 	private readonly onSynced?: () => void;
 	/** Frames produced while the transport was down; flushed on reconnect. */
@@ -73,9 +80,18 @@ export class NoteProvider {
 		this.buffer.push(frame);
 	}
 
-	/** Relay's onopen: advertise via syncStep1 and flush buffered updates. */
+	/** Relay's onopen: (re)connect the transport. */
 	connect(): void {
 		this.setConnected(true);
+	}
+
+	/** Open (true) or close (false) this note's room. Advertising sends syncStep1
+	 *  on connect + every reconnect (the down-sync pull). Un-advertising stops the
+	 *  re-advertise but leaves the transport connected — SEND/RECEIVE of ops still
+	 *  work (idle notes converge over the fan-out without a room). */
+	setAdvertised(advertised: boolean): void {
+		this.advertised = advertised;
+		if (advertised && this.connected) this.sendSyncStep1();
 	}
 
 	setConnected(connected: boolean): void {
@@ -84,16 +100,23 @@ export class NoteProvider {
 			return;
 		}
 		this.connected = true;
-		// syncStep1 (state vector) — NEVER a full-state push.
-		const encoder = encoding.createEncoder();
-		encoding.writeVarUint(encoder, MESSAGE_SYNC);
-		syncProtocol.writeSyncStep1(encoder, this.doc);
-		this.send(toB64(encoding.toUint8Array(encoder)));
+		// syncStep1 (state vector) — ONLY when this note holds an open room. A
+		// connect that isn't advertised just flushes: a cold SEND / fan-out RECEIVE
+		// must not open a room ("STEP1 is only the down-sync pull, never required
+		// to SEND" — sync.ts). NEVER a full-state push.
+		if (this.advertised) this.sendSyncStep1();
 		// Flush anything buffered while offline; re-buffer whatever is still refused.
 		const pending = this.buffer.splice(0);
 		for (const frame of pending) {
 			if (!this.send(frame)) this.buffer.push(frame);
 		}
+	}
+
+	private sendSyncStep1(): void {
+		const encoder = encoding.createEncoder();
+		encoding.writeVarUint(encoder, MESSAGE_SYNC);
+		syncProtocol.writeSyncStep1(encoder, this.doc);
+		this.send(toB64(encoding.toUint8Array(encoder)));
 	}
 
 	/** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an

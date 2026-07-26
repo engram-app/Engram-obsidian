@@ -72,8 +72,26 @@ export interface ProviderRegistryOpts {
 export class ProviderRegistry {
 	private readonly entries = new Map<string, Entry>();
 	private connected = false;
+	/** note_ids with an OPEN room — those advertising syncStep1 (the down-sync
+	 *  pull). Only enroll/startSync adds; a cold SEND or fan-out RECEIVE never
+	 *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
+	 *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
+	private readonly enrolledIds = new Set<string>();
 
 	constructor(private readonly opts: ProviderRegistryOpts) {}
+
+	/** The set of note_ids holding an open CRDT room (STEP1-advertised). Read by
+	 *  the e2e `get_enrolled_note_ids` helper — a note absent here is room-free. */
+	get enrolled(): Set<string> {
+		return this.enrolledIds;
+	}
+
+	/** Resident docs by note_id. `.has(id)` is the e2e `is_crdt_doc_resident`
+	 *  probe; the persistent-doc model never frees an entry on reconnect, so this
+	 *  only drops on a true delete/rename (removeDoc) or unload (destroyAll). */
+	get docs(): Map<string, Entry> {
+		return this.entries;
+	}
 
 	/** Wire key == note_id (matches the backend's bare-UUID crdt_msg). */
 	docId(noteId: string): string {
@@ -271,11 +289,14 @@ export class ProviderRegistry {
 		}
 	}
 
-	/** Relay: a fresh syncStep1 already delivers held ops as a state-vector diff,
-	 *  so there is no separate full-state re-push (that was the doubling bug).
-	 *  Re-advertise this note so the server pulls whatever it lacks. */
+	/** Create-ack flush: OPEN the note's room (advertise) and flush any frames the
+	 *  create-gate held. A just-created note the user is editing should start
+	 *  pulling, so unlike a cold send this DOES enroll. The syncStep1 delivers held
+	 *  ops as a state-vector diff — no full-state re-push (that was the doubling). */
 	async flushHeldState(noteId: string): Promise<void> {
+		this.enrolledIds.add(noteId);
 		const e = await this.entry(noteId);
+		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
 	}
 
@@ -287,23 +308,28 @@ export class ProviderRegistry {
 		(await this.entry(noteId)).provider.receive(frameB64);
 	}
 
-	/** Begin/refresh sync for a note: ensure the provider exists and, if the
-	 *  socket is up, advertise via syncStep1. (CrdtChannel.startSync +
+	/** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
+	 *  pull) now and on every reconnect. Only open/live-bound notes call this; a
+	 *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
 	 *  CrdtEnrollment.enroll collapse to this.) */
 	async startSync(noteId: string): Promise<void> {
+		this.enrolledIds.add(noteId);
 		const e = await this.entry(noteId);
+		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
 	}
 
 	enroll(noteId: string): void {
+		this.enrolledIds.add(noteId); // sync mark so the room shows immediately
 		void this.startSync(noteId);
 	}
 
-	/** Allow a fresh handshake (re-syncStep1 on next connect). With the persistent
-	 *  provider this is a re-advertise, not a teardown. */
+	/** Close the room: stop advertising syncStep1 on reconnect. SEND/RECEIVE of
+	 *  ops still work (the note converges over the fan-out); the server room idles
+	 *  out. reset+enroll = a fresh re-handshake. */
 	reset(noteId: string): void {
-		const e = this.entries.get(noteId);
-		if (e && this.connected) e.provider.setConnected(true);
+		this.enrolledIds.delete(noteId);
+		this.entries.get(noteId)?.provider.setAdvertised(false);
 	}
 
 	resetSync(noteId: string): void {
@@ -311,7 +337,7 @@ export class ProviderRegistry {
 	}
 
 	resetAll(): void {
-		if (this.connected) for (const e of this.entries.values()) e.provider.setConnected(true);
+		for (const id of [...this.enrolledIds]) this.reset(id);
 	}
 
 	/** Socket (re)connected/dropped: fan out to every resident provider. On

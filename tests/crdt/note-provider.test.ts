@@ -91,7 +91,7 @@ describe("NoteProvider (Relay model)", () => {
 		b.destroy();
 	});
 
-	test("a reconnect advertises via syncStep1 (state vector), never a full-state re-push", async () => {
+	test("an ADVERTISED note reconnects via syncStep1 (state vector), never a full-state re-push", async () => {
 		const doc = new Y.Doc();
 		doc.getText("content").insert(0, "x".repeat(5000)); // a big doc
 		const sent: number[] = [];
@@ -101,6 +101,7 @@ describe("NoteProvider (Relay model)", () => {
 			return true;
 		});
 
+		p.setAdvertised(true); // open a room — this note advertises syncStep1
 		p.connect(); // fresh connect
 		p.setConnected(false);
 		sent.length = 0;
@@ -110,6 +111,33 @@ describe("NoteProvider (Relay model)", () => {
 		// of doc size. A full-state re-push (the doubling bug) would be >5000 bytes.
 		expect(sent.length).toBeGreaterThan(0);
 		expect(Math.max(...sent)).toBeLessThan(200);
+		p.destroy();
+	});
+
+	test("a connected-but-UN-advertised note sends NO syncStep1 (cold-send / fan-out room-free invariant)", async () => {
+		const doc = new Y.Doc();
+		const sent: string[] = [];
+		const p = new NoteProvider(doc);
+		p.setSend((frame) => {
+			sent.push(frame);
+			return true;
+		});
+
+		// Connect WITHOUT advertising: a cold SEND or a fan-out RECEIVE must not
+		// open a room. No syncStep1 goes out on connect...
+		p.connect();
+		expect(sent.length).toBe(0);
+
+		// ...but a LOCAL edit still ships (send works without a room).
+		doc.getText("content").insert(0, "cold edit");
+		await flush();
+		expect(sent.length).toBe(1); // the update frame, no preceding syncStep1
+
+		// Reconnect stays room-free too — still no syncStep1.
+		p.setConnected(false);
+		sent.length = 0;
+		p.setConnected(true);
+		expect(sent.length).toBe(0);
 		p.destroy();
 	});
 });
