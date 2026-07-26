@@ -15610,6 +15610,14 @@ function textDiffToChangeSpec(before, after) {
   return changes;
 }
 
+// src/crdt/live/live-binding-decisions.ts
+function needsReattach(bound, path, noteId, coordinator2) {
+  return path !== bound.path || noteId !== bound.noteId || coordinator2 !== bound.coordinator;
+}
+function decideReconcile(editorText, docText, dirty) {
+  return docText.length === 0 && editorText.length > 0 ? { kind: "defer" } : editorText === docText ? { kind: "noop" } : dirty ? { kind: "forward", changes: textDiffToChangeSpec(docText, editorText) } : { kind: "adopt", changes: textDiffToChangeSpec(editorText, docText) };
+}
+
 // src/crdt/live/live-binding.ts
 var ySyncAnnotation = import_state.Annotation.define(), coordinator = null;
 function setLiveBindingCoordinator(c) {
@@ -15627,8 +15635,17 @@ var LiveBindingValue = class {
     this.path = null;
     this.noteId = null;
     this.ytext = null;
+    /** The coordinator this binding attached against. A stack rebuild (real
+     *  account/backend/vault switch) swaps the module coordinator AND destroys the
+     *  old doc; path + noteId stay the same, so this is the only signal that the
+     *  editor must re-attach off the now-dead doc. */
+    this.boundCoordinator = null;
     /** Forwarding local edits + painting deltas is active (post-reconcile). */
     this.ready = !1;
+    /** The user typed into the editor during the async hydration/defer window
+     *  (edits are in the CM buffer but NOT yet in the doc). Drives the reconcile:
+     *  such edits must be FORWARDED into the doc, never reverted. */
+    this.dirtySinceAttach = !1;
     this.destroyed = !1;
     /** The permanent delta->editor observer, once live. */
     this.observer = null;
@@ -15638,52 +15655,74 @@ var LiveBindingValue = class {
   }
   update(u) {
     if (this.destroyed) return;
-    let path = editorPath(this.editor), noteId = path && coordinator ? coordinator.resolveId(path) : null;
-    if (path !== this.path || noteId !== this.noteId) {
+    let path = editorPath(this.editor), noteId = path && coordinator ? coordinator.resolveId(path) : null, bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
+    if (needsReattach(bound, path, noteId, coordinator)) {
       this.detach(), this.attach();
       return;
     }
-    if (!this.ready || !this.ytext || !u.docChanged || u.transactions.some((tr) => tr.annotation(ySyncAnnotation) === this.editor)) return;
+    if (!u.docChanged) return;
+    if (!this.ready || !this.ytext) {
+      u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete")) && (this.dirtySinceAttach = !0);
+      return;
+    }
     let doc2 = this.ytext.doc;
     if (!doc2) return;
-    let changes = [];
-    u.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-      changes.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, `
-`) });
-    });
     let ytext = this.ytext;
-    doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
+    for (let tr of u.transactions) {
+      if (!tr.docChanged || tr.annotation(ySyncAnnotation) === this.editor) continue;
+      let changes = [];
+      tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+        changes.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, `
+`) });
+      }), changes.length > 0 && doc2.transact(() => applyCmChangesToYText(ytext, changes), this);
+    }
   }
   destroy() {
     this.destroyed = !0, this.detach(), this.editor = null;
   }
   attach() {
     let path = editorPath(this.editor);
-    if (this.path = path, this.noteId = null, this.ytext = null, this.ready = !1, !path || !coordinator) return;
+    if (this.path = path, this.noteId = null, this.ytext = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = coordinator, !path || !coordinator) return;
     let noteId = coordinator.resolveId(path), { text: text2, ready } = coordinator.residentText(noteId);
     this.noteId = noteId, this.ytext = text2, coordinator.enroll(noteId), coordinator.onBind(path, this.viewId), ready.then(() => this.onReady(noteId, text2));
   }
   onReady(noteId, text2) {
     this.destroyed || this.noteId !== noteId || this.ytext !== text2 || this.reconcileAndGoLive(text2);
   }
-  /** Initial reconcile then activate. The doc is authoritative:
-   *  - doc has content         -> snap the editor to it (adopt), go live.
-   *  - doc empty, editor empty -> genuinely-empty note, go live.
-   *  - doc empty, editor body  -> NOT seeded yet. Do NOT seed locally (that forks
-   *    a second lineage against the server's -> #846 doubling / base loss). Defer
-   *    until the sync engine/server seeds the doc, then adopt. */
+  /** Initial reconcile then activate. Delegates the decision to decideReconcile
+   *  (pure, unit-tested): adopt the doc into the editor when it is authoritative,
+   *  FORWARD the editor's edits into the doc when the user typed during hydration
+   *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
   reconcileAndGoLive(text2) {
-    let editorText = this.editor.state.doc.toString(), docText = text2.toJSON();
-    if (docText.length === 0 && editorText.length > 0) {
-      ediagAlways(
-        `[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`
-      ), this.deferSeed(text2);
-      return;
+    let editorText = this.editor.state.doc.toString(), docText = text2.toJSON(), action = decideReconcile(editorText, docText, this.dirtySinceAttach);
+    switch (action.kind) {
+      case "defer":
+        ediagAlways(
+          `[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`
+        ), this.deferSeed(text2);
+        return;
+      case "adopt":
+        this.editor.dispatch({
+          changes: action.changes,
+          annotations: [ySyncAnnotation.of(this.editor)]
+        });
+        break;
+      case "forward": {
+        let doc2 = text2.doc;
+        if (doc2) {
+          let changes = action.changes.map((c) => ({
+            fromA: c.from,
+            toA: c.to,
+            insert: c.insert
+          }));
+          doc2.transact(() => applyCmChangesToYText(text2, changes), this);
+        }
+        break;
+      }
+      case "noop":
+        break;
     }
-    editorText !== docText && this.editor.dispatch({
-      changes: textDiffToChangeSpec(editorText, docText),
-      annotations: [ySyncAnnotation.of(this.editor)]
-    }), this.goLive(text2);
+    this.goLive(text2);
   }
   deferSeed(text2) {
     let onSeed = (_event, _tr) => {
@@ -15703,7 +15742,7 @@ var LiveBindingValue = class {
     }, text2.observe(this.observer), this.ready = !0, ediagAlways(`[EDIAG] bind LIVE path=${this.path} note=${this.noteId} len=${text2.length}`);
   }
   detach() {
-    this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && coordinator && coordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.path = null;
+    this.observer && this.ytext && this.ytext.unobserve(this.observer), this.deferObserver && this.ytext && this.ytext.unobserve(this.deferObserver), this.observer = null, this.deferObserver = null, this.path && this.boundCoordinator && this.boundCoordinator.onRelease(this.path, this.viewId), this.ytext = null, this.noteId = null, this.ready = !1, this.dirtySinceAttach = !1, this.boundCoordinator = null, this.path = null;
   }
 }, liveBindingPlugin = import_view.ViewPlugin.fromClass(LiveBindingValue);
 

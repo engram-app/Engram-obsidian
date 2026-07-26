@@ -24,12 +24,8 @@ import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { ediagAlways } from "../ediag";
-import {
-	type YDeltaEntry,
-	applyCmChangesToYText,
-	textDiffToChangeSpec,
-	yDeltaToChangeSpec,
-} from "./cm-yjs-bridge";
+import { type YDeltaEntry, applyCmChangesToYText, yDeltaToChangeSpec } from "./cm-yjs-bridge";
+import { decideReconcile, needsReattach } from "./live-binding-decisions";
 
 /** Marks editor dispatches that ORIGINATE from a Y.Text delta (or the initial
  *  reconcile) so update() does not echo them back into the Y.Text. Value = the
@@ -69,8 +65,17 @@ class LiveBindingValue implements PluginValue {
 	private path: string | null = null;
 	private noteId: string | null = null;
 	private ytext: Y.Text | null = null;
+	/** The coordinator this binding attached against. A stack rebuild (real
+	 *  account/backend/vault switch) swaps the module coordinator AND destroys the
+	 *  old doc; path + noteId stay the same, so this is the only signal that the
+	 *  editor must re-attach off the now-dead doc. */
+	private boundCoordinator: LiveBindingCoordinator | null = null;
 	/** Forwarding local edits + painting deltas is active (post-reconcile). */
 	private ready = false;
+	/** The user typed into the editor during the async hydration/defer window
+	 *  (edits are in the CM buffer but NOT yet in the doc). Drives the reconcile:
+	 *  such edits must be FORWARDED into the doc, never reverted. */
+	private dirtySinceAttach = false;
 	private destroyed = false;
 	/** The permanent delta->editor observer, once live. */
 	private observer: ((event: Y.YTextEvent, tr: Y.Transaction) => void) | null = null;
@@ -91,25 +96,44 @@ class LiveBindingValue implements PluginValue {
 		// call to handle. Re-attaching to the new resident Y.Text covers both.
 		const path = editorPath(this.editor);
 		const noteId = path && coordinator ? coordinator.resolveId(path) : null;
-		if (path !== this.path || noteId !== this.noteId) {
+		const bound = { path: this.path, noteId: this.noteId, coordinator: this.boundCoordinator };
+		if (needsReattach(bound, path, noteId, coordinator)) {
 			this.detach();
 			this.attach();
 			return;
 		}
-		if (!this.ready || !this.ytext || !u.docChanged) return;
-		// Skip dispatches we made from a Y.Text delta / reconcile (echo guard).
-		if (u.transactions.some((tr) => tr.annotation(ySyncAnnotation) === this.editor)) return;
+		if (!u.docChanged) return;
+		if (!this.ready || !this.ytext) {
+			// Typed before the doc finished hydrating: remember it so the reconcile
+			// FORWARDS these edits into the doc instead of reverting them. Only real
+			// user edits count — Obsidian's programmatic file load is not a user event.
+			if (u.transactions.some((tr) => tr.isUserEvent("input") || tr.isUserEvent("delete"))) {
+				this.dirtySinceAttach = true;
+			}
+			return;
+		}
 		const doc = this.ytext.doc;
 		if (!doc) return;
-		// Forward local editor edits into the Y.Text. origin === this so our observer
-		// (tr.origin === this) suppresses re-painting, and the provider treats it as a
-		// local edit to broadcast (NOT a remote merge, so it is not re-flushed to disk).
-		const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
-		u.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
-			changes.push({ fromA, toA, insert: inserted.sliceString(0, inserted.length, "\n") });
-		});
 		const ytext = this.ytext;
-		doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+		// Forward local editor edits into the Y.Text, PER TRANSACTION, skipping only
+		// the transactions we ourselves dispatched from a Y.Text delta / reconcile
+		// (the echo). Per-transaction (not an all-or-nothing `.some()` over the whole
+		// update) so a real user edit coalesced into the same ViewUpdate as an echo is
+		// still forwarded and never dropped. origin === this so our observer suppresses
+		// re-painting and the provider broadcasts it (never re-flushed to disk).
+		for (const tr of u.transactions) {
+			if (!tr.docChanged) continue;
+			if (tr.annotation(ySyncAnnotation) === this.editor) continue;
+			const changes: Array<{ fromA: number; toA: number; insert: string }> = [];
+			tr.changes.iterChanges((fromA, toA, _fromB, _toB, inserted) => {
+				changes.push({
+					fromA,
+					toA,
+					insert: inserted.sliceString(0, inserted.length, "\n"),
+				});
+			});
+			if (changes.length > 0) doc.transact(() => applyCmChangesToYText(ytext, changes), this);
+		}
 	}
 
 	destroy(): void {
@@ -124,6 +148,8 @@ class LiveBindingValue implements PluginValue {
 		this.noteId = null;
 		this.ytext = null;
 		this.ready = false;
+		this.dirtySinceAttach = false;
+		this.boundCoordinator = coordinator;
 		if (!path || !coordinator) return;
 		const noteId = coordinator.resolveId(path);
 		const { text, ready } = coordinator.residentText(noteId);
@@ -140,27 +166,41 @@ class LiveBindingValue implements PluginValue {
 		this.reconcileAndGoLive(text);
 	}
 
-	/** Initial reconcile then activate. The doc is authoritative:
-	 *  - doc has content         -> snap the editor to it (adopt), go live.
-	 *  - doc empty, editor empty -> genuinely-empty note, go live.
-	 *  - doc empty, editor body  -> NOT seeded yet. Do NOT seed locally (that forks
-	 *    a second lineage against the server's -> #846 doubling / base loss). Defer
-	 *    until the sync engine/server seeds the doc, then adopt. */
+	/** Initial reconcile then activate. Delegates the decision to decideReconcile
+	 *  (pure, unit-tested): adopt the doc into the editor when it is authoritative,
+	 *  FORWARD the editor's edits into the doc when the user typed during hydration
+	 *  (never revert them — the cold-open loss bug), or defer an unseeded doc. */
 	private reconcileAndGoLive(text: Y.Text): void {
 		const editorText = this.editor.state.doc.toString();
 		const docText = text.toJSON();
-		if (docText.length === 0 && editorText.length > 0) {
-			ediagAlways(
-				`[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`,
-			);
-			this.deferSeed(text);
-			return;
-		}
-		if (editorText !== docText) {
-			this.editor.dispatch({
-				changes: textDiffToChangeSpec(editorText, docText),
-				annotations: [ySyncAnnotation.of(this.editor)],
-			});
+		const action = decideReconcile(editorText, docText, this.dirtySinceAttach);
+		switch (action.kind) {
+			case "defer":
+				ediagAlways(
+					`[EDIAG] bind DEFER (unseeded) path=${this.path} editorLen=${editorText.length}`,
+				);
+				this.deferSeed(text);
+				return;
+			case "adopt":
+				this.editor.dispatch({
+					changes: action.changes,
+					annotations: [ySyncAnnotation.of(this.editor)],
+				});
+				break;
+			case "forward": {
+				const doc = text.doc;
+				if (doc) {
+					const changes = action.changes.map((c) => ({
+						fromA: c.from,
+						toA: c.to,
+						insert: c.insert,
+					}));
+					doc.transact(() => applyCmChangesToYText(text, changes), this);
+				}
+				break;
+			}
+			case "noop":
+				break;
 		}
 		this.goLive(text);
 	}
@@ -201,10 +241,16 @@ class LiveBindingValue implements PluginValue {
 		if (this.deferObserver && this.ytext) this.ytext.unobserve(this.deferObserver);
 		this.observer = null;
 		this.deferObserver = null;
-		if (this.path && coordinator) coordinator.onRelease(this.path, this.viewId);
+		// Release against the coordinator we BOUND to, not the current module one:
+		// after a stack swap they differ, and releasing on the new coordinator would
+		// leave the old one's refcount stuck (path forever "bound" -> flush skipped).
+		if (this.path && this.boundCoordinator)
+			this.boundCoordinator.onRelease(this.path, this.viewId);
 		this.ytext = null;
 		this.noteId = null;
 		this.ready = false;
+		this.dirtySinceAttach = false;
+		this.boundCoordinator = null;
 		this.path = null;
 	}
 }
