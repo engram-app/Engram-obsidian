@@ -12,6 +12,7 @@ import { EditorController } from "./editor-controller";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import { getEditorViewForLeaf, getMarkdownFilePath } from "./obsidian-internals";
 import { CrdtReadingView } from "./reading-view";
+import { crdtCompartment } from "./ycollab-binding";
 
 /** Fix wave 6: trailing debounce window for `requestSaveForBoundPath` — a
  *  burst of remote deltas into the same bound doc collapses to one
@@ -247,7 +248,25 @@ export class CrdtLiveViews {
 			// live inside CrdtEnrollment.enroll — it now belongs here, at the one
 			// call site in this file that actually knows the path (Task 6).
 			this.deps.enrollment.enroll(this.deps.resolveId(path));
-			void ctrl.bindTo(cm, path);
+			// Dropped-binding detection. Obsidian loads a file into the editor
+			// (setViewData) AFTER our bindTo, which resets the EditorState and wipes
+			// our binding out of the compartment WHILE REUSING the same EditorView.
+			// The controller still thinks it's bound (path unchanged), so bindTo's
+			// path-equality short-circuit would skip the rebind and keystrokes never
+			// reach the Y.Text (the file-switch wedge). If the compartment is empty
+			// but the controller claims this path, force a rebind.
+			const compartment = crdtCompartment.get(cm.state);
+			const bindingDropped =
+				ctrl.currentPath() === path &&
+				(!compartment || (Array.isArray(compartment) && compartment.length === 0));
+			if (bindingDropped) {
+				ediag(
+					`[EDIAG] refresh: binding DROPPED (compartment empty) for ${path} — force rebind`,
+				);
+				ctrl.forceRebind(cm, path);
+			} else {
+				void ctrl.bindTo(cm, path);
+			}
 			this.frontmatter.attach(view);
 			void this.reading.attach(view, path);
 		}

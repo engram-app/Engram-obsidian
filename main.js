@@ -16971,7 +16971,9 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
         // FILE it displays is not (Obsidian reuses views across note
         // switches) — this closure always reports the currently shown file.
         viewPath: () => getMarkdownFilePath(view)
-      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path)), ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
+      }), this.controllers.set(cm, ctrl)), ctrl.currentPath() !== null && ctrl.currentPath() !== path && (this.frontmatter.detach(view), this.reading.detach(view)), this.deps.enrollment.enroll(this.deps.resolveId(path));
+      let compartment = crdtCompartment.get(cm.state);
+      ctrl.currentPath() === path && (!compartment || Array.isArray(compartment) && compartment.length === 0) ? (ediag(`[EDIAG] refresh: binding DROPPED (compartment empty) for ${path} \u2014 force rebind`), ctrl.forceRebind(cm, path)) : ctrl.bindTo(cm, path), this.frontmatter.attach(view), this.reading.attach(view, path);
     }
     for (let [cm, ctrl] of this.controllers)
       seen.has(cm) || (ctrl.release(cm), this.controllers.delete(cm));
@@ -22229,7 +22231,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
      *  does. Mirrors the old CrdtEnrollment.enrolled set; exposed via `enrolled`
      *  so the e2e introspection (get_enrolled_note_ids) reads it unchanged. */
     this.enrolledIds = /* @__PURE__ */ new Set();
-    ediag("[EDIAG] BUILD=v8-rebind-poll (ProviderRegistry created)"), installHangDiagnostics(() => ({
+    ediag("[EDIAG] BUILD=v9-dropped-binding-detect (ProviderRegistry created)"), installHangDiagnostics(() => ({
       docs: this.entries.size,
       enrolled: this.enrolledIds.size
     }));
