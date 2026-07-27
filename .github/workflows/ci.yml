@@ -3,7 +3,15 @@ name: CI
 on:
   push:
     branches: ["**"]
-    tags-ignore: ["v*"]
+    # No tag should start CI — every tag we push points at a commit this
+    # workflow already gated on its branch. This was ["v*"], which missed
+    # release-please's own tag: release-please-config.json sets
+    # include-v-in-tag=false, so it publishes BARE semver (1.18.1, no v) and
+    # every release quietly ran a second full CI on head_branch=<version>.
+    # "**" is exhaustive and needs no upkeep when a new tag shape appears.
+    # (pr-build.yml's <version>-pr.<n>.<sha> preview tags are created through
+    # the releases API with GITHUB_TOKEN, so they never triggered this anyway.)
+    tags-ignore: ["**"]
 
 permissions:
   contents: read
