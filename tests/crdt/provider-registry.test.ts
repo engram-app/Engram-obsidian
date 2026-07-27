@@ -48,6 +48,21 @@ function twoDevices() {
 
 const flush = () => new Promise<void>((r) => setTimeout(r, 15));
 
+/** Poll until `cond` holds. The STEP1/STEP2 handshake spans several async turns
+ *  — two `IndexeddbPersistence.whenSynced` resolutions plus the relay's
+ *  queueMicrotask hops — so the fixed `flush()` sleep above is racy for anything
+ *  that waits on the handshake COMPLETING (measured ~15% failure under parallel
+ *  load, pre-existing on main: `synced` was still false when closeDoc ran, so
+ *  isFullySynced refused to evict). Same helper, same reason, as the sibling
+ *  wiring.test.ts. Use this — not a bigger sleep — for handshake preconditions. */
+async function waitFor(cond: () => boolean, label: string): Promise<void> {
+	for (let i = 0; i < 200; i++) {
+		if (cond()) return;
+		await new Promise<void>((r) => setTimeout(r, 5));
+	}
+	throw new Error(`waitFor timed out: ${label}`);
+}
+
 describe("ProviderRegistry destroyed-doc guard", () => {
 	function oneDevice() {
 		const flushed: Record<string, string> = {};
@@ -92,7 +107,7 @@ describe("ProviderRegistry destroyed-doc guard", () => {
 		B.setConnected(true);
 		await A.applyLocalEdit("idle.md", "persistent content");
 		await A.startSync("idle.md"); // advertise -> B replies syncStep2 -> A.synced
-		await flush();
+		await waitFor(() => A.isSynced("idle.md"), "A synced with B");
 		expect(A.hasDoc("idle.md")).toBe(true);
 		A.closeDoc("idle.md"); // fully synced -> safe to evict
 		await flush();
@@ -195,14 +210,14 @@ describe("ProviderRegistry (Relay-model engine)", () => {
 		await A.applyLocalEdit("n4", "base");
 		await A.startSync("n4");
 		await B.startSync("n4"); // B enrolls → syncStep1/2 → synced
-		await flush();
+		await waitFor(() => B.isSynced("n4"), "B synced with A");
 		expect(B.isSynced("n4")).toBe(true);
 
 		B.reset("n4");
 		expect(B.isSynced("n4")).toBe(false); // the fix: reset invalidates the mark
 
 		await B.startSync("n4"); // re-handshake
-		await flush();
+		await waitFor(() => B.isSynced("n4"), "B re-synced after reset");
 		expect(B.isSynced("n4")).toBe(true); // re-confirmed → onSynced re-fired
 		await A.destroyAll();
 		await B.destroyAll();

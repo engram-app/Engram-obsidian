@@ -38,10 +38,16 @@ here via `note_changed`.** `note_changed` materializes the body to disk and sets
 the socket is down, this device holds the note with no head forever, and the one
 recovery path (re-handshake) is gated off. Permanently deaf.
 
-Blast radius is bounded: a later LOCAL edit routes REST (precisely because
-`hasServerNote` is false), which flips the head and unsticks it. So the symptom
-is "this note stopped receiving remote updates until I typed in it", not silent
-loss.
+Blast radius is bounded: a later LOCAL edit unsticks it. `pushFile` sees
+`hasServerNote` false and takes the socket-native genesis branch
+(`sync.ts:2663-2678`) rather than the live-CRDT branch, so it sends a
+`crdt_create`; the server's idempotent same-path arm (`engram`
+`lib/engram/notes.ex:687-689`) returns the existing row, and the ack sets
+`CRDT_HEAD_CREATED` (`sync.ts:2770`). Head flipped, gate open. (There is NO REST
+route here any more — `sync.ts:2845-2851`, "CRDT-sole … the only REST note path
+kept is for notes OUTSIDE the CRDT domain". An earlier draft of this doc said
+REST; same conclusion, wrong path.) So the symptom is "this note stopped
+receiving remote updates until I typed in it", not silent loss.
 
 ## Reading the evidence (the trap that cost the first two sessions)
 
@@ -89,7 +95,27 @@ side) is what separates the pre-disconnect connection from the reconnect.
 
 ## Invariant to keep
 
-A **pull** (syncStep1 — a bare state vector, no content) must never be subject
-to a gate that exists to protect **writes**. The server answers an unknown
-`doc_id` with `note_not_found`, so an un-acked pull costs one error reply. A
-held pull costs the note.
+**Handshake traffic must never be subject to a gate that exists to protect
+writes.** The client's `FrameKind` (`src/crdt/note-provider.ts`) deliberately
+mirrors the backend's own lanes in `crdt_channel.ex` `frame_class_b64`, which
+buckets syncStep1 and a small syncStep2 as `:handshake` and everything else as
+`:edit`:
+
+- syncStep1 is a bare state vector, no content.
+- The syncStep2 written in reply is only ever produced in response to an
+  inbound syncStep1, and the server sends one only for a `doc_id` it already
+  resolved through `note_in_vault?` (`crdt_channel.ex` `resolve_note_id`, which
+  runs BEFORE `ensure_observed` — so an unknown id also starts no room, pins no
+  `SharedDoc`, and persists nothing).
+
+Gating the pull cost the note. Gating the reply cost the doc's evictability:
+the reply sits in the provider buffer forever, so `isFullySynced()` is never
+true and `closeDoc` can never free the Y.Doc or its IndexedDB connection for the
+rest of the session. Buffered frames therefore carry their own kind — re-offering
+a held handshake as an `"op"` on flush re-gates it into the same trap.
+
+**Not free, though:** an un-acked handshake costs one `note_not_found` reply AND
+a server-side `Logger.warning(category: :sync)` (`crdt_channel.ex` `log_dropped`).
+A brand-new note open in the editor emits one step1 before its create-ack lands,
+so expect one `sync` warn per new note per reconnect. Bounded and low, but if
+you are triaging a `sync` warn burst, this is a known contributor.

@@ -262,9 +262,8 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		dbPrefix: deps.dbPrefix,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
-			// hold a "pull" (syncStep1) — it carries no content, the server answers an
-			// unknown doc_id with note_not_found, and it is the only way a note this
-			// device holds no crdtHead for can converge. Holding it made
+			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply
+			// to one) — see FrameKind in note-provider.ts. Holding the pull made
 			// socketConverge's diverged-note re-handshake a silent no-op for every
 			// note discovered via note_changed whose Yjs fan-out was missed (#1130,
 			// e2e test_48): hasServerNote stayed false forever, so the heal frame was
@@ -285,6 +284,12 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 				}
 				unsentDocIds.add(docId);
 			} else {
+				// A delivered HANDSHAKE clears the flag for a doc whose ops may still
+				// be gate-held. Safe only because of call ordering: startSync sets
+				// advertised (which sends the step1) and then calls setConnected(true),
+				// whose buffer flush immediately re-refuses the held ops and re-adds
+				// the id. Reorder those two and a gated doc silently drops out of
+				// reEnrollUnsent tracking.
 				unsentDocIds.delete(docId);
 			}
 			return ok;

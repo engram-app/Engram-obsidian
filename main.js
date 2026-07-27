@@ -21342,14 +21342,17 @@ var NoteProvider = class {
      *  idle note never contributes to the server room fan-out (the connect-storm
      *  the fan-out design avoids). Set via setAdvertised on enroll. */
     this.advertised = !1;
-    /** Frames produced while the transport was down; flushed on reconnect. */
+    /** Frames produced while the transport was down; flushed on reconnect. Each
+     *  keeps its own kind: a buffered frame must be re-offered under the SAME
+     *  classification it was produced with, or the flush would re-gate a
+     *  handshake reply as an op and strand it in the buffer forever. */
     this.buffer = [];
     var _a;
     this.doc = doc2, this.send = (_a = opts.send) != null ? _a : (() => !1), this.onSynced = opts.onSynced, this.active = !opts.deferActivation, this.updateHandler = (update, origin) => {
       if (origin === this || !this.active)
         return;
       let encoder = createEncoder();
-      writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)));
+      writeVarUint(encoder, MESSAGE_SYNC), writeUpdate(encoder, update), this.broadcast(toB64(toUint8Array(encoder)), "op");
     }, this.doc.on("update", this.updateHandler);
   }
   /** Enable broadcasting of local doc updates. Call ONLY after local persistence
@@ -21375,8 +21378,8 @@ var NoteProvider = class {
   }
   /** Relay's broadcastMessage: send now if connected, else buffer for the next
    *  onopen flush. A refused send (transport down mid-flight) also buffers. */
-  broadcast(frame) {
-    this.connected && this.send(frame, "op") || this.buffer.push(frame);
+  broadcast(frame, kind) {
+    this.connected && this.send(frame, kind) || this.buffer.push({ frame, kind });
   }
   /** Relay's onopen: (re)connect the transport. */
   connect() {
@@ -21405,12 +21408,12 @@ var NoteProvider = class {
     let wasConnected = this.connected;
     this.connected = !0, this.advertised && !wasConnected && this.sendSyncStep1();
     let pending = this.buffer.splice(0);
-    for (let frame of pending)
-      this.send(frame, "op") || this.buffer.push(frame);
+    for (let held of pending)
+      this.send(held.frame, held.kind) || this.buffer.push(held);
   }
   sendSyncStep1() {
     let encoder = createEncoder();
-    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)), "pull");
+    writeVarUint(encoder, MESSAGE_SYNC), writeSyncStep1(encoder, this.doc), this.send(toB64(toUint8Array(encoder)), "handshake");
   }
   /** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
    *  inbound syncStep1, reply with syncStep2. The reply is sent ONLY when it
@@ -21424,7 +21427,7 @@ var NoteProvider = class {
     let reply = createEncoder();
     writeVarUint(reply, MESSAGE_SYNC);
     let syncType = readSyncMessage(decoder, reply, this.doc, this);
-    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply))), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
+    length(reply) > 1 && this.broadcast(toB64(toUint8Array(reply)), "handshake"), syncType === messageYjsSyncStep2 && !this.synced && (this.synced = !0, (_a = this.onSynced) == null || _a.call(this));
   }
   /** Detach the update listener. Call ONLY when the note truly closes / on
    *  unload — NOT on a transport reconnect (Relay's provider.destroy). */
@@ -21515,12 +21518,12 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // (it forks the lineage → non-converging storm → the file-switch wedge).
       // syncStep1 on connect advertises the hydrated state instead.
       deferActivation: !0,
-      // Create-ack gate: a held note reads as REFUSED so its frames buffer in
-      // the provider and flush once the server row exists. OPS only — a
-      // "pull" (syncStep1) carries no content and is the sole way a note whose
-      // fan-out this device missed can converge, so gating it made the
-      // diverged-note heal a permanent no-op (#1130).
-      send: (frame, kind2) => (kind2 === "op" && this.opts.canSendLive ? !this.opts.canSendLive(noteId) : !1) ? !1 : this.opts.send(noteId, frame, kind2),
+      // The registry owns NO gate of its own. The create-before-edit gate lives
+      // in exactly ONE place — the `send` closure in wiring.ts, which is what
+      // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
+      // here could silently drift from the shipped one (it did: the suite
+      // exercised only the duplicate, so #1130 could regress green).
+      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -21644,8 +21647,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       doc2.destroy();
     }
   }
-  /** Create-ack flush: re-attempt the frames the create-gate (canSendLive) held
-   *  now that the server row exists. This is a SEND, not an enroll — a
+  /** Create-ack flush: re-attempt the frames the create-gate (the `canSendLive`
+   *  check inside wiring.ts's `send` closure) held while the note had no server
+   *  row, now that it does. This is a SEND, not an enroll — a
    *  newly-created note stays room-free (no syncStep1) exactly like a cold send;
    *  it opens a room only when the editor binds it (enroll). setConnected re-runs
    *  the buffered-frame flush without advertising. */

@@ -20,13 +20,26 @@ import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
 import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
 
-/** What a frame is FOR, so a transport can gate the two classes differently:
- *  `"pull"` is syncStep1 — a bare state vector requesting the peer's ops, no
- *  content. `"op"` is everything else (local updates, syncStep2 replies) —
- *  content leaving this device. The create-before-edit gate holds `"op"` only:
- *  holding a `"pull"` makes a note that missed its fan-out permanently deaf
- *  (#1130). */
-export type FrameKind = "pull" | "op";
+/** What a frame is FOR, so a transport can gate the two classes differently.
+ *  Deliberately mirrors the backend's own lanes (`frame_class_b64` in
+ *  crdt_channel.ex, which buckets syncStep1 and a small syncStep2 as
+ *  `:handshake` and everything else as `:edit`):
+ *
+ *  - `"handshake"` — protocol traffic tied to a doc the PEER has already
+ *    vouched for. Either syncStep1 (a bare state vector, no content) or the
+ *    syncStep2 written in reply to an inbound syncStep1. The server only ever
+ *    sends us a syncStep1 for a doc_id it validated through `note_in_vault?`
+ *    FIRST (crdt_channel.ex `resolve_note_id`), so by the time we reply, the
+ *    row provably exists.
+ *  - `"op"` — a local edit this device originated, unsolicited.
+ *
+ *  The create-before-edit gate holds `"op"` ONLY. It exists to keep content for
+ *  a not-yet-created note off the wire, and neither handshake frame can be
+ *  that: gating the pull left a note that missed its fan-out permanently deaf
+ *  (#1130), and gating the reply pinned the healed doc resident forever (its
+ *  buffer never drains, so `isFullySynced` stays false and `closeDoc` can never
+ *  evict it). */
+export type FrameKind = "handshake" | "op";
 
 /** Transport: hand a base64 y-protocols frame to the wire. Returns false when
  *  the frame could NOT be delivered (socket not joined) so the provider holds it
@@ -66,8 +79,11 @@ export class NoteProvider {
 	private active: boolean;
 	private send: ProviderSend;
 	private readonly onSynced?: () => void;
-	/** Frames produced while the transport was down; flushed on reconnect. */
-	private readonly buffer: string[] = [];
+	/** Frames produced while the transport was down; flushed on reconnect. Each
+	 *  keeps its own kind: a buffered frame must be re-offered under the SAME
+	 *  classification it was produced with, or the flush would re-gate a
+	 *  handshake reply as an op and strand it in the buffer forever. */
+	private readonly buffer: { frame: string; kind: FrameKind }[] = [];
 	private readonly updateHandler: (update: Uint8Array, origin: unknown) => void;
 
 	constructor(doc: Y.Doc, opts: NoteProviderOpts = {}) {
@@ -91,7 +107,8 @@ export class NoteProvider {
 			const encoder = encoding.createEncoder();
 			encoding.writeVarUint(encoder, MESSAGE_SYNC);
 			syncProtocol.writeUpdate(encoder, update);
-			this.broadcast(toB64(encoding.toUint8Array(encoder)));
+			// A local edit — the one frame class the create-ack gate exists to hold.
+			this.broadcast(toB64(encoding.toUint8Array(encoder)), "op");
 		};
 		this.doc.on("update", this.updateHandler);
 	}
@@ -122,10 +139,10 @@ export class NoteProvider {
 
 	/** Relay's broadcastMessage: send now if connected, else buffer for the next
 	 *  onopen flush. A refused send (transport down mid-flight) also buffers. */
-	private broadcast(frame: string): void {
-		const sent = this.connected && this.send(frame, "op");
+	private broadcast(frame: string, kind: FrameKind): void {
+		const sent = this.connected && this.send(frame, kind);
 		if (sent) return;
-		this.buffer.push(frame);
+		this.buffer.push({ frame, kind });
 	}
 
 	/** Relay's onopen: (re)connect the transport. */
@@ -166,11 +183,13 @@ export class NoteProvider {
 		// held frames always deliver. NEVER a full-state push.
 		if (this.advertised && !wasConnected) this.sendSyncStep1();
 		// Flush anything buffered while offline; re-buffer whatever is still refused.
+		// Each frame keeps the kind it was produced with — re-offering a buffered
+		// handshake reply as an "op" would hand it to the create-ack gate, which
+		// refuses it, which re-buffers it, forever (and a never-draining buffer
+		// pins the doc resident via isFullySynced/closeDoc).
 		const pending = this.buffer.splice(0);
-		// Only `broadcast` buffers, and it only ever buffers ops — syncStep1 is
-		// re-derived from the live state vector on each connect edge, never replayed.
-		for (const frame of pending) {
-			if (!this.send(frame, "op")) this.buffer.push(frame);
+		for (const held of pending) {
+			if (!this.send(held.frame, held.kind)) this.buffer.push(held);
 		}
 	}
 
@@ -178,7 +197,7 @@ export class NoteProvider {
 		const encoder = encoding.createEncoder();
 		encoding.writeVarUint(encoder, MESSAGE_SYNC);
 		syncProtocol.writeSyncStep1(encoder, this.doc);
-		this.send(toB64(encoding.toUint8Array(encoder)), "pull");
+		this.send(toB64(encoding.toUint8Array(encoder)), "handshake");
 	}
 
 	/** Relay's messageHandlers[messageSync]: apply an inbound frame and, for an
@@ -193,7 +212,11 @@ export class NoteProvider {
 		encoding.writeVarUint(reply, MESSAGE_SYNC);
 		const syncType = syncProtocol.readSyncMessage(decoder, reply, this.doc, this);
 		if (encoding.length(reply) > 1) {
-			this.broadcast(toB64(encoding.toUint8Array(reply)));
+			// readSyncMessage writes a reply for an inbound syncStep1 ONLY, and the
+			// server sends one only for a doc_id it already resolved through
+			// `note_in_vault?`. The row provably exists, so this syncStep2 is
+			// handshake traffic, not gated content.
+			this.broadcast(toB64(encoding.toUint8Array(reply)), "handshake");
 		}
 		if (syncType === syncProtocol.messageYjsSyncStep2 && !this.synced) {
 			this.synced = true;

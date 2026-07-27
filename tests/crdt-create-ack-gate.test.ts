@@ -9,10 +9,15 @@
  *
  * Ported to the Relay-model ProviderRegistry: the old `onUpdate` outbound seam
  * is the provider's `send` now, which only fires while connected — so every
- * test marks the registry connected. The `canSendLive` gate lives in the
- * registry's per-note send closure exactly as before. On create-ack the held
- * state is delivered by `flushHeldState` (a syncStep1 re-advertise + buffered
- * frame flush), which the caller opens the gate for by confirming first.
+ * test marks the registry connected. On create-ack the held state is delivered
+ * by `flushHeldState` (a syncStep1 re-advertise + buffered frame flush), which
+ * the caller opens the gate for by confirming first.
+ *
+ * The gate itself lives in ONE place — the `send` closure built by
+ * `createCrdtWiring` — and these tests stand in for it via `gatedSend` below.
+ * ProviderRegistry used to carry a duplicate `canSendLive` opt that only tests
+ * ever set; it was deleted (#1130 follow-up) because the suite exercised the
+ * duplicate while the shipped gate went uncovered.
  */
 import { describe, expect, mock, test } from "bun:test";
 import "fake-indexeddb/auto";
@@ -20,10 +25,26 @@ import { TFile } from "obsidian";
 import * as Y from "yjs";
 import { CONTENT_KEY } from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { NoteProvider } from "../src/crdt/note-provider";
+import { type FrameKind, NoteProvider } from "../src/crdt/note-provider";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { CRDT_HEAD_CREATED, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
+
+type Send = (noteId: string, frame: string, kind: FrameKind) => boolean;
+
+/** Wrap a transport in the create-before-edit gate, mirroring the PRODUCTION
+ *  closure in `wiring.ts` (`kind === "op" && !canSendLive(docId)` -> refuse).
+ *
+ *  ProviderRegistry deliberately has no `canSendLive` opt of its own: one gate,
+ *  no drift. These tests used to configure that duplicate, which meant the whole
+ *  gate suite could stay green while the SHIPPED gate regressed — exactly the
+ *  #1130 hole. The shipped closure is pinned directly by
+ *  `tests/crdt/wiring.test.ts`; this helper keeps these provider-level tests
+ *  honest about the shape they are standing in for. */
+function gatedSend(canSendLive: (noteId: string) => boolean, send: Send): Send {
+	return (noteId, frame, kind) =>
+		kind === "op" && !canSendLive(noteId) ? false : send(noteId, frame, kind);
+}
 
 /** Minimal SyncEngine for flush tests — app/api are untouched by
  *  flushHeldEditsOnCreateAck, so bare stubs are enough. */
@@ -42,9 +63,8 @@ describe("create-ack gate on live send", () => {
 		const acked = new Set<string>(); // nothing acked yet
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-unacked",
-			send,
+			send: gatedSend((id: string) => acked.has(id), send),
 			onFlushToDisk: async () => {},
-			canSendLive: (id: string) => acked.has(id),
 		});
 		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
@@ -57,9 +77,8 @@ describe("create-ack gate on live send", () => {
 		const acked = new Set<string>(["note-1"]);
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-acked",
-			send,
+			send: gatedSend((id: string) => acked.has(id), send),
 			onFlushToDisk: async () => {},
-			canSendLive: (id: string) => acked.has(id),
 		});
 		mgr.setConnected(true);
 		await mgr.applyLocalEdit("note-1", "hello");
@@ -67,7 +86,7 @@ describe("create-ack gate on live send", () => {
 		await mgr.destroyAll();
 	});
 
-	test("omitting canSendLive keeps the pre-existing always-send behavior", async () => {
+	test("an UNWRAPPED transport always sends — the registry adds no gate", async () => {
 		const send = mock(() => true);
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-default",
@@ -81,21 +100,21 @@ describe("create-ack gate on live send", () => {
 	});
 
 	// #1130 (e2e test_48): the gate is CREATE-BEFORE-EDIT — it holds outbound
-	// OPS for a note whose server row may not exist yet. syncStep1 is a PULL
-	// (a bare state vector, no content), and it is the ONLY way a diverged
-	// note whose Yjs fan-out this device missed can ever converge. Gating it
-	// made `socketConverge`'s re-handshake a silent no-op for exactly those
-	// notes: a REST-created note discovered via note_changed sets no crdtHead,
-	// so hasServerNote stays false forever and the heal never reaches the wire.
+	// OPS for a note whose server row may not exist yet. syncStep1 is a bare
+	// state vector carrying no content, and it is the ONLY way a diverged note
+	// whose Yjs fan-out this device missed can ever converge. Gating it made
+	// `socketConverge`'s re-handshake a silent no-op for exactly those notes:
+	// a REST-created note discovered via note_changed sets no crdtHead, so
+	// hasServerNote stays false forever and the heal never reaches the wire.
 	// The server answers an unknown doc_id with note_not_found, so an
-	// un-acked pull is harmless.
-	test("enroll's syncStep1 PULL is NOT held by the create-ack gate", async () => {
+	// un-acked handshake is harmless.
+	test("enroll's syncStep1 is NOT held by the create-ack gate", async () => {
 		const send = mock(() => true);
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-step1-pull",
-			send,
+			// no crdtHead recorded for this note -> the gate holds every op
+			send: gatedSend(() => false, send),
 			onFlushToDisk: async () => {},
-			canSendLive: () => false, // no crdtHead recorded for this note
 		});
 		mgr.setConnected(true);
 		await mgr.startSync("note-1");
@@ -115,14 +134,17 @@ describe("create-ack gate on live send", () => {
 		const flushed: string[] = [];
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-step1-heal",
-			send: (_id, frame) => {
-				queueMicrotask(() => peer.receive(frame));
-				return true;
-			},
+			// no crdtHead — the note is "unknown" to the gate
+			send: gatedSend(
+				() => false,
+				(_id, frame) => {
+					queueMicrotask(() => peer.receive(frame));
+					return true;
+				},
+			),
 			onFlushToDisk: async (_id, content) => {
 				flushed.push(content);
 			},
-			canSendLive: () => false, // no crdtHead — the note is "unknown" to the gate
 		});
 		peer.setSend((frame) => {
 			void mgr.receive("note-1", frame);
@@ -140,6 +162,50 @@ describe("create-ack gate on live send", () => {
 		peer.destroy();
 	});
 
+	// The reply half. When the PEER advertises, its syncStep1 reaches us and
+	// readSyncMessage writes a syncStep2 back. That reply must NOT be gated:
+	// the server only sends a syncStep1 for a doc_id it already resolved through
+	// `note_in_vault?`, so the row provably exists. Gating it also never drains
+	// the provider buffer, which pins isFullySynced false and makes closeDoc a
+	// permanent no-op — the doc can never be evicted for the rest of the session.
+	test("the syncStep2 REPLY is not held, and the buffer drains", async () => {
+		const local = new Y.Doc();
+		const peerDoc = new Y.Doc();
+		const peer = new NoteProvider(peerDoc);
+		const registrySend = mock((_id: string, frame: string) => {
+			queueMicrotask(() => peer.receive(frame));
+			return true;
+		});
+		const mgr = new ProviderRegistry({
+			dbPrefix: "gate-step2-reply",
+			send: gatedSend(() => false, registrySend), // ops held for the whole test
+			onFlushToDisk: async () => {},
+		});
+		peer.setSend((frame) => {
+			void mgr.receive("note-1", frame);
+			return true;
+		});
+		// Seed OUR doc so the reply carries real ops, then hand it to the registry.
+		local.getText(CONTENT_KEY).insert(0, "local state the peer lacks");
+		await mgr.applyRemoteUpdate("note-1", Y.encodeStateAsUpdate(local));
+		mgr.setConnected(true);
+		peer.setAdvertised(true);
+		peer.connect(); // fires the peer's syncStep1 at us
+
+		await new Promise<void>((r) => setTimeout(r, 20));
+
+		// Our reply landed: the peer converged on content it never had.
+		expect(peerDoc.getText(CONTENT_KEY).toJSON()).toContain("local state the peer lacks");
+		// ...and a local EDIT is still held, so the gate is intact.
+		const before = registrySend.mock.calls.length;
+		await mgr.applyLocalEdit("note-1", "a brand new local edit");
+		expect(registrySend.mock.calls.length).toBe(before);
+
+		await mgr.destroyAll();
+		peer.destroy();
+		local.destroy();
+	});
+
 	test("a held note still pulls on reconnect while its ops stay held", async () => {
 		const frames: string[] = [];
 		const send = mock((_id: string, frame: string) => {
@@ -148,9 +214,8 @@ describe("create-ack gate on live send", () => {
 		});
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-step1-reconnect",
-			send,
+			send: gatedSend(() => false, send),
 			onFlushToDisk: async () => {},
-			canSendLive: () => false,
 		});
 		mgr.setConnected(true);
 		await mgr.startSync("note-1");
@@ -175,9 +240,8 @@ describe("SyncEngine.flushHeldEditsOnCreateAck", () => {
 		const confirmed = new Set<string>();
 		const mgr = new ProviderRegistry({
 			dbPrefix: "flush-ack",
-			send,
+			send: gatedSend((id: string) => confirmed.has(id), send),
 			onFlushToDisk: async () => {},
-			canSendLive: (id: string) => confirmed.has(id),
 		});
 		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
@@ -278,10 +342,9 @@ describe("Defect 1: gate must survive reconnect for server-known notes", () => {
 
 		const mgr = new ProviderRegistry({
 			dbPrefix: "gate-reconnect",
-			send,
+			send: gatedSend((id: string) => engine.hasServerNote(id), send),
 			onFlushToDisk: async () => {},
 			// main.ts createCrdtWiring's canSendLive — mirrors the production wiring.
-			canSendLive: (id: string) => engine.hasServerNote(id),
 		});
 		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);
@@ -322,12 +385,16 @@ describe("Task 3: create-before-edit wire ordering (regression)", () => {
 
 		const mgr = new ProviderRegistry({
 			dbPrefix: "order-genesis",
-			send: (docId: string) => {
-				wire.push({ kind: "msg", id: docId });
-				return true;
-			},
+			// The gate is what enforces the ordering under test: an op for a
+			// not-yet-confirmed note must not reach the wire ahead of its create.
+			send: gatedSend(
+				(id: string) => engine.isNoteConfirmed(id),
+				(docId: string) => {
+					wire.push({ kind: "msg", id: docId });
+					return true;
+				},
+			),
 			onFlushToDisk: async () => {},
-			canSendLive: (id: string) => engine.isNoteConfirmed(id),
 		});
 		mgr.setConnected(true);
 		engine.setCrdtManager(mgr);

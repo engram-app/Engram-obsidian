@@ -498,3 +498,58 @@ test("forgetUnsent prunes a doc so reEnrollUnsent skips it (offline-delete clean
 	wiring.dispose();
 	await wiring.manager.destroyAll();
 });
+
+// #1130: the create-ack gate that production actually runs lives in THIS file's
+// `send` closure (main.ts passes `canSendLive` to createCrdtWiring; the wiring
+// never forwards it to ProviderRegistry, whose own `canSendLive` opt is a
+// test/sim-only seam). Every other gate test drives that second seam, so a
+// regression here would ship green. This pins the shipped one: a doc the gate
+// holds must still get its syncStep1 out, while its ops stay held.
+test("wiring gate: syncStep1 reaches sendCrdt for a held doc, ops do not", async () => {
+	const map = new NoteIdMap();
+	const noteId = "019fa000-0000-7000-8000-00000000d130";
+	map.set("Held.md", noteId);
+
+	const sent: string[] = [];
+	const wiring = createCrdtWiring({
+		noteIdMap: map,
+		syncEngine: {
+			flushFromCrdt: async () => true,
+			isUnchangedSynced: () => false,
+			materializeEmptyDiscovered: async () => {},
+			reconcileNoteIdMapFromManifest: async () => 0,
+			isSyncBlocked: () => false,
+			ensureNoteIdMapped: () => {},
+			discoverAnnouncedNote: async () => {},
+			commitCrdtConvergence: async () => {},
+		},
+		sendCrdt: (_docId, frame) => {
+			sent.push(frame);
+			return true;
+		},
+		isBound: () => false,
+		// The production wiring: no crdtHead for this note -> hasServerNote false.
+		canSendLive: () => false,
+		strandHealDebounceMs: 100_000,
+		dbPrefix: "wiring-gate-1130",
+	});
+	wiring.manager.setConnected(true);
+
+	// A local EDIT is held by the gate — nothing on the wire.
+	await wiring.manager.applyLocalEdit(noteId, "an edit before the row exists\n");
+	await sleep(20);
+	expect(sent).toHaveLength(0);
+
+	// socketConverge's re-handshake: reset + enroll. The syncStep1 MUST get out
+	// even though canSendLive is still false, or the note can never converge.
+	wiring.enrollment.reset(noteId);
+	wiring.enrollment.enroll(noteId);
+	await waitFor(() => sent.length > 0, "syncStep1 reached sendCrdt");
+
+	// y-protocols messageSync(0) + messageYjsSyncStep1(0) — the first two
+	// varuints, which base64 renders as a leading "AA".
+	expect(sent[0].startsWith("AA")).toBe(true);
+
+	wiring.dispose();
+	await wiring.manager.destroyAll();
+});
