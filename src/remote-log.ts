@@ -22,6 +22,18 @@ export interface RemoteLogEntry {
 
 type PushFn = (entries: RemoteLogEntry[]) => Promise<void>;
 
+/** Shipping threshold for log entries. A call ships only if its own level's
+ *  severity is at or above the configured threshold. "debug" has no emitting
+ *  call sites yet (reserved for future verbose logging behind the dial). */
+export type RemoteLogLevel = "error" | "warn" | "info" | "debug";
+
+const LEVEL_SEVERITY: Record<RemoteLogLevel, number> = {
+	debug: 0,
+	info: 1,
+	warn: 2,
+	error: 3,
+};
+
 const MAX_BUFFER = 200;
 const FLUSH_INTERVAL_MS = 30_000;
 const FLUSH_THRESHOLD = 20;
@@ -38,6 +50,7 @@ export class RemoteLogger {
 	private deviceId: string | null = null;
 	private vaultId: string | null = null;
 	private seq = 0;
+	private levelThreshold: RemoteLogLevel = "info";
 
 	configure(pushFn: PushFn, pluginVersion: string, platform: string): void {
 		this.pushFn = pushFn;
@@ -69,6 +82,13 @@ export class RemoteLogger {
 
 	setConnId(id: string | null): void {
 		this.connId = id;
+	}
+
+	/** Set the minimum severity that ships. Entries below this level are
+	 *  dropped before buffering (they never count toward the ring buffer or
+	 *  flush threshold). Default "info" preserves today's behavior. */
+	setLevelThreshold(level: RemoteLogLevel): void {
+		this.levelThreshold = level;
 	}
 
 	setClientContext(deviceId: string | null, vaultId: string | null): void {
@@ -116,6 +136,7 @@ export class RemoteLogger {
 		diagnostic?: boolean,
 	): void {
 		if (!this.enabled || !this.pushFn) return;
+		if (LEVEL_SEVERITY[level] < LEVEL_SEVERITY[this.levelThreshold]) return;
 
 		const entry: RemoteLogEntry = {
 			ts: new Date().toISOString(),
@@ -167,6 +188,7 @@ interface NoopLogger {
 	diag(category: string, message: string): void;
 	setConnId(id: string | null): void;
 	setClientContext(deviceId: string | null, vaultId: string | null): void;
+	setLevelThreshold(level: RemoteLogLevel): void;
 	flush(): Promise<void>;
 	destroy(): Promise<void>;
 	setEnabled(enabled: boolean): void;
@@ -180,6 +202,7 @@ const _noop: NoopLogger = {
 	diag() {},
 	setConnId() {},
 	setClientContext() {},
+	setLevelThreshold() {},
 	async flush() {},
 	async destroy() {},
 	setEnabled() {},

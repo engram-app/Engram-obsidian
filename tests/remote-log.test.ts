@@ -84,6 +84,79 @@ describe("RemoteLogger basics", () => {
 });
 
 // ---------------------------------------------------------------------------
+// remoteLogLevel severity threshold
+// ---------------------------------------------------------------------------
+
+describe("RemoteLogger level threshold", () => {
+	test("default threshold ships all current levels (info/warn/error)", () => {
+		const logger = new RemoteLogger();
+		const pushFn = mock().mockResolvedValue(undefined);
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		logger.info("cat", "an info line");
+		logger.warn("cat", "a warn line");
+		logger.error("cat", "an error line");
+		logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+		expect(pushFn.mock.calls[0][0]).toHaveLength(3);
+		logger.destroy();
+	});
+
+	test("threshold 'warn' drops an info call", () => {
+		const logger = new RemoteLogger();
+		const pushFn = mock().mockResolvedValue(undefined);
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		logger.setLevelThreshold("warn");
+		logger.info("cat", "should be dropped");
+		logger.flush();
+		expect(pushFn).not.toHaveBeenCalled();
+		logger.destroy();
+	});
+
+	test("threshold 'warn' ships a warn call", () => {
+		const logger = new RemoteLogger();
+		const pushFn = mock().mockResolvedValue(undefined);
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		logger.setLevelThreshold("warn");
+		logger.warn("cat", "should ship");
+		logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+		expect(pushFn.mock.calls[0][0][0].message).toBe("should ship");
+		logger.destroy();
+	});
+
+	test("threshold 'error' drops warn and info but ships error", () => {
+		const logger = new RemoteLogger();
+		const pushFn = mock().mockResolvedValue(undefined);
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		logger.setLevelThreshold("error");
+		logger.info("cat", "dropped");
+		logger.warn("cat", "also dropped");
+		logger.error("cat", "shipped");
+		logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+		expect(pushFn.mock.calls[0][0]).toHaveLength(1);
+		expect(pushFn.mock.calls[0][0][0].message).toBe("shipped");
+		logger.destroy();
+	});
+
+	test("threshold 'debug' ships everything (no debug-level call sites exist yet)", () => {
+		const logger = new RemoteLogger();
+		const pushFn = mock().mockResolvedValue(undefined);
+		logger.configure(pushFn, "1.0.0", "desktop");
+		logger.setEnabled(true);
+		logger.setLevelThreshold("debug");
+		logger.info("cat", "info");
+		logger.flush();
+		expect(pushFn).toHaveBeenCalledTimes(1);
+		logger.destroy();
+	});
+});
+
+// ---------------------------------------------------------------------------
 // Flush threshold
 // ---------------------------------------------------------------------------
 

@@ -1,4 +1,5 @@
 import { Notice, Setting, TFolder } from "obsidian";
+import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
 /** Directories that should never be synced — detect and warn if found in vault. */
@@ -76,6 +77,26 @@ export function renderAdvancedTab(ctx: TabContext): void {
 				plugin.settings.diagnosticsEnabled = value;
 				await plugin.saveSettings();
 			}),
+		);
+
+	new Setting(containerEl)
+		.setName("Diagnostics detail")
+		.setDesc(
+			"Minimum severity that ships while diagnostics are on. Higher levels send fewer lines. Default: Info.",
+		)
+		.addDropdown((dropdown) =>
+			dropdown
+				.addOptions({
+					error: "Errors only",
+					warn: "Warnings and errors",
+					info: "Info (default)",
+					debug: "Debug (verbose)",
+				})
+				.setValue(plugin.settings.remoteLogLevel)
+				.onChange(async (value) => {
+					plugin.settings.remoteLogLevel = value as EngramSyncSettings["remoteLogLevel"];
+					await plugin.saveSettings();
+				}),
 		);
 
 	// ── About ──

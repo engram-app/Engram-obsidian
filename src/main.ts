@@ -389,6 +389,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.manifest.version,
 			Platform.isMobile ? "mobile" : "desktop",
 		);
+		remoteLogger.setLevelThreshold(this.settings.remoteLogLevel);
 		remoteLogger.setEnabled(this.settings.diagnosticsEnabled);
 		remoteLogger.setClientContext(this.deviceId, this.settings.vaultId);
 		rlog().info(
@@ -1151,6 +1152,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.api.setVaultId(this.settings.vaultId);
 		this.api.setTracingEnabled(this.settings.diagnosticsEnabled);
 		this.syncEngine.updateSettings(this.settings);
+		rlog().setLevelThreshold(this.settings.remoteLogLevel);
 		rlog().setEnabled(this.settings.diagnosticsEnabled);
 		this.startSyncInterval();
 		this.setupNoteStream();
