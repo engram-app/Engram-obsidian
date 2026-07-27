@@ -21518,14 +21518,12 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // (it forks the lineage → non-converging storm → the file-switch wedge).
       // syncStep1 on connect advertises the hydrated state instead.
       deferActivation: !0,
-      // Create-ack gate: a held note reads as REFUSED so its frames buffer in
-      // the provider and flush once the server row exists. OPS only —
-      // "handshake" frames are tied to a doc the peer already vouched for
-      // (see FrameKind), and gating them broke the diverged-note heal (#1130).
-      send: (frame, kind2) => {
-        var _a2, _b2;
-        return kind2 === "op" && ((_b2 = (_a2 = this.opts).canSendLive) == null ? void 0 : _b2.call(_a2, noteId)) === !1 ? !1 : this.opts.send(noteId, frame, kind2);
-      },
+      // The registry owns NO gate of its own. The create-before-edit gate lives
+      // in exactly ONE place — the `send` closure in wiring.ts, which is what
+      // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
+      // here could silently drift from the shipped one (it did: the suite
+      // exercised only the duplicate, so #1130 could regress green).
+      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -21649,8 +21647,9 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       doc2.destroy();
     }
   }
-  /** Create-ack flush: re-attempt the frames the create-gate (canSendLive) held
-   *  now that the server row exists. This is a SEND, not an enroll — a
+  /** Create-ack flush: re-attempt the frames the create-gate (the `canSendLive`
+   *  check inside wiring.ts's `send` closure) held while the note had no server
+   *  row, now that it does. This is a SEND, not an enroll — a
    *  newly-created note stays room-free (no syncStep1) exactly like a cold send;
    *  it opens a room only when the editor binds it (enroll). setConnected re-runs
    *  the buffered-frame flush without advertising. */

@@ -61,10 +61,6 @@ export interface ProviderRegistryOpts {
 	/** Adopt-first gate: content byte-identical to the last-synced content must
 	 *  NOT seed (would fork a second lineage → #846 doubling). */
 	isUnchangedSynced?: (noteId: string, content: string) => boolean;
-	/** Create-before-edit gate: return false to HOLD a note's frames until its
-	 *  server row exists (crdt_create acked). Held frames buffer in the provider
-	 *  and flush once this returns true (a later send/reconnect). */
-	canSendLive?: (noteId: string) => boolean;
 	/** Fired on the first inbound syncStep2 for a note. */
 	onSynced?: (noteId: string) => void;
 	/** Fired when the first inbound syncStep2 leaves the doc EMPTY — the server's
@@ -142,14 +138,12 @@ export class ProviderRegistry {
 			// (it forks the lineage → non-converging storm → the file-switch wedge).
 			// syncStep1 on connect advertises the hydrated state instead.
 			deferActivation: true,
-			// Create-ack gate: a held note reads as REFUSED so its frames buffer in
-			// the provider and flush once the server row exists. OPS only —
-			// "handshake" frames are tied to a doc the peer already vouched for
-			// (see FrameKind), and gating them broke the diverged-note heal (#1130).
-			send: (frame, kind) => {
-				const gated = kind === "op" && this.opts.canSendLive?.(noteId) === false;
-				return gated ? false : this.opts.send(noteId, frame, kind);
-			},
+			// The registry owns NO gate of its own. The create-before-edit gate lives
+			// in exactly ONE place — the `send` closure in wiring.ts, which is what
+			// production runs and what tests/crdt/wiring.test.ts pins. A duplicate
+			// here could silently drift from the shipped one (it did: the suite
+			// exercised only the duplicate, so #1130 could regress green).
+			send: (frame, kind) => this.opts.send(noteId, frame, kind),
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
@@ -340,8 +334,9 @@ export class ProviderRegistry {
 		}
 	}
 
-	/** Create-ack flush: re-attempt the frames the create-gate (canSendLive) held
-	 *  now that the server row exists. This is a SEND, not an enroll — a
+	/** Create-ack flush: re-attempt the frames the create-gate (the `canSendLive`
+	 *  check inside wiring.ts's `send` closure) held while the note had no server
+	 *  row, now that it does. This is a SEND, not an enroll — a
 	 *  newly-created note stays room-free (no syncStep1) exactly like a cold send;
 	 *  it opens a room only when the editor binds it (enroll). setConnected re-runs
 	 *  the buffered-frame flush without advertising. */
