@@ -11620,6 +11620,15 @@ function countFolders(paths) {
   return set2.size;
 }
 var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"];
+function callerTrace() {
+  var _a;
+  return ((_a = new Error().stack) != null ? _a : "").split(`
+`).slice(2, 6).map((f) => {
+    var _a2;
+    let m = /at\s+([^\s(]+)/.exec(f.trim());
+    return (_a2 = m == null ? void 0 : m[1]) != null ? _a2 : "?";
+  }).filter((n) => n !== "?").join(" < ");
+}
 function fnv1a(s) {
   let h = 2166136261;
   for (let i = 0; i < s.length; i++)
@@ -12677,7 +12686,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
-    await this.flushFromCrdt(path, text2);
+    rlog().warn(
+      "crdt",
+      `EMPTY-MATERIALIZE proceeding ${normalized} id=${noteId} projected=${text2.length}`
+    ), await this.flushFromCrdt(path, text2);
   }
   /** Materialize a relocated/first-delivery note at `path` from its CRDT doc
    *  projection when this device's handshake for `noteId` has landed. Content-
@@ -13019,7 +13031,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian20.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
+    if (rlog().warn(
+      "crdt",
+      `DELETE begin ${file.path} id=${crdtNoteId != null ? crdtNoteId : "none"} binary=${isBinary} liveBound=${this.isLiveBound((0, import_obsidian20.normalizePath)(file.path))} remoteEcho=${this.remotelyDeleted.has(file.path)}`
+    ), crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian20.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
       this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
       return;
     }
@@ -14730,6 +14745,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.app.vault.process ? await this.app.vault.process(file, () => content) : await this.app.vault.modify(file, content);
   }
   async createFileWithFolders(normalized, content) {
+    rlog().warn(
+      "crdt",
+      `FILE CREATE ${normalized} bytes=${content.length} via=${callerTrace()}`
+    );
     let folder = normalized.includes("/") ? normalized.substring(0, normalized.lastIndexOf("/")) : "";
     folder && await this.ensureFolder(folder);
     try {
@@ -22211,7 +22230,7 @@ function createCrdtWiring(deps) {
     // off the handshake so a slow content STEP2 can't race an empty file (#547).
     onEmptyStep2: (noteId) => {
       let path = noteIdMap.pathForId(noteId);
-      if (!path) {
+      if (rlog().warn("crdt", `EMPTY-STEP2 id=${noteId} path=${path != null ? path : "unmapped"}`), !path) {
         rlog().warn(
           "crdt",
           `onEmptyStep2: no known path for note_id=${noteId} \u2014 skipping materialize`

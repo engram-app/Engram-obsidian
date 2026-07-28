@@ -241,6 +241,22 @@ const DEGRADED_NOTICE_DURATION_MS = 10_000;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
 const ALWAYS_IGNORED = [".trash/", ".git/"];
 
+/** Compact call-site trace for forensic logging: the 4 frames above the caller,
+ *  function names only (paths/line numbers are noise once minified, and the
+ *  bundle is what runs in Obsidian). Used to attribute a file creation to the
+ *  code path that requested it — the thing missing from the two failed
+ *  delete-resurrection investigations. */
+function callerTrace(): string {
+	const frames = (new Error().stack ?? "").split("\n").slice(2, 6);
+	return frames
+		.map((f) => {
+			const m = /at\s+([^\s(]+)/.exec(f.trim());
+			return m?.[1] ?? "?";
+		})
+		.filter((n) => n !== "?")
+		.join(" < ");
+}
+
 /** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content change detection. */
 export function fnv1a(s: string): number {
 	let h = 0x811c9dc5;
@@ -1514,6 +1530,10 @@ export class SyncEngine {
 		// STEP2 already carries its body. The former client-side REST getNote
 		// cross-check (this note's #310 race-closer) is therefore redundant.
 		const text = this.crdt ? await this.crdt.projectedText(noteId) : "";
+		rlog().warn(
+			"crdt",
+			`EMPTY-MATERIALIZE proceeding ${normalized} id=${noteId} projected=${text.length}`,
+		);
 		await this.flushFromCrdt(path, text);
 	}
 
@@ -2152,6 +2172,12 @@ export class SyncEngine {
 		// or a late fan-out cannot resurrect it. Covers every exit path below
 		// (socket delete, REST delete, remote-echo skip, offline enqueue). Marked
 		// on any known id, regardless of which send path runs.
+		rlog().warn(
+			"crdt",
+			`DELETE begin ${file.path} id=${crdtNoteId ?? "none"} binary=${isBinary}` +
+				` liveBound=${this.isLiveBound(normalizePath(file.path))}` +
+				` remoteEcho=${this.remotelyDeleted.has(file.path)}`,
+		);
 		if (crdtNoteId) this.markRecentlyDeleted(crdtNoteId);
 
 		// Clear the file's note_id mapping — the vault file is genuinely gone,
@@ -5976,6 +6002,15 @@ export class SyncEngine {
 	}
 
 	private async createFileWithFolders(normalized: string, content: string): Promise<void> {
+		// FORENSICS (delete-resurrection hunt, 2026-07-28): this is the ONLY path
+		// that creates a markdown file, so whatever resurrects a deleted note must
+		// come through here. WARN level deliberately — info never reaches Loki, and
+		// the previous two investigations failed because the creating call site
+		// left no trace at all. `bytes=0` is the resurrection signature.
+		rlog().warn(
+			"crdt",
+			`FILE CREATE ${normalized} bytes=${content.length} via=${callerTrace()}`,
+		);
 		const folder = normalized.includes("/")
 			? normalized.substring(0, normalized.lastIndexOf("/"))
 			: "";
