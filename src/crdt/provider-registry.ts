@@ -13,6 +13,7 @@
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
+import { NoteDestroyedError, isDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -115,6 +116,13 @@ export class ProviderRegistry {
 		return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
 	}
 
+	/** Relay parity (`Document.isDocumentAlive`): a tombstoned note is dead for
+	 *  good — a note_id is minted once and never reused, so this never rejects a
+	 *  legitimate access. Cleared only by destroyAll (stack teardown). */
+	private assertAlive(noteId: string): void {
+		if (this.removed.has(noteId)) throw new NoteDestroyedError(noteId);
+	}
+
 	private async entry(noteId: string): Promise<Entry> {
 		const e = this.ensureEntrySync(noteId);
 		await e.ready;
@@ -128,6 +136,12 @@ export class ProviderRegistry {
 	private ensureEntrySync(noteId: string): Entry {
 		const cached = this.entries.get(noteId);
 		if (cached) return cached;
+		// Relay's contract (Document.commitDocumentState): a destroyed doc is not
+		// re-creatable — touching it throws. This is the ONE choke point where a
+		// doc comes into existence, so refusing here makes "a deleted note's room
+		// silently rebuilt by a late frame" unrepresentable, rather than something
+		// each inbound path has to remember to guard.
+		this.assertAlive(noteId);
 		const doc = new Y.Doc();
 		const persistence = new IndexeddbPersistence(this.storeName(noteId), doc);
 		const kind = this.opts.docKind?.(noteId) ?? "note";
@@ -358,6 +372,10 @@ export class ProviderRegistry {
 	 *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
 	 *  CrdtEnrollment.enroll collapse to this.) */
 	async startSync(noteId: string): Promise<void> {
+		// Liveness FIRST, before any state mutation: a deleted note must not even
+		// appear enrolled. Throws NoteDestroyedError (Relay contract) — enroll()
+		// below is the fire-and-forget wrapper that absorbs it.
+		this.assertAlive(noteId);
 		this.enrolledIds.add(noteId);
 		const e = await this.entry(noteId);
 		e.provider.setAdvertised(true);
@@ -365,8 +383,13 @@ export class ProviderRegistry {
 	}
 
 	enroll(noteId: string): void {
+		if (this.removed.has(noteId)) return; // deleted — nothing to open
 		this.enrolledIds.add(noteId); // sync mark so the room shows immediately
-		void this.startSync(noteId);
+		// Fire-and-forget: absorb the destroyed-note rejection (a delete racing an
+		// enroll is expected), but let any OTHER failure surface as it did before.
+		void this.startSync(noteId).catch((e) => {
+			if (!isDestroyedError(e)) throw e;
+		});
 	}
 
 	/** Close the room: stop advertising syncStep1 on reconnect. SEND/RECEIVE of

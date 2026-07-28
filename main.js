@@ -12624,6 +12624,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  I/O and log messages — passing `path` to `crdt.projectedText` would open
    *  a stray path-keyed doc/IndexedDB store instead of the real note. */
   async materializeEmptyDiscovered(path, noteId) {
+    var _a;
     if (this.syncBlocked) {
       devLog().log(
         "sync-blocked",
@@ -12634,6 +12635,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (!this.isCrdtEligiblePath(path)) return;
     let normalized = (0, import_obsidian20.normalizePath)(path);
     if (this.app.vault.getAbstractFileByPath(normalized)) return;
+    if (this.recentlyDeleted.has(noteId)) {
+      rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
+      return;
+    }
+    if (this.queue.hasPendingDelete(normalized, (_a = this.settings.vaultId) != null ? _a : void 0)) {
+      rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
+      return;
+    }
     let text2 = this.crdt ? await this.crdt.projectedText(noteId) : "";
     await this.flushFromCrdt(path, text2);
   }
@@ -16399,6 +16408,26 @@ async function ensureDocSchema(vaultId, storage, dbs) {
   for (let name of dbsToWipe)
     await dbs.drop(name);
   return storage.setItem(markerKey, "2"), !0;
+}
+
+// src/crdt/destroyed-error.ts
+var DestroyedError = class extends Error {
+  constructor(owner, detail) {
+    super(detail ? `${owner} was destroyed: ${detail}` : `${owner} was destroyed`);
+    this.owner = owner;
+    this.detail = detail;
+    this.name = "DestroyedError";
+  }
+}, NoteDestroyedError = class extends DestroyedError {
+  constructor(noteId, path) {
+    super("Note", path ? `${path} (${noteId})` : noteId);
+    this.noteId = noteId;
+    this.path = path;
+    this.name = "NoteDestroyedError";
+  }
+};
+function isDestroyedError(error) {
+  return error instanceof DestroyedError;
 }
 
 // node_modules/lib0/indexeddb.js
@@ -21577,6 +21606,12 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     let { order, values } = frontmatterOf(e.doc);
     return projectNote(order, values, e.text.toJSON(), rawFrontmatterOf(e.doc));
   }
+  /** Relay parity (`Document.isDocumentAlive`): a tombstoned note is dead for
+   *  good — a note_id is minted once and never reused, so this never rejects a
+   *  legitimate access. Cleared only by destroyAll (stack teardown). */
+  assertAlive(noteId) {
+    if (this.removed.has(noteId)) throw new NoteDestroyedError(noteId);
+  }
   async entry(noteId) {
     let e = this.ensureEntrySync(noteId);
     return await e.ready, e;
@@ -21589,6 +21624,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     var _a, _b, _c;
     let cached = this.entries.get(noteId);
     if (cached) return cached;
+    this.assertAlive(noteId);
     let doc2 = new Doc(), persistence = new IndexeddbPersistence(this.storeName(noteId), doc2), kind = (_c = (_b = (_a = this.opts).docKind) == null ? void 0 : _b.call(_a, noteId)) != null ? _c : "note", text2 = doc2.getText(CONTENT_KEY), provider = new NoteProvider(doc2, {
       // Start MUTED until IndexedDB replay finishes (activate() below): the
       // replayed persisted state must NOT be re-broadcast as a fresh local edit
@@ -21745,12 +21781,14 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
-    this.enrolledIds.add(noteId);
+    this.assertAlive(noteId), this.enrolledIds.add(noteId);
     let e = await this.entry(noteId);
     e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
   enroll(noteId) {
-    this.enrolledIds.add(noteId), this.startSync(noteId);
+    this.removed.has(noteId) || (this.enrolledIds.add(noteId), this.startSync(noteId).catch((e) => {
+      if (!isDestroyedError(e)) throw e;
+    }));
   }
   /** Close the room: stop advertising syncStep1 on reconnect. SEND/RECEIVE of
    *  ops still work (the note converges over the fan-out); the server room idles
@@ -21992,6 +22030,10 @@ function createCrdtWiring(deps) {
     }
   }), manager = registry, channel = registry, enrollment = registry, onCrdtMessage = (docId, b64) => {
     channel.receive(docId, b64).catch((e) => {
+      if (isDestroyedError(e)) {
+        rlog().info("crdt", `frame dropped for deleted note_id=${docId}`);
+        return;
+      }
       rlog().warn(
         "crdt",
         `handleFrame failed for note_id=${docId}: ${errMsg(e)} \u2014 frame dropped`
