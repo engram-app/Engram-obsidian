@@ -1481,6 +1481,21 @@ export class SyncEngine {
 		const normalized = normalizePath(path);
 		// Already on disk — a content STEP2 created it, or the user already has it.
 		if (this.app.vault.getAbstractFileByPath(normalized)) return;
+		// A note THIS device is deleting must NOT be materialized: "not on disk"
+		// is the expected state mid-delete, and an empty STEP2 racing the
+		// tombstone would otherwise CREATE an empty file at the deleted path that
+		// nothing ever removes (observed 2026-07-28). Same pair, keyed the same
+		// way, as discoverAnnouncedNote: recentlyDeleted (by note_id, ~60s TTL)
+		// covers a delete already sent; hasPendingDelete (by path) covers one
+		// still sitting unsent in the offline queue.
+		if (this.recentlyDeleted.has(noteId)) {
+			rlog().info("crdt", `empty-materialize skip (recent local delete): ${normalized}`);
+			return;
+		}
+		if (this.queue.hasPendingDelete(normalized, this.settings.vaultId ?? undefined)) {
+			rlog().info("crdt", `empty-materialize skip (delete queued): ${normalized}`);
+			return;
+		}
 
 		// An empty STEP2 is the server's authoritative "genuinely empty" reply.
 		// The transient-empty race (an author's REST-pushed body whose Y.Doc

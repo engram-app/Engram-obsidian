@@ -1,6 +1,7 @@
 import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
+import { isDestroyedError } from "./destroyed-error";
 import type { NoteIdMap } from "./note-id-map";
 import { ProviderRegistry } from "./provider-registry";
 import { fromB64 } from "./wire";
@@ -350,6 +351,15 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// docId is the bare note_id (Task 6) — forwarded to handleFrame directly.
 	const onCrdtMessage = (docId: string, b64: string): void => {
 		channel.receive(docId, b64).catch((e) => {
+			// A frame for a DELETED note is expected, not a fault: the server can
+			// fan out or reply for a note this device just tore down. Relay's
+			// call sites (LiveViews) swallow exactly this error and nothing else —
+			// dropping it here is the whole point of the tombstone, so it must not
+			// masquerade as a malformed-frame warning.
+			if (isDestroyedError(e)) {
+				rlog().info("crdt", `frame dropped for deleted note_id=${docId}`);
+				return;
+			}
 			// Malformed frame / doc-open failure: log + drop — never leak an
 			// unhandled rejection from the inbound hot path.
 			rlog().warn(
