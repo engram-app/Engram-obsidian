@@ -3786,9 +3786,9 @@ var MERGE_CARD = {
         cls: "engram-sync-preview-picker-error"
       });
     else if (this.state.vaults && this.state.vaults.length > 0) {
-      let list = body.createDiv({ cls: "engram-sync-preview-picker-list" });
+      let list2 = body.createDiv({ cls: "engram-sync-preview-picker-list" });
       for (let v of this.state.vaults) {
-        let item = list.createEl("button", {
+        let item = list2.createEl("button", {
           cls: "engram-sync-preview-picker-item"
         });
         item.createSpan({
@@ -3988,7 +3988,7 @@ function makeActionButton(parent, text2, handler) {
   });
 }
 function renderPlanSkips(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]), total = groups.reduce((n, [, list]) => n + list.length, 0);
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["informational"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
   if (total === 0) return;
   let section = parent.createDiv({
     cls: "engram-sync-center-section engram-sync-center-plan-section"
@@ -3999,8 +3999,8 @@ function renderPlanSkips(parent, plugin, refresh) {
     cls: "engram-sync-center-card-hint",
     text: "These files are fine. They just need a paid plan to sync."
   });
-  for (let [category, list] of groups)
-    renderPlanCard(body, plugin, refresh, category, list);
+  for (let [category, list2] of groups)
+    renderPlanCard(body, plugin, refresh, category, list2);
 }
 function renderPlanCard(parent, plugin, refresh, category, issues) {
   var _a, _b, _c;
@@ -4024,13 +4024,13 @@ function renderPlanCard(parent, plugin, refresh, category, issues) {
     renderFileRow(fileList, plugin, refresh, issue);
 }
 function renderNeedsAttention(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list]) => n + list.length, 0), section = parent.createDiv({
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["actionable"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0), section = parent.createDiv({
     cls: "engram-sync-center-section engram-sync-center-attention-section"
   }), heading2 = sectionHeading(section, `Needs attention (${total})`);
   total > 0 && heading2.addButton(
     (btn) => btn.setButtonText("Clear all").onClick(() => {
-      for (let [, list] of groups)
-        for (let issue of list) plugin.syncEngine.issues.clear(issue.path);
+      for (let [, list2] of groups)
+        for (let issue of list2) plugin.syncEngine.issues.clear(issue.path);
       plugin.persistEngineState().then(refresh);
     })
   );
@@ -4042,8 +4042,8 @@ function renderNeedsAttention(parent, plugin, refresh) {
     });
     return;
   }
-  for (let [category, list] of groups)
-    renderAttentionCard(body, plugin, refresh, category, list);
+  for (let [category, list2] of groups)
+    renderAttentionCard(body, plugin, refresh, category, list2);
 }
 function renderAttentionCard(parent, plugin, refresh, category, issues) {
   var _a, _b;
@@ -4066,7 +4066,7 @@ function renderAttentionCard(parent, plugin, refresh, category, issues) {
     renderFileRow(fileList, plugin, refresh, issue);
 }
 function renderRetrying(parent, plugin, refresh) {
-  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list2]) => n + list2.length, 0);
+  let groups = groupedByCategory(plugin.syncEngine.issues.all(), ["transient"]), total = groups.reduce((n, [, list3]) => n + list3.length, 0);
   if (total === 0) return;
   let section = parent.createDiv({ cls: "engram-sync-center-section" });
   sectionHeading(section, `Retrying automatically (${total})`).addButton(
@@ -4079,9 +4079,9 @@ function renderRetrying(parent, plugin, refresh) {
     cls: "engram-sync-center-card-hint",
     text: "Temporary errors. These clear themselves once the server recovers."
   });
-  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+  let list2 = body.createDiv({ cls: "engram-sync-center-issue-list" });
   for (let [, issues] of groups)
-    for (let issue of issues) renderFileRow(list, plugin, refresh, issue);
+    for (let issue of issues) renderFileRow(list2, plugin, refresh, issue);
 }
 function renderFileRow(parent, plugin, refresh, issue) {
   var _a;
@@ -4110,9 +4110,9 @@ function renderIgnored(parent, plugin, refresh) {
     });
     return;
   }
-  let list = body.createDiv({ cls: "engram-sync-center-issue-list" });
+  let list2 = body.createDiv({ cls: "engram-sync-center-issue-list" });
   for (let path of ignored)
-    renderIgnoredRow(list, plugin, refresh, path);
+    renderIgnoredRow(list2, plugin, refresh, path);
 }
 function renderIgnoredRow(parent, plugin, refresh, path) {
   let row = parent.createDiv({ cls: "engram-sync-center-issue-row" });
@@ -4162,9 +4162,9 @@ function renderActivity(parent, plugin, refresh) {
     });
     return;
   }
-  let list = body.createDiv({ cls: "engram-sync-center-activity-list" }), recent = all2.slice(-ACTIVITY_LIMIT).reverse();
+  let list2 = body.createDiv({ cls: "engram-sync-center-activity-list" }), recent = all2.slice(-ACTIVITY_LIMIT).reverse();
   for (let entry of recent)
-    renderActivityRow(list, entry);
+    renderActivityRow(list2, entry);
 }
 function renderActivityRow(parent, entry) {
   var _a;
@@ -4577,8 +4577,8 @@ function renderAboutTab(ctx) {
   let plans = containerEl.createEl("ul", { cls: "engram-plans" }), plan = (name, features) => {
     let card = plans.createEl("li", { cls: "engram-plan" });
     card.createEl("h4", { text: name });
-    let list = card.createEl("ul", { cls: "engram-plan-features" });
-    for (let feature of features) list.createEl("li", { text: feature });
+    let list2 = card.createEl("ul", { cls: "engram-plan-features" });
+    for (let feature of features) list2.createEl("li", { text: feature });
   };
   plan("Free", [
     "1 vault, 1 device",
@@ -16224,6 +16224,12 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
   isBound(path) {
     return this.refcount.isBound(path);
   }
+  /** Every path an editor is currently bound to. Enumerable (not just the
+   *  isBound predicate) so the invariant checker can assert properties ACROSS
+   *  the whole binding set, e.g. every bound path resolves to a note_id. */
+  boundPaths() {
+    return this.refcount.boundPaths();
+  }
   /** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
    *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
    *  skips the disk write for a bound path (the editor owns the file) — but
@@ -16430,6 +16436,96 @@ function isDestroyedError(error) {
   return error instanceof DestroyedError;
 }
 
+// src/crdt/invariants.ts
+var list = (items, max2 = 5) => {
+  let all2 = [...items], head = all2.slice(0, max2).join(", ");
+  return all2.length > max2 ? `${head} (+${all2.length - max2} more)` : head;
+}, STANDARD_INVARIANTS = [
+  {
+    id: "removed-implies-not-resident",
+    description: "A tombstoned note must have no resident Y.Doc",
+    check(ctx) {
+      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.residentNoteIds.has(id2));
+      return bad.length ? `resident docs for removed note_ids: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "removed-implies-not-enrolled",
+    description: "A tombstoned note must not hold an open room",
+    check(ctx) {
+      let bad = [...ctx.removedNoteIds].filter((id2) => ctx.enrolledNoteIds.has(id2));
+      return bad.length ? `open rooms for removed note_ids: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "enrolled-implies-resident",
+    description: "An enrolled note must have a resident doc to advertise",
+    check(ctx) {
+      let bad = [...ctx.enrolledNoteIds].filter((id2) => !ctx.residentNoteIds.has(id2));
+      return bad.length ? `enrolled but not resident: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "live-bound-implies-mapped",
+    description: "A live-bound path must resolve to a note_id",
+    check(ctx) {
+      let bad = [...ctx.liveBoundPaths].filter((p) => ctx.idForPath(p) === null);
+      return bad.length ? `live-bound paths with no note_id: ${list(bad)}` : null;
+    }
+  },
+  {
+    id: "id-map-bijective",
+    description: "path\u2192id and id\u2192path must agree in both directions",
+    check(ctx) {
+      let bad = [];
+      for (let path of ctx.mappedPaths) {
+        let id2 = ctx.idForPath(path);
+        id2 !== null && ctx.pathForId(id2) !== path && bad.push(`${path}\u2192${id2}\u2192${ctx.pathForId(id2)}`);
+      }
+      return bad.length ? `id-map direction mismatch: ${list(bad)}` : null;
+    }
+  }
+], InvariantChecker = class {
+  constructor(opts) {
+    this.opts = opts;
+    this.timer = null;
+    var _a;
+    this.invariants = (_a = opts.invariants) != null ? _a : STANDARD_INVARIANTS;
+  }
+  /** Run every invariant once. Returns the violations found (also reported via
+   *  onViolation). A throwing invariant is itself a violation — a check that
+   *  cannot evaluate is never evidence that the property holds. */
+  async checkAll() {
+    let ctx = this.opts.getContext(), violations = [];
+    for (let inv of this.invariants) {
+      let detail;
+      try {
+        detail = await inv.check(ctx);
+      } catch (e) {
+        detail = `check threw: ${e instanceof Error ? e.message : String(e)}`;
+      }
+      if (detail !== null) {
+        let violation = { id: inv.id, description: inv.description, detail };
+        violations.push(violation), this.opts.onViolation(violation);
+      }
+    }
+    return violations;
+  }
+  startPeriodicChecks(ms) {
+    var _a;
+    if (this.timer !== null) return;
+    let schedule = (_a = this.opts.setInterval) != null ? _a : ((cb, delay) => window.setInterval(cb, delay));
+    this.timer = schedule(() => {
+      this.checkAll();
+    }, ms);
+  }
+  stop() {
+    var _a;
+    if (this.timer === null) return;
+    ((_a = this.opts.clearInterval) != null ? _a : ((id2) => window.clearInterval(id2)))(this.timer), this.timer = null;
+  }
+};
+
 // node_modules/lib0/indexeddb.js
 var rtop = (request) => create4((resolve, reject) => {
   request.onerror = (event) => reject(new Error(event.target.error)), request.onsuccess = (event) => resolve(event.target.result);
@@ -16564,6 +16660,68 @@ var IndexeddbPersistence = class extends Observable {
       let [custom] = transact2(db, [customStoreName]);
       return del(custom, key);
     });
+  }
+};
+
+// src/lifetime.ts
+var asError = (e) => e instanceof Error ? e : new Error(String(e)), Lifetime = class {
+  constructor() {
+    this.ended = !1;
+    this.controller = new AbortController();
+    this.endListeners = /* @__PURE__ */ new Set();
+  }
+  get signal() {
+    return this.controller.signal;
+  }
+  get active() {
+    return !this.ended;
+  }
+  get reason() {
+    return this.endReason;
+  }
+  /** The rejection value. A lifetime always ends WITH a reason in practice
+   *  (NoteDestroyedError); the fallback keeps the reject type honestly `Error`
+   *  rather than `unknown`, so callers can catch on type. */
+  get rejection() {
+    var _a;
+    return (_a = this.endReason) != null ? _a : new Error("Lifetime ended");
+  }
+  /** Subscribe to the end. Fires immediately if already ended. Returns an
+   *  unsubscribe. */
+  onEnded(listener) {
+    return this.ended ? (listener(this.rejection), () => {
+    }) : (this.endListeners.add(listener), () => {
+      this.endListeners.delete(listener);
+    });
+  }
+  /** Run `operation` under this lifetime. Rejects with the end reason if the
+   *  lifetime is already over, or the instant it ends — whichever comes first —
+   *  rather than waiting for the operation to settle into a dead owner. */
+  guard(operation) {
+    if (this.ended) return Promise.reject(this.rejection);
+    let promise;
+    try {
+      promise = typeof operation == "function" ? operation(this.signal) : operation;
+    } catch (error) {
+      return Promise.reject(asError(error));
+    }
+    return this.ended ? (promise.catch(() => {
+    }), Promise.reject(this.rejection)) : new Promise((resolve, reject) => {
+      let settled = !1, finish = (fn) => {
+        settled || (settled = !0, this.signal.removeEventListener("abort", onEnd), fn());
+      }, onEnd = () => finish(() => reject(this.rejection));
+      this.signal.addEventListener("abort", onEnd, { once: !0 }), promise.then(
+        (value) => finish(() => resolve(value)),
+        (error) => finish(() => reject(asError(error)))
+      );
+    });
+  }
+  end(reason) {
+    if (!this.ended) {
+      this.ended = !0, this.endReason = reason, this.controller.abort();
+      for (let listener of Array.from(this.endListeners)) listener(reason);
+      this.endListeners.clear();
+    }
   }
 };
 
@@ -20636,15 +20794,15 @@ var LineCounter = class {
 };
 
 // node_modules/yaml/browser/dist/parse/parser.js
-function includesToken(list, type) {
-  for (let i = 0; i < list.length; ++i)
-    if (list[i].type === type)
+function includesToken(list2, type) {
+  for (let i = 0; i < list2.length; ++i)
+    if (list2[i].type === type)
       return !0;
   return !1;
 }
-function findNonEmptyIndex(list) {
-  for (let i = 0; i < list.length; ++i)
-    switch (list[i].type) {
+function findNonEmptyIndex(list2) {
+  for (let i = 0; i < list2.length; ++i)
+    switch (list2[i].type) {
       case "space":
       case "comment":
       case "newline":
@@ -21594,6 +21752,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   get docs() {
     return this.entries;
   }
+  /** note_ids tombstoned by removeDoc. Exposed for the invariant checker, which
+   *  asserts a removed note holds neither a resident doc nor an open room. */
+  get removedIds() {
+    return this.removed;
+  }
   /** Wire key == note_id (matches the backend's bare-UUID crdt_msg). */
   docId(noteId) {
     return noteId;
@@ -21614,7 +21777,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   async entry(noteId) {
     let e = this.ensureEntrySync(noteId);
-    return await e.ready, e;
+    return await e.lifetime.guard(e.ready), e;
   }
   /** Synchronously get-or-create the resident entry WITHOUT awaiting IndexedDB
    *  hydration. The Y.Doc + Y.Text exist immediately (empty until hydrated);
@@ -21655,10 +21818,10 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       ready: Promise.resolve(),
       remoteSeq: 0,
       pendingFlush: null,
-      destroyed: !1
+      lifetime: new Lifetime()
     };
     return doc2.on("update", (_u, origin) => {
-      if (entry.destroyed || origin !== provider && origin !== REMOTE) return;
+      if (!entry.lifetime.active || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
       let flush = Promise.resolve(
         this.opts.onFlushToDisk(noteId, this.project(entry))
@@ -21709,7 +21872,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     var _a, _b;
     if (this.removed.has(noteId)) return null;
     let e = await this.entry(noteId);
-    if (e.destroyed) return null;
+    if (!e.lifetime.active) return null;
     let content = diskContent;
     if (reread) {
       let stable = !1;
@@ -21738,7 +21901,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   async applyRemoteUpdate(noteId, update) {
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
-    if (e.destroyed) return;
+    if (!e.lifetime.active) return;
     applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
@@ -21851,7 +22014,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  undelivered, so a caller preserving data errs toward preserving it. */
   hasUndeliveredOps(noteId) {
     let e = this.entries.get(noteId);
-    return !e || e.destroyed ? !1 : e.provider.hasUndeliveredWork();
+    return !e || !e.lifetime.active ? !1 : e.provider.hasUndeliveredWork();
   }
   // --- Lifecycle no-ops the persistent doc doesn't need -----------------------
   /** Relay: the doc is NEVER closed on a transport reconnect (that was the
@@ -21869,7 +22032,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  data-loss class ("moving between files, only some make it"). */
   closeDoc(noteId) {
     let e = this.entries.get(noteId);
-    e && !e.destroyed && e.provider.isFullySynced() && this.destroy(noteId, !1);
+    e != null && e.lifetime.active && e.provider.isFullySynced() && this.destroy(noteId, !1);
   }
   /** No LRU eviction — the doc is persistent; protect/unprotect are no-ops. */
   protect(_noteId) {
@@ -21887,7 +22050,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   async destroy(noteId, clearData) {
     let e = this.entries.get(noteId);
-    if (e && (e.destroyed = !0), !e) {
+    if (e && e.lifetime.end(new NoteDestroyedError(noteId)), !e) {
       clearData && await new Promise((resolve) => {
         let req = indexedDB.deleteDatabase(this.storeName(noteId));
         req.onsuccess = req.onerror = req.onblocked = () => resolve();
@@ -21903,7 +22066,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
 };
 
 // src/crdt/wiring.ts
-var DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5, MAX_UNSENT_DOCS = 500;
+var INVARIANT_CHECK_INTERVAL_MS = 6e4, DEFAULT_STRAND_HEAL_DEBOUNCE_MS = 750, STRAND_HEAL_MAX_ATTEMPTS = 5, MAX_UNSENT_DOCS = 500;
 function partitionStrandedFlushes(pending, resolvePath, attempts, maxAttempts) {
   var _a;
   let toFlush = [], toRetry = [], toGiveUp = [];
@@ -22052,9 +22215,26 @@ function createCrdtWiring(deps) {
     path !== null && deps.isBound(path) && enrollment.enroll(docId);
   }, onCrdtNoteNotFound = (docId) => {
     syncEngine.isSyncBlocked() || syncEngine.ensureNoteIdMapped(docId);
-  };
+  }, invariants = new InvariantChecker({
+    getContext: () => {
+      var _a2, _b;
+      return {
+        removedNoteIds: registry.removedIds,
+        residentNoteIds: new Set(registry.docs.keys()),
+        enrolledNoteIds: registry.enrolled,
+        liveBoundPaths: new Set((_b = (_a2 = deps.boundPaths) == null ? void 0 : _a2.call(deps)) != null ? _b : []),
+        mappedPaths: new Set(Object.keys(noteIdMap.toJSON())),
+        pathForId: (id2) => noteIdMap.pathForId(id2),
+        idForPath: (path) => noteIdMap.get(path)
+      };
+    },
+    onViolation: (v) => {
+      rlog().warn("crdt", `invariant violated [${v.id}]: ${v.detail}`);
+    }
+  });
+  invariants.startPeriodicChecks(INVARIANT_CHECK_INTERVAL_MS);
   function dispose() {
-    strandHealTimer !== null && (window.clearTimeout(strandHealTimer), strandHealTimer = null);
+    invariants.stop(), strandHealTimer !== null && (window.clearTimeout(strandHealTimer), strandHealTimer = null);
   }
   return {
     manager,
@@ -22065,6 +22245,8 @@ function createCrdtWiring(deps) {
     onCrdtNoteNotFound,
     onNoteYjsUpdate,
     drainStrandedFlushes,
+    /** On-demand invariant sweep (Sync Center / e2e probe). */
+    checkInvariants: () => invariants.checkAll(),
     clearStrandHealAttempts: () => strandHealAttempts.clear(),
     reEnrollUnsent: () => {
       for (let id2 of [...unsentDocIds]) enrollment.enroll(id2);
@@ -22274,9 +22456,9 @@ var import_obsidian25 = require("obsidian"), ACTION_ICONS = {
     }).setText(
       entries.length === 0 ? "No sync activity this session." : `Showing ${entries.length} entries${errorCount > 0 ? ` (${errorCount} errors)` : ""}`
     ), entries.length === 0) return;
-    let list = contentEl.createDiv({ cls: "engram-sync-log-list" });
+    let list2 = contentEl.createDiv({ cls: "engram-sync-log-list" });
     for (let entry of entries) {
-      let row = list.createDiv({ cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
+      let row = list2.createDiv({ cls: "engram-sync-log-entry" }), time = entry.timestamp.toLocaleTimeString([], {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit"
@@ -23176,6 +23358,10 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             isBound: (path) => {
               var _a3, _b2;
               return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.isBound(path)) != null ? _b2 : !1;
+            },
+            boundPaths: () => {
+              var _a3, _b2;
+              return (_b2 = (_a3 = this.crdtLiveViews) == null ? void 0 : _a3.boundPaths()) != null ? _b2 : [];
             },
             // Fix wave 6: nudge Obsidian's save pipeline after a remote merge
             // paints into an unfocused bound editor (CI doesn't flush it).
