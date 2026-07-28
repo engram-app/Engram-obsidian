@@ -138,3 +138,22 @@ describe("deleted note must not re-materialize empty", () => {
 		expect(mgr.docs.has("id-gone")).toBe(false);
 	});
 });
+
+describe("liveness during an in-flight local edit", () => {
+	test("a delete during applyLocalEdit's reread window does not seed the dead doc", async () => {
+		const { mgr } = scenario("reread-delete-race");
+
+		await mgr.applyLocalEdit("id-gone", "seed");
+		const doc = await mgr.getDoc("id-gone");
+
+		// The reread resolves only AFTER the note is deleted — the exact window
+		// where a post-await liveness check let a seed land on a destroyed doc.
+		const consumed = await mgr.applyLocalEdit("id-gone", "later", undefined, async () => {
+			await mgr.removeDoc("id-gone");
+			return "content read after the delete";
+		});
+
+		expect(consumed).toBeNull();
+		expect(doc.getText("content").toJSON()).not.toContain("after the delete");
+	});
+});

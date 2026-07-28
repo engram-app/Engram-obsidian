@@ -21913,12 +21913,12 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
         let seq2 = e.remoteSeq, flushOk = !0;
         if (e.pendingFlush)
           try {
-            await e.pendingFlush;
+            await e.lifetime.guard(e.pendingFlush);
           } catch (e2) {
             flushOk = !1;
           }
         try {
-          content = await reread();
+          content = await e.lifetime.guard(reread());
         } catch (e2) {
           return null;
         }

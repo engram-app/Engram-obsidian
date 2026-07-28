@@ -287,15 +287,21 @@ export class ProviderRegistry {
 				let flushOk = true;
 				if (e.pendingFlush) {
 					try {
-						await e.pendingFlush;
+						// Guarded: a removeDoc landing mid-flush abandons this edit
+						// instead of resuming to seed a destroyed doc.
+						await e.lifetime.guard(e.pendingFlush);
 					} catch {
 						flushOk = false;
 					}
 				}
 				try {
-					content = await reread();
+					// Guarded for the same reason — reread() is caller-supplied disk
+					// I/O and is exactly where a delete has time to land.
+					content = await e.lifetime.guard(reread());
 				} catch {
-					return null; // cap-exceeded / unreadable — REST owns it, never diff stale
+					// Cap-exceeded / unreadable / note destroyed — REST owns it, and a
+					// dead doc must never be diffed against stale disk content.
+					return null;
 				}
 				stable = flushOk && e.remoteSeq === seq;
 			}
