@@ -1999,6 +1999,7 @@ export default class EngramSyncPlugin extends Plugin {
 							// Resolve-or-mint: the editor binding needs a note_id immediately
 							// on open, even for a brand-new never-pushed note.
 							resolveId: (path) => this.noteIdMap.getOrMint(path),
+							resolveExistingId: (path) => this.noteIdMap.get(path),
 							flushToDisk: (path, content) =>
 								this.syncEngine.flushFromCrdt(path, content).then(() => {}),
 							onReleaseError: (path, err) =>

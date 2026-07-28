@@ -16028,6 +16028,26 @@ var LiveBindingValue = class {
 // src/crdt/live/live-views.ts
 var import_obsidian23 = require("obsidian");
 
+// src/crdt/destroyed-error.ts
+var DestroyedError = class extends Error {
+  constructor(owner, detail) {
+    super(detail ? `${owner} was destroyed: ${detail}` : `${owner} was destroyed`);
+    this.owner = owner;
+    this.detail = detail;
+    this.name = "DestroyedError";
+  }
+}, NoteDestroyedError = class extends DestroyedError {
+  constructor(noteId, path) {
+    super("Note", path ? `${path} (${noteId})` : noteId);
+    this.noteId = noteId;
+    this.path = path;
+    this.name = "NoteDestroyedError";
+  }
+};
+function isDestroyedError(error) {
+  return error instanceof DestroyedError;
+}
+
 // src/crdt/bridge.ts
 var import_diff_match_patch3 = __toESM(require_diff_match_patch(), 1), dmp2 = new import_diff_match_patch3.diff_match_patch();
 function seedOnce(text2, disk, hasLca) {
@@ -16328,8 +16348,15 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *  stays resident (Relay persistent-doc model — closeDoc is a no-op), so the
    *  note keeps syncing and re-paints instantly on re-open. */
   async onLastViewerRelease(path) {
-    let noteId = this.deps.resolveId(path), text2 = await this.deps.manager.getText(noteId);
-    await this.deps.flushToDisk(path, text2);
+    let noteId = this.deps.resolveExistingId(path);
+    if (noteId !== null && this.deps.app.vault.getAbstractFileByPath(path) instanceof import_obsidian23.TFile)
+      try {
+        let text2 = await this.deps.manager.getText(noteId);
+        await this.deps.flushToDisk(path, text2);
+      } catch (e) {
+        if (isDestroyedError(e)) return;
+        throw e;
+      }
   }
   /** Open (or get cached) the path's Y.Text from the CRDT manager, resolving
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
@@ -16466,26 +16493,6 @@ async function ensureDocSchema(vaultId, storage, dbs) {
   for (let name of dbsToWipe)
     await dbs.drop(name);
   return storage.setItem(markerKey, "2"), !0;
-}
-
-// src/crdt/destroyed-error.ts
-var DestroyedError = class extends Error {
-  constructor(owner, detail) {
-    super(detail ? `${owner} was destroyed: ${detail}` : `${owner} was destroyed`);
-    this.owner = owner;
-    this.detail = detail;
-    this.name = "DestroyedError";
-  }
-}, NoteDestroyedError = class extends DestroyedError {
-  constructor(noteId, path) {
-    super("Note", path ? `${path} (${noteId})` : noteId);
-    this.noteId = noteId;
-    this.path = path;
-    this.name = "NoteDestroyedError";
-  }
-};
-function isDestroyedError(error) {
-  return error instanceof DestroyedError;
 }
 
 // src/crdt/invariants.ts
@@ -23432,6 +23439,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             // Resolve-or-mint: the editor binding needs a note_id immediately
             // on open, even for a brand-new never-pushed note.
             resolveId: (path) => this.noteIdMap.getOrMint(path),
+            resolveExistingId: (path) => this.noteIdMap.get(path),
             flushToDisk: (path, content) => this.syncEngine.flushFromCrdt(path, content).then(() => {
             }),
             onReleaseError: (path, err) => rlog().warn(
