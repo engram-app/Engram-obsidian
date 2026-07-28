@@ -11538,6 +11538,38 @@ var OfflineQueue = class {
   }
 };
 
+// src/time-provider.ts
+var DefaultTimeProvider = class {
+  constructor() {
+    this.timeouts = /* @__PURE__ */ new Set();
+    this.intervals = /* @__PURE__ */ new Set();
+  }
+  now() {
+    return Date.now();
+  }
+  setTimeout(callback, ms) {
+    let id2 = window.setTimeout(() => {
+      this.timeouts.delete(id2), callback();
+    }, ms);
+    return this.timeouts.add(id2), id2;
+  }
+  clearTimeout(id2) {
+    this.timeouts.delete(id2), window.clearTimeout(id2);
+  }
+  setInterval(callback, ms) {
+    let id2 = window.setInterval(callback, ms);
+    return this.intervals.add(id2), id2;
+  }
+  clearInterval(id2) {
+    this.intervals.delete(id2), window.clearInterval(id2);
+  }
+  destroy() {
+    for (let id2 of this.timeouts) window.clearTimeout(id2);
+    for (let id2 of this.intervals) window.clearInterval(id2);
+    this.timeouts.clear(), this.intervals.clear();
+  }
+};
+
 // src/sync.ts
 var MAX_CRDT_NOTE_BYTES = 4 * 1024 * 1024, CRDT_HEAD_CREATED = "__crdt_created__";
 function exceedsCrdtNoteLimit(content, maxBytes) {
@@ -11632,11 +11664,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   zip: "application/zip",
   canvas: "application/json"
 }, _SyncEngine = class _SyncEngine {
-  constructor(app, api, settings, saveData) {
+  constructor(app, api, settings, saveData, time = new DefaultTimeProvider()) {
     this.app = app;
     this.api = api;
     this.settings = settings;
     this.saveData = saveData;
+    this.time = time;
     this.debounceTimers = /* @__PURE__ */ new Map();
     /** Paths that newly degraded (ok/none -> frontmatter issue) since the last
      *  flush, awaiting the debounced Notice below. */
@@ -13425,8 +13458,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the three echo-suppression marks below; destroy() sweeps the same maps. */
   markWithTtl(map3, path, ms) {
     let existing = map3.get(path);
-    existing && window.clearTimeout(existing);
-    let timer = window.setTimeout(() => {
+    existing && this.time.clearTimeout(existing);
+    let timer = this.time.setTimeout(() => {
       map3.delete(path);
     }, ms);
     map3.set(path, timer);
@@ -15574,13 +15607,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       window.clearTimeout(timer);
     this.recentlyPushed.clear();
     for (let timer of this.recentlyFlushed.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.recentlyFlushed.clear();
     for (let timer of this.remotelyDeleted.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.remotelyDeleted.clear();
     for (let timer of this.recentlyDeleted.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
     for (let timer of this.crdtHealTrailingTimers.values())
       window.clearTimeout(timer);

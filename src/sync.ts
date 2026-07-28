@@ -26,6 +26,7 @@ import { OfflineQueue } from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
+import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
 	AttachmentChange,
 	EngramSyncSettings,
@@ -1603,6 +1604,10 @@ export class SyncEngine {
 			// the wholesale save.
 			noteIds?: Record<string, string>;
 		}) => Promise<void>,
+		/** Injectable clock + timers. Defaulted so every existing caller is
+		 *  unchanged; tests pass a ManualTimeProvider to advance a TTL window
+		 *  instead of sleeping through it. */
+		private time: TimeProvider = new DefaultTimeProvider(),
 	) {
 		this.parseIgnorePatterns();
 	}
@@ -3228,8 +3233,8 @@ export class SyncEngine {
 	 *  the three echo-suppression marks below; destroy() sweeps the same maps. */
 	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
 		const existing = map.get(path);
-		if (existing) window.clearTimeout(existing);
-		const timer = window.setTimeout(() => {
+		if (existing) this.time.clearTimeout(existing);
+		const timer = this.time.setTimeout(() => {
 			map.delete(path);
 		}, ms);
 		map.set(path, timer);
@@ -7476,15 +7481,15 @@ export class SyncEngine {
 		}
 		this.recentlyPushed.clear();
 		for (const timer of this.recentlyFlushed.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.recentlyFlushed.clear();
 		for (const timer of this.remotelyDeleted.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.remotelyDeleted.clear();
 		for (const timer of this.recentlyDeleted.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
