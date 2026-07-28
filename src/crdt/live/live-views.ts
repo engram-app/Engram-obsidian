@@ -143,6 +143,13 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		return this.refcount.isBound(path);
 	}
 
+	/** Every path an editor is currently bound to. Enumerable (not just the
+	 *  isBound predicate) so the invariant checker can assert properties ACROSS
+	 *  the whole binding set, e.g. every bound path resolves to a note_id. */
+	boundPaths(): string[] {
+		return this.refcount.boundPaths();
+	}
+
 	/** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
 	 *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
 	 *  skips the disk write for a bound path (the editor owns the file) — but

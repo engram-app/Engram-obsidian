@@ -12,6 +12,7 @@
 // re-handshake) become no-ops the persistent doc doesn't need.
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
+import { Lifetime } from "../lifetime";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { NoteDestroyedError, isDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
@@ -39,10 +40,12 @@ interface Entry {
 	/** In-flight disk-flush from the last remote merge; applyRemoteUpdate awaits
 	 *  it so a write failure can leave crdtHead unadvanced (#235). */
 	pendingFlush: Promise<void> | null;
-	/** Set the instant removeDoc/destroy begins (before doc.destroy()), so an
-	 *  in-flight operation that captured this entry across an await bails instead
-	 *  of seeding/applying/flushing onto a dead doc (delete-note resurrection). */
-	destroyed: boolean;
+	/** Ownership window for this doc. Ended the instant removeDoc/destroy begins
+	 *  (before doc.destroy()), so an in-flight operation that captured this entry
+	 *  across an await is ABANDONED rather than resuming onto a dead doc
+	 *  (delete-note resurrection). `lifetime.guard(...)` races the await against
+	 *  the end; `lifetime.active` is the cheap synchronous check. */
+	lifetime: Lifetime;
 }
 
 export interface ProviderRegistryOpts {
@@ -101,6 +104,12 @@ export class ProviderRegistry {
 		return this.entries;
 	}
 
+	/** note_ids tombstoned by removeDoc. Exposed for the invariant checker, which
+	 *  asserts a removed note holds neither a resident doc nor an open room. */
+	get removedIds(): ReadonlySet<string> {
+		return this.removed;
+	}
+
 	/** Wire key == note_id (matches the backend's bare-UUID crdt_msg). */
 	docId(noteId: string): string {
 		return noteId;
@@ -125,7 +134,10 @@ export class ProviderRegistry {
 
 	private async entry(noteId: string): Promise<Entry> {
 		const e = this.ensureEntrySync(noteId);
-		await e.ready;
+		// Guarded, not a bare await: a removeDoc landing DURING IndexedDB
+		// hydration abandons this continuation immediately (rejects with
+		// NoteDestroyedError) instead of resuming to hand back a dead entry.
+		await e.lifetime.guard(e.ready);
 		return e;
 	}
 
@@ -175,13 +187,13 @@ export class ProviderRegistry {
 			ready: Promise.resolve(),
 			remoteSeq: 0,
 			pendingFlush: null,
-			destroyed: false,
+			lifetime: new Lifetime(),
 		};
 		// Disk-flush listener: a REMOTE merge (origin === provider from
 		// readSyncMessage, or REMOTE from applyRemoteUpdate) writes back to disk.
 		// Local edits (editor/default origin) and IndexedDB replay do NOT flush.
 		doc.on("update", (_u: Uint8Array, origin: unknown) => {
-			if (entry.destroyed) return; // deleted mid-flight — never flush a dead doc
+			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
 			const flush = Promise.resolve(
@@ -262,7 +274,7 @@ export class ProviderRegistry {
 	): Promise<string | null> {
 		if (this.removed.has(noteId)) return null; // deleted — don't resurrect
 		const e = await this.entry(noteId);
-		if (e.destroyed) return null; // destroyed while we awaited hydration
+		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
@@ -309,7 +321,7 @@ export class ProviderRegistry {
 	async applyRemoteUpdate(noteId: string, update: Uint8Array): Promise<void> {
 		if (this.removed.has(noteId)) return; // deleted — a late fan-out must not resurrect
 		const e = await this.entry(noteId);
-		if (e.destroyed) return; // destroyed while we awaited hydration
+		if (!e.lifetime.active) return; // destroyed while we awaited hydration
 		// Apply with the PROVIDER as origin (NOT a distinct REMOTE symbol): the
 		// provider's update handler suppresses its own origin, so a fanned-out update
 		// is NOT re-broadcast to the server. Applying it as a foreign origin (the old
@@ -471,7 +483,7 @@ export class ProviderRegistry {
 	 *  undelivered, so a caller preserving data errs toward preserving it. */
 	hasUndeliveredOps(noteId: string): boolean {
 		const e = this.entries.get(noteId);
-		if (!e || e.destroyed) return false;
+		if (!e || !e.lifetime.active) return false;
 		return e.provider.hasUndeliveredWork();
 	}
 
@@ -492,7 +504,7 @@ export class ProviderRegistry {
 	 *  data-loss class ("moving between files, only some make it"). */
 	closeDoc(noteId: string): void {
 		const e = this.entries.get(noteId);
-		if (e && !e.destroyed && e.provider.isFullySynced()) void this.destroy(noteId, false);
+		if (e?.lifetime.active && e.provider.isFullySynced()) void this.destroy(noteId, false);
 	}
 
 	/** No LRU eviction — the doc is persistent; protect/unprotect are no-ops. */
@@ -514,7 +526,8 @@ export class ProviderRegistry {
 
 	private async destroy(noteId: string, clearData: boolean): Promise<void> {
 		const e = this.entries.get(noteId);
-		if (e) e.destroyed = true; // set BEFORE any await so in-flight ops bail
+		// End BEFORE any await so in-flight ops are abandoned, not merely checked.
+		if (e) e.lifetime.end(new NoteDestroyedError(noteId));
 		if (!e) {
 			if (clearData) {
 				await new Promise<void>((resolve) => {

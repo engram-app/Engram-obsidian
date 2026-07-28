@@ -2,6 +2,7 @@ import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import { isDestroyedError } from "./destroyed-error";
+import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
 import { ProviderRegistry } from "./provider-registry";
 import { fromB64 } from "./wire";
@@ -22,6 +23,10 @@ type WiringSyncEngine = Pick<
 	| "commitCrdtConvergence"
 >;
 
+/** How often the structural invariants are swept. Cheap (set arithmetic over
+ *  in-memory state), so this is about log volume, not CPU. */
+const INVARIANT_CHECK_INTERVAL_MS = 60_000;
+
 export interface CrdtWiringDeps {
 	/** Path <-> note_id sidecar. The wire is id-keyed; disk I/O is path-keyed,
 	 *  so every callback resolves id -> path through `pathForId`. */
@@ -34,6 +39,12 @@ export interface CrdtWiringDeps {
 	 *  the binding stays authoritative. Backed lazily by CrdtLiveViews (which is
 	 *  constructed after this wiring), so it must be a closure, not a value. */
 	isBound: (path: string) => boolean;
+	/** Every currently bound path. Enumerable counterpart to `isBound`, so the
+	 *  invariant checker can assert properties across the whole binding set
+	 *  rather than one path at a time. Same lazy-closure reason as `isBound`.
+	 *  Optional: a caller that omits it simply reports no bound paths, which
+	 *  makes the binding invariants vacuous rather than throwing. */
+	boundPaths?: () => string[];
 	/** Fix wave 6: called whenever a remote-merge flush is skipped BECAUSE
 	 *  `path` is bound (i.e. right where the editor binding painted the
 	 *  update instead of a disk write). Headless/unfocused Obsidian (CI)
@@ -83,6 +94,9 @@ export interface CrdtWiring {
 	 *  flush. Exposed for tests + teardown; production fires it via the debounce
 	 *  timer set in the manager's onFlushToDisk. */
 	drainStrandedFlushes: () => Promise<void>;
+	/** Run the structural invariant sweep once, on demand (Sync Center / e2e
+	 *  probe). The periodic sweep runs on its own timer from wiring setup. */
+	checkInvariants: () => Promise<InvariantViolation[]>;
 	/** Reset per-id strand-heal retry counters. Call when the noteIdMap was just
 	 *  reconciled wholesale (reconnect) — stranded ids deserve fresh attempts
 	 *  against the now-current map, not counters left over from before the drift
@@ -433,7 +447,27 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		syncEngine.ensureNoteIdMapped(docId);
 	};
 
+	// Runtime invariants (Relay parity). Violations report at WARN — the level
+	// that actually reaches Loki — so structural drift surfaces in prod instead
+	// of being inferred from a downstream symptom weeks later.
+	const invariants = new InvariantChecker({
+		getContext: () => ({
+			removedNoteIds: registry.removedIds,
+			residentNoteIds: new Set(registry.docs.keys()),
+			enrolledNoteIds: registry.enrolled,
+			liveBoundPaths: new Set(deps.boundPaths?.() ?? []),
+			mappedPaths: new Set(Object.keys(noteIdMap.toJSON())),
+			pathForId: (id) => noteIdMap.pathForId(id),
+			idForPath: (path) => noteIdMap.get(path),
+		}),
+		onViolation: (v) => {
+			rlog().warn("crdt", `invariant violated [${v.id}]: ${v.detail}`);
+		},
+	});
+	invariants.startPeriodicChecks(INVARIANT_CHECK_INTERVAL_MS);
+
 	function dispose(): void {
+		invariants.stop();
 		if (strandHealTimer !== null) {
 			window.clearTimeout(strandHealTimer);
 			strandHealTimer = null;
@@ -449,6 +483,8 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		onCrdtNoteNotFound,
 		onNoteYjsUpdate,
 		drainStrandedFlushes,
+		/** On-demand invariant sweep (Sync Center / e2e probe). */
+		checkInvariants: () => invariants.checkAll(),
 		clearStrandHealAttempts: () => strandHealAttempts.clear(),
 		reEnrollUnsent: () => {
 			// Snapshot: enroll() → startSync succeeds → clears the id from the set;
