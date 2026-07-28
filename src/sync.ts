@@ -1127,6 +1127,27 @@ export class SyncEngine {
 		return state !== undefined && state.hash !== fnv1a(content);
 	}
 
+	/** Should an inbound delete preserve `disk` as a keep-both conflict copy
+	 *  before trashing the file and tearing the CRDT room down?
+	 *
+	 *  Only when the room actually holds work the server has not acknowledged.
+	 *  `needsColdReconcile` alone is NOT sufficient: it is a baseline-vs-disk
+	 *  hash proxy, and a note whose content reached the server through the LIVE
+	 *  editor binding (rather than a push) trips it while being perfectly
+	 *  converged — which made every delete of an opened note leave a spurious
+	 *  "(conflict <stamp>)" copy. The undelivered-ops check is the positive
+	 *  signal: it is true exactly when tearing the room down would destroy
+	 *  something. Oversized notes are excluded (they never entered CRDT).
+	 *
+	 *  Registries without the probe (older fakes in tests) fall back to the
+	 *  drift proxy alone — the pre-existing, copy-happy behavior. */
+	private shouldKeepDriftCopy(normalized: string, disk: string, noteId: string | null): boolean {
+		if (exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES)) return false;
+		if (!this.needsColdReconcile(normalized, disk)) return false;
+		if (!noteId || typeof this.crdt?.hasUndeliveredOps !== "function") return true;
+		return this.crdt.hasUndeliveredOps(noteId);
+	}
+
 	/** Write a remote-merged CRDT result to disk.
 	 *  Marks the path recentlyFlushed first so the resulting vault.modify/create
 	 *  event is suppressed by the recentlyFlushed guard in handleModify (the
@@ -1224,6 +1245,26 @@ export class SyncEngine {
 	private recordCrdtBaseline(normalized: string, content: string): void {
 		const prev = this.syncState.get(normalized);
 		this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+	}
+
+	/** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
+	 *  Fire-and-forget from handleModify's editor-owns-the-file gate (which is
+	 *  synchronous): the read is the same `cachedRead` the push path would have
+	 *  done on the not-bound route, so this adds no disk work the gate saved.
+	 *  Best-effort — a read failure only leaves the baseline as stale as it is
+	 *  today, so it must never surface as an error to the vault event. */
+	private async recordLiveBoundBaseline(file: TFile): Promise<void> {
+		try {
+			this.recordCrdtBaseline(
+				normalizePath(file.path),
+				await this.app.vault.cachedRead(file),
+			);
+		} catch (e) {
+			devLog().log(
+				"crdt",
+				`live-bound baseline refresh failed for ${file.path}: ${errMsg(e)}`,
+			);
+		}
 	}
 
 	/** Capture an un-pushed on-disk edit into the Y.Doc BEFORE a fanned-out or
@@ -2033,6 +2074,16 @@ export class SyncEngine {
 		// disk path still serves closed notes, reading-view-only notes, and
 		// external edits (none of which are live-bound).
 		if (crdtManaged && this.isLiveBound(file.path)) {
+			// ...but the baseline must still track disk. Skipping the push path also
+			// skips every syncState write, so the recorded hash would freeze at
+			// whatever the last REMOTE flush wrote and drift further with every
+			// autosave. Downstream that stale baseline is read as "un-synced local
+			// drift" by needsColdReconcile, which makes a delete of an opened note
+			// leave a spurious "(conflict <stamp>)" copy, and makes a later
+			// cold-start adopt keep-both a copy of content that was never in
+			// conflict. The editor's content IS in the Y.Doc, so recording it here
+			// is the truthful baseline, not an optimistic one.
+			if (file instanceof TFile) void this.recordLiveBoundBaseline(file);
 			return;
 		}
 
@@ -4475,16 +4526,13 @@ export class SyncEngine {
 				// old path (delete-first is the common order), so a note renamed on
 				// another device while THIS device has un-synced edits would lose that
 				// drift. Preserve it FIRST as a keep-both conflict copy (mirrors
-				// adoptHistoryLessNote's no-LCA keep-both), then trash. needsColdReconcile
-				// == a recorded baseline disagreeing with disk == real local drift; no
-				// baseline / no drift → trash directly. Best-effort: a copy failure must
-				// not block the delete.
+				// adoptHistoryLessNote's no-LCA keep-both), then trash. The copy is
+				// gated on the room actually holding undelivered work — see
+				// shouldKeepDriftCopy for why the drift proxy alone is not enough.
+				// Best-effort: a copy failure must not block the delete.
 				try {
 					const disk = await this.app.vault.cachedRead(existing);
-					if (
-						!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) &&
-						this.needsColdReconcile(normalized, disk)
-					) {
+					if (this.shouldKeepDriftCopy(normalized, disk, targetId ?? currentId)) {
 						const copy = await this.writeDriftConflictCopy(normalized, disk);
 						rlog().info(
 							"conflict",
@@ -5290,7 +5338,7 @@ export class SyncEngine {
 						}
 						return false;
 					}
-					if (this.needsColdReconcile(normalized, localContent)) {
+					if (this.shouldKeepDriftCopy(normalized, localContent, crdtNoteId)) {
 						// Best-effort: a copy failure must not block the delete
 						// (mirrors the WS foreign-delete drift-capture on this branch).
 						try {

@@ -131,6 +131,19 @@ export class NoteProvider {
 		return this.connected && this.synced && this.buffer.length === 0;
 	}
 
+	/** True when this doc holds local work the server has NOT received: the
+	 *  handshake never completed, or frames are sitting in the offline buffer.
+	 *
+	 *  Deliberately NOT gated on `connected`, unlike isFullySynced: a doc whose
+	 *  frames were all handed to the transport before the socket dropped has
+	 *  nothing undelivered, and treating a momentary disconnect as data-at-risk
+	 *  would make every offline delete leave a keep-both copy behind. Eviction
+	 *  safety needs the stricter question (is the server current RIGHT NOW);
+	 *  a destructive path needs this one (would teardown lose anything). */
+	hasUndeliveredWork(): boolean {
+		return !this.synced || this.buffer.length > 0;
+	}
+
 	/** Swap the transport (e.g. after a socket reconnect built a fresh channel).
 	 *  The doc + buffer are untouched. */
 	setSend(send: ProviderSend): void {

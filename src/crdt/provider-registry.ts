@@ -433,6 +433,25 @@ export class ProviderRegistry {
 		return store.pendingStructs != null;
 	}
 
+	/** True when this doc holds local work the server has NOT received — the
+	 *  handshake never completed, or frames sit in the provider's offline
+	 *  buffer. The positive signal a destructive path needs before deciding
+	 *  whether tearing the room down would lose anything.
+	 *
+	 *  NOT `hasPendingGap`: that is a RECEIVE-side causal gap (a delta landed
+	 *  before its base), which says nothing about undelivered local edits.
+	 *  NOT `!isFullySynced` either — that also demands a CURRENTLY-connected
+	 *  transport, so a plain offline window would read as data-at-risk.
+	 *
+	 *  No resident entry → false: nothing is held locally, so nothing is at risk.
+	 *  Conservative by construction — a never-handshook doc reads as
+	 *  undelivered, so a caller preserving data errs toward preserving it. */
+	hasUndeliveredOps(noteId: string): boolean {
+		const e = this.entries.get(noteId);
+		if (!e || e.destroyed) return false;
+		return e.provider.hasUndeliveredWork();
+	}
+
 	// --- Lifecycle no-ops the persistent doc doesn't need -----------------------
 
 	/** Relay: the doc is NEVER closed on a transport reconnect (that was the
