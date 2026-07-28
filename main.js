@@ -12409,6 +12409,24 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let state = this.syncState.get((0, import_obsidian20.normalizePath)(path));
     return state !== void 0 && state.hash !== fnv1a(content);
   }
+  /** Should an inbound delete preserve `disk` as a keep-both conflict copy
+   *  before trashing the file and tearing the CRDT room down?
+   *
+   *  Only when the room actually holds work the server has not acknowledged.
+   *  `needsColdReconcile` alone is NOT sufficient: it is a baseline-vs-disk
+   *  hash proxy, and a note whose content reached the server through the LIVE
+   *  editor binding (rather than a push) trips it while being perfectly
+   *  converged — which made every delete of an opened note leave a spurious
+   *  "(conflict <stamp>)" copy. The undelivered-ops check is the positive
+   *  signal: it is true exactly when tearing the room down would destroy
+   *  something. Oversized notes are excluded (they never entered CRDT).
+   *
+   *  Registries without the probe (older fakes in tests) fall back to the
+   *  drift proxy alone — the pre-existing, copy-happy behavior. */
+  shouldKeepDriftCopy(normalized, disk, noteId) {
+    var _a;
+    return exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) || !this.needsColdReconcile(normalized, disk) ? !1 : !noteId || typeof ((_a = this.crdt) == null ? void 0 : _a.hasUndeliveredOps) != "function" ? !0 : this.crdt.hasUndeliveredOps(noteId);
+  }
   /** Write a remote-merged CRDT result to disk.
    *  Marks the path recentlyFlushed first so the resulting vault.modify/create
    *  event is suppressed by the recentlyFlushed guard in handleModify (the
@@ -12456,6 +12474,25 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   recordCrdtBaseline(normalized, content) {
     let prev = this.syncState.get(normalized);
     this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+  }
+  /** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
+   *  Fire-and-forget from handleModify's editor-owns-the-file gate (which is
+   *  synchronous): the read is the same `cachedRead` the push path would have
+   *  done on the not-bound route, so this adds no disk work the gate saved.
+   *  Best-effort — a read failure only leaves the baseline as stale as it is
+   *  today, so it must never surface as an error to the vault event. */
+  async recordLiveBoundBaseline(file) {
+    try {
+      this.recordCrdtBaseline(
+        (0, import_obsidian20.normalizePath)(file.path),
+        await this.app.vault.cachedRead(file)
+      );
+    } catch (e) {
+      devLog().log(
+        "crdt",
+        `live-bound baseline refresh failed for ${file.path}: ${errMsg(e)}`
+      );
+    }
   }
   /** Capture an un-pushed on-disk edit into the Y.Doc BEFORE a fanned-out or
    *  cold-received remote update flushes to disk, so CRDT MERGES the local
@@ -12918,8 +12955,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
-    if (crdtManaged && this.isLiveBound(file.path))
+    if (crdtManaged && this.isLiveBound(file.path)) {
+      file instanceof import_obsidian20.TFile && this.recordLiveBoundBaseline(file);
       return;
+    }
     let existing = this.debounceTimers.get(file.path);
     existing && window.clearTimeout(existing);
     let timer = window.setTimeout(() => {
@@ -14087,7 +14126,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (existing) {
         try {
           let disk = await this.app.vault.cachedRead(existing);
-          if (!exceedsCrdtNoteLimit(disk, MAX_CRDT_NOTE_BYTES) && this.needsColdReconcile(normalized, disk)) {
+          if (this.shouldKeepDriftCopy(normalized, disk, targetId != null ? targetId : currentId)) {
             let copy2 = await this.writeDriftConflictCopy(normalized, disk);
             rlog().info(
               "conflict",
@@ -14436,7 +14475,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }
             return !1;
           }
-          if (this.needsColdReconcile(normalized, localContent))
+          if (this.shouldKeepDriftCopy(normalized, localContent, crdtNoteId))
             try {
               let copy2 = await this.writeDriftConflictCopy(
                 normalized,
@@ -21397,6 +21436,18 @@ var NoteProvider = class {
   isFullySynced() {
     return this.connected && this.synced && this.buffer.length === 0;
   }
+  /** True when this doc holds local work the server has NOT received: the
+   *  handshake never completed, or frames are sitting in the offline buffer.
+   *
+   *  Deliberately NOT gated on `connected`, unlike isFullySynced: a doc whose
+   *  frames were all handed to the transport before the socket dropped has
+   *  nothing undelivered, and treating a momentary disconnect as data-at-risk
+   *  would make every offline delete leave a keep-both copy behind. Eviction
+   *  safety needs the stricter question (is the server current RIGHT NOW);
+   *  a destructive path needs this one (would teardown lose anything). */
+  hasUndeliveredWork() {
+    return !this.synced || this.buffer.length > 0;
+  }
   /** Swap the transport (e.g. after a socket reconnect built a fresh channel).
    *  The doc + buffer are untouched. */
   setSend(send) {
@@ -21746,6 +21797,23 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   async hasPendingGap(noteId) {
     let e = this.entries.get(noteId);
     return e ? e.doc.store.pendingStructs != null : !1;
+  }
+  /** True when this doc holds local work the server has NOT received — the
+   *  handshake never completed, or frames sit in the provider's offline
+   *  buffer. The positive signal a destructive path needs before deciding
+   *  whether tearing the room down would lose anything.
+   *
+   *  NOT `hasPendingGap`: that is a RECEIVE-side causal gap (a delta landed
+   *  before its base), which says nothing about undelivered local edits.
+   *  NOT `!isFullySynced` either — that also demands a CURRENTLY-connected
+   *  transport, so a plain offline window would read as data-at-risk.
+   *
+   *  No resident entry → false: nothing is held locally, so nothing is at risk.
+   *  Conservative by construction — a never-handshook doc reads as
+   *  undelivered, so a caller preserving data errs toward preserving it. */
+  hasUndeliveredOps(noteId) {
+    let e = this.entries.get(noteId);
+    return !e || e.destroyed ? !1 : e.provider.hasUndeliveredWork();
   }
   // --- Lifecycle no-ops the persistent doc doesn't need -----------------------
   /** Relay: the doc is NEVER closed on a transport reconnect (that was the
