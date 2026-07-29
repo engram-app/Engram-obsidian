@@ -147,6 +147,18 @@ export class RemoteLogger {
 			platform: this.platform,
 			seq: this.seq++,
 		};
+		// Verbose mode opts sub-warn entries into Loki. The backend keeps client
+		// logs out of Loki below warn (Category: :client is absent from
+		// @info_to_loki, so a whole plugin fleet can't flood it) and offers
+		// exactly one escape hatch: `diagnostic: true`. Without this, setting
+		// remoteLogLevel to "debug" made the plugin SEND info lines that the
+		// backend then dropped — verbose logging that produced nothing to read.
+		// Gated on "debug", never the "info" default, so the flood guard still
+		// holds for everyone who hasn't explicitly asked for the firehose.
+		// warn/error already ship, so flagging them would just pad the payload.
+		if (this.levelThreshold === "debug" && LEVEL_SEVERITY[level] < LEVEL_SEVERITY.warn) {
+			entry.diagnostic = true;
+		}
 		if (stack) entry.stack = stack;
 		if (this.connId) entry.conn_id = this.connId;
 		if (this.deviceId) entry.device_id = this.deviceId;

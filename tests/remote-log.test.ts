@@ -349,3 +349,59 @@ describe("RemoteLogger client context + seq + diag", () => {
 		expect(sent[0].level).toBe("info");
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Loki reachability (2026-07-28)
+// ---------------------------------------------------------------------------
+
+// The backend drops re-emitted client logs below warn UNLESS the entry carries
+// `diagnostic: true` (Engram.Logger.Category: :client is deliberately absent
+// from @info_to_loki so a plugin fleet can't flood Loki). So setting
+// remoteLogLevel to "debug" made the plugin SEND info lines that then died at
+// the backend filter — the setting silently did nothing for the one thing you
+// want it for. Two investigations were lost to exactly this.
+describe("verbose remote logging reaches Loki", () => {
+	function loggerAt(level: "info" | "debug") {
+		const sent: RemoteLogEntry[][] = [];
+		const logger = new RemoteLogger();
+		logger.configure(
+			async (batch: RemoteLogEntry[]) => {
+				sent.push(batch);
+			},
+			"1.0.0",
+			"desktop",
+		);
+		logger.setEnabled(true);
+		logger.setLevelThreshold(level);
+		return { logger, sent };
+	}
+
+	test("at debug, info entries opt into Loki", async () => {
+		const { logger, sent } = loggerAt("debug");
+
+		logger.info("crdt", "something worth seeing");
+		await logger.flush();
+
+		expect(sent[0]?.[0]?.diagnostic).toBe(true);
+	});
+
+	test("at the default level, info entries do NOT opt in (no fleet-wide flood)", async () => {
+		const { logger, sent } = loggerAt("info");
+
+		logger.info("crdt", "routine chatter");
+		await logger.flush();
+
+		expect(sent[0]?.[0]?.diagnostic).toBeUndefined();
+	});
+
+	test("warn already reaches Loki, so it stays unflagged even at debug", async () => {
+		const { logger, sent } = loggerAt("debug");
+
+		logger.warn("crdt", "a real problem");
+		await logger.flush();
+
+		// warn/error ship regardless (Category.loki_ship? passes them); flagging
+		// them would only add noise to the payload.
+		expect(sent[0]?.[0]?.diagnostic).toBeUndefined();
+	});
+});
