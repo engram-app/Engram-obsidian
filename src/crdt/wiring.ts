@@ -345,7 +345,6 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 		// off the handshake so a slow content STEP2 can't race an empty file (#547).
 		onEmptyStep2: (noteId) => {
 			const path = noteIdMap.pathForId(noteId);
-			rlog().warn("crdt", `EMPTY-STEP2 id=${noteId} path=${path ?? "unmapped"}`);
 			if (!path) {
 				rlog().warn(
 					"crdt",
