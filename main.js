@@ -942,7 +942,7 @@ var LEVEL_SEVERITY = {
       platform: this.platform,
       seq: this.seq++
     };
-    stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > MAX_BUFFER && this.buffer.splice(0, this.buffer.length - MAX_BUFFER), this.buffer.length >= FLUSH_THRESHOLD && this.flush();
+    this.levelThreshold === "debug" && LEVEL_SEVERITY[level] < LEVEL_SEVERITY.warn && (entry.diagnostic = !0), stack && (entry.stack = stack), this.connId && (entry.conn_id = this.connId), this.deviceId && (entry.device_id = this.deviceId), this.vaultId && (entry.vault_id = this.vaultId), diagnostic && (entry.diagnostic = !0), this.buffer.push(entry), this.buffer.length > MAX_BUFFER && this.buffer.splice(0, this.buffer.length - MAX_BUFFER), this.buffer.length >= FLUSH_THRESHOLD && this.flush();
   }
   startTimer() {
     this.stopTimer(), this.flushTimer = window.setInterval(() => {
