@@ -47,6 +47,8 @@ function engineWithClock() {
 		recentlyDeleted: Map<string, number>;
 		markRecentlyFlushed(path: string): void;
 		recentlyFlushed: Map<string, number>;
+		markRecentlyPushed(path: string): void;
+		recentlyPushed: Map<string, number>;
 	};
 	return { engine, clock, probe };
 }
@@ -150,5 +152,55 @@ describe("push debounce bookkeeping", () => {
 		clock.advance(5_000);
 
 		expect(armed(engine)).toBe(0);
+	});
+});
+
+describe("destroy() timer sweep", () => {
+	test("cancels the recentlyPushed cooldown on the injected clock", () => {
+		const { engine, clock, probe } = engineWithClock();
+		probe.markRecentlyPushed("a.md");
+		expect(clock.pendingCount).toBe(1);
+
+		engine.destroy();
+
+		// markWithTtl arms every TTL map through `this.time`, so cancelling with
+		// window.clearTimeout cannot reach the timer — it stays armed and fires
+		// its expiry callback into a torn-down engine on the next tick.
+		expect(clock.pendingCount).toBe(0);
+	});
+});
+
+describe("push debounce, follow-ups from review", () => {
+	function armed(engine: SyncEngine) {
+		return (engine as unknown as { debounceTimers: Map<string, number> }).debounceTimers.size;
+	}
+
+	test("a fired debounce re-emits status so the bar stops painting a stale count", () => {
+		const { engine, clock } = engineWithClock();
+		const seen: number[] = [];
+		engine.onStatusChange = (s) => seen.push(s.pending);
+
+		engine.handleModify(new TFile("a.md"));
+		clock.advance(5_000);
+
+		// pushFile has early returns ABOVE its first emitStatus(), so delegating
+		// the repaint to it leaves the bar showing the pre-fire count forever —
+		// there is no poller to correct it.
+		expect(seen.at(-1)).toBe(0);
+	});
+
+	test("a rename cancels the old path's pending push outright", () => {
+		const { engine, clock } = engineWithClock();
+		const file = new TFile("a.md");
+		engine.handleModify(file);
+
+		file.path = "b.md";
+		void engine.handleRename(file, "a.md");
+
+		// Self-clearing on fire is not enough. A still-armed old-path timer is
+		// uncancellable by handleDelete (which looks up the CURRENT path) and
+		// bypasses handleRename's own shouldIgnore guard on the new path.
+		expect(armed(engine)).toBe(0);
+		expect(clock.pendingCount).toBe(0);
 	});
 });

@@ -19794,7 +19794,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let armedPath = file.path, existing = this.debounceTimers.get(armedPath);
     existing && this.time.clearTimeout(existing);
     let timer = this.time.setTimeout(() => {
-      this.debounceTimers.delete(armedPath), this.pushFile(file);
+      this.debounceTimers.delete(armedPath), this.emitStatus(), this.pushFile(file);
     }, this.settings.debounceMs);
     this.debounceTimers.set(armedPath, timer), this.emitStatus();
   }
@@ -19837,8 +19837,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (!this.ready || !this.isSyncable(file)) return;
-    let isBinary = this.isBinaryFile(file);
-    if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
+    let isBinary = this.isBinaryFile(file), armed = this.debounceTimers.get(oldPath);
+    if (armed && (this.time.clearTimeout(armed), this.debounceTimers.delete(oldPath), this.emitStatus()), isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
         isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
@@ -22397,7 +22397,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.time.clearTimeout(timer);
     this.debounceTimers.clear();
     for (let timer of this.recentlyPushed.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.recentlyPushed.clear();
     for (let timer of this.recentlyFlushed.values())
       this.time.clearTimeout(timer);
