@@ -5,7 +5,7 @@
  */
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
-import { type PreflightResult, interpretHealthProbe } from "./auth-state";
+import { interpretHealthProbe, type PreflightResult } from "./auth-state";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";

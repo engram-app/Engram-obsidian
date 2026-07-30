@@ -12,8 +12,8 @@ import {
 	CONTENT_KEY,
 	FRONTMATTER_KEY,
 	ORDER_KEY,
-	RAW_FRONTMATTER_KEY,
 	parseFrontmatter,
+	RAW_FRONTMATTER_KEY,
 	splitFrontmatter,
 } from "./frontmatter-codec";
 

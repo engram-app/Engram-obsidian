@@ -16,7 +16,7 @@ test("diffIntoYText does NOT full-replace (history preserved)", () => {
 	const doc = new Y.Doc();
 	const text = doc.getText("content");
 	text.insert(0, "hello world");
-	const before = Y.encodeStateVector(doc);
+	const _before = Y.encodeStateVector(doc);
 
 	diffIntoYText(text, "hello brave world");
 

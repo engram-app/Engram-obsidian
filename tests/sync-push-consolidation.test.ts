@@ -18,11 +18,15 @@ import { TFile } from "obsidian";
 import * as syncProtocol from "y-protocols/sync";
 import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
-import { projectNote } from "../src/crdt/frontmatter-codec";
-import { CONTENT_KEY, frontmatterOf, rawFrontmatterOf } from "../src/crdt/frontmatter-codec";
+import {
+	CONTENT_KEY,
+	frontmatterOf,
+	projectNote,
+	rawFrontmatterOf,
+} from "../src/crdt/frontmatter-codec";
 import { NoteIdMap } from "../src/crdt/note-id-map";
-import { ProviderRegistry } from "../src/crdt/provider-registry";
 import type { ProviderRegistry as CrdtManagerType } from "../src/crdt/provider-registry";
+import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { encodeUpdateFrame, fromB64 } from "../src/crdt/wire";
 import { MAX_CRDT_NOTE_BYTES, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";

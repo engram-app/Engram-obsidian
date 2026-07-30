@@ -3,7 +3,7 @@
  */
 import { afterAll, beforeEach, describe, expect, mock, test } from "bun:test";
 import type { AuthProvider } from "../src/auth";
-import { NoteChannel, connectRetryDelayMs, makeCrdtCatchupSender } from "../src/channel";
+import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "../src/channel";
 
 // Capture WebSocket constructor calls
 let lastWsUrl: string | null = null;

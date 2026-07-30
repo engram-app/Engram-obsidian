@@ -238,7 +238,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	 *  empties the container first so it can be wired to live status events. */
 	private renderStatus(): void {
 		const statusEl = this.statusContainerEl;
-		if (!statusEl || !statusEl.isConnected) return;
+		if (!statusEl?.isConnected) return;
 		statusEl.empty();
 
 		const status = this.plugin.syncEngine.getStatus();

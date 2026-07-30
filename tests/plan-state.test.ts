@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { type PlanState, attachmentCapabilityGained, parsePlanState } from "../src/plan-state";
+import { attachmentCapabilityGained, type PlanState, parsePlanState } from "../src/plan-state";
 
 const free: PlanState = {
 	tier: "free",

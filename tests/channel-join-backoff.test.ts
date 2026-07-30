@@ -100,7 +100,7 @@ function acceptCrdtJoin(ws: any, ref: string, topic: string): void {
 
 /** Open a fresh socket, reject its crdt join, then close it "live" (opened=true).
  *  Returns the ms of the reconnect timer scheduled by that close. */
-function failCycle(channel: NoteChannel, reason: string, topic = "crdt:u1:v1"): number {
+function failCycle(_channel: NoteChannel, reason: string, topic = "crdt:u1:v1"): number {
 	lastWsInstance.onopen?.();
 	const ref = crdtJoinRef(lastWsInstance);
 	rejectCrdtJoin(lastWsInstance, ref, reason, topic);

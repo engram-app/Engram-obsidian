@@ -11,9 +11,8 @@ function twoDevices() {
 	const flushedA: Record<string, string> = {};
 	const flushedB: Record<string, string> = {};
 	let up = true;
-	// biome-ignore lint/style/useConst: mutually referential wiring
+	// mutually referential wiring — assigned below, not at declaration
 	let A: ProviderRegistry;
-	// biome-ignore lint/style/useConst: mutually referential wiring
 	let B: ProviderRegistry;
 	A = new ProviderRegistry({
 		dbPrefix: "devA",

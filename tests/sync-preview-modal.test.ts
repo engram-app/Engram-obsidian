@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { LimitExceededError } from "../src/limit-error";
 import type { OptionBreakdown } from "../src/sync-plan-format";
 import {
-	HEADER_BY_CONTEXT,
-	SyncPreviewState,
 	confirmActions,
 	countSkippedAttachments,
 	describeCreateVaultError,
+	HEADER_BY_CONTEXT,
 	mergeHelperText,
+	SyncPreviewState,
 	skippedAttachmentsLine,
 } from "../src/sync-preview-modal";
 import type { SyncChoice, SyncPlan } from "../src/types";

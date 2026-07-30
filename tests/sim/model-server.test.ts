@@ -117,7 +117,7 @@ test("WS sync phx_join → phx_reply ok on same topic+ref", async () => {
 	const reply = framesOf(recv, PHX_REPLY).find((f) => f[2] === SYNC_TOPIC);
 	expect(reply).toBeDefined();
 	expect(reply?.[1]).toBe("10");
-	expect((reply?.[4] as { status: string }).status).toBe("ok");
+	expect((reply?.[4] as { status: string })?.status).toBe("ok");
 });
 
 test("WS crdt phx_join {crdt_proto:2} → phx_reply ok on crdt topic", async () => {
@@ -128,7 +128,7 @@ test("WS crdt phx_join {crdt_proto:2} → phx_reply ok on crdt topic", async () 
 	);
 	await s.drain();
 	const reply = framesOf(recv, PHX_REPLY).find((f) => f[2] === CRDT_TOPIC);
-	expect((reply?.[4] as { status: string }).status).toBe("ok");
+	expect((reply?.[4] as { status: string })?.status).toBe("ok");
 });
 
 test("WS user phx_join → phx_reply ok on user topic", async () => {
@@ -137,7 +137,7 @@ test("WS user phx_join → phx_reply ok on user topic", async () => {
 	sock.send(JSON.stringify([USER_JOIN_REF, "12", USER_TOPIC, PHX_JOIN, {}]));
 	await s.drain();
 	const reply = framesOf(recv, PHX_REPLY).find((f) => f[2] === USER_TOPIC);
-	expect((reply?.[4] as { status: string }).status).toBe("ok");
+	expect((reply?.[4] as { status: string })?.status).toBe("ok");
 });
 
 test("WS heartbeat → phoenix phx_reply", async () => {
@@ -147,7 +147,7 @@ test("WS heartbeat → phoenix phx_reply", async () => {
 	await s.drain();
 	const reply = framesOf(recv, PHX_REPLY).find((f) => f[2] === "phoenix");
 	expect(reply?.[1]).toBe("20");
-	expect((reply?.[4] as { status: string }).status).toBe("ok");
+	expect((reply?.[4] as { status: string })?.status).toBe("ok");
 });
 
 // --- WS CRDT request/response + fan-out contract ---
@@ -178,10 +178,10 @@ test("WS crdt_create → phx_reply {doc_id} to sender + crdt_doc_ready to others
 	);
 	await s.drain();
 	const reply = a.recv.find((f) => f[3] === PHX_REPLY && f[1] === "30");
-	expect((reply?.[4] as { response: { doc_id: string } }).response.doc_id).toBe("n1");
+	expect((reply?.[4] as { response: { doc_id: string } })?.response.doc_id).toBe("n1");
 	const ready = framesOf(b.recv, CRDT_DOC_READY)[0];
-	expect((ready?.[4] as { doc_id: string }).doc_id).toBe("n1");
-	expect((ready?.[4] as { path: string }).path).toBe("a.md");
+	expect((ready?.[4] as { doc_id: string })?.doc_id).toBe("n1");
+	expect((ready?.[4] as { path: string })?.path).toBe("a.md");
 	// sender must NOT get its own doc_ready echo
 	expect(framesOf(a.recv, CRDT_DOC_READY).length).toBe(0);
 });
@@ -210,7 +210,9 @@ test("WS crdt_msg STEP1 → sender gets a STEP2 that materializes server content
 	expect(step2).toBeDefined();
 	// decode + apply the STEP2 the way CrdtChannel.handleFrame does
 	const doc = new Y.Doc();
-	const dec = decoding.createDecoder(fromB64((step2?.[4] as { b64: string }).b64));
+	// step2 is asserted defined above, so the non-null assertion cannot fire:
+	// a failed expect() throws before reaching here.
+	const dec = decoding.createDecoder(fromB64((step2![4] as { b64: string }).b64));
 	expect(decoding.readVarUint(dec)).toBe(MESSAGE_SYNC);
 	const reply = encoding.createEncoder();
 	encoding.writeVarUint(reply, MESSAGE_SYNC);
@@ -293,7 +295,7 @@ test("WS crdt_msg UPDATE (seed) → OTHER client gets note_yjs_update with raw u
 	// applyLiveOpWithSeq. The echo carries the same note_id + seq.
 	const selfEcho = framesOf(a.recv, NOTE_YJS_UPDATE)[0];
 	expect(selfEcho).toBeDefined();
-	expect((selfEcho?.[4] as { note_id: string }).note_id).toBe("n1");
+	expect((selfEcho?.[4] as { note_id: string })?.note_id).toBe("n1");
 });
 
 test("WS crdt_catchup_since → {changes, has_more, next_seq} with SyncNoteChange rows", async () => {
@@ -310,8 +312,9 @@ test("WS crdt_catchup_since → {changes, has_more, next_seq} with SyncNoteChang
 	);
 	await s.drain();
 	const reply = a.recv.find((f) => f[3] === PHX_REPLY && f[1] === "50");
+	expect(reply).toBeDefined();
 	const resp = (
-		reply?.[4] as {
+		reply![4] as {
 			response: {
 				changes: Record<string, unknown>[];
 				has_more: boolean;

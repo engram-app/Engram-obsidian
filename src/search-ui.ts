@@ -3,9 +3,9 @@
  * Owns input, mode toggle, filters, results list, keyboard nav, highlight,
  * and open / jump-to-heading. UI-only — search logic lives in search-engine.ts.
  */
-import { Notice, Setting, type TFile, getAllTags, prepareSimpleSearch, setIcon } from "obsidian";
+import { getAllTags, Notice, prepareSimpleSearch, Setting, setIcon, type TFile } from "obsidian";
 import { FolderInputSuggest } from "./folder-suggest";
-import { type SearchContext, matchStrengths, searchEngram } from "./search-engine";
+import { matchStrengths, type SearchContext, searchEngram } from "./search-engine";
 import { buildSegments, queryTokenRanges } from "./search-highlight";
 import { TagInputSuggest } from "./tag-suggest";
 import type { SearchMode, UnifiedSearchResult } from "./types";
@@ -496,7 +496,7 @@ export class SearchPanel {
 			return null;
 		}
 		const res = prepareSimpleSearch(query)(content);
-		if (!res || !res.matches.length) return null;
+		if (!res?.matches.length) return null;
 		return { content, matches: res.matches };
 	}
 }

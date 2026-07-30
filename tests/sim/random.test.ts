@@ -164,6 +164,7 @@ test("seeded random: 5 replicas × concurrent online editing converge (strict or
 	// A gating test whose job includes leaving a replayable seed breadcrumb on
 	// stdout BEFORE each run (so a hang/OOM still names the seed). Aliasing
 	// console.log keeps that intent explicit — same pattern as random-harness.ts.
+	// biome-ignore lint/suspicious/noConsole: replayable seed breadcrumb is the point
 	const log = console.log;
 	for (let k = 0; k < iterations; k++) {
 		const seed = process.env.SIM_SEED ? Number(process.env.SIM_SEED) >>> 0 : pickSeed();

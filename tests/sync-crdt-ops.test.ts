@@ -80,10 +80,7 @@ const mockApp = {
 	workspace: { getActiveViewOfType: mock().mockReturnValue(null) },
 } as any;
 
-function engine(opts?: {
-	api?: Partial<EngramApi>;
-	crdt?: Partial<CrdtManager>;
-}): SyncEngine {
+function engine(opts?: { api?: Partial<EngramApi>; crdt?: Partial<CrdtManager> }): SyncEngine {
 	const e = new SyncEngine(
 		mockApp,
 		(opts?.api ?? mockApi) as unknown as EngramApi,

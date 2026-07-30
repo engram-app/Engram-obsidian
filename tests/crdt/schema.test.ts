@@ -47,7 +47,7 @@ function makeFakeIndexedDB() {
 }
 
 describe("ensureDocSchema", () => {
-	it("absent marker → drops exactly the ${vaultId}/ -prefixed DBs and sets marker", async () => {
+	it("absent marker → drops exactly the <vaultId>/ -prefixed DBs and sets marker", async () => {
 		const storage = makeFakeStorage();
 		const idb = makeFakeIndexedDB();
 		idb.dbs = {

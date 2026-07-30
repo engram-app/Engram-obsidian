@@ -9,8 +9,8 @@
  * applySyncChange's dispatch to applyChange/applyAttachmentChange, and
  * reconcileFromManifest (server-delete-local + folder markers).
  */
-import { type Mock, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
-import { TFile, requestUrl } from "obsidian";
+import { beforeEach, describe, expect, type Mock, mock, spyOn, test } from "bun:test";
+import { requestUrl, TFile } from "obsidian";
 import { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";

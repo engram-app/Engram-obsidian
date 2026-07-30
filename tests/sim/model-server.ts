@@ -419,7 +419,7 @@ export class ModelServer {
 		return { replyB64, changed, serverStep1B64 };
 	}
 
-	private fanoutUpdate(fromClient: string, n: Note, update: Uint8Array): void {
+	private fanoutUpdate(_fromClient: string, n: Note, update: Uint8Array): void {
 		const b64 = toB64(update);
 		const head = this.head(n);
 		const seq = n.seq;
@@ -732,6 +732,7 @@ export class ModelServer {
 
 // crdtTopicKey lives on the note object (attached in mint); declare it so TS is
 // happy about the call in handleCrdtMsg without widening the exported Note type.
+// biome-ignore lint/correctness/noUnusedVariables: declaration merging with Note above
 interface Note {
 	crdtTopicKey(): string;
 }

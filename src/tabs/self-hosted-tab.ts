@@ -1,6 +1,6 @@
 import { Notice, Setting, setIcon } from "obsidian";
 import { EngramApi } from "../api";
-import { type PreflightResult, applyApiUrlChange, completeOrigin } from "../auth-state";
+import { applyApiUrlChange, completeOrigin, type PreflightResult } from "../auth-state";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL } from "./urls";
 

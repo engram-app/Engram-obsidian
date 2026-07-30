@@ -101,6 +101,7 @@ function topLevelKeyOrder(block: string, map: Record<string, unknown>): string[]
 		const key = m[1];
 		if (
 			key !== undefined &&
+			// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
 			Object.prototype.hasOwnProperty.call(map, key) &&
 			!order.includes(key)
 		) {
@@ -134,6 +135,7 @@ export function emitFrontmatter(
 	raws: Record<string, string> = {},
 ): string {
 	const has = (m: Record<string, string>, k: string) =>
+		// biome-ignore lint/suspicious/noPrototypeBuiltins: Object.hasOwn needs lib ES2022, we target ES2021
 		Object.prototype.hasOwnProperty.call(m, k);
 	const present = order.filter((k) => has(raws, k) || has(values, k));
 	if (present.length === 0) return "";

@@ -1,10 +1,10 @@
 {
-	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
-	"organizeImports": { "enabled": true },
+	"$schema": "https://biomejs.dev/schemas/2.5.6/schema.json",
+	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"suspicious": {
 				"noConsole": "error"
 			},
@@ -26,11 +26,17 @@
 		}
 	},
 	"files": {
-		"ignore": ["node_modules", "main.js", "esbuild.config.mjs", "version-bump.mjs"]
+		"includes": [
+			"**",
+			"!**/node_modules",
+			"!**/main.js",
+			"!**/esbuild.config.mjs",
+			"!**/version-bump.mjs"
+		]
 	},
 	"overrides": [
 		{
-			"include": ["tests/**"],
+			"includes": ["**/tests/**"],
 			"linter": {
 				"rules": {
 					"suspicious": {

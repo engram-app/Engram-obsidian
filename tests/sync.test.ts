@@ -3,7 +3,7 @@ import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { LimitExceededError } from "../src/limit-error";
-import { SyncEngine, fnv1a } from "../src/sync";
+import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { __noticeCapture } from "./__mocks__/obsidian";
 

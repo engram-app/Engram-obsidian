@@ -6,17 +6,17 @@
  * - onFlushToDisk echo: remote-applied disk write does not re-enqueue a local push
  * - offline CRDT capture: consumed md edits do NOT enter the legacy offline queue
  */
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import {
 	CRDT_HEAD_CREATED,
-	MAX_CRDT_NOTE_BYTES,
-	SyncEngine,
 	fnv1a,
+	MAX_CRDT_NOTE_BYTES,
 	reconcileColdStart,
 	routeModify,
+	SyncEngine,
 } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -95,7 +95,7 @@ describe("routeModify helper", () => {
 
 	test("binary modify does NOT route to CRDT, returns null", async () => {
 		const applyLocalEdit = mock(async () => null);
-		const pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
+		const _pushNote = mock(async () => ({ note: {}, chunks_indexed: 1 }));
 		const result = await routeModify(
 			{ crdtEligible: false, noteId: "id-img", readContent: async () => "" },
 			{ applyLocalEdit } as any,

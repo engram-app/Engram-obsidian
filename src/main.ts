@@ -8,12 +8,12 @@ import {
 	FileSystemAdapter,
 	MarkdownView,
 	Notice,
+	normalizePath,
 	Platform,
 	Plugin,
+	requestUrl,
 	TFile,
 	TFolder,
-	normalizePath,
-	requestUrl,
 } from "obsidian";
 import { EngramApi, withTimeout } from "./api";
 import {
@@ -24,27 +24,44 @@ import {
 	seededAccessToken,
 } from "./auth";
 import { migrateCloudApiUrl, withClearedAuth } from "./auth-state";
-import { NoteChannel, connectRetryDelayMs, makeCrdtCatchupSender } from "./channel";
+import { BaseStore } from "./base-store";
+import { connectRetryDelayMs, makeCrdtCatchupSender, NoteChannel } from "./channel";
+import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
+import { CrdtLiveViews } from "./crdt/live/live-views";
+import { NoteIdMap } from "./crdt/note-id-map";
+import type { ProviderRegistry } from "./crdt/provider-registry";
+import { ensureDocSchema } from "./crdt/schema";
+import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
+import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { registerDiagnostics } from "./diagnostics";
+import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg } from "./error-util";
+import { ExplicitFolders } from "./explicit-folders";
 import { LimitExceededError } from "./limit-error";
 import { notifyLimitExceeded } from "./limit-toast";
 import { parsePlanState } from "./plan-state";
+import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
+import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
 import { SearchModal } from "./search-modal";
 import { SEARCH_VIEW_TYPE, SearchView } from "./search-view";
 import { EngramSyncSettingTab } from "./settings";
 import { migrateDiagnosticsEnabled } from "./settings-migrate";
 import { createSingleFlight } from "./single-flight";
-import { SyncEngine, reconcileColdStart } from "./sync";
+import { reconcileColdStart, SyncEngine } from "./sync";
+import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
+import { SyncLog } from "./sync-log";
+import { SyncLogModal } from "./sync-log-modal";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import {
-	type PlannedPhase,
-	SyncProgressModal,
 	describePlannedWork,
+	type PlannedPhase,
 	plannedPhases,
+	SyncProgressModal,
 } from "./sync-progress-modal";
 import { ENGRAM_CLOUD_URL, engramWebUrl } from "./tabs/urls";
+import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import {
 	DEFAULT_SETTINGS,
 	type EngramSyncSettings,
@@ -54,24 +71,6 @@ import {
 	type SyncStatus,
 } from "./types";
 import { checkForPluginUpdate } from "./update-check";
-
-import { BaseStore } from "./base-store";
-import { liveBindingPlugin, setLiveBindingCoordinator } from "./crdt/live/live-binding";
-import { CrdtLiveViews } from "./crdt/live/live-views";
-import { NoteIdMap } from "./crdt/note-id-map";
-import type { ProviderRegistry } from "./crdt/provider-registry";
-import { ensureDocSchema } from "./crdt/schema";
-import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
-import { destroyDevLog, devLog, initDevLog } from "./dev-log";
-import { registerDiagnostics } from "./diagnostics";
-import { EmailCaptureModal } from "./email-capture-modal";
-import { ExplicitFolders } from "./explicit-folders";
-import { atomicWriteJson, resilientReadJson } from "./plugin-data-io";
-import { destroyRemoteLog, initRemoteLog, rlog } from "./remote-log";
-import { channelConnectionKey, computeSyncFingerprint } from "./sync-fingerprint";
-import { SyncLog } from "./sync-log";
-import { SyncLogModal } from "./sync-log-modal";
-import type { QueueEntry, SyncChoice, SyncIssue, SyncPlan } from "./types";
 import { shouldShowWaitlistPrompt } from "./waitlist";
 
 /** Generate a stable client ID for vault registration.

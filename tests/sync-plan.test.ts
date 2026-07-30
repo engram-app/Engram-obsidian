@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { SyncEngine, fnv1a } from "../src/sync";
-import { DEFAULT_SETTINGS } from "../src/types";
+import { fnv1a, SyncEngine } from "../src/sync";
 import type { SyncProgress } from "../src/types";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 // Mock the API — mirrors the pattern from sync.test.ts
 const mockApi = {

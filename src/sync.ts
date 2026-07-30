@@ -1,8 +1,8 @@
 /**
  * Sync engine — handles push/pull logic, debouncing, and ignore patterns.
  */
-import { type App, Notice, type TAbstractFile, TFile, TFolder, normalizePath } from "obsidian";
-import { type EngramApi, arrayBufferToBase64, base64ToArrayBuffer } from "./api";
+import { type App, Notice, normalizePath, type TAbstractFile, TFile, TFolder } from "obsidian";
+import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
@@ -13,9 +13,9 @@ import { errMsg } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
 import { IgnoredFiles } from "./ignored-files";
 import {
-	IssueStore,
 	categorizeError,
 	healthCheckDelay,
+	IssueStore,
 	issueDisposition,
 	parseStatusToIssue,
 	shouldGoOffline,
@@ -23,7 +23,7 @@ import {
 } from "./issue-store";
 import { isTextAttachment } from "./mime";
 import { OfflineQueue } from "./offline-queue";
-import { type PlanState, attachmentCapabilityGained } from "./plan-state";
+import { attachmentCapabilityGained, type PlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
 import type {
@@ -437,7 +437,14 @@ export class SyncEngine {
 	 *  into a destroyed doc (the never-span-a-load class,
 	 *  crdt-editor-bind-race-pollution.md). Bindings re-establish via the
 	 *  normal refresh events; meanwhile edits flow through handleModify as
-	 *  plain pushes. */
+	 *  plain pushes.
+	 *
+	 *  DEAD as of #258 (main.ts:443 — "the old setCrdtEditorDetach /
+	 *  setCrdtEditorRebind wiring is gone"): nothing reads this field any more.
+	 *  The setter is retained because it is still part of the harness-facing
+	 *  surface — engram/e2e/headless/run.ts:330 and tests/sim/replica.ts:447
+	 *  both call it. Removing the pair therefore needs a paired backend PR. */
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: setter is harness-facing surface, see above
 	private crdtEditorDetach: (() => void) | null = null;
 
 	setCrdtEditorDetach(fn: (() => void) | null): void {
@@ -3092,11 +3099,13 @@ export class SyncEngine {
 
 	/** Test hook: how many attachments were marked needs_pro since the last
 	 *  flush. Drained when the toast fires. */
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
 	private getAttachmentLimitedCount(): number {
 		return this.attachmentLimitedThisBatch;
 	}
 
 	/** Test hook: whether the session has already shown the batched toast. */
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
 	private hasShownAttachmentLimitToast(): boolean {
 		return this.attachmentLimitToastShown;
 	}
@@ -3176,6 +3185,7 @@ export class SyncEngine {
 	}
 
 	/** Check if a path was recently pushed (for echo suppression). */
+	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
 	private isRecentlyPushed(path: string): boolean {
 		return this.recentlyPushed.has(path);
 	}

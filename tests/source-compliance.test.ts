@@ -31,7 +31,7 @@
  *   - no plugin self-update mechanism keywords (defensive)
  */
 import { describe, expect, test } from "bun:test";
-import { readFileSync, readdirSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
 const repoRoot = join(import.meta.dir, "..");
