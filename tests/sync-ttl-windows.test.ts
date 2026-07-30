@@ -8,6 +8,7 @@
  * behaviour on either side of the boundary was never pinned.
  */
 import { describe, expect, mock, test } from "bun:test";
+import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
 import { ManualTimeProvider } from "../src/time-provider";
@@ -40,6 +41,7 @@ function engineWithClock() {
 		mock().mockResolvedValue(undefined),
 		clock,
 	);
+	engine.setReady();
 	const probe = engine as unknown as {
 		markRecentlyDeleted(id: string): void;
 		recentlyDeleted: Map<string, number>;
@@ -111,5 +113,42 @@ describe("recentlyFlushed echo window", () => {
 		clock.advance(RECENT_DELETE_COOLDOWN_MS);
 
 		expect(clock.pendingCount).toBe(0);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Debounce bookkeeping (2026-07-30: status bar stuck on "1 pending")
+// ---------------------------------------------------------------------------
+
+describe("push debounce bookkeeping", () => {
+	function armed(engine: SyncEngine) {
+		return (engine as unknown as { debounceTimers: Map<string, number> }).debounceTimers.size;
+	}
+
+	test("a fired debounce clears its own entry", () => {
+		const { engine, clock } = engineWithClock();
+		const file = new TFile("a.md");
+
+		engine.handleModify(file);
+		expect(armed(engine)).toBe(1);
+		clock.advance(5_000);
+
+		expect(armed(engine)).toBe(0);
+	});
+
+	test("a rename before the debounce fires does not leak the old path", () => {
+		const { engine, clock } = engineWithClock();
+		const file = new TFile("a.md");
+
+		engine.handleModify(file);
+		expect(armed(engine)).toBe(1);
+
+		// Obsidian mutates the SAME TFile in place on rename, so a closure that
+		// reads file.path at FIRE time deletes the new key and strands the old —
+		// leaving the status bar permanently showing a phantom pending file.
+		file.path = "b.md";
+		clock.advance(5_000);
+
+		expect(armed(engine)).toBe(0);
 	});
 });
