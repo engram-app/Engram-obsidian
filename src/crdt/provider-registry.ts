@@ -14,7 +14,7 @@ import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
 import { Lifetime } from "../lifetime";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
-import { NoteDestroyedError, isDestroyedError } from "./destroyed-error";
+import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
@@ -489,7 +489,7 @@ export class ProviderRegistry {
 	 *  undelivered, so a caller preserving data errs toward preserving it. */
 	hasUndeliveredOps(noteId: string): boolean {
 		const e = this.entries.get(noteId);
-		if (!e || !e.lifetime.active) return false;
+		if (!e?.lifetime.active) return false;
 		return e.provider.hasUndeliveredWork();
 	}
 
