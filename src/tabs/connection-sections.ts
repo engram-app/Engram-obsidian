@@ -247,6 +247,9 @@ export function renderAuthSection(ctx: TabContext): void {
 			.addButton((btn) =>
 				btn
 					.setButtonText(t("Clear key"))
+					// ponytail: stays on setWarning(). setDestructive() needs Obsidian
+					// >= 1.13.0 and minAppVersion is 1.8.7, so it would throw for most
+					// users. Swap when the floor reaches 1.13 (#353).
 					.setWarning()
 					.onClick(async () => {
 						plugin.settings.apiKey = "";
