@@ -1,5 +1,5 @@
 import { describe, expect, it, mock } from "bun:test";
-import { MarkdownView as MdView } from "obsidian";
+import { MarkdownView as MdView, TFile } from "obsidian";
 import { CrdtLiveViews, ViewerRefcount } from "../src/crdt/live/live-views";
 
 describe("ViewerRefcount", () => {
@@ -64,6 +64,10 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 	function makeLiveViews(opts?: {
 		flushToDisk?: (path: string, content: string) => Promise<void>;
 		getText?: (id: string) => Promise<string>;
+		/** The path has no id mapping — a deleted note's cleared entry. */
+		unmapped?: boolean;
+		/** The file is gone from the vault — deleted while its view was open. */
+		missingOnDisk?: boolean;
 	}) {
 		const closed: string[] = [];
 		const flushed: Array<{ path: string; content: string }> = [];
@@ -74,11 +78,19 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 				closed.push(id);
 			},
 		};
+		// Release-path deps (2026-07-28): the flush is now gated on the file still
+		// existing and on a NON-minting id lookup, so the harness must model both.
 		const lv = new CrdtLiveViews({
-			app: {} as never,
+			app: {
+				vault: {
+					getAbstractFileByPath: (p: string) =>
+						opts?.missingOnDisk ? null : new TFile(p),
+				},
+			} as never,
 			manager: manager as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
+			resolveExistingId: (p: string) => (opts?.unmapped ? null : `id:${p}`),
 			flushToDisk:
 				opts?.flushToDisk ??
 				(async (path, content) => {
@@ -90,6 +102,42 @@ describe("CrdtLiveViews doc lifecycle (onLastViewerRelease)", () => {
 		});
 		return { lv, closed, flushed, releaseErrors };
 	}
+
+	// --- Delete-while-open resurrection (2026-07-28, prod trace) --------------
+	// FILE CREATE a test.md bytes=0
+	//   via=createFileWithFolders < flushFromCrdt < flushToDisk < onLastViewerRelease
+	//
+	// Deleting a note with its tab open makes Obsidian close the view. The last
+	// viewer released, the teardown flushed the doc to disk, and because the file
+	// was already gone flushFromCrdt CREATED it — empty. Relay never reaches this
+	// state: its release resolves an existing guid (syncStore.get) instead of
+	// minting, and persists only a live document.
+
+	it("does not flush when the path has no id mapping (deleted: entry cleared)", async () => {
+		const { lv, flushed } = makeLiveViews({ unmapped: true });
+		lv.onBind("a.md", "v1");
+
+		lv.onRelease("a.md", "v1");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// Minting here would hand back a fresh, untombstoned id whose empty doc
+		// gets written straight back to the deleted path.
+		expect(flushed).toEqual([]);
+	});
+
+	it("does not recreate a file deleted while its view was open", async () => {
+		const { lv, flushed } = makeLiveViews({ missingOnDisk: true });
+		lv.onBind("a.md", "v1");
+
+		lv.onRelease("a.md", "v1");
+		await Promise.resolve();
+		await Promise.resolve();
+
+		// A release persists an OPEN editor's buffer. No file = the note was
+		// deleted, and a teardown flush must never materialize it again.
+		expect(flushed).toEqual([]);
+	});
 
 	it("flushes but keeps the doc resident when the last viewer releases", async () => {
 		const { lv, closed, flushed } = makeLiveViews();
@@ -193,6 +241,7 @@ describe("CrdtLiveViews.requestSaveForBoundPath (fix wave 6)", () => {
 			manager: manager as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
+			resolveExistingId: (p: string) => `id:${p}`,
 			flushToDisk: async () => {},
 		});
 		return lv;
@@ -244,6 +293,7 @@ describe("CrdtLiveViews.refresh() coalescing", () => {
 			manager: { getText: async () => "", closeDoc: () => {} } as never,
 			enrollment: {} as never,
 			resolveId: (p: string) => `id:${p}`,
+			resolveExistingId: (p: string) => `id:${p}`,
 			flushToDisk: async () => {},
 		});
 

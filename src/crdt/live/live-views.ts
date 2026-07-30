@@ -1,8 +1,9 @@
 import type { App } from "obsidian";
-import { MarkdownView as MdView } from "obsidian";
+import { MarkdownView as MdView, TFile } from "obsidian";
 import type * as Y from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
+import { isDestroyedError } from "../destroyed-error";
 import type { ProviderRegistry } from "../provider-registry";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import type { LiveBindingCoordinator } from "./live-binding";
@@ -70,6 +71,15 @@ export interface CrdtLiveViewsDeps {
 	 * by id.
 	 */
 	resolveId(path: string): string;
+	/** Resolve WITHOUT minting: the id this path already has, or null.
+	 *
+	 *  Relay parity (`SharedFolder.deleteFiles` / `syncStore.get(vpath)`): a path
+	 *  with no entry has no document, so there is nothing to persist. The
+	 *  minting `resolveId` must never be used on a teardown path — after a delete
+	 *  the map entry is gone, so minting hands back a BRAND-NEW id whose doc is
+	 *  empty and, crucially, carries no tombstone. Flushing that wrote a 0-byte
+	 *  file at the just-deleted path (2026-07-28). */
+	resolveExistingId(path: string): string | null;
 	/** The existing disk flush (SyncEngine.flushFromCrdt). Called on last release. */
 	flushToDisk(path: string, content: string): Promise<void>;
 	/** Optional: surface a last-release flush/getText failure (the doc is left
@@ -143,6 +153,13 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		return this.refcount.isBound(path);
 	}
 
+	/** Every path an editor is currently bound to. Enumerable (not just the
+	 *  isBound predicate) so the invariant checker can assert properties ACROSS
+	 *  the whole binding set, e.g. every bound path resolves to a note_id. */
+	boundPaths(): string[] {
+		return this.refcount.boundPaths();
+	}
+
 	/** Fix wave 6: nudge Obsidian's own save pipeline for the bound editor
 	 *  showing `path`, after a remote merge painted into it. `onFlushToDisk`
 	 *  skips the disk write for a bound path (the editor owns the file) — but
@@ -196,9 +213,25 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	 *  stays resident (Relay persistent-doc model — closeDoc is a no-op), so the
 	 *  note keeps syncing and re-paints instantly on re-open. */
 	private async onLastViewerRelease(path: string): Promise<void> {
-		const noteId = this.deps.resolveId(path);
-		const text = await this.deps.manager.getText(noteId);
-		await this.deps.flushToDisk(path, text);
+		// Relay parity, three rules for a teardown flush:
+		//
+		// 1. NEVER mint. `syncStore.get(vpath)` returning nothing means the note is
+		//    not tracked — there is no document, so there is nothing to persist.
+		//    Minting here resurrects a deleted note under a fresh, untombstoned id.
+		const noteId = this.deps.resolveExistingId(path);
+		if (noteId === null) return;
+		// 2. NEVER materialize. A release persists an OPEN editor's buffer; if the
+		//    file is gone the note was deleted while open, and writing recreates it.
+		if (!(this.deps.app.vault.getAbstractFileByPath(path) instanceof TFile)) return;
+		// 3. A destroyed doc is expected here (delete races the view teardown) and
+		//    is swallowed — exactly and only this error, as Relay's LiveViews do.
+		try {
+			const text = await this.deps.manager.getText(noteId);
+			await this.deps.flushToDisk(path, text);
+		} catch (e) {
+			if (isDestroyedError(e)) return;
+			throw e;
+		}
 	}
 
 	/** Open (or get cached) the path's Y.Text from the CRDT manager, resolving

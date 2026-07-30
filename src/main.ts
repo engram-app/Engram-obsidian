@@ -1979,6 +1979,7 @@ export default class EngramSyncPlugin extends Plugin {
 							// crdtLiveViews is constructed just below; read the field at call
 							// time, never capture a value.
 							isBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+							boundPaths: () => this.crdtLiveViews?.boundPaths() ?? [],
 							// Fix wave 6: nudge Obsidian's save pipeline after a remote merge
 							// paints into an unfocused bound editor (CI doesn't flush it).
 							onBoundUpdate: (path) =>
@@ -1998,6 +1999,7 @@ export default class EngramSyncPlugin extends Plugin {
 							// Resolve-or-mint: the editor binding needs a note_id immediately
 							// on open, even for a brand-new never-pushed note.
 							resolveId: (path) => this.noteIdMap.getOrMint(path),
+							resolveExistingId: (path) => this.noteIdMap.get(path),
 							flushToDisk: (path, content) =>
 								this.syncEngine.flushFromCrdt(path, content).then(() => {}),
 							onReleaseError: (path, err) =>
