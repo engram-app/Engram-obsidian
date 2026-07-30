@@ -27,7 +27,7 @@ import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { MESSAGE_SYNC, toB64 } from "../src/crdt/wire";
-import { SyncEngine, fnv1a } from "../src/sync";
+import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS, type NoteChange } from "../src/types";
 
 /** Build an engine whose note `a.md` is CRDT-managed, live-bound, and whose
