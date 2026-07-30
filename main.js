@@ -19791,12 +19791,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       file instanceof import_obsidian23.TFile && this.recordLiveBoundBaseline(file);
       return;
     }
-    let existing = this.debounceTimers.get(file.path);
-    existing && window.clearTimeout(existing);
-    let timer = window.setTimeout(() => {
-      this.debounceTimers.delete(file.path), this.pushFile(file);
+    let armedPath = file.path, existing = this.debounceTimers.get(armedPath);
+    existing && this.time.clearTimeout(existing);
+    let timer = this.time.setTimeout(() => {
+      this.debounceTimers.delete(armedPath), this.emitStatus(), this.pushFile(file);
     }, this.settings.debounceMs);
-    this.debounceTimers.set(file.path, timer), this.emitStatus();
+    this.debounceTimers.set(armedPath, timer), this.emitStatus();
   }
   /** Handle a vault delete event. */
   async handleDelete(file) {
@@ -19807,7 +19807,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     if (!this.ready || this.suppressDeletes || !this.isSyncable(file) || this.shouldIgnore(file.path)) return;
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
-    existing && (window.clearTimeout(existing), this.debounceTimers.delete(file.path));
+    existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
     if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian23.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
       this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
@@ -19837,8 +19837,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     if (!this.ready || !this.isSyncable(file)) return;
-    let isBinary = this.isBinaryFile(file);
-    if (isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
+    let isBinary = this.isBinaryFile(file), armed = this.debounceTimers.get(oldPath);
+    if (armed && (this.time.clearTimeout(armed), this.debounceTimers.delete(oldPath), this.emitStatus()), isBinary || (_a = this.noteIdMap) == null || _a.rename(oldPath, file.path), !this.shouldIgnore(oldPath))
       try {
         isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
@@ -22394,10 +22394,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Cancel all pending debounce, cooldown, and health check timers. */
   destroy() {
     for (let timer of this.debounceTimers.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.debounceTimers.clear();
     for (let timer of this.recentlyPushed.values())
-      window.clearTimeout(timer);
+      this.time.clearTimeout(timer);
     this.recentlyPushed.clear();
     for (let timer of this.recentlyFlushed.values())
       this.time.clearTimeout(timer);

@@ -2108,16 +2108,28 @@ export class SyncEngine {
 			return;
 		}
 
-		// Clear existing debounce timer for this file
-		const existing = this.debounceTimers.get(file.path);
-		if (existing) window.clearTimeout(existing);
+		// Capture the path NOW. Obsidian mutates the SAME TFile in place on a
+		// rename, so reading `file.path` inside the callback resolves to the NEW
+		// path — deleting a key that was never set and stranding the original
+		// forever. That leak surfaced as a status bar permanently reporting a
+		// phantom "1 pending" (pending == debounceTimers.size).
+		const armedPath = file.path;
 
-		const timer = window.setTimeout(() => {
-			this.debounceTimers.delete(file.path);
+		// Clear existing debounce timer for this file
+		const existing = this.debounceTimers.get(armedPath);
+		if (existing) this.time.clearTimeout(existing);
+
+		const timer = this.time.setTimeout(() => {
+			this.debounceTimers.delete(armedPath);
+			// Repaint HERE, not via pushFile: it has early returns above its first
+			// emitStatus(), and a persistently-skipped file (an attachment parked
+			// under a plan issue) would leave the bar painting the stale count
+			// forever — nothing polls it.
+			this.emitStatus();
 			void this.pushFile(file);
 		}, this.settings.debounceMs);
 
-		this.debounceTimers.set(file.path, timer);
+		this.debounceTimers.set(armedPath, timer);
 		this.emitStatus();
 	}
 
@@ -2140,7 +2152,7 @@ export class SyncEngine {
 		// Cancel any pending push for this file
 		const existing = this.debounceTimers.get(file.path);
 		if (existing) {
-			window.clearTimeout(existing);
+			this.time.clearTimeout(existing);
 			this.debounceTimers.delete(file.path);
 		}
 
@@ -2252,6 +2264,19 @@ export class SyncEngine {
 		if (!this.isSyncable(file)) return;
 
 		const isBinary = this.isBinaryFile(file);
+
+		// Cancel any push still armed under the OLD path. Capturing armedPath at
+		// arm time stops it leaking the map entry, but a surviving timer is still
+		// wrong: handleDelete cancels by CURRENT path so it can no longer reach
+		// this one (rename-then-delete inside the window pushes a file the user
+		// just deleted), and it fires without the shouldIgnore(file.path) guard
+		// applied to the push below (renaming INTO an ignored folder still pushes).
+		const armed = this.debounceTimers.get(oldPath);
+		if (armed) {
+			this.time.clearTimeout(armed);
+			this.debounceTimers.delete(oldPath);
+			this.emitStatus();
+		}
 
 		// Keep the note_id mapping stable across the rename (Task 5) — the id
 		// itself never changes on a rename, only the path key it's filed under.
@@ -7475,11 +7500,11 @@ export class SyncEngine {
 	/** Cancel all pending debounce, cooldown, and health check timers. */
 	destroy(): void {
 		for (const timer of this.debounceTimers.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.debounceTimers.clear();
 		for (const timer of this.recentlyPushed.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.recentlyPushed.clear();
 		for (const timer of this.recentlyFlushed.values()) {
