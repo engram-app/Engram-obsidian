@@ -1,10 +1,10 @@
 import { describe, expect, mock, test } from "bun:test";
 import { __settingCapture } from "obsidian";
 import {
-	type VaultSwitchTarget,
 	applyVaultSwitch,
 	describeListVaultsError,
 	renderEngramUrlSetting,
+	type VaultSwitchTarget,
 } from "../src/tabs/self-hosted-tab";
 
 describe("renderEngramUrlSetting", () => {

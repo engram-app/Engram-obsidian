@@ -59,20 +59,20 @@ import { IDBFactory } from "fake-indexeddb";
 import { requestUrl as mockedRequestUrl } from "obsidian";
 import { EngramApi } from "../../src/api";
 import { NoteChannel } from "../../src/channel";
-import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
-import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
 import { NoteIdMap } from "../../src/crdt/note-id-map";
 import type { ProviderRegistry } from "../../src/crdt/provider-registry";
 import { createCrdtWiring } from "../../src/crdt/wiring";
+import { makeCrdtOpSend } from "../../src/crdt-op-dispatch";
+import { type CrdtOp, CrdtOpQueue } from "../../src/crdt-op-queue";
 import { SyncEngine } from "../../src/sync";
 import { SyncLog } from "../../src/sync-log";
 import { DEFAULT_SETTINGS, type EngramSyncSettings } from "../../src/types";
-import { TFile, TFolder, requestUrl as baseRequestUrl, normalizePath } from "../__mocks__/obsidian";
+import { requestUrl as baseRequestUrl, normalizePath, TFile, TFolder } from "../__mocks__/obsidian";
 import type { SimClock } from "./clock";
 import type { ModelServer } from "./model-server";
 import { setRequestUrlHandler, requestUrl as shimRequestUrl } from "./obsidian-shim";
 import type { Scheduler } from "./scheduler";
-import { type SimApp, type VaultEvents, type WriteJournalEntry, makeVault } from "./vault-fs";
+import { makeVault, type SimApp, type VaultEvents, type WriteJournalEntry } from "./vault-fs";
 
 let requestUrlRedirected = false;
 
@@ -739,6 +739,7 @@ export class Replica {
 			void this.crdtManager
 				.applyLocalEdit(this.noteIdMap.getOrMint(path), content)
 				.catch((err) =>
+					// biome-ignore lint/suspicious/noConsole: error-path visibility, see above
 					console.warn(`SIM editNote applyLocalEdit failed for ${path}:`, err),
 				);
 			// Obsidian's autosave still writes the editor buffer to disk (~2s); that

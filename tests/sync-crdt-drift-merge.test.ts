@@ -17,7 +17,7 @@ import * as Y from "yjs";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { ProviderRegistry } from "../src/crdt/provider-registry";
-import { SyncEngine, fnv1a } from "../src/sync";
+import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 function markConfirmed(engine: SyncEngine, noteId: string): void {

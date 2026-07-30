@@ -3,7 +3,7 @@
  * carries the local Obsidian vault name so the web /link consent page
  * can pre-fill the "create new vault" field.
  */
-import { type Mock, beforeEach, describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, type Mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { DeviceFlowModal } from "../src/device-flow-modal";
 

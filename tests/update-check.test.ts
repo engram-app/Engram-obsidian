@@ -1,7 +1,7 @@
-import { beforeEach, describe, expect, test } from "bun:test";
 import type { Mock } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { requestUrl } from "obsidian";
-import { MANIFEST_URL, checkForPluginUpdate, isNewerVersion } from "../src/update-check";
+import { checkForPluginUpdate, isNewerVersion, MANIFEST_URL } from "../src/update-check";
 
 const mockRequestUrl = requestUrl as unknown as Mock<() => Promise<any>>;
 

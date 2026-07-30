@@ -1,4 +1,4 @@
-import { type Mock, beforeEach, describe, expect, it, jest, mock } from "bun:test";
+import { beforeEach, describe, expect, it, jest, type Mock, mock } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 

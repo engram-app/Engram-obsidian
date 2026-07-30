@@ -2,7 +2,7 @@
  * Pure search engine: dispatches Semantic / Keyword / Hybrid and normalizes
  * every mode to UnifiedSearchResult[]. No DOM, no Obsidian view code.
  */
-import { type App, type TFile, getAllTags, prepareSimpleSearch } from "obsidian";
+import { type App, getAllTags, prepareSimpleSearch, type TFile } from "obsidian";
 import type { EngramApi } from "./api";
 import { queryTokenRanges } from "./search-highlight";
 import type { SearchMode, SearchResult, UnifiedSearchResult } from "./types";

@@ -6,7 +6,7 @@
  *
  * Mirrors the requestUrl mock pattern from tests/api.test.ts.
  */
-import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, type Mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import { EngramApi } from "../src/api";
 

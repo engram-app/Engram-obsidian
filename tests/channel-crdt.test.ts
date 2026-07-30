@@ -8,7 +8,7 @@
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import { NoteChannel } from "../src/channel";
 
-let lastWsUrl: string | null = null;
+let _lastWsUrl: string | null = null;
 let lastWsInstance: any = null;
 
 class MockWebSocket {
@@ -21,7 +21,7 @@ class MockWebSocket {
 	sent: string[] = [];
 
 	constructor(url: string) {
-		lastWsUrl = url;
+		_lastWsUrl = url;
 		lastWsInstance = this;
 	}
 
@@ -60,7 +60,7 @@ async function joinedCrdtChannel(): Promise<{ channel: NoteChannel; ws: any }> {
 }
 
 beforeEach(() => {
-	lastWsUrl = null;
+	_lastWsUrl = null;
 	lastWsInstance = null;
 });
 

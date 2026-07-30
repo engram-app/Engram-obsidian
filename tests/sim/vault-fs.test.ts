@@ -4,7 +4,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { TFile, TFolder } from "../__mocks__/obsidian";
-import { type VaultEvents, makeVault } from "./vault-fs";
+import { makeVault, type VaultEvents } from "./vault-fs";
 
 describe("makeVault", () => {
 	let rootDir: string;

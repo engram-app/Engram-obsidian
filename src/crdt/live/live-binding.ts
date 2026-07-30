@@ -25,10 +25,10 @@ import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
 import { rlog } from "../../remote-log";
 import {
-	type CmChangeSpec,
-	type YDeltaEntry,
 	applyCmChangesToYText,
+	type CmChangeSpec,
 	textDiffToChangeSpec,
+	type YDeltaEntry,
 	yDeltaToChangeSpec,
 } from "./cm-yjs-bridge";
 import { decideReconcile, frontmatterPrefixLen, needsReattach } from "./live-binding-decisions";

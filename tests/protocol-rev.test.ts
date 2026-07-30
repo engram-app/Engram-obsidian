@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
-import { SyncEngine, fnv1a } from "../src/sync";
+import { fnv1a, SyncEngine } from "../src/sync";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // Protocol rev: hash-compare live sync + serverHash-based reconcile over the

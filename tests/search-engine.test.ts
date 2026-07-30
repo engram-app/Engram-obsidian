@@ -1,7 +1,7 @@
 import { describe, expect, it } from "bun:test";
 import { matchStrengths, searchEngram } from "../src/search-engine";
-import { DEFAULT_SETTINGS } from "../src/types";
 import type { SearchResponse } from "../src/types";
+import { DEFAULT_SETTINGS } from "../src/types";
 
 describe("search settings", () => {
 	it("defaults searchDefaultMode to hybrid", () => {

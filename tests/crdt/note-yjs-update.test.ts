@@ -53,10 +53,7 @@ function engine(opts?: { crdt?: Partial<CrdtManager> }): SyncEngine {
 	return e;
 }
 
-function noteEngine(opts: {
-	live?: (path: string) => boolean;
-	applyThrows?: boolean;
-}) {
+function noteEngine(opts: { live?: (path: string) => boolean; applyThrows?: boolean }) {
 	const applied: Array<{ id: string; update: Uint8Array }> = [];
 	const closed: string[] = [];
 	const crdt = {

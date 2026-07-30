@@ -1,5 +1,4 @@
-import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
-import type { EngramApi } from "../src/api";
+import { describe, expect, mock, test } from "bun:test";
 import type { VaultInfo } from "../src/types";
 
 const mockVaults: VaultInfo[] = [

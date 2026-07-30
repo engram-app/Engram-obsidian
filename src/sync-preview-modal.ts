@@ -3,11 +3,11 @@ import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
 import {
-	type OptionBreakdown,
 	buildDeletionTree,
 	computeMatchPercent,
 	isDestructiveChoice,
 	isPlanEmpty,
+	type OptionBreakdown,
 	optionBreakdown,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";

@@ -243,6 +243,7 @@ if (import.meta.main) {
 			: 3;
 	// A CLI tool run directly (not `bun test`); its whole job is to print the seed
 	// + divergence table to stdout. Aliasing console.log keeps that intent explicit.
+	// biome-ignore lint/suspicious/noConsole: CLI harness, stdout IS the output
 	const log = console.log;
 	const results: { seed: number; diverged: boolean; report: string }[] = [];
 	for (let k = 0; k < iterations; k++) {

@@ -1,10 +1,9 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import {
-	NoteChannel,
-	RECONNECT_JITTER_DEFAULT_MS,
-	RECONNECT_JITTER_MAX_MS,
 	clampReconnectJitter,
 	fullJitterDelay,
+	NoteChannel,
+	RECONNECT_JITTER_MAX_MS,
 } from "../src/channel";
 
 let lastWsInstance: any = null;

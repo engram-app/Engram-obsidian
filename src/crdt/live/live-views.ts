@@ -39,7 +39,7 @@ export class ViewerRefcount {
 
 	release(path: string, viewId: string): void {
 		const set = this.viewers.get(path);
-		if (!set || !set.has(viewId)) return;
+		if (!set?.has(viewId)) return;
 		set.delete(viewId);
 		if (set.size === 0) {
 			this.viewers.delete(path);
@@ -222,7 +222,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			const view = leaf.view;
 			if (!(view instanceof MdView)) continue;
 			const path = getMarkdownFilePath(view);
-			if (!path || !path.endsWith(".md")) continue;
+			if (!path?.endsWith(".md")) continue;
 			// If this view was showing a different note (rename / reuse), detach the
 			// stale hooks first so their idempotency guard does not block the rebind.
 			const prev = this.hookPaths.get(view);

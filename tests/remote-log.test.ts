@@ -3,10 +3,10 @@
  */
 import { beforeEach, describe, expect, jest, mock, test } from "bun:test";
 import {
-	type RemoteLogEntry,
-	RemoteLogger,
 	destroyRemoteLog,
 	initRemoteLog,
+	type RemoteLogEntry,
+	RemoteLogger,
 	rlog,
 } from "../src/remote-log";
 

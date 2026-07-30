@@ -103,7 +103,7 @@ export function devLog(): DevLog {
 
 export function destroyDevLog(): void {
 	if (DEV_MODE) {
-		// biome-ignore lint/performance/noDelete: intentional cleanup of debug global
+		// intentional cleanup of debug global (biome 2 dropped lint/performance/noDelete)
 		delete (window as unknown as { __engramLog?: DevLog }).__engramLog;
 	}
 	instance = noopLog;

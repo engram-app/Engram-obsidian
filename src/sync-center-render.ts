@@ -4,7 +4,7 @@
  *  callback so in-pane button clicks can re-render the same surface they were
  *  clicked from.
  */
-import { Notice, Setting, normalizePath } from "obsidian";
+import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import { SyncPreviewModal } from "./sync-preview-modal";

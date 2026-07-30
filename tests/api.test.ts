@@ -1,16 +1,15 @@
 /**
  * Tests for api.ts — utility functions and EngramApi method behavior.
  */
-import { type Mock, beforeEach, describe, expect, mock, test } from "bun:test";
+import { beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import {
-	EngramApi,
-	RequestTimeoutError,
 	arrayBufferToBase64,
 	base64ToArrayBuffer,
+	EngramApi,
+	RequestTimeoutError,
 } from "../src/api";
 import type { AuthProvider } from "../src/auth";
-import { toB64 } from "../src/crdt/wire";
 import { LimitExceededError } from "../src/limit-error";
 
 // requestUrl is mocked via tests/preload.ts — it is already a mock() instance

@@ -18,7 +18,7 @@ import * as decoding from "lib0/decoding";
 import * as encoding from "lib0/encoding";
 import * as syncProtocol from "y-protocols/sync";
 import type * as Y from "yjs";
-import { MESSAGE_SYNC, fromB64, toB64 } from "./wire";
+import { fromB64, MESSAGE_SYNC, toB64 } from "./wire";
 
 /** What a frame is FOR, so a transport can gate the two classes differently.
  *  Deliberately mirrors the backend's own lanes (`frame_class_b64` in
