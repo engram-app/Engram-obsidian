@@ -1,6 +1,8 @@
 {
+  // `baseUrl` was dropped here: there is no `paths` block and no `@/*` import
+  // anywhere in src/, so it resolved nothing. TypeScript 7 removes the option
+  // outright (TS5102), so keeping a no-op would have been a future blocker.
   "compilerOptions": {
-    "baseUrl": ".",
     "inlineSourceMap": true,
     "inlineSources": true,
     "module": "ESNext",
@@ -10,7 +12,10 @@
     "noImplicitAny": true,
     "noImplicitThis": true,
     "noImplicitReturns": true,
-    "moduleResolution": "node",
+    // "bundler", not "node"/node10: esbuild does the resolving (see
+    // esbuild.config.mjs), so this matches reality. Don't revert to "node" —
+    // TypeScript 7 removed node10 resolution (TS5108).
+    "moduleResolution": "bundler",
     "importHelpers": true,
     "isolatedModules": true,
     "noUncheckedIndexedAccess": true,

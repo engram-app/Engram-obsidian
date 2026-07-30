@@ -25,6 +25,10 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 			.addButton((btn) =>
 				btn
 					.setButtonText("Switch to Engram cloud")
+					// ponytail: stays on setWarning(). The 1.13 typings deprecate
+					// it in favour of setDestructive(), which only exists on
+					// Obsidian >= 1.13.0 — minAppVersion is 1.7.2, so calling it
+					// would throw for most users. Swap when the floor rises (#353).
 					.setWarning()
 					.onClick(async () => {
 						await applyApiUrlChange(
