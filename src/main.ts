@@ -34,7 +34,16 @@ import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
+import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { type FeatureFlags, resolveFlags } from "./feature-flags";
+import { setLogSink } from "./has-logging";
+import { SyncRecorder } from "./sync-recorder";
+import { PromiseTracker, setActiveTracker } from "./track-promise";
+
+/** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
+declare const DEV_MODE: boolean;
+
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg } from "./error-util";
@@ -181,6 +190,26 @@ export function channelIdentityMatches(
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
+	/** Dev-build only: registry of outstanding async work, exposed through the
+	 *  debug snapshot so a wedged sync shows up as a long-lived pending entry
+	 *  instead of having to be inferred from logs. Null in production. */
+	promiseTracker: PromiseTracker | null = null;
+
+	/** Timeline capture for the CRDT seams (#356). Constructed once and kept for
+	 *  the plugin's lifetime — it reads the flag on every record call, so
+	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
+	 *  bounded, and it costs one predicate call per seam while off. */
+	readonly syncRecorder: SyncRecorder = new SyncRecorder({
+		enabled: () => this.flags.crdtRecording,
+	});
+
+	/** Resolved feature flags (stored overrides applied over schema defaults).
+	 *  Recomputed on every read so a settings toggle takes effect without a
+	 *  reload — these are cheap (a fixed-size object literal), and caching one
+	 *  would just add an invalidation bug. */
+	get flags(): FeatureFlags {
+		return resolveFlags(this.settings.featureFlags);
+	}
 	/** Persist the user's chosen search mode as the new default. Passed to the
 	 *  search view + modal so a mode switch in either surface sticks. */
 	private persistSearchMode = (mode: SearchMode): void => {
@@ -343,6 +372,22 @@ export default class EngramSyncPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		initDevLog();
+		// Route HasLogging output to both existing destinations, so a class that
+		// extends it needs no logger wiring of its own. devLog is tree-shaken in
+		// production; rlog respects the diagnostics switch and level threshold.
+		setLogSink((level, category, message) => {
+			devLog().log(category, message);
+			// "debug" stops at the local ring buffer on purpose. rlog has no debug
+			// method, and shipping debug volume to Loki is exactly the cardinality
+			// problem the remoteLogLevel dial exists to avoid.
+			if (level === "error") rlog().error(category, message);
+			else if (level === "warn") rlog().warn(category, message);
+			else if (level === "info") rlog().info(category, message);
+		});
+		if (DEV_MODE) {
+			this.promiseTracker = new PromiseTracker();
+			setActiveTracker(this.promiseTracker);
+		}
 		devLog().log("lifecycle", "plugin loading");
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
@@ -1079,6 +1124,15 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncInterval = null;
 		}
 		void destroyRemoteLog();
+		// The debug API closes over the CRDT stack; leaving the global behind after
+		// unload hands the next instance's console a handle to dead objects.
+		uninstallDebugApi();
+		// Detach the sink BEFORE the loggers go away: a HasLogging subclass torn
+		// down after this point would otherwise write into a destroyed devLog.
+		setLogSink(null);
+		setActiveTracker(null);
+		this.promiseTracker?.destroy();
+		this.promiseTracker = null;
 		destroyDevLog();
 		// Yjs stamps globalThis['__ $YJS$ __'] = true on import to guard against
 		// duplicate copies (yjs#438). Obsidian reloads the plugin module graph on
@@ -1146,6 +1200,51 @@ export default class EngramSyncPlugin extends Plugin {
 		// setDeviceId(this.deviceId), before any sync runs.
 	}
 
+	/**
+	 * Install or remove `window.__engramDebug` to match the diagnostics setting.
+	 *
+	 * Called from saveSettings (the user toggled diagnostics) and after the CRDT
+	 * stack is rebuilt (the registry it closes over was replaced). Cheap and
+	 * idempotent, so both callers can fire it unconditionally.
+	 */
+	private refreshDebugApi(): void {
+		const registry = this.crdtManager;
+		if (!this.settings.diagnosticsEnabled || !registry) {
+			uninstallDebugApi();
+			return;
+		}
+		installDebugApi(
+			createDebugApi({
+				registry: {
+					hasDoc: (id) => registry.hasDoc(id),
+					projectedText: (id) => registry.projectedText(id),
+					hasHistory: (id) => registry.hasHistory(id),
+					encodeStateVector: (id) => registry.encodeStateVector(id),
+					isSynced: (id) => registry.isSynced(id),
+					hasPendingGap: (id) => registry.hasPendingGap(id),
+					hasUndeliveredOps: (id) => registry.hasUndeliveredOps(id),
+					enrolled: registry.enrolled,
+					removedIds: registry.removedIds,
+					residentIds: () => [...registry.docs.keys()],
+				},
+				idForPath: (path) => this.noteIdMap.get(path),
+				pathForId: (id) => this.noteIdMap.pathForId(id),
+				readDisk: async (path) => {
+					const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+					if (!(file instanceof TFile)) return null;
+					const content = await this.app.vault.read(file);
+					return { length: content.length, mtime: file.stat.mtime, content };
+				},
+				// exportSyncState() copies the whole map per call. Acceptable: this
+				// runs only when a human invokes the console API, never on a sync path.
+				syncStateFor: (path) => this.syncEngine.exportSyncState()[normalizePath(path)],
+				isLiveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+				pendingPromises: () => this.promiseTracker?.pending() ?? [],
+				recorder: this.syncRecorder,
+			}),
+		);
+	}
+
 	async saveSettings(): Promise<void> {
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
@@ -1153,6 +1252,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.updateSettings(this.settings);
 		rlog().setLevelThreshold(this.settings.remoteLogLevel);
 		rlog().setEnabled(this.settings.diagnosticsEnabled);
+		this.refreshDebugApi();
 		this.startSyncInterval();
 		this.setupNoteStream();
 		await this.savePluginData(this.syncEngine.getLastSync());
@@ -1971,6 +2071,21 @@ export default class EngramSyncPlugin extends Plugin {
 						const wiring = createCrdtWiring({
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
+							recorder: this.syncRecorder,
+							// BaseStore is keyed by vault path and already holds exactly the
+							// last-synced content its own docstring calls "the common
+							// ancestor for 3-way merge"; the registry is keyed by note_id,
+							// so resolve through the id map.
+							lcaFor: (noteId) => {
+								const path = this.noteIdMap.pathForId(noteId);
+								return path ? (this.baseStore?.get(path)?.content ?? null) : null;
+							},
+							lcaMergeEnabled: () => this.flags.crdtLcaMerge,
+							onDirtyMerge: (noteId) =>
+								rlog().warn(
+									"crdt",
+									`LCA merge left unapplied hunks for ${noteId} — fell back to the two-way path`,
+								),
 							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
 							// the frame is held in unsentDocIds and flushed on rejoin — never
 							// silently dropped as if sent.
@@ -2026,6 +2141,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// Bind whatever leaves are open now — a fresh stack saw none at build;
 					// a reconnect re-checks in case the open set changed while offline.
 					this.crdtLiveViews?.refresh();
+					this.refreshDebugApi();
 					// Re-point the NEW channel's inbound callbacks at the PERSISTENT wiring
 					// every (re)connect. The wiring (and its box.channel) outlives the socket.
 					const wiring = this.crdtWiring;

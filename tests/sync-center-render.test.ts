@@ -117,6 +117,9 @@ function makeMockPlugin(issues: SyncIssue[]): any {
 				lastSync: "",
 				error: undefined,
 			}),
+			// Matches the real engine: null when nothing is queued, which is the
+			// state `getStatus` above reports.
+			queuedReason: () => null,
 			issues: {
 				all: () => issues,
 				count: (cat?: string) =>

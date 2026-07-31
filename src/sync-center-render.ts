@@ -7,6 +7,7 @@
 import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
+import type { QueuedReason } from "./offline-queue";
 import { SyncPreviewModal } from "./sync-preview-modal";
 import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
@@ -78,6 +79,15 @@ function groupedByCategory(
 	return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)!]);
 }
 
+/** User-facing wording for each queued reason. Kept beside the render so the
+ *  copy is reviewable in one place rather than inlined into a template. */
+const QUEUED_REASON_TEXT: Record<QueuedReason, string> = {
+	offline: "waiting for a connection",
+	"sync-blocked": "sync is paused",
+	"in-progress": "syncing now",
+	waiting: "waiting to retry",
+};
+
 function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	const header = parent.createDiv({ cls: "engram-sync-center-header" });
 	const status = plugin.syncEngine.getStatus();
@@ -117,6 +127,15 @@ function renderHeader(parent: HTMLElement, plugin: EngramSyncPlugin): void {
 	if (ignoredCount > 0) {
 		const badge = header.createSpan({ cls: "engram-sync-center-ignored-badge" });
 		badge.setText(`${ignoredCount} ignored`);
+	}
+
+	// Say WHY the queue is holding rather than leaving a bare count that reads
+	// as a hang. "waiting" is the case that previously showed an unexplained
+	// spinner: online, unblocked, nothing in flight, work still sitting there.
+	const reason = plugin.syncEngine.queuedReason();
+	if (reason) {
+		const badge = header.createSpan({ cls: "engram-sync-center-queued-badge" });
+		badge.setText(`${status.queued} queued — ${QUEUED_REASON_TEXT[reason]}`);
 	}
 }
 

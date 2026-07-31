@@ -4,6 +4,7 @@ import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { LimitExceededError } from "../src/limit-error";
 import { fnv1a, SyncEngine } from "../src/sync";
+import type { SyncedFileTable } from "../src/synced-file";
 import { DEFAULT_SETTINGS } from "../src/types";
 import { __noticeCapture } from "./__mocks__/obsidian";
 
@@ -2826,10 +2827,9 @@ describe("Path sanitization on push", () => {
 		// path: the self-echo arrives as an upsert for RenameOld. Marking the live
 		// path instead would let the old-path echo recreate the renamed-away file
 		// and swallow a genuine remote update to RenameNew (Engram#944 class).
-		const recentlyPushed = (engine as unknown as { recentlyPushed: Map<string, number> })
-			.recentlyPushed;
-		expect(recentlyPushed.has("Notes/RenameOld.md")).toBe(true);
-		expect(recentlyPushed.has("Notes/RenameNew.md")).toBe(false);
+		const files = (engine as unknown as { files: SyncedFileTable }).files;
+		expect(files.has("Notes/RenameOld.md", "pushed")).toBe(true);
+		expect(files.has("Notes/RenameNew.md", "pushed")).toBe(false);
 	});
 
 	test("does not rename when server path matches original", async () => {

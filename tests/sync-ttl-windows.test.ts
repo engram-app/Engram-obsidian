@@ -11,6 +11,7 @@ import { describe, expect, mock, test } from "bun:test";
 import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { SyncEngine } from "../src/sync";
+import type { SyncedFileTable } from "../src/synced-file";
 import { ManualTimeProvider } from "../src/time-provider";
 import { DEFAULT_SETTINGS } from "../src/types";
 
@@ -46,9 +47,8 @@ function engineWithClock() {
 		markRecentlyDeleted(id: string): void;
 		recentlyDeleted: Map<string, number>;
 		markRecentlyFlushed(path: string): void;
-		recentlyFlushed: Map<string, number>;
 		markRecentlyPushed(path: string): void;
-		recentlyPushed: Map<string, number>;
+		files: SyncedFileTable;
 	};
 	return { engine, clock, probe };
 }
@@ -101,11 +101,11 @@ describe("recentlyFlushed echo window", () => {
 	test("expires on the same injected clock", () => {
 		const { clock, probe } = engineWithClock();
 		probe.markRecentlyFlushed("a.md");
-		expect(probe.recentlyFlushed.has("a.md")).toBe(true);
+		expect(probe.files.has("a.md", "flushed")).toBe(true);
 
 		clock.advance(RECENT_DELETE_COOLDOWN_MS);
 
-		expect(probe.recentlyFlushed.has("a.md")).toBe(false);
+		expect(probe.files.has("a.md", "flushed")).toBe(false);
 	});
 
 	test("leaves no timer pending after expiry", () => {

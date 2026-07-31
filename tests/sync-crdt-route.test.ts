@@ -18,6 +18,7 @@ import {
 	routeModify,
 	SyncEngine,
 } from "../src/sync";
+import type { SyncedFileTable } from "../src/synced-file";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 // ---------------------------------------------------------------------------
@@ -1230,9 +1231,10 @@ describe("Task 4: local delete enqueues a durable crdt_delete", () => {
 		engine.setCrdtEnqueue((op) => enqueued.push(op));
 		// Simulate trashRemotelyDeleted having marked the path before the vault
 		// 'delete' event fires — the remote-echo early-return in handleDelete.
-		(engine as unknown as { remotelyDeleted: Map<string, number> }).remotelyDeleted.set(
+		(engine as unknown as { files: SyncedFileTable }).files.mark(
 			"Notes/gone.md",
-			0,
+			"remotelyDeleted",
+			60_000,
 		);
 
 		const file = new TFile("Notes/gone.md");

@@ -4,6 +4,7 @@
 import { type App, Notice, normalizePath, type TAbstractFile, TFile, TFolder } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
+import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
@@ -22,10 +23,19 @@ import {
 	shouldRetryAfterFailure,
 } from "./issue-store";
 import { isTextAttachment } from "./mime";
-import { OfflineQueue } from "./offline-queue";
+import {
+	// Aliased: the SyncEngine method below has the same name, and an unqualified
+	// call resolving to the module function while `this.queuedReason` resolves to
+	// the method is exactly the kind of thing that reads wrong at 3am.
+	queuedReason as computeQueuedReason,
+	OfflineQueue,
+	type QueuedReason,
+	QueuePriority,
+} from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
+import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
 	AttachmentChange,
@@ -241,15 +251,9 @@ const DEGRADED_NOTICE_DURATION_MS = 10_000;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
 const ALWAYS_IGNORED = [".trash/", ".git/"];
 
-/** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content change detection. */
-export function fnv1a(s: string): number {
-	let h = 0x811c9dc5;
-	for (let i = 0; i < s.length; i++) {
-		h ^= s.charCodeAt(i);
-		h = Math.imul(h, 0x01000193);
-	}
-	return h >>> 0;
-}
+// Re-exported so existing importers keep working; the implementation moved to
+// content-hash.ts to stop a hash-only consumer pulling this module in.
+export { fnv1a };
 
 /** Binary file extensions that sync as attachments. */
 const BINARY_EXTENSIONS = new Set([
@@ -305,21 +309,15 @@ export class SyncEngine {
 	private degradedNoticeTimer: number | null = null;
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
-	private recentlyPushed: Map<string, number> = new Map();
-	/** Paths whose local trash APPLIED a remote change (WS delete, pull
-	 *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
-	 *  trash fires must not push a DELETE back to the server: the server
-	 *  already knows, and the path-keyed CAS-less delete would kill a note
-	 *  recreated at the same path in between (wipe→re-push, delete→recreate).
-	 *  Found by test_86's settle assert: B's echo-push landed after A's
-	 *  replace-remote re-upload and tombstoned the fresh note. */
-	private remotelyDeleted: Map<string, number> = new Map();
-	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
-	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
-	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
-	 *  recentlyPushed would make handleModify drop REAL user edits within the
-	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
-	private recentlyFlushed: Map<string, number> = new Map();
+	/** Per-path echo-suppression markers (#358). Replaces three parallel
+	 *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
+	 *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
+	 *  meaning of each marker and why `flushed` must stay distinct from `pushed`.
+	 *  Unlike the maps it replaces, its timers are cancelled on destroy(). */
+	private readonly files = new SyncedFileTable({
+		setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+		clearTimeout: (id) => this.time.clearTimeout(id),
+	});
 	/** note_ids THIS device recently deleted. Both CRDT convergence paths
 	 *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
 	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
@@ -346,6 +344,9 @@ export class SyncEngine {
 	private syncBlocked = false;
 	private activePushCount = 0;
 	private maxConcurrentPushes = 5;
+	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
+	 *  produces get Background priority — see priorityForPath. */
+	private bulkDepth = 0;
 	private pushWaiters: (() => void)[] = [];
 	readonly queue: OfflineQueue = new OfflineQueue();
 
@@ -2081,7 +2082,7 @@ export class SyncEngine {
 		// be wrongly dropped here and never reach the CRDT path. So only apply the
 		// guard off the CRDT path (legacy writes, attachments).
 		const crdtManaged = !!this.crdt && this.isCrdtEligible(file);
-		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
+		if (!crdtManaged && this.files.has(file.path, "flushed")) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
 		}
@@ -2188,8 +2189,8 @@ export class SyncEngine {
 		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
 		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
 		// teardown the push path would have done and stop.
-		if (this.remotelyDeleted.has(file.path)) {
-			this.remotelyDeleted.delete(file.path);
+		if (this.files.has(file.path, "remotelyDeleted")) {
+			this.files.clearMarker(file.path, "remotelyDeleted");
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.crdt?.removeDoc(crdtNoteId);
@@ -3273,26 +3274,26 @@ export class SyncEngine {
 	 *  handleDelete — every sync-applied deletion must route through here, or
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
-		this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS);
+		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
 		await this.app.fileManager.trashFile(file);
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
 	private markRecentlyPushed(path: string): void {
-		this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
+		this.files.mark(path, "pushed", ECHO_COOLDOWN_MS);
 	}
 
 	/** Check if a path was recently pushed (for echo suppression). */
 	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
 	private isRecentlyPushed(path: string): boolean {
-		return this.recentlyPushed.has(path);
+		return this.files.has(path, "pushed");
 	}
 
 	/** Suppress the handleModify echo of a flushFromCrdt disk write for
 	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
 	 *  never swallows a genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
-		this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+		this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
 	}
 
 	/** Record a note_id THIS device just deleted so neither CRDT convergence
@@ -3322,7 +3323,7 @@ export class SyncEngine {
 		return (
 			!!this.noteIdMap &&
 			!this.noteIdMap.get(path) &&
-			this.recentlyFlushed.has(normalizePath(path))
+			this.files.has(normalizePath(path), "flushed")
 		);
 	}
 
@@ -4477,7 +4478,7 @@ export class SyncEngine {
 				rlog().info("ws", `Echo skip (pushing): ${event.path}`);
 				return;
 			}
-			if (this.recentlyPushed.has(event.path)) {
+			if (this.files.has(event.path, "pushed")) {
 				rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
 				return;
 			}
@@ -6157,6 +6158,12 @@ export class SyncEngine {
 
 	/** Full bidirectional sync: pull remote changes, then push local changes. */
 	async fullSync(): Promise<{ pulled: number; pushed: number }> {
+		// Thin wrapper so the sweep is marked without reindenting the whole body.
+		// fullSync calls pushAll, so bulkDepth nests — hence a counter, not a flag.
+		return this.inBulkSweep(() => this.fullSyncInner());
+	}
+
+	private async fullSyncInner(): Promise<{ pulled: number; pushed: number }> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "fullSync short-circuited — gate closed");
 			return { pulled: 0, pushed: 0 };
@@ -6790,6 +6797,13 @@ export class SyncEngine {
 	async pushAll(
 		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
 	): Promise<number> {
+		// Thin wrapper so the sweep is marked without reindenting the whole body.
+		return this.inBulkSweep(() => this.pushAllInner(opts));
+	}
+
+	private async pushAllInner(
+		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
 			return 0;
@@ -7076,9 +7090,52 @@ export class SyncEngine {
 
 	// --- Offline queue ---
 
-	/** Queue a change for retry and go offline. */
+	/** Flush priority for a path.
+	 *
+	 *  A live-bound path is one the user has open in an editor — the single case
+	 *  where queue latency is directly visible — so it outranks everything even
+	 *  during a bulk sweep. Otherwise, work generated inside a bulk sweep sinks
+	 *  to Background so an interactive edit made mid-import is not stuck behind
+	 *  thousands of retries. */
+	private priorityForPath(path: string): number {
+		if (this.isLiveBound?.(path)) return QueuePriority.OpenNote;
+		return this.bulkDepth > 0 ? QueuePriority.Background : QueuePriority.Normal;
+	}
+
+	/** Run `fn` with queue entries it produces marked as bulk work. A counter
+	 *  rather than a boolean because fullSync calls pushAll — a boolean would be
+	 *  cleared by the inner call while the outer sweep was still running. */
+	private async inBulkSweep<T>(fn: () => Promise<T>): Promise<T> {
+		this.bulkDepth += 1;
+		try {
+			return await fn();
+		} finally {
+			this.bulkDepth -= 1;
+		}
+	}
+
+	/** Why the queue is not draining, or null when nothing is queued. Surfaced
+	 *  in the Sync Center so a held queue reads as a reason instead of a
+	 *  spinner. */
+	queuedReason(): QueuedReason | null {
+		return computeQueuedReason({
+			queued: this.queue.size,
+			inFlight: this.pushing.size,
+			offline: this.offline,
+			syncBlocked: this.syncBlocked,
+		});
+	}
+
+	/** Queue a change for retry and go offline.
+	 *
+	 *  Assigns a flush priority when the caller did not: the note the user has
+	 *  open jumps ahead of everything else, so a bulk import cannot make the file
+	 *  being edited wait behind thousands of background entries. */
 	private async enqueueChange(entry: QueueEntry): Promise<void> {
-		await this.queue.enqueue(entry);
+		await this.queue.enqueue({
+			...entry,
+			priority: entry.priority ?? this.priorityForPath(entry.path),
+		});
 		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
 		// file's server-side error (e.g. a storage 502) leaves the backend
 		// perfectly reachable. The offline transition is decided separately via
@@ -7503,18 +7560,8 @@ export class SyncEngine {
 			this.time.clearTimeout(timer);
 		}
 		this.debounceTimers.clear();
-		for (const timer of this.recentlyPushed.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.recentlyPushed.clear();
-		for (const timer of this.recentlyFlushed.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.recentlyFlushed.clear();
-		for (const timer of this.remotelyDeleted.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.remotelyDeleted.clear();
+		// Was three near-identical clear-every-timer loops, one per marker map.
+		this.files.destroy();
 		for (const timer of this.recentlyDeleted.values()) {
 			this.time.clearTimeout(timer);
 		}

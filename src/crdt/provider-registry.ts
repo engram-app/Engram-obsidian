@@ -12,10 +12,13 @@
 // re-handshake) become no-ops the persistent doc doesn't need.
 import { IndexeddbPersistence } from "y-indexeddb";
 import * as Y from "yjs";
+import { fnv1a } from "../content-hash";
 import { Lifetime } from "../lifetime";
+import type { SyncRecorder } from "../sync-recorder";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
+import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
 
@@ -73,6 +76,24 @@ export interface ProviderRegistryOpts {
 	onEmptyStep2?: (noteId: string) => void;
 	docKind?: (noteId: string) => DocKind;
 	onPersistError?: (noteId: string, err: unknown) => void;
+	/** Last-synced content for this note — the merge base (#357). Backed by
+	 *  `BaseStore`, which already persists exactly this and calls it "the common
+	 *  ancestor for 3-way merge". Null when none is recorded (a note that has
+	 *  never completed a sync), which falls back to the pre-LCA path. */
+	lcaFor?: (noteId: string) => string | null;
+	/** `crdtLcaMerge` flag. Read per call so a toggle takes effect without a
+	 *  stack rebuild. */
+	lcaMergeEnabled?: () => boolean;
+	/** Called when a merge could not apply every hunk. The content is still
+	 *  written, but the caller may want to record an issue — a dirty merge is the
+	 *  honest conflict signal that the two-way diff never produced. */
+	onDirtyMerge?: (noteId: string) => void;
+	/** Optional timeline capture (#356). Injected HERE rather than at each call
+	 *  site because every seam worth recording — receive, send, local edit, raw
+	 *  remote update, enroll, reset, connection, flush — already passes through
+	 *  this class. One hook, eight seams, no instrumentation scattered across
+	 *  sync.ts and the live views. No-op when absent or when its flag is off. */
+	recorder?: SyncRecorder;
 }
 
 export class ProviderRegistry {
@@ -169,7 +190,14 @@ export class ProviderRegistry {
 			// production runs and what tests/crdt/wiring.test.ts pins. A duplicate
 			// here could silently drift from the shipped one (it did: the suite
 			// exercised only the duplicate, so #1130 could regress green).
-			send: (frame, kind) => this.opts.send(noteId, frame, kind),
+			send: (frame, kind) => {
+				const accepted = this.opts.send(noteId, frame, kind);
+				// Record the ACCEPTED result, not merely the attempt: a refused frame
+				// (socket unjoined, create-gate holding) is buffered for later, and
+				// that distinction is exactly what a delivery investigation needs.
+				this.opts.recorder?.record("send", noteId, { kind, accepted });
+				return accepted;
+			},
 			onSynced: () => {
 				this.opts.onSynced?.(noteId);
 				// A first syncStep2 that left the doc empty = the server's "genuinely
@@ -196,9 +224,16 @@ export class ProviderRegistry {
 			if (!entry.lifetime.active) return; // deleted mid-flight — never flush a dead doc
 			if (origin !== provider && origin !== REMOTE) return;
 			entry.remoteSeq += 1;
-			const flush = Promise.resolve(
-				this.opts.onFlushToDisk(noteId, this.project(entry)),
-			).then((ok) => {
+			const projected = this.project(entry);
+			// Hash, never content: a timeline is exportable and note bodies are
+			// private. Two hashes are enough to tell "did this write change
+			// anything" and to line a flush up against a later disk read.
+			this.opts.recorder?.record("flush", noteId, {
+				hash: fnv1a(projected).toString(16),
+				length: projected.length,
+				remoteSeq: entry.remoteSeq,
+			});
+			const flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
 				if (ok === false) throw new Error(`flushFromCrdt write failure for ${noteId}`);
 			});
 			entry.pendingFlush = flush;
@@ -277,9 +312,46 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
+		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
+		// THE BASE, so a remote op that landed after the disk read survives by
+		// construction. That removes the reason for the retry loop below: there is
+		// no stale-snapshot race left to detect, because we are no longer forcing
+		// the doc to equal the snapshot.
+		//
+		// Gated on the doc HAVING history. A history-less doc holds no remote work
+		// for the merge to protect, and routing it here would bypass the adopt-first
+		// gate below: `mergeDiskOntoDoc` short-circuits base===disk to the doc's own
+		// projection, which for a fresh doc is empty — and the caller records
+		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
+		// isUnchangedSynced for a note that actually has content (#846 doubling).
+		const base =
+			this.opts.lcaMergeEnabled?.() && (hasLca ?? docHasHistory(e.doc, e.kind))
+				? this.opts.lcaFor?.(noteId)
+				: null;
+		if (base !== null && base !== undefined && e.kind === "note") {
+			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
+			if (merged.clean) {
+				this.opts.recorder?.record("localEdit", noteId, {
+					hash: fnv1a(merged.text).toString(16),
+					length: merged.text.length,
+					lca: true,
+					merged: true,
+					kind: e.kind,
+				});
+				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
+				return merged.text;
+			}
+			// Dirty merge: overlapping edits to the same region. Fall through to the
+			// pre-LCA path rather than writing content we know is mangled — the
+			// existing guards are conservative and will decline rather than revert.
+			this.opts.onDirtyMerge?.(noteId);
+		}
+
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
 		// this resolved; a remote merge in that window is absent from it, and
 		// diffing would DELETE the remote ops. Re-read across a doc-stable window.
+		// Still the path when the LCA flag is off, no base is recorded yet, the doc
+		// is a canvas, or the merge came back dirty.
 		if (reread) {
 			let stable = false;
 			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
@@ -315,6 +387,17 @@ export class ProviderRegistry {
 		// server's lineage (avoids the #846 doubling). "Consumed, nothing to push".
 		if (!lca && this.opts.isUnchangedSynced?.(noteId, content)) return content;
 
+		// Recorded AFTER the guards, so a timeline shows what the doc actually
+		// consumed rather than what the caller offered. `lca` is here because
+		// history-vs-no-history picks the seed strategy, and getting that wrong is
+		// the #846 lineage-doubling class.
+		this.opts.recorder?.record("localEdit", noteId, {
+			hash: fnv1a(content).toString(16),
+			length: content.length,
+			lca,
+			kind: e.kind,
+		});
+
 		if (e.kind === "canvas") {
 			return seedCanvasInto(e.doc, content) ? content : null;
 		}
@@ -335,6 +418,7 @@ export class ProviderRegistry {
 		// fanned it back -> an infinite echo storm. The disk-flush listener fires for
 		// the provider origin too, so the merge still writes to disk. (Relay parity:
 		// everything the sync machinery applies uses the provider as origin.)
+		this.opts.recorder?.record("remoteUpdate", noteId, { bytes: update.byteLength });
 		Y.applyUpdate(e.doc, update, e.provider);
 		const flush = e.pendingFlush;
 		if (flush) {
@@ -382,6 +466,7 @@ export class ProviderRegistry {
 	/** Route an inbound wire frame to its provider (creating it if a fan-out
 	 *  announced a note this device hasn't opened). */
 	async receive(noteId: string, frameB64: string): Promise<void> {
+		this.opts.recorder?.record("receive", noteId, { frame: frameB64 });
 		(await this.entry(noteId)).provider.receive(frameB64);
 	}
 
@@ -395,6 +480,7 @@ export class ProviderRegistry {
 		// below is the fire-and-forget wrapper that absorbs it.
 		this.assertAlive(noteId);
 		this.enrolledIds.add(noteId);
+		this.opts.recorder?.record("enroll", noteId, {});
 		const e = await this.entry(noteId);
 		e.provider.setAdvertised(true);
 		if (this.connected) e.provider.setConnected(true);
@@ -415,6 +501,7 @@ export class ProviderRegistry {
 	 *  out. reset+enroll = a fresh re-handshake. */
 	reset(noteId: string): void {
 		this.enrolledIds.delete(noteId);
+		this.opts.recorder?.record("reset", noteId, {});
 		const e = this.entries.get(noteId);
 		if (!e) return;
 		e.provider.setAdvertised(false);
@@ -441,6 +528,12 @@ export class ProviderRegistry {
 	 *  outlives the socket. */
 	setConnected(connected: boolean): void {
 		this.connected = connected;
+		// Vault-wide, so noteId is null. Reconnect boundaries are the single most
+		// useful landmark when reading a timeline back.
+		this.opts.recorder?.record("connection", null, {
+			connected,
+			resident: this.entries.size,
+		});
 		for (const e of this.entries.values()) e.provider.setConnected(connected);
 	}
 

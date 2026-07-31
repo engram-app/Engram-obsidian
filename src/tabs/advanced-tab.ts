@@ -1,4 +1,5 @@
 import { Notice, Setting, TFolder } from "obsidian";
+import { visibleFlags } from "../feature-flags";
 import type { EngramSyncSettings } from "../types";
 import type { TabContext } from "./types";
 
@@ -99,6 +100,8 @@ export function renderAdvancedTab(ctx: TabContext): void {
 				}),
 		);
 
+	renderFeatureFlags(ctx);
+
 	// ── About ──
 	new Setting(containerEl).setName("About").setHeading();
 
@@ -117,6 +120,43 @@ export function renderAdvancedTab(ctx: TabContext): void {
 
 	const licenseItem = aboutList.createEl("li");
 	licenseItem.createSpan({ text: "License: MIT" });
+}
+
+/**
+ * Feature-flag toggles, grouped by the schema's category.
+ *
+ * `labs` flags are always visible. `debugging` and `danger` appear only once
+ * diagnostics are on — a user who has not opted into diagnostics has no reason
+ * to see instrumentation switches, and every way of finding a danger flag
+ * should pass through a deliberate step first.
+ */
+function renderFeatureFlags(ctx: TabContext): void {
+	const { containerEl, plugin } = ctx;
+	const visible = visibleFlags(plugin.settings.diagnosticsEnabled);
+	if (visible.length === 0) return;
+
+	new Setting(containerEl).setName("Feature flags").setHeading();
+
+	for (const [key, schema] of visible) {
+		const setting = new Setting(containerEl)
+			.setName(schema.title)
+			.setDesc(schema.description)
+			.addToggle((toggle) =>
+				toggle.setValue(plugin.flags[key]).onChange(async (value) => {
+					// Store sparsely: only what the user actually touched, so a later
+					// change to a flag's DEFAULT still reaches installs that never
+					// toggled it.
+					plugin.settings.featureFlags = {
+						...plugin.settings.featureFlags,
+						[key]: value,
+					};
+					await plugin.saveSettings();
+				}),
+			);
+		if (schema.category === "danger") {
+			setting.settingEl.addClass("engram-status-warning");
+		}
+	}
 }
 
 /** Scan vault for problematic directories and render warnings with add-to-ignore buttons. */

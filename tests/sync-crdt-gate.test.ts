@@ -24,6 +24,7 @@ import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { fnv1a, SyncEngine } from "../src/sync";
+import type { SyncedFileTable } from "../src/synced-file";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 /** Cast engine to access private syncState for test setup. */
@@ -860,9 +861,12 @@ describe("Graceful degradation: channel join gate — CRDT not connected", () =>
 // P0-2 — sync gate blocks all CRDT inbound paths
 // ---------------------------------------------------------------------------
 
-/** Access private recentlyFlushed map via type cast (same pattern as seedSyncState). */
-function getRecentlyFlushed(engine: SyncEngine): Map<string, number> {
-	return (engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed;
+/** Access the private per-file marker table via type cast (same pattern as
+ *  seedSyncState). Shaped like the old Map so the assertions below read the
+ *  same: `.has(path)` now means "carries the flushed marker". */
+function getRecentlyFlushed(engine: SyncEngine): { has(path: string): boolean } {
+	const files = (engine as unknown as { files: SyncedFileTable }).files;
+	return { has: (path: string) => files.has(path, "flushed") };
 }
 
 describe("flushFromCrdt — idempotent: skips rewrite when disk already matches", () => {

@@ -164,7 +164,7 @@ describe("pushGenesisBatch — direct", () => {
 		const file = new TFile("Notes/Flushed.md", Date.now());
 		const { engine } = makeEngine([file], { "Notes/Flushed.md": "# F" });
 		// shouldDeferMint = mapped-map + no id for path + path recentlyFlushed.
-		(engine as any).recentlyFlushed.set("Notes/Flushed.md", Date.now());
+		(engine as any).files.mark("Notes/Flushed.md", "flushed", 60_000);
 		let called = 0;
 		engine.setCrdtCreateBatch(async (creates) => {
 			called++;
