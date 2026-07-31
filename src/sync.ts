@@ -23,7 +23,15 @@ import {
 	shouldRetryAfterFailure,
 } from "./issue-store";
 import { isTextAttachment } from "./mime";
-import { OfflineQueue } from "./offline-queue";
+import {
+	// Aliased: the SyncEngine method below has the same name, and an unqualified
+	// call resolving to the module function while `this.queuedReason` resolves to
+	// the method is exactly the kind of thing that reads wrong at 3am.
+	queuedReason as computeQueuedReason,
+	OfflineQueue,
+	type QueuedReason,
+	QueuePriority,
+} from "./offline-queue";
 import { attachmentCapabilityGained, type PlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
@@ -341,6 +349,9 @@ export class SyncEngine {
 	private syncBlocked = false;
 	private activePushCount = 0;
 	private maxConcurrentPushes = 5;
+	/** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
+	 *  produces get Background priority — see priorityForPath. */
+	private bulkDepth = 0;
 	private pushWaiters: (() => void)[] = [];
 	readonly queue: OfflineQueue = new OfflineQueue();
 
@@ -6152,6 +6163,12 @@ export class SyncEngine {
 
 	/** Full bidirectional sync: pull remote changes, then push local changes. */
 	async fullSync(): Promise<{ pulled: number; pushed: number }> {
+		// Thin wrapper so the sweep is marked without reindenting the whole body.
+		// fullSync calls pushAll, so bulkDepth nests — hence a counter, not a flag.
+		return this.inBulkSweep(() => this.fullSyncInner());
+	}
+
+	private async fullSyncInner(): Promise<{ pulled: number; pushed: number }> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "fullSync short-circuited — gate closed");
 			return { pulled: 0, pushed: 0 };
@@ -6785,6 +6802,13 @@ export class SyncEngine {
 	async pushAll(
 		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
 	): Promise<number> {
+		// Thin wrapper so the sweep is marked without reindenting the whole body.
+		return this.inBulkSweep(() => this.pushAllInner(opts));
+	}
+
+	private async pushAllInner(
+		opts: { replaceRemote?: boolean; localSnapshot?: Set<string> } = {},
+	): Promise<number> {
 		if (this.syncBlocked) {
 			devLog().log("sync-blocked", "pushAll short-circuited — gate closed");
 			return 0;
@@ -7071,9 +7095,52 @@ export class SyncEngine {
 
 	// --- Offline queue ---
 
-	/** Queue a change for retry and go offline. */
+	/** Flush priority for a path.
+	 *
+	 *  A live-bound path is one the user has open in an editor — the single case
+	 *  where queue latency is directly visible — so it outranks everything even
+	 *  during a bulk sweep. Otherwise, work generated inside a bulk sweep sinks
+	 *  to Background so an interactive edit made mid-import is not stuck behind
+	 *  thousands of retries. */
+	private priorityForPath(path: string): number {
+		if (this.isLiveBound?.(path)) return QueuePriority.OpenNote;
+		return this.bulkDepth > 0 ? QueuePriority.Background : QueuePriority.Normal;
+	}
+
+	/** Run `fn` with queue entries it produces marked as bulk work. A counter
+	 *  rather than a boolean because fullSync calls pushAll — a boolean would be
+	 *  cleared by the inner call while the outer sweep was still running. */
+	private async inBulkSweep<T>(fn: () => Promise<T>): Promise<T> {
+		this.bulkDepth += 1;
+		try {
+			return await fn();
+		} finally {
+			this.bulkDepth -= 1;
+		}
+	}
+
+	/** Why the queue is not draining, or null when nothing is queued. Surfaced
+	 *  in the Sync Center so a held queue reads as a reason instead of a
+	 *  spinner. */
+	queuedReason(): QueuedReason | null {
+		return computeQueuedReason({
+			queued: this.queue.size,
+			inFlight: this.pushing.size,
+			offline: this.offline,
+			syncBlocked: this.syncBlocked,
+		});
+	}
+
+	/** Queue a change for retry and go offline.
+	 *
+	 *  Assigns a flush priority when the caller did not: the note the user has
+	 *  open jumps ahead of everything else, so a bulk import cannot make the file
+	 *  being edited wait behind thousands of background entries. */
 	private async enqueueChange(entry: QueueEntry): Promise<void> {
-		await this.queue.enqueue(entry);
+		await this.queue.enqueue({
+			...entry,
+			priority: entry.priority ?? this.priorityForPath(entry.path),
+		});
 		// Enqueuing a retry does NOT by itself mean we're disconnected — a single
 		// file's server-side error (e.g. a storage 502) leaves the backend
 		// perfectly reachable. The offline transition is decided separately via

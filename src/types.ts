@@ -279,6 +279,11 @@ export interface QueueEntry {
 	 *  is parked after RETRY_CAP attempts instead of retrying forever across
 	 *  reloads. Absent = never failed. */
 	attempts?: number;
+	/** Flush order (see `QueuePriority` in offline-queue.ts). Lower runs sooner.
+	 *  Absent = Normal, which is what every entry persisted before this field
+	 *  existed reads as — so an upgrade never demotes pending work below a bulk
+	 *  import. */
+	priority?: number;
 }
 
 /** Request body for POST /search */
