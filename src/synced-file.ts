@@ -80,7 +80,13 @@ export class SyncedFileTable {
 				file.markers.delete(marker);
 				// Drop the entry once its last marker expires, so a long session does
 				// not accumulate one empty object per path ever touched.
-				if (file.empty) this.files.delete(path);
+				//
+				// Identity-checked, not just `files.delete(path)`. This closure captured
+				// `path` at mark time, but rename() moves the same object to a different
+				// key — so a timer armed before a rename would otherwise delete whatever
+				// entry now sits at the OLD path, which may be a newer, unrelated file.
+				// Silently dropping that entry loses its echo suppression.
+				if (file.empty && this.files.get(path) === file) this.files.delete(path);
 			}, ms),
 		);
 	}

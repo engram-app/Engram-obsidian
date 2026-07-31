@@ -22,6 +22,12 @@ function fakeTime() {
 		fireAll(): void {
 			for (const id of [...timers.keys()]) this.fire(id);
 		},
+		/** Fire only the earliest-armed timer. Needed where firing everything
+		 *  would also expire the marker under assertion. */
+		fireOldest(): void {
+			const [id] = timers.keys();
+			if (id !== undefined) this.fire(id);
+		},
 		get live(): number {
 			return timers.size;
 		},
@@ -136,6 +142,26 @@ describe("SyncedFileTable lifecycle", () => {
 
 		expect(time.live).toBe(0);
 		expect(t.size).toBe(0);
+	});
+
+	test("a stale timer from before a rename does not delete a newer entry at the old path", () => {
+		// The expiry closure captures the path it was created for, but rename()
+		// moves the object to a different key. Re-marking the old path creates a
+		// NEW entry there; when the stale timer fires it must not delete it.
+		// Losing that entry silently drops echo suppression for a real file.
+		const time = fakeTime();
+		const t = new SyncedFileTable(time);
+		t.mark("old.md", "flushed", 100);
+		t.rename("old.md", "new.md");
+		t.mark("old.md", "pushed", 100);
+
+		// Only the PRE-rename timer. fireAll would also expire the marker under
+		// assertion and pass for the wrong reason.
+		time.fireOldest();
+
+		expect(t.has("old.md", "pushed")).toBe(true);
+		// ...and the renamed file keeps its own entry.
+		expect(t.has("new.md", "flushed")).toBe(false);
 	});
 
 	test("an expired marker leaves no empty entry behind", () => {

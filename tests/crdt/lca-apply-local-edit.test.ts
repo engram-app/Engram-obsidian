@@ -78,6 +78,28 @@ describe("applyLocalEdit with an LCA", () => {
 		await registry.destroyAll();
 	});
 
+	test("a history-less doc whose disk equals the base returns the DISK content, not an empty projection", async () => {
+		// The caller records fnv1a(returned) as the last-synced baseline hash
+		// (sync.ts applyCrdtCreateAck). A fresh doc projects to "", so returning
+		// the projection here would record the hash of "" as the baseline for a
+		// note that actually has content — which makes isUnchangedSynced false
+		// forever after and re-opens the #846 doubling path. The adopt-first gate
+		// owns this case and must not be bypassed by the LCA branch.
+		const registry = new ProviderRegistry({
+			dbPrefix: "lca7",
+			send: () => true,
+			onFlushToDisk: () => true,
+			lcaFor: () => "same content\n",
+			lcaMergeEnabled: () => true,
+			isUnchangedSynced: () => true,
+		});
+
+		const consumed = await registry.applyLocalEdit("n7", "same content\n");
+
+		expect(consumed).toBe("same content\n");
+		await registry.destroyAll();
+	});
+
 	test("reports a dirty merge instead of writing mangled content", async () => {
 		const { registry, dirty } = registryWith({
 			lca: "the quick brown fox jumps over the lazy dog",

@@ -317,7 +317,17 @@ export class ProviderRegistry {
 		// construction. That removes the reason for the retry loop below: there is
 		// no stale-snapshot race left to detect, because we are no longer forcing
 		// the doc to equal the snapshot.
-		const base = this.opts.lcaMergeEnabled?.() ? this.opts.lcaFor?.(noteId) : null;
+		//
+		// Gated on the doc HAVING history. A history-less doc holds no remote work
+		// for the merge to protect, and routing it here would bypass the adopt-first
+		// gate below: `mergeDiskOntoDoc` short-circuits base===disk to the doc's own
+		// projection, which for a fresh doc is empty — and the caller records
+		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
+		// isUnchangedSynced for a note that actually has content (#846 doubling).
+		const base =
+			this.opts.lcaMergeEnabled?.() && (hasLca ?? docHasHistory(e.doc, e.kind))
+				? this.opts.lcaFor?.(noteId)
+				: null;
 		if (base !== null && base !== undefined && e.kind === "note") {
 			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
 			if (merged.clean) {
