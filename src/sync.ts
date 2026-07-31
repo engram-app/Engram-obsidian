@@ -7579,6 +7579,16 @@ export class SyncEngine {
 			window.clearTimeout(timer);
 		}
 		this.crdtHealTrailingTimers.clear();
+		// Per-note CRDT bookkeeping that holds no timers, so nothing leaks if it
+		// survives — but it is per-engine-lifetime state and every sibling map
+		// above is swept here. Left behind, a reused engine would carry a stale
+		// heal cooldown (suppressing a handshake the new session needs), a stale
+		// re-handshake attempt count, and a staged convergence for a note whose
+		// room is gone. `syncState` is deliberately NOT in this list: it is the
+		// persisted sync baseline, not transient state.
+		this.pendingConvergence.clear();
+		this.crdtRehandshakeAttempts.clear();
+		this.crdtHealCooldown.clear();
 		this.pendingQueueDeliveries.clear();
 		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
