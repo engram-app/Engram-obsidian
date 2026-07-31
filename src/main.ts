@@ -34,6 +34,7 @@ import { ensureDocSchema } from "./crdt/schema";
 import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
+import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { type FeatureFlags, resolveFlags } from "./feature-flags";
 import { setLogSink } from "./has-logging";
@@ -1114,6 +1115,9 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncInterval = null;
 		}
 		void destroyRemoteLog();
+		// The debug API closes over the CRDT stack; leaving the global behind after
+		// unload hands the next instance's console a handle to dead objects.
+		uninstallDebugApi();
 		// Detach the sink BEFORE the loggers go away: a HasLogging subclass torn
 		// down after this point would otherwise write into a destroyed devLog.
 		setLogSink(null);
@@ -1187,6 +1191,50 @@ export default class EngramSyncPlugin extends Plugin {
 		// setDeviceId(this.deviceId), before any sync runs.
 	}
 
+	/**
+	 * Install or remove `window.__engramDebug` to match the diagnostics setting.
+	 *
+	 * Called from saveSettings (the user toggled diagnostics) and after the CRDT
+	 * stack is rebuilt (the registry it closes over was replaced). Cheap and
+	 * idempotent, so both callers can fire it unconditionally.
+	 */
+	private refreshDebugApi(): void {
+		const registry = this.crdtManager;
+		if (!this.settings.diagnosticsEnabled || !registry) {
+			uninstallDebugApi();
+			return;
+		}
+		installDebugApi(
+			createDebugApi({
+				registry: {
+					hasDoc: (id) => registry.hasDoc(id),
+					projectedText: (id) => registry.projectedText(id),
+					hasHistory: (id) => registry.hasHistory(id),
+					encodeStateVector: (id) => registry.encodeStateVector(id),
+					isSynced: (id) => registry.isSynced(id),
+					hasPendingGap: (id) => registry.hasPendingGap(id),
+					hasUndeliveredOps: (id) => registry.hasUndeliveredOps(id),
+					enrolled: registry.enrolled,
+					removedIds: registry.removedIds,
+					residentIds: () => [...registry.docs.keys()],
+				},
+				idForPath: (path) => this.noteIdMap.get(path),
+				pathForId: (id) => this.noteIdMap.pathForId(id),
+				readDisk: async (path) => {
+					const file = this.app.vault.getAbstractFileByPath(normalizePath(path));
+					if (!(file instanceof TFile)) return null;
+					const content = await this.app.vault.read(file);
+					return { length: content.length, mtime: file.stat.mtime, content };
+				},
+				// exportSyncState() copies the whole map per call. Acceptable: this
+				// runs only when a human invokes the console API, never on a sync path.
+				syncStateFor: (path) => this.syncEngine.exportSyncState()[normalizePath(path)],
+				isLiveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
+				pendingPromises: () => this.promiseTracker?.pending() ?? [],
+			}),
+		);
+	}
+
 	async saveSettings(): Promise<void> {
 		this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey);
 		this.api.setVaultId(this.settings.vaultId);
@@ -1194,6 +1242,7 @@ export default class EngramSyncPlugin extends Plugin {
 		this.syncEngine.updateSettings(this.settings);
 		rlog().setLevelThreshold(this.settings.remoteLogLevel);
 		rlog().setEnabled(this.settings.diagnosticsEnabled);
+		this.refreshDebugApi();
 		this.startSyncInterval();
 		this.setupNoteStream();
 		await this.savePluginData(this.syncEngine.getLastSync());
@@ -2067,6 +2116,7 @@ export default class EngramSyncPlugin extends Plugin {
 					// Bind whatever leaves are open now — a fresh stack saw none at build;
 					// a reconnect re-checks in case the open set changed while offline.
 					this.crdtLiveViews?.refresh();
+					this.refreshDebugApi();
 					// Re-point the NEW channel's inbound callbacks at the PERSISTENT wiring
 					// every (re)connect. The wiring (and its box.channel) outlives the socket.
 					const wiring = this.crdtWiring;

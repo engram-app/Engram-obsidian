@@ -4,6 +4,7 @@
 import { type App, Notice, normalizePath, type TAbstractFile, TFile, TFolder } from "obsidian";
 import { arrayBufferToBase64, base64ToArrayBuffer, type EngramApi } from "./api";
 import type { BaseStore } from "./base-store";
+import { fnv1a } from "./content-hash";
 import type { NoteIdMap } from "./crdt/note-id-map";
 import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
@@ -241,15 +242,9 @@ const DEGRADED_NOTICE_DURATION_MS = 10_000;
  *  shouldIgnore() reads `app.vault.configDir` at runtime to handle that. */
 const ALWAYS_IGNORED = [".trash/", ".git/"];
 
-/** Fast string hash (FNV-1a 32-bit). Not cryptographic — just for content change detection. */
-export function fnv1a(s: string): number {
-	let h = 0x811c9dc5;
-	for (let i = 0; i < s.length; i++) {
-		h ^= s.charCodeAt(i);
-		h = Math.imul(h, 0x01000193);
-	}
-	return h >>> 0;
-}
+// Re-exported so existing importers keep working; the implementation moved to
+// content-hash.ts to stop a hash-only consumer pulling this module in.
+export { fnv1a };
 
 /** Binary file extensions that sync as attachments. */
 const BINARY_EXTENSIONS = new Set([
