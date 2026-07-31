@@ -1,3 +1,4 @@
+import type { FeatureFlags } from "./feature-flags";
 import type { PlanState } from "./plan-state";
 
 /** Plugin settings stored in data.json */
@@ -57,6 +58,12 @@ export interface EngramSyncSettings {
 	/** True once the first-run waitlist popup has been shown (submitted OR
 	 *  dismissed). Set once, never re-shown. */
 	waitlistPromptSeen?: boolean;
+	/** Feature-flag overrides. Sparse on purpose: only flags the user has
+	 *  actually toggled are stored, so a change to a flag's DEFAULT reaches
+	 *  every install that never touched it. Read through `resolveFlags` — never
+	 *  index this directly, or a retired key in an old data.json leaks through.
+	 *  See `feature-flags.ts`. */
+	featureFlags?: Partial<FeatureFlags>;
 }
 
 /** Which search backend the panel uses. */

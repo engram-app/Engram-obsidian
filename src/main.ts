@@ -35,6 +35,13 @@ import { type CrdtWiring, createCrdtWiring } from "./crdt/wiring";
 import { makeCrdtOpSend } from "./crdt-op-dispatch";
 import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
+import { type FeatureFlags, resolveFlags } from "./feature-flags";
+import { setLogSink } from "./has-logging";
+import { PromiseTracker, setActiveTracker } from "./track-promise";
+
+/** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
+declare const DEV_MODE: boolean;
+
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg } from "./error-util";
@@ -181,6 +188,18 @@ export function channelIdentityMatches(
 export default class EngramSyncPlugin extends Plugin {
 	settings: EngramSyncSettings = DEFAULT_SETTINGS;
 	api: EngramApi = new EngramApi("", "");
+	/** Dev-build only: registry of outstanding async work, exposed through the
+	 *  debug snapshot so a wedged sync shows up as a long-lived pending entry
+	 *  instead of having to be inferred from logs. Null in production. */
+	promiseTracker: PromiseTracker | null = null;
+
+	/** Resolved feature flags (stored overrides applied over schema defaults).
+	 *  Recomputed on every read so a settings toggle takes effect without a
+	 *  reload — these are cheap (a fixed-size object literal), and caching one
+	 *  would just add an invalidation bug. */
+	get flags(): FeatureFlags {
+		return resolveFlags(this.settings.featureFlags);
+	}
 	/** Persist the user's chosen search mode as the new default. Passed to the
 	 *  search view + modal so a mode switch in either surface sticks. */
 	private persistSearchMode = (mode: SearchMode): void => {
@@ -343,6 +362,22 @@ export default class EngramSyncPlugin extends Plugin {
 
 	async onload(): Promise<void> {
 		initDevLog();
+		// Route HasLogging output to both existing destinations, so a class that
+		// extends it needs no logger wiring of its own. devLog is tree-shaken in
+		// production; rlog respects the diagnostics switch and level threshold.
+		setLogSink((level, category, message) => {
+			devLog().log(category, message);
+			// "debug" stops at the local ring buffer on purpose. rlog has no debug
+			// method, and shipping debug volume to Loki is exactly the cardinality
+			// problem the remoteLogLevel dial exists to avoid.
+			if (level === "error") rlog().error(category, message);
+			else if (level === "warn") rlog().warn(category, message);
+			else if (level === "info") rlog().info(category, message);
+		});
+		if (DEV_MODE) {
+			this.promiseTracker = new PromiseTracker();
+			setActiveTracker(this.promiseTracker);
+		}
 		devLog().log("lifecycle", "plugin loading");
 		rlog().info("lifecycle", `onload start — v${this.manifest.version}`);
 		activeDocument.body.classList.add("engram-vault-sync-active");
@@ -1079,6 +1114,12 @@ export default class EngramSyncPlugin extends Plugin {
 			this.syncInterval = null;
 		}
 		void destroyRemoteLog();
+		// Detach the sink BEFORE the loggers go away: a HasLogging subclass torn
+		// down after this point would otherwise write into a destroyed devLog.
+		setLogSink(null);
+		setActiveTracker(null);
+		this.promiseTracker?.destroy();
+		this.promiseTracker = null;
 		destroyDevLog();
 		// Yjs stamps globalThis['__ $YJS$ __'] = true on import to guard against
 		// duplicate copies (yjs#438). Obsidian reloads the plugin module graph on
