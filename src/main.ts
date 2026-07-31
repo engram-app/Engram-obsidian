@@ -38,6 +38,7 @@ import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api"
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { type FeatureFlags, resolveFlags } from "./feature-flags";
 import { setLogSink } from "./has-logging";
+import { SyncRecorder } from "./sync-recorder";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
 
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
@@ -193,6 +194,14 @@ export default class EngramSyncPlugin extends Plugin {
 	 *  debug snapshot so a wedged sync shows up as a long-lived pending entry
 	 *  instead of having to be inferred from logs. Null in production. */
 	promiseTracker: PromiseTracker | null = null;
+
+	/** Timeline capture for the CRDT seams (#356). Constructed once and kept for
+	 *  the plugin's lifetime — it reads the flag on every record call, so
+	 *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
+	 *  bounded, and it costs one predicate call per seam while off. */
+	readonly syncRecorder: SyncRecorder = new SyncRecorder({
+		enabled: () => this.flags.crdtRecording,
+	});
 
 	/** Resolved feature flags (stored overrides applied over schema defaults).
 	 *  Recomputed on every read so a settings toggle takes effect without a
@@ -1231,6 +1240,7 @@ export default class EngramSyncPlugin extends Plugin {
 				syncStateFor: (path) => this.syncEngine.exportSyncState()[normalizePath(path)],
 				isLiveBound: (path) => this.crdtLiveViews?.isBound(path) ?? false,
 				pendingPromises: () => this.promiseTracker?.pending() ?? [],
+				recorder: this.syncRecorder,
 			}),
 		);
 	}
@@ -2061,6 +2071,7 @@ export default class EngramSyncPlugin extends Plugin {
 						const wiring = createCrdtWiring({
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
+							recorder: this.syncRecorder,
 							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
 							// the frame is held in unsentDocIds and flushed on rejoin — never
 							// silently dropped as if sent.

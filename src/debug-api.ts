@@ -13,12 +13,18 @@
 
 import type { SnapshotDeps, SnapshotRegistry } from "./debug-snapshot";
 import { buildNoteSnapshot, buildVaultSnapshot } from "./debug-snapshot";
+import { type SyncEvent, serializeTimeline } from "./sync-recorder";
 
 const GLOBAL_KEY = "__engramDebug";
 
 export interface DebugApi {
 	note(key: string, includeContent?: boolean): Promise<unknown>;
 	vault(): unknown;
+	/** Recorded sync timeline (#356), optionally narrowed to one note. Returns
+	 *  the JSON a replay fixture is made of — copy it out of the console, or
+	 *  attach it to a bug report. */
+	timeline(noteId?: string): string;
+	clearTimeline(): void;
 }
 
 export interface DebugApiHost {
@@ -29,6 +35,7 @@ export interface DebugApiHost {
 	syncStateFor: SnapshotDeps["syncStateFor"];
 	isLiveBound(path: string): boolean;
 	pendingPromises(): { label: string; ageMs: number }[];
+	recorder: { timeline(noteId?: string): SyncEvent[]; clear(): void };
 }
 
 export function createDebugApi(host: DebugApiHost): DebugApi {
@@ -36,7 +43,16 @@ export function createDebugApi(host: DebugApiHost): DebugApi {
 	return {
 		note: (key, includeContent = false) => buildNoteSnapshot(key, deps, { includeContent }),
 		vault: () => buildVaultSnapshot(deps),
+		// Accepts a path as well as an id, matching `note()` — an investigation
+		// starts from whichever the evidence contained.
+		timeline: (noteId) =>
+			serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : undefined)),
+		clearTimeline: () => host.recorder.clear(),
 	};
+}
+
+function resolveId(host: DebugApiHost, key: string): string {
+	return host.idForPath(key) ?? key;
 }
 
 export function installDebugApi(api: DebugApi): void {

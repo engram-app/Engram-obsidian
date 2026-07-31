@@ -1,6 +1,7 @@
 import { errMsg } from "../error-util";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
+import type { SyncRecorder } from "../sync-recorder";
 import { isDestroyedError } from "./destroyed-error";
 import { InvariantChecker, type InvariantViolation } from "./invariants";
 import type { NoteIdMap } from "./note-id-map";
@@ -68,6 +69,9 @@ export interface CrdtWiringDeps {
 	 *  it — each real device has its own browser origin. Set only by tests that
 	 *  run two "devices" against one shared fake-indexeddb process. */
 	dbPrefix?: string;
+	/** Timeline capture (#356). Handed straight to the registry, which is where
+	 *  every recordable seam already passes through. Omitted = no recording. */
+	recorder?: SyncRecorder;
 }
 
 export interface CrdtWiring {
@@ -275,6 +279,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	// provider sends its own local updates through this `send`.
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
+		recorder: deps.recorder,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply
