@@ -1015,6 +1015,44 @@ describe("pull un-masking — CRDT-owned local note must catch up from /changes"
 		expect(reset).toHaveBeenCalledTimes(1);
 	});
 
+	// #290 (item 2). These three hold no timers, so nothing leaks either way —
+	// this pins teardown DISCIPLINE: every per-note CRDT map is swept, so a
+	// reused engine cannot inherit a stale heal cooldown (which would suppress
+	// a handshake the new session needs) or a staged convergence for a room
+	// that no longer exists.
+	test("destroy() sweeps the per-note CRDT bookkeeping maps", async () => {
+		const { engine } = crdtEngine();
+		engine.healCooldownMs = 30;
+		const localFile = new TFile("owned.md");
+		mockApp.vault.getFileByPath.mockReturnValue(localFile);
+		mockApp.vault.getAbstractFileByPath.mockReturnValue(localFile);
+		engine.setLiveBoundCheck((p: string) => p === "owned.md");
+		engine.importSyncState({ "owned.md": { hash: 1, version: 1, serverHash: "h0" } });
+
+		const change = {
+			path: "owned.md",
+			action: "upsert",
+			content: "a",
+			content_hash: "h1",
+			version: 2,
+			mtime: 1,
+		} as any;
+		await engine.applyChange(change); // fires: stages convergence + cooldown
+		await engine.applyChange(change); // suppressed: bumps attempt bookkeeping
+
+		const e = engine as any;
+		// Guard the guard: if the setup stopped arming these, the assertions
+		// below would pass on empty maps and prove nothing.
+		expect(e.crdtHealCooldown.size).toBeGreaterThan(0);
+		expect(e.pendingConvergence.size + e.crdtRehandshakeAttempts.size).toBeGreaterThan(0);
+
+		engine.destroy();
+
+		expect(e.pendingConvergence.size).toBe(0);
+		expect(e.crdtRehandshakeAttempts.size).toBe(0);
+		expect(e.crdtHealCooldown.size).toBe(0);
+	});
+
 	test("fix wave 3 (a): seq decides the staleRow fence — a newer seq with equal version RUNS the diverged leg (D3 gate forensics, issue #282)", async () => {
 		const { engine, reset } = crdtEngine();
 		const localFile = new TFile("owned.md");
