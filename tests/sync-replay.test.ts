@@ -4,7 +4,24 @@ import { ProviderRegistry } from "../src/crdt/provider-registry";
 import { deserializeTimeline, SyncRecorder, serializeTimeline } from "../src/sync-recorder";
 import { replayTimeline } from "./helpers/replay";
 
-const settle = () => new Promise<void>((r) => setTimeout(r, 25));
+/**
+ * Poll until `cond` holds.
+ *
+ * NOT a bigger sleep. The STEP1/STEP2 handshake spans several async turns (two
+ * IndexeddbPersistence.whenSynced resolutions plus the relay's queueMicrotask
+ * hops), so a fixed sleep is racy under parallel load — the sibling
+ * provider-registry.test.ts and wiring.test.ts carry the same helper and the
+ * same warning. Tearing a registry down mid-handshake abandons the in-flight
+ * entry() await, and its NoteDestroyedError surfaces as a test failure with a
+ * stack pointing at destroyAll rather than at the real cause.
+ */
+async function waitFor(cond: () => boolean, label: string): Promise<void> {
+	for (let i = 0; i < 200; i++) {
+		if (cond()) return;
+		await new Promise<void>((r) => setTimeout(r, 5));
+	}
+	throw new Error(`waitFor timed out: ${label}`);
+}
 
 /** Record a real two-device exchange, then hand back its timeline. This is the
  *  loop the whole feature exists for: a live session produces a timeline, and
@@ -40,7 +57,9 @@ async function recordExchange(dbPrefix: string) {
 	await A.applyLocalEdit("note-1", "hello world");
 	A.enroll("note-1");
 	B.enroll("note-1");
-	await settle();
+	// Wait for the exchange to actually COMPLETE, not for a fixed duration:
+	// B receiving the content is the observable end of the handshake.
+	await waitFor(() => flushedB["note-1"] === "hello world", "B flushed A's content");
 
 	const timeline = recorder.timeline();
 	await A.destroyAll();

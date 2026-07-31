@@ -21,6 +21,7 @@ import { TFile } from "obsidian";
 import type { EngramApi } from "../src/api";
 import { NoteIdMap } from "../src/crdt/note-id-map";
 import { SyncEngine } from "../src/sync";
+import type { SyncedFileTable } from "../src/synced-file";
 import { DEFAULT_SETTINGS } from "../src/types";
 
 const mockApi = {
@@ -202,9 +203,10 @@ describe("replay mint refusal (#972/#217 guard parity)", () => {
 		// was relocated away (#972 class). Live pushes and batch genesis refuse to
 		// mint here (shouldDeferMint) — the replay path must too, or a stale
 		// queued entry mints a FRESH id and creates a duplicate server row.
-		(engine as unknown as { recentlyFlushed: Map<string, number> }).recentlyFlushed.set(
+		(engine as unknown as { files: SyncedFileTable }).files.mark(
 			"flushed.md",
-			1,
+			"flushed",
+			60_000,
 		);
 
 		engine.queue.load([

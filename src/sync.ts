@@ -35,6 +35,7 @@ import {
 import { attachmentCapabilityGained, type PlanState } from "./plan-state";
 import { rlog } from "./remote-log";
 import type { SyncLog } from "./sync-log";
+import { SyncedFileTable } from "./synced-file";
 import { DefaultTimeProvider, type TimeProvider } from "./time-provider";
 import type {
 	AttachmentChange,
@@ -308,21 +309,15 @@ export class SyncEngine {
 	private degradedNoticeTimer: number | null = null;
 	private ignorePatterns: string[] = [];
 	private pushing: Set<string> = new Set();
-	private recentlyPushed: Map<string, number> = new Map();
-	/** Paths whose local trash APPLIED a remote change (WS delete, pull
-	 *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
-	 *  trash fires must not push a DELETE back to the server: the server
-	 *  already knows, and the path-keyed CAS-less delete would kill a note
-	 *  recreated at the same path in between (wipe→re-push, delete→recreate).
-	 *  Found by test_86's settle assert: B's echo-push landed after A's
-	 *  replace-remote re-upload and tombstoned the fresh note. */
-	private remotelyDeleted: Map<string, number> = new Map();
-	/** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
-	 *  Distinct from recentlyPushed (WS echo suppression after a push): only the
-	 *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
-	 *  recentlyPushed would make handleModify drop REAL user edits within the
-	 *  post-push cooldown — silently losing edits and breaking conflict detection. */
-	private recentlyFlushed: Map<string, number> = new Map();
+	/** Per-path echo-suppression markers (#358). Replaces three parallel
+	 *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
+	 *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
+	 *  meaning of each marker and why `flushed` must stay distinct from `pushed`.
+	 *  Unlike the maps it replaces, its timers are cancelled on destroy(). */
+	private readonly files = new SyncedFileTable({
+		setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+		clearTimeout: (id) => this.time.clearTimeout(id),
+	});
 	/** note_ids THIS device recently deleted. Both CRDT convergence paths
 	 *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
 	 *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
@@ -2087,7 +2082,7 @@ export class SyncEngine {
 		// be wrongly dropped here and never reach the CRDT path. So only apply the
 		// guard off the CRDT path (legacy writes, attachments).
 		const crdtManaged = !!this.crdt && this.isCrdtEligible(file);
-		if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
+		if (!crdtManaged && this.files.has(file.path, "flushed")) {
 			rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
 			return;
 		}
@@ -2194,8 +2189,8 @@ export class SyncEngine {
 		// (replace-remote wipe→re-push, delete→recreate) and tombstones the
 		// FRESH note. Local bookkeeping above still ran; mirror the CRDT
 		// teardown the push path would have done and stop.
-		if (this.remotelyDeleted.has(file.path)) {
-			this.remotelyDeleted.delete(file.path);
+		if (this.files.has(file.path, "remotelyDeleted")) {
+			this.files.clearMarker(file.path, "remotelyDeleted");
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
 				await this.crdt?.removeDoc(crdtNoteId);
@@ -3279,26 +3274,26 @@ export class SyncEngine {
 	 *  handleDelete — every sync-applied deletion must route through here, or
 	 *  its echo-push can tombstone a note recreated at the path since. */
 	private async trashRemotelyDeleted(file: TAbstractFile): Promise<void> {
-		this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS);
+		this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS);
 		await this.app.fileManager.trashFile(file);
 	}
 
 	/** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
 	private markRecentlyPushed(path: string): void {
-		this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
+		this.files.mark(path, "pushed", ECHO_COOLDOWN_MS);
 	}
 
 	/** Check if a path was recently pushed (for echo suppression). */
 	// biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
 	private isRecentlyPushed(path: string): boolean {
-		return this.recentlyPushed.has(path);
+		return this.files.has(path, "pushed");
 	}
 
 	/** Suppress the handleModify echo of a flushFromCrdt disk write for
 	 *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
 	 *  never swallows a genuine local edit. */
 	private markRecentlyFlushed(path: string): void {
-		this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+		this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
 	}
 
 	/** Record a note_id THIS device just deleted so neither CRDT convergence
@@ -3328,7 +3323,7 @@ export class SyncEngine {
 		return (
 			!!this.noteIdMap &&
 			!this.noteIdMap.get(path) &&
-			this.recentlyFlushed.has(normalizePath(path))
+			this.files.has(normalizePath(path), "flushed")
 		);
 	}
 
@@ -4483,7 +4478,7 @@ export class SyncEngine {
 				rlog().info("ws", `Echo skip (pushing): ${event.path}`);
 				return;
 			}
-			if (this.recentlyPushed.has(event.path)) {
+			if (this.files.has(event.path, "pushed")) {
 				rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
 				return;
 			}
@@ -7565,18 +7560,8 @@ export class SyncEngine {
 			this.time.clearTimeout(timer);
 		}
 		this.debounceTimers.clear();
-		for (const timer of this.recentlyPushed.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.recentlyPushed.clear();
-		for (const timer of this.recentlyFlushed.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.recentlyFlushed.clear();
-		for (const timer of this.remotelyDeleted.values()) {
-			this.time.clearTimeout(timer);
-		}
-		this.remotelyDeleted.clear();
+		// Was three near-identical clear-every-timer loops, one per marker map.
+		this.files.destroy();
 		for (const timer of this.recentlyDeleted.values()) {
 			this.time.clearTimeout(timer);
 		}
