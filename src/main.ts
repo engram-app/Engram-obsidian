@@ -2072,6 +2072,20 @@ export default class EngramSyncPlugin extends Plugin {
 							noteIdMap: this.noteIdMap,
 							syncEngine: this.syncEngine,
 							recorder: this.syncRecorder,
+							// BaseStore is keyed by vault path and already holds exactly the
+							// last-synced content its own docstring calls "the common
+							// ancestor for 3-way merge"; the registry is keyed by note_id,
+							// so resolve through the id map.
+							lcaFor: (noteId) => {
+								const path = this.noteIdMap.pathForId(noteId);
+								return path ? (this.baseStore?.get(path)?.content ?? null) : null;
+							},
+							lcaMergeEnabled: () => this.flags.crdtLcaMerge,
+							onDirtyMerge: (noteId) =>
+								rlog().warn(
+									"crdt",
+									`LCA merge left unapplied hunks for ${noteId} — fell back to the two-way path`,
+								),
 							// `?? false`: a null socket (mid-reconnect) must read as REFUSED so
 							// the frame is held in unsentDocIds and flushed on rejoin — never
 							// silently dropped as if sent.

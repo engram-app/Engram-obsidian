@@ -18,6 +18,7 @@ import type { SyncRecorder } from "../sync-recorder";
 import { projectCanvas, seedCanvasInto } from "./canvas-codec";
 import { isDestroyedError, NoteDestroyedError } from "./destroyed-error";
 import { CONTENT_KEY, frontmatterOf, projectNote, rawFrontmatterOf } from "./frontmatter-codec";
+import { mergeDiskOntoDoc } from "./lca-merge";
 import { type FrameKind, NoteProvider } from "./note-provider";
 import { docHasHistory, seedContentInto } from "./note-seed";
 
@@ -75,6 +76,18 @@ export interface ProviderRegistryOpts {
 	onEmptyStep2?: (noteId: string) => void;
 	docKind?: (noteId: string) => DocKind;
 	onPersistError?: (noteId: string, err: unknown) => void;
+	/** Last-synced content for this note — the merge base (#357). Backed by
+	 *  `BaseStore`, which already persists exactly this and calls it "the common
+	 *  ancestor for 3-way merge". Null when none is recorded (a note that has
+	 *  never completed a sync), which falls back to the pre-LCA path. */
+	lcaFor?: (noteId: string) => string | null;
+	/** `crdtLcaMerge` flag. Read per call so a toggle takes effect without a
+	 *  stack rebuild. */
+	lcaMergeEnabled?: () => boolean;
+	/** Called when a merge could not apply every hunk. The content is still
+	 *  written, but the caller may want to record an issue — a dirty merge is the
+	 *  honest conflict signal that the two-way diff never produced. */
+	onDirtyMerge?: (noteId: string) => void;
 	/** Optional timeline capture (#356). Injected HERE rather than at each call
 	 *  site because every seam worth recording — receive, send, local edit, raw
 	 *  remote update, enroll, reset, connection, flush — already passes through
@@ -299,9 +312,36 @@ export class ProviderRegistry {
 		if (!e.lifetime.active) return null; // destroyed while we awaited hydration
 		let content = diskContent;
 
+		// LCA path (#357). With a merge base we apply the disk's delta RELATIVE TO
+		// THE BASE, so a remote op that landed after the disk read survives by
+		// construction. That removes the reason for the retry loop below: there is
+		// no stale-snapshot race left to detect, because we are no longer forcing
+		// the doc to equal the snapshot.
+		const base = this.opts.lcaMergeEnabled?.() ? this.opts.lcaFor?.(noteId) : null;
+		if (base !== null && base !== undefined && e.kind === "note") {
+			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
+			if (merged.clean) {
+				this.opts.recorder?.record("localEdit", noteId, {
+					hash: fnv1a(merged.text).toString(16),
+					length: merged.text.length,
+					lca: true,
+					merged: true,
+					kind: e.kind,
+				});
+				seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind));
+				return merged.text;
+			}
+			// Dirty merge: overlapping edits to the same region. Fall through to the
+			// pre-LCA path rather than writing content we know is mangled — the
+			// existing guards are conservative and will decline rather than revert.
+			this.opts.onDirtyMerge?.(noteId);
+		}
+
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
 		// this resolved; a remote merge in that window is absent from it, and
 		// diffing would DELETE the remote ops. Re-read across a doc-stable window.
+		// Still the path when the LCA flag is off, no base is recorded yet, the doc
+		// is a canvas, or the merge came back dirty.
 		if (reread) {
 			let stable = false;
 			for (let attempt = 0; attempt < 3 && !stable; attempt++) {

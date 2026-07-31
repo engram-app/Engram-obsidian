@@ -72,6 +72,13 @@ export interface CrdtWiringDeps {
 	/** Timeline capture (#356). Handed straight to the registry, which is where
 	 *  every recordable seam already passes through. Omitted = no recording. */
 	recorder?: SyncRecorder;
+	/** Merge base for a note_id (#357), resolved through the id map to the path
+	 *  BaseStore is keyed by. Omitted = the pre-LCA path. */
+	lcaFor?: (noteId: string) => string | null;
+	/** `crdtLcaMerge` flag, read per call. */
+	lcaMergeEnabled?: () => boolean;
+	/** A merge that could not apply every hunk. */
+	onDirtyMerge?: (noteId: string) => void;
 }
 
 export interface CrdtWiring {
@@ -280,6 +287,9 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 	const registry = new ProviderRegistry({
 		dbPrefix: deps.dbPrefix,
 		recorder: deps.recorder,
+		lcaFor: deps.lcaFor,
+		lcaMergeEnabled: deps.lcaMergeEnabled,
+		onDirtyMerge: deps.onDirtyMerge,
 		send: (docId, frame, kind) => {
 			// Create-before-edit: hold OPS until the note's server row exists. Never
 			// hold a "handshake" frame (syncStep1, or the syncStep2 written in reply
