@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.19.0](https://github.com/engram-app/Engram-obsidian/compare/1.18.1...1.19.0) (2026-07-31)
+
+
+### Features
+
+* adopt six Relay sync patterns (audit wave) ([40e4012](https://github.com/engram-app/Engram-obsidian/commit/40e40122474cd2a1ad6be4e0321d00c9daf670fd)), closes [#355](https://github.com/engram-app/Engram-obsidian/issues/355) [#356](https://github.com/engram-app/Engram-obsidian/issues/356) [#357](https://github.com/engram-app/Engram-obsidian/issues/357) [#358](https://github.com/engram-app/Engram-obsidian/issues/358) [#359](https://github.com/engram-app/Engram-obsidian/issues/359) [#360](https://github.com/engram-app/Engram-obsidian/issues/360)
+* **logging:** remoteLogLevel severity threshold for RemoteLogger ([#333](https://github.com/engram-app/Engram-obsidian/issues/333)) ([c884067](https://github.com/engram-app/Engram-obsidian/commit/c8840670b5c476d72484a96a0bde4ef297cd77c5))
+
+
+### Bug Fixes
+
+* **crdt:** classify handshake frames, ungate the syncStep2 reply too ([#337](https://github.com/engram-app/Engram-obsidian/issues/337)) ([61fa5d0](https://github.com/engram-app/Engram-obsidian/commit/61fa5d0104a4f4be0e6f8fe262fb5274a433de33))
+* **crdt:** delete-time artifacts, Relay correctness primitives, and verbose logs that reach Loki ([#348](https://github.com/engram-app/Engram-obsidian/issues/348)) ([67dd39b](https://github.com/engram-app/Engram-obsidian/commit/67dd39bb9cea6bec553ebfcff2e8559d00a50a6d))
+* stop the push debounce leaking a phantom pending entry ([#352](https://github.com/engram-app/Engram-obsidian/issues/352)) ([312faa7](https://github.com/engram-app/Engram-obsidian/commit/312faa7f4f32f97c6bf530730822db9c5f18430b))
+* **sync:** sweep per-note CRDT maps in destroy() ([#366](https://github.com/engram-app/Engram-obsidian/issues/366)) ([f58b8c1](https://github.com/engram-app/Engram-obsidian/commit/f58b8c1126ee7a75fbbceeab94c76d272f36ff9f)), closes [#290](https://github.com/engram-app/Engram-obsidian/issues/290)
+
 ## [1.18.1](https://github.com/engram-app/Engram-obsidian/compare/1.18.0...1.18.1) (2026-07-26)
 
 
