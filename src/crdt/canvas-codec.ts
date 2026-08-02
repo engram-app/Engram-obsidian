@@ -1,4 +1,5 @@
 import type * as Y from "yjs";
+import { canonicalJson } from "./frontmatter-codec";
 
 /**
  * Structural CRDT codec for Obsidian `.canvas` files (JSON Canvas format).
@@ -111,13 +112,14 @@ function upsertElements(
 	for (const id of [...map.keys()]) {
 		if (!ids.has(id)) map.delete(id);
 	}
-	// Replace the order array wholesale (small list; mirrors applyFrontmatterInto).
-	if (order.length > 0) order.delete(0, order.length);
-	if (elements.length > 0)
-		order.insert(
-			0,
-			elements.map((e) => e.id),
-		);
+	// Replace the order array wholesale (small list; mirrors applyFrontmatterInto)
+	// — but only when it actually changed: an identical rewrite ships a needless
+	// delete+insert op pair (and grows tombstones) on every no-op re-ingest.
+	const nextOrder = elements.map((e) => e.id);
+	if (!jsonEqual(order.toArray(), nextOrder)) {
+		if (order.length > 0) order.delete(0, order.length);
+		if (nextOrder.length > 0) order.insert(0, nextOrder);
+	}
 }
 
 function upsertMeta(map: Y.Map<unknown>, meta: Record<string, unknown>): void {
@@ -177,6 +179,9 @@ export function canvasIsEmpty(doc: Y.Doc): boolean {
 	return doc.getMap(NODES_KEY).size === 0 && doc.getMap(EDGES_KEY).size === 0;
 }
 
+/** Key-order-insensitive: two devices serializing the same node with
+ *  different key order must compare equal, or the changed-element guard above
+ *  re-sets the whole element and LWW-clobbers a concurrent edit for no reason. */
 function jsonEqual(a: unknown, b: unknown): boolean {
-	return JSON.stringify(a) === JSON.stringify(b);
+	return canonicalJson(a) === canonicalJson(b);
 }

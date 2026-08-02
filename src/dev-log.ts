@@ -49,7 +49,7 @@ class DevLogBuffer {
 	filter(substring: string): LogEntry[] {
 		const lower = substring.toLowerCase();
 		return this.entries.filter(
-			(e) => e.cat.includes(lower) || e.msg.toLowerCase().includes(lower),
+			(e) => e.cat.toLowerCase().includes(lower) || e.msg.toLowerCase().includes(lower),
 		);
 	}
 
