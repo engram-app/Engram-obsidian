@@ -1627,13 +1627,6 @@ export default class EngramSyncPlugin extends Plugin {
 		await this.commitAuthProviderSwap();
 	}
 
-	/** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
-	 *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
-	 *  channel — the rebuild freezes the channel topic's userId from
-	 *  api.getMe() at construction, so a stale provider mints a doomed
-	 *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
-	 *  live sync stays dead until reload. Then persist and hand the provider
-	 *  to the live stream. */
 	/** Reveal the search sidebar, creating its leaf on first use. Shared by the
 	 *  palette command and the ribbon icon (previously byte-identical copies). */
 	private async revealSearchSidebar(): Promise<void> {
@@ -1649,6 +1642,13 @@ export default class EngramSyncPlugin extends Plugin {
 		}
 	}
 
+	/** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
+	 *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
+	 *  channel — the rebuild freezes the channel topic's userId from
+	 *  api.getMe() at construction, so a stale provider mints a doomed
+	 *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
+	 *  live sync stays dead until reload. Then persist and hand the provider
+	 *  to the live stream. */
 	private async commitAuthProviderSwap(): Promise<void> {
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);

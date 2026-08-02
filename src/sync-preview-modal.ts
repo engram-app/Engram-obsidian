@@ -445,9 +445,6 @@ export class SyncPreviewModal extends Modal {
 		this.renderFooter(parent, "Cancel", false);
 	}
 
-	/** The loaded plan. Only reached from render paths that run after the plan
-	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
-	 *  against a future caller skipping the loading gate. */
 	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
 	 *  and the loading state (previously identical blocks). */
 	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
@@ -465,6 +462,9 @@ export class SyncPreviewModal extends Modal {
 		}
 	}
 
+	/** The loaded plan. Only reached from render paths that run after the plan
+	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
+	 *  against a future caller skipping the loading gate. */
 	private requirePlan(): SyncPlan {
 		const p = this.state.plan;
 		if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");

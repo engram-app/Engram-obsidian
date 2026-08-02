@@ -2047,9 +2047,6 @@ export class SyncEngine {
 		if (opts?.dropBase !== false) this.baseStore?.delete(normalized);
 	}
 
-	/** The vault a queue entry belongs to: its own stamp, else the current
-	 *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
-	 *  path. */
 	/** Injected-clock sleep: tests advance time instead of spending it. The
 	 *  inline window.setTimeout promise this replaces bypassed the injected
 	 *  TimeProvider at three sites. */
@@ -2057,6 +2054,9 @@ export class SyncEngine {
 		return new Promise((resolve) => this.time.setTimeout(resolve, ms));
 	}
 
+	/** The vault a queue entry belongs to: its own stamp, else the current
+	 *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
+	 *  path. */
 	private entryVaultId(entry: { vaultId?: string }): string | undefined {
 		return entry.vaultId ?? this.settings.vaultId ?? undefined;
 	}

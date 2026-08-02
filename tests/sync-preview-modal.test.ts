@@ -410,7 +410,6 @@ describe("mergeHelperText", () => {
 		conflictCount: 0,
 		deleteLocalCount: 0,
 		deleteRemoteCount: 0,
-		samplePaths: [],
 		...over,
 	});
 

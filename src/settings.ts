@@ -219,13 +219,21 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 	 *  modal's own restore then wiped the settings bar. Re-install replaces the
 	 *  prior wrapper (re-render must not stack), and a wrapper that is no
 	 *  longer current renders nothing but keeps forwarding — it may be held
-	 *  mid-chain by a modal that captured it. */
+	 *  mid-chain by a modal that captured it.
+	 *
+	 *  `prev` is captured PER WRAPPER in the closure, never read off the shared
+	 *  field at call time: a modal can restore a superseded wrapper into the
+	 *  slot, and a later install then points the field at that same dead
+	 *  wrapper — a call-time read makes it forward to itself (unbounded
+	 *  recursion, crashing the in-flight sync's emit). The field exists only
+	 *  for uninstall's head-restore. */
 	private installProgressBar(render: (progress: SyncProgress) => void): void {
 		this.uninstallProgressBar();
-		this.prevProgressCb = this.plugin.syncEngine.onSyncProgress;
+		const prev = this.plugin.syncEngine.onSyncProgress;
+		this.prevProgressCb = prev;
 		const wrapper = (progress: SyncProgress): void => {
 			if (this.installedProgressCb === wrapper) render(progress);
-			this.prevProgressCb?.(progress);
+			prev?.(progress);
 		};
 		this.installedProgressCb = wrapper;
 		this.plugin.syncEngine.onSyncProgress = wrapper;

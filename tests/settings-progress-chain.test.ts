@@ -80,3 +80,51 @@ describe("settings progress-bar chaining", () => {
 		expect(seen).toEqual(["modal"]);
 	});
 });
+
+describe("wrapper cycles (code-review Critical #1)", () => {
+	let seen: string[];
+	beforeEach(() => {
+		seen = [];
+	});
+
+	test("settle-then-reopen: a dead wrapper restored by the modal never self-recurses", () => {
+		const tab = makeTab();
+		const engine = tab.plugin.syncEngine;
+		// 1. open settings
+		tab.installProgressBar(() => seen.push("w1"));
+		// 2. modal chains on top, capturing w1
+		const prev = engine.onSyncProgress;
+		const modalCb = (p: unknown) => {
+			seen.push("modal");
+			prev?.(p);
+		};
+		engine.onSyncProgress = modalCb;
+		// 3. settings closed mid-sync (uninstall is a no-op on the slot: not head)
+		tab.uninstallProgressBar();
+		// 4. sync settles: modal restores what it captured (the dead w1)
+		engine.onSyncProgress = prev;
+		// 5. settings reopened: w2 installs on top of dead w1
+		tab.installProgressBar(() => seen.push("w2"));
+		// 6. a background sync emits progress — must not stack-overflow
+		expect(() => engine.onSyncProgress?.({})).not.toThrow();
+		expect(seen).toEqual(["w2"]); // w1 is dead: silent, and fires nothing further
+	});
+
+	test("re-render mid-sync under a chained modal never builds a two-node cycle", () => {
+		const tab = makeTab();
+		const engine = tab.plugin.syncEngine;
+		tab.installProgressBar(() => seen.push("w1"));
+		const prev = engine.onSyncProgress;
+		const modalCb = (p: unknown) => {
+			seen.push("modal");
+			prev?.(p);
+		};
+		engine.onSyncProgress = modalCb;
+		// settings re-renders while the modal is chained: w2 installs with the
+		// modal as its forward target
+		tab.installProgressBar(() => seen.push("w2"));
+		expect(() => engine.onSyncProgress?.({})).not.toThrow();
+		// w2 renders, forwards to modal, modal forwards to (now dead) w1
+		expect(seen).toEqual(["w2", "modal"]);
+	});
+});

@@ -1,4 +1,5 @@
 import type { AuthProvider } from "./auth";
+import { expBackoff } from "./backoff";
 import { errMsg } from "./error-util";
 import { rlog } from "./remote-log";
 
@@ -89,7 +90,6 @@ export function topicUserIdIsStale(
  *  plenty of runway to catch a growing note/attachment before it gets close. */
 const LARGE_FRAME_WARN_BYTES = 1_000_000;
 
-import { expBackoff } from "./backoff";
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -587,7 +587,12 @@ export class NoteChannel {
 	// Private
 	// ---------------------------------------------------------------------------
 
-	/** Guards openSocket against re-entry across its async token fetch. */
+	/** Guards openSocket against re-entry across its async token fetch. NOTE:
+	 *  while a doomed (epoch-aborted) openSocketInner is still suspended, this
+	 *  also swallows a racing openSocket — fine today because connect() is only
+	 *  ever called on a freshly constructed channel; a future same-instance
+	 *  disconnect();connect() pattern would need the abort path to re-fire a
+	 *  refused open. */
 	private opening = false;
 
 	/** Bumped by disconnect(). An openSocketInner that suspended on an await
@@ -1134,7 +1139,16 @@ export class NoteChannel {
 			const notes = (payload.notes as Array<Record<string, unknown>> | undefined) ?? [];
 			rlog().info("channel", `Batch digest: ${notes.length} notes`);
 			for (const n of notes) {
-				this.onEvent?.(toStreamEvent(n, { event_type: "upsert", kind: "note" }));
+				this.onEvent?.(
+					// Batch digests are metadata-only by protocol: content/device_id
+					// stay structurally excluded even if the server ever adds them.
+					toStreamEvent(n, {
+						event_type: "upsert",
+						kind: "note",
+						content: undefined,
+						device_id: undefined,
+					}),
+				);
 			}
 		}
 	}

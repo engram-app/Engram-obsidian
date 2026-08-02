@@ -1,7 +1,7 @@
 /**
  * Tests for api.ts — utility functions and EngramApi method behavior.
  */
-import { beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
+import { afterAll, beforeEach, describe, expect, type Mock, mock, test } from "bun:test";
 import { requestUrl } from "obsidian";
 import {
 	arrayBufferToBase64,
@@ -1189,6 +1189,13 @@ describe("deadline classification", () => {
 // ---------------------------------------------------------------------------
 
 describe("stale cached beacon token", () => {
+	// window.fetch is monkey-patched to capture beacon posts; restore it so the
+	// patch can't leak into downstream test files (bun shares one process).
+	const originalFetch = (global as any).fetch;
+	afterAll(() => {
+		(global as any).fetch = originalFetch;
+	});
+
 	function tracedApi(): EngramApi {
 		const a = new EngramApi(TEST_SERVER, TEST_KEY);
 		a.setTracingEnabled(true);

@@ -1793,7 +1793,12 @@ var _NoteChannel = class _NoteChannel {
     // ---------------------------------------------------------------------------
     // Private
     // ---------------------------------------------------------------------------
-    /** Guards openSocket against re-entry across its async token fetch. */
+    /** Guards openSocket against re-entry across its async token fetch. NOTE:
+     *  while a doomed (epoch-aborted) openSocketInner is still suspended, this
+     *  also swallows a racing openSocket — fine today because connect() is only
+     *  ever called on a freshly constructed channel; a future same-instance
+     *  disconnect();connect() pattern would need the abort path to re-fire a
+     *  refused open. */
     this.opening = !1;
     /** Bumped by disconnect(). An openSocketInner that suspended on an await
      *  before the bump must abandon the open when it resumes (see disconnect). */
@@ -2197,7 +2202,17 @@ var _NoteChannel = class _NoteChannel {
       let notes = (_m = payload.notes) != null ? _m : [];
       rlog().info("channel", `Batch digest: ${notes.length} notes`);
       for (let n of notes)
-        (_n = this.onEvent) == null || _n.call(this, toStreamEvent(n, { event_type: "upsert", kind: "note" }));
+        (_n = this.onEvent) == null || _n.call(
+          this,
+          // Batch digests are metadata-only by protocol: content/device_id
+          // stay structurally excluded even if the server ever adds them.
+          toStreamEvent(n, {
+            event_type: "upsert",
+            kind: "note",
+            content: void 0,
+            device_id: void 0
+          })
+        );
     }
   }
   send(msg) {
@@ -17829,9 +17844,6 @@ var MERGE_CARD = {
       text: this.state.planError
     }) : body.createSpan({ text: "Comparing your vault with the cloud\u2026" }), this.renderFooter(parent, "Cancel", !1);
   }
-  /** The loaded plan. Only reached from render paths that run after the plan
-   *  has arrived (renderPreview gates on it); throws otherwise as a guard
-   *  against a future caller skipping the loading gate. */
   /** Dismiss + optional "Change vault" footer, shared by the loaded preview
    *  and the loading state (previously identical blocks). */
   renderFooter(parent, dismissLabel, dismissCta) {
@@ -17843,6 +17855,9 @@ var MERGE_CARD = {
       this.openVaultPicker();
     });
   }
+  /** The loaded plan. Only reached from render paths that run after the plan
+   *  has arrived (renderPreview gates on it); throws otherwise as a guard
+   *  against a future caller skipping the loading gate. */
   requirePlan() {
     let p = this.state.plan;
     if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");
@@ -18582,12 +18597,20 @@ var EngramSyncSettingTab = class extends import_obsidian23.PluginSettingTab {
    *  modal's own restore then wiped the settings bar. Re-install replaces the
    *  prior wrapper (re-render must not stack), and a wrapper that is no
    *  longer current renders nothing but keeps forwarding — it may be held
-   *  mid-chain by a modal that captured it. */
+   *  mid-chain by a modal that captured it.
+   *
+   *  `prev` is captured PER WRAPPER in the closure, never read off the shared
+   *  field at call time: a modal can restore a superseded wrapper into the
+   *  slot, and a later install then points the field at that same dead
+   *  wrapper — a call-time read makes it forward to itself (unbounded
+   *  recursion, crashing the in-flight sync's emit). The field exists only
+   *  for uninstall's head-restore. */
   installProgressBar(render) {
-    this.uninstallProgressBar(), this.prevProgressCb = this.plugin.syncEngine.onSyncProgress;
+    this.uninstallProgressBar();
+    let prev = this.plugin.syncEngine.onSyncProgress;
+    this.prevProgressCb = prev;
     let wrapper = (progress) => {
-      var _a;
-      this.installedProgressCb === wrapper && render(progress), (_a = this.prevProgressCb) == null || _a.call(this, progress);
+      this.installedProgressCb === wrapper && render(progress), prev == null || prev(progress);
     };
     this.installedProgressCb = wrapper, this.plugin.syncEngine.onSyncProgress = wrapper;
   }
@@ -20265,15 +20288,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let normalized = (0, import_obsidian24.normalizePath)(file.path);
     await this.trashRemotelyDeleted(file), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (opts == null ? void 0 : opts.dropBase) !== !1 && ((_a = this.baseStore) == null || _a.delete(normalized));
   }
-  /** The vault a queue entry belongs to: its own stamp, else the current
-   *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
-   *  path. */
   /** Injected-clock sleep: tests advance time instead of spending it. The
    *  inline window.setTimeout promise this replaces bypassed the injected
    *  TimeProvider at three sites. */
   sleep(ms) {
     return new Promise((resolve) => this.time.setTimeout(resolve, ms));
   }
+  /** The vault a queue entry belongs to: its own stamp, else the current
+   *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
+   *  path. */
   entryVaultId(entry) {
     var _a, _b;
     return (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0;
@@ -23848,13 +23871,6 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   async clearOAuthTokens() {
     this.syncEngine.bumpAuthGeneration(), this.settings.refreshToken = void 0, this.settings.userEmail = void 0, this.settings.authMethod = null, this.settings.accessToken = void 0, this.settings.accessTokenExpiresAt = void 0, this.settings.accessTokenVaultId = void 0, this.authProvider = this.settings.apiKey ? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId) : null, await this.commitAuthProviderSwap();
   }
-  /** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
-   *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
-   *  channel — the rebuild freezes the channel topic's userId from
-   *  api.getMe() at construction, so a stale provider mints a doomed
-   *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
-   *  live sync stays dead until reload. Then persist and hand the provider
-   *  to the live stream. */
   /** Reveal the search sidebar, creating its leaf on first use. Shared by the
    *  palette command and the ribbon icon (previously byte-identical copies). */
   async revealSearchSidebar() {
@@ -23866,6 +23882,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     let leaf = this.app.workspace.getRightLeaf(!1);
     leaf && (await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: !0 }), this.app.workspace.revealLeaf(leaf));
   }
+  /** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
+   *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
+   *  channel — the rebuild freezes the channel topic's userId from
+   *  api.getMe() at construction, so a stale provider mints a doomed
+   *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
+   *  live sync stays dead until reload. Then persist and hand the provider
+   *  to the live stream. */
   async commitAuthProviderSwap() {
     this.authProvider && this.api.setAuthProvider(this.authProvider), await this.saveSettings(), this.authProvider && this.noteStream && (this.noteStream.setAuthProvider(this.authProvider), this.noteStream.setAuthProbe(() => this.api.getMe()));
   }
