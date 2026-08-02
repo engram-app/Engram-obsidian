@@ -4398,8 +4398,11 @@ export class SyncEngine {
 			folder: event.folder ?? "",
 			title: event.title ?? "",
 			tags: event.tags ?? [],
-			mtime: event.mtime ?? Date.now(),
-			updated_at: event.updated_at ?? new Date().toISOString(),
+			// Absence stays absence — see the SyncOp field doc and the guard
+			// comment in handleStreamEvent (client-receipt time must become
+			// undefined, not a value).
+			mtime: event.mtime,
+			updated_at: event.updated_at,
 			version: event.version,
 		};
 	}
@@ -4782,8 +4785,9 @@ export class SyncEngine {
 						content_hash: event.content_hash,
 						folder: event.folder ?? "",
 						tags: event.tags ?? [],
-						mtime: event.mtime ?? Date.now(),
-						updated_at: event.updated_at ?? new Date().toISOString(),
+						// applyChange reads neither field; sentinels, not clock lies.
+						mtime: event.mtime ?? 0,
+						updated_at: event.updated_at ?? "",
 						deleted: false,
 						version: event.version,
 					});
@@ -5050,7 +5054,7 @@ export class SyncEngine {
 			// than NaN, which would poison every future comparison for this id
 			// (NaN is never < anything, so the guard would silently stop
 			// protecting it for the rest of the session).
-			const relocationTs = Date.parse(op.updated_at);
+			const relocationTs = Date.parse(op.updated_at ?? "");
 			await this.moveIfIdRelocated(
 				op.id,
 				op.path,
@@ -5080,8 +5084,9 @@ export class SyncEngine {
 			content_hash: op.content_hash,
 			folder: op.folder,
 			tags: op.tags,
-			mtime: op.mtime,
-			updated_at: op.updated_at,
+			// applyChange reads neither field; sentinels only satisfy the shape.
+			mtime: op.mtime ?? 0,
+			updated_at: op.updated_at ?? "",
 			deleted: op.kind === "delete",
 			version: op.version,
 			seq: op.seq,

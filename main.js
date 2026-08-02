@@ -14939,6 +14939,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
     this.removed.add(noteId), await this.destroy(noteId, !0);
   }
   async destroy(noteId, clearData) {
+    this.enrolledIds.delete(noteId);
     let e = this.entries.get(noteId);
     if (e && e.lifetime.end(new NoteDestroyedError(noteId)), !e) {
       clearData && await new Promise((resolve) => {
@@ -14951,7 +14952,7 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   }
   async destroyAll() {
     for (let noteId of [...this.entries.keys()]) await this.destroy(noteId, !1);
-    this.removed.clear();
+    this.removed.clear(), this.enrolledIds.clear();
   }
 };
 
@@ -21296,7 +21297,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  so the CRDT-managed first-delivery / rename new-leg both converge through
    *  `applyOp`. */
   eventToOp(event, content, id2) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     return {
       kind: "upsert",
       id: id2,
@@ -21306,8 +21307,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       folder: (_a = event.folder) != null ? _a : "",
       title: (_b = event.title) != null ? _b : "",
       tags: (_c = event.tags) != null ? _c : [],
-      mtime: (_d = event.mtime) != null ? _d : Date.now(),
-      updated_at: (_e = event.updated_at) != null ? _e : (/* @__PURE__ */ new Date()).toISOString(),
+      // Absence stays absence — see the SyncOp field doc and the guard
+      // comment in handleStreamEvent (client-receipt time must become
+      // undefined, not a value).
+      mtime: event.mtime,
+      updated_at: event.updated_at,
       version: event.version
     };
   }
@@ -21440,8 +21444,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           content_hash: event.content_hash,
           folder: (_A = event.folder) != null ? _A : "",
           tags: (_B = event.tags) != null ? _B : [],
-          mtime: (_C = event.mtime) != null ? _C : Date.now(),
-          updated_at: (_D = event.updated_at) != null ? _D : (/* @__PURE__ */ new Date()).toISOString(),
+          // applyChange reads neither field; sentinels, not clock lies.
+          mtime: (_C = event.mtime) != null ? _C : 0,
+          updated_at: (_D = event.updated_at) != null ? _D : "",
           deleted: !1,
           version: event.version
         }) : this.catchupViaSeqReplay();
@@ -21530,7 +21535,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  materialize/merge/tombstone/resurrection logic to the shared `applyChange`
    *  core. Attachments are NOT ops (they stay on the binary channel). */
   async applyOp(op) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e, _f;
     if (!op.path) return !1;
     if (op.kind === "upsert" && (this.recentlyDeleted.has(op.id) || this.queue.hasPendingDelete(
       (0, import_obsidian23.normalizePath)(op.path),
@@ -21538,12 +21543,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     )))
       return rlog().info("crdt", `op-replay skip (recent/pending local delete): ${op.id}`), !1;
     if (op.kind === "upsert") {
-      let relocationTs = Date.parse(op.updated_at);
+      let relocationTs = Date.parse((_b = op.updated_at) != null ? _b : "");
       await this.moveIfIdRelocated(
         op.id,
         op.path,
         Number.isNaN(relocationTs) ? void 0 : relocationTs
-      ), (_b = this.noteIdMap) == null || _b.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
+      ), (_c = this.noteIdMap) == null || _c.set(op.path, op.id), this.confirmNoteId(op.id), this.shouldIgnore(op.path) || this.recordParseStatus(op.path, "note", op.parse_status, op.parse_reason);
     }
     let nc = {
       path: op.path,
@@ -21552,13 +21557,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       content_hash: op.content_hash,
       folder: op.folder,
       tags: op.tags,
-      mtime: op.mtime,
-      updated_at: op.updated_at,
+      // applyChange reads neither field; sentinels only satisfy the shape.
+      mtime: (_d = op.mtime) != null ? _d : 0,
+      updated_at: (_e = op.updated_at) != null ? _e : "",
       deleted: op.kind === "delete",
       version: op.version,
       seq: op.seq
     }, applied = await this.applyChange(nc);
-    return op.kind === "delete" && ((_c = this.noteIdMap) == null || _c.delete(op.path)), applied;
+    return op.kind === "delete" && ((_f = this.noteIdMap) == null || _f.delete(op.path)), applied;
   }
   /** Manifest-diff reconcile: trash files the server deleted while we were
    *  away (in baseline, absent from the manifest) and drop their baseline, then

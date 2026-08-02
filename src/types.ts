@@ -190,8 +190,11 @@ export interface SyncOp {
 	content_hash?: string;
 	folder: string;
 	tags: string[];
-	mtime: number;
-	updated_at: string;
+	/** Absent when the source event carried none. NEVER fabricate a client
+	 *  clock here: any consumer comparing against server time (the relocation
+	 *  staleness guard) is poisoned in the stale direction by a now-stamp. */
+	mtime?: number;
+	updated_at?: string;
 	version?: number;
 	parse_status?: "ok" | "degraded";
 	parse_reason?: ParseReason | null;
