@@ -123,6 +123,9 @@ export class EngramApi {
 
 	setAuthProvider(provider: AuthProvider | null): void {
 		this.authProvider = provider;
+		// The cached beacon token belongs to the old credential source; keep it
+		// and a pending beacon batch would post it under the new identity.
+		this.lastToken = "";
 	}
 
 	getActiveVaultId(): string | null {
@@ -183,6 +186,10 @@ export class EngramApi {
 	updateConfig(baseUrl: string, apiKey: string): void {
 		this.baseUrl = EngramApi.normalizeBaseUrl(baseUrl);
 		this.apiKey = apiKey;
+		// A backend switch wipes every persisted token (withClearedAuth) for
+		// exactly this reason: a pending beacon batch must never ship the old
+		// backend's JWT to the new origin.
+		this.lastToken = "";
 	}
 
 	private async request(
@@ -209,7 +216,23 @@ export class EngramApi {
 			// recovery path, so retry only when invalidateAccessToken is supported.
 			if (status === 401 && this.authProvider?.invalidateAccessToken) {
 				this.authProvider.invalidateAccessToken();
-				return this.sendRequest(method, path, body, extraHeaders);
+				// Single-shot retry (recursing into request() could 401-loop), but it
+				// must keep the 402 mapping and failure logging of the primary path —
+				// a 401-then-402 (token refresh revealing a lapsed plan) otherwise
+				// escapes as a raw rejection and is retried forever instead of parked.
+				try {
+					return await this.sendRequest(method, path, body, extraHeaders);
+				} catch (e2) {
+					const retryStatus = (e2 as { status?: number }).status;
+					if (retryStatus === 402) {
+						throw parseLimitExceededError(e2);
+					}
+					rlog().warn(
+						"api",
+						`${method} ${path} failed after 401 retry — status=${retryStatus ?? "none"} vault=${this.vaultId ?? "none"}`,
+					);
+					throw e2;
+				}
 			}
 			// Log every non-2xx with method/status/vault so failures are legible
 			// (a 404 here meaning "token's user doesn't own this vault" is easy
@@ -622,11 +645,24 @@ function parseLimitExceededError(e: unknown): LimitExceededError {
 	const pick = <T>(key: string): T | null => (body[key] !== undefined ? (body[key] as T) : null);
 	return new LimitExceededError(
 		typeof body.reason === "string" ? body.reason : "unknown",
-		pick<string>("upgrade_url"),
+		sanitizeUpgradeUrl(body.upgrade_url),
 		pick<string>("limit_key"),
 		pick<number | boolean>("limit"),
 		pick<number>("current"),
 	);
+}
+
+/** The 402 body's upgrade_url is handed to window.open (Electron external-open
+ *  on desktop), so a malicious self-host backend must not be able to launch
+ *  arbitrary protocol handlers. Only absolute http(s) URLs survive. */
+function sanitizeUpgradeUrl(v: unknown): string | null {
+	if (typeof v !== "string") return null;
+	try {
+		const u = new URL(v);
+		return u.protocol === "http:" || u.protocol === "https:" ? v : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Encode a vault path for use in a URL path segment list. Encodes each
