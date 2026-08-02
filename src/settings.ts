@@ -12,11 +12,17 @@ import { renderSelfHostedTab } from "./tabs/self-hosted-tab";
 import { pickInitialTab } from "./tabs/start-tab";
 import { renderSyncCenterTab } from "./tabs/sync-center-tab";
 import type { TabContext } from "./tabs/types";
+import type { SyncProgress } from "./types";
 
 export class EngramSyncSettingTab extends PluginSettingTab {
 	plugin: EngramSyncPlugin;
 	private activeTab: string;
 	private statusContainerEl: HTMLElement | null = null;
+	/** The wrapper this tab currently has installed in the engine's single
+	 *  onSyncProgress slot, and whatever was in the slot before it. See
+	 *  installProgressBar. */
+	private installedProgressCb: ((progress: SyncProgress) => void) | null = null;
+	private prevProgressCb: ((progress: SyncProgress) => void) | null = null;
 	/** Container the UI was last drawn into. Differs by path: this.containerEl
 	 *  on <1.13 (display()), the render-hatch host on 1.13+. rerender() targets
 	 *  it so redisplay/device-flow re-renders land in the right place. */
@@ -119,7 +125,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		// Per-phase previous denominator, so a fallback (plan-less) row keeps its
 		// total when the engine momentarily reports 0. Cleared on completion.
 		const prevTotals = new Map<string, number>();
-		this.plugin.syncEngine.onSyncProgress = (progress) => {
+		this.installProgressBar((progress) => {
 			if (progress.phase === "complete") {
 				progressContainer.removeClass("is-active");
 				prevTotals.clear();
@@ -156,7 +162,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 					: `${phaseLabel}... ${current}${failedSuffix}`,
 			);
 			progressBarInner.style.width = `${pct}%`;
-		};
+		});
 
 		// ── Tab bar ──
 		const tabs = [
@@ -205,6 +211,37 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 		// Activate the remembered tab (or default to "account")
 		const startTab = tabs.find((t) => t.id === this.activeTab) ? this.activeTab : "account";
 		activateTab(startTab);
+	}
+
+	/** Install `render` into the engine's single onSyncProgress slot by
+	 *  CHAINING, mirroring runSyncWithProgress: capture the previous callback
+	 *  and forward to it. A bare assignment here silently disconnected an open
+	 *  SyncProgressModal whenever settings (re)rendered mid-sync, and the
+	 *  modal's own restore then wiped the settings bar. Re-install replaces the
+	 *  prior wrapper (re-render must not stack), and a wrapper that is no
+	 *  longer current renders nothing but keeps forwarding — it may be held
+	 *  mid-chain by a modal that captured it. */
+	private installProgressBar(render: (progress: SyncProgress) => void): void {
+		this.uninstallProgressBar();
+		this.prevProgressCb = this.plugin.syncEngine.onSyncProgress;
+		const wrapper = (progress: SyncProgress): void => {
+			if (this.installedProgressCb === wrapper) render(progress);
+			this.prevProgressCb?.(progress);
+		};
+		this.installedProgressCb = wrapper;
+		this.plugin.syncEngine.onSyncProgress = wrapper;
+	}
+
+	/** Detach the settings progress bar (hide/re-render). Restores the slot
+	 *  when this wrapper is still at the head; if a modal chained on top, the
+	 *  wrapper stays in its chain but goes inert (see installProgressBar). */
+	private uninstallProgressBar(): void {
+		const wrapper = this.installedProgressCb;
+		if (!wrapper) return;
+		this.installedProgressCb = null;
+		if (this.plugin.syncEngine.onSyncProgress === wrapper) {
+			this.plugin.syncEngine.onSyncProgress = this.prevProgressCb;
+		}
 	}
 
 	/** Open a progress modal and wire it to the sync engine's progress callback. */
@@ -297,6 +334,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 
 	hide(): void {
 		this.plugin.onStatusBarChange = null;
+		this.uninstallProgressBar();
 		this.statusContainerEl = null;
 		this.activeContainerEl = null;
 	}
