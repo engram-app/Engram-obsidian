@@ -1,5 +1,5 @@
 import { type App, Modal, Notice, requestUrl } from "obsidian";
-import { withTimeout } from "./api";
+import { EngramApi, withTimeout } from "./api";
 import { devLog } from "./dev-log";
 import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
@@ -65,8 +65,7 @@ export class DeviceFlowModal extends Modal {
 		verification_url: string;
 		expires_in: number;
 	}> {
-		const baseUrl = this.plugin.settings.apiUrl.replace(/\/+$/, "");
-		const apiUrl = baseUrl.endsWith("/api") ? baseUrl : `${baseUrl}/api`;
+		const apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl);
 		// Trim before sending so we don't ship trailing whitespace from a
 		// corrupted Obsidian config; omit the field entirely when empty so the
 		// backend doesn't store a useless empty hint. (Backend also clamps the
@@ -132,8 +131,7 @@ export class DeviceFlowModal extends Modal {
 	}
 
 	private startPolling(deviceCode: string): void {
-		const base = this.plugin.settings.apiUrl.replace(/\/+$/, "");
-		const apiUrl = base.endsWith("/api") ? base : `${base}/api`;
+		const apiUrl = EngramApi.normalizeBaseUrl(this.plugin.settings.apiUrl);
 		// Wall-clock deadline, not a tick counter: a 15s-timeout request holding
 		// its 5s tick hostage made `elapsed += 5` undercount real time.
 		const startedAt = Date.now();

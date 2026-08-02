@@ -3,6 +3,7 @@ import { MarkdownView as MdView, TFile } from "obsidian";
 import type * as Y from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
+import { isMarkdownPath } from "../../file-kind";
 import { isDestroyedError } from "../destroyed-error";
 import { CONTENT_KEY } from "../frontmatter-codec";
 import type { ProviderRegistry } from "../provider-registry";
@@ -256,7 +257,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 			const view = leaf.view;
 			if (!(view instanceof MdView)) continue;
 			const path = getMarkdownFilePath(view);
-			if (!path?.endsWith(".md")) continue;
+			if (!path || !isMarkdownPath(path)) continue;
 			// If this view was showing a different note (rename / reuse), detach the
 			// stale hooks first so their idempotency guard does not block the rebind.
 			const prev = this.hookPaths.get(view);

@@ -23,6 +23,7 @@ import { Annotation } from "@codemirror/state";
 import { type EditorView, type PluginValue, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 import { editorInfoField } from "obsidian";
 import type * as Y from "yjs";
+import { isMarkdownPath } from "../../file-kind";
 import { rlog } from "../../remote-log";
 import {
 	applyCmChangesToYText,
@@ -73,7 +74,7 @@ let viewSeq = 0;
 function editorPath(editor: EditorView): string | null {
 	const info = editor.state.field(editorInfoField, false);
 	const path = info?.file?.path ?? null;
-	return path?.endsWith(".md") ? path : null;
+	return path && isMarkdownPath(path) ? path : null;
 }
 
 class LiveBindingValue implements PluginValue {

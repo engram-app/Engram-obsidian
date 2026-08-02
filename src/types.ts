@@ -289,7 +289,6 @@ export interface QueueEntry {
 	priority?: number;
 }
 
-
 /** A single search result from Engram's `POST /api/search`.
  *  The grouped/web-card response uses `path` + `snippet`; older/raw-chunk
  *  responses use `source_path` + `text`. The plugin tolerates both. */

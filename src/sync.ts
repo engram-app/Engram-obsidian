@@ -10,8 +10,13 @@ import type { DocKind, ProviderRegistry } from "./crdt/provider-registry";
 import { uuid7 } from "./crdt/uuid7";
 import { encodeUpdateFrame } from "./crdt/wire";
 import { devLog } from "./dev-log";
-import { errMsg } from "./error-util";
+import { errMsg, isHttpStatus } from "./error-util";
 import type { ExplicitFolders } from "./explicit-folders";
+import {
+	isCanvasPath as canvasPath,
+	isCrdtEligiblePath as crdtEligiblePath,
+	docKindFor,
+} from "./file-kind";
 import { IgnoredFiles } from "./ignored-files";
 import {
 	categorizeError,
@@ -209,12 +214,6 @@ export async function reconcileColdStart(
 	// live sync until the user opens it. Enrollment is idempotent (once per
 	// session), so seeding paths pay nothing extra.
 	crdt.enroll?.(file.noteId);
-}
-
-/** Check if an error is an HTTP response with the given status code.
- *  Obsidian's requestUrl() throws objects with a `status` property on non-2xx. */
-function isHttpStatus(e: unknown, status: number): boolean {
-	return typeof e === "object" && e !== null && (e as { status?: number }).status === status;
 }
 
 /** Count distinct parent folders across the given file paths. Files at the
@@ -1451,7 +1450,7 @@ export class SyncEngine {
 		const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 		// Preserve the note's own extension (.md or .canvas) so a canvas drift copy
 		// stays a canvas file, not a stray .md.
-		const ext = normalized.endsWith(".canvas") ? "canvas" : "md";
+		const ext = canvasPath(normalized) ? "canvas" : "md";
 		const base = normalized.replace(/\.(md|canvas)$/, "");
 		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
 		await this.createFileWithFolders(conflictPath, localDisk);
@@ -2016,13 +2015,13 @@ export class SyncEngine {
 	 *  (the manager's docKind picks the per-type schema). Binary/attachment
 	 *  types are NOT eligible and stay on the REST/attachment path. */
 	isCrdtEligible(file: TAbstractFile): boolean {
-		return file instanceof TFile && (file.extension === "md" || file.extension === "canvas");
+		return file instanceof TFile && crdtEligiblePath(file.path);
 	}
 
 	/** Path-string variant of isCrdtEligible for the pull/apply path, which works
 	 *  with normalized paths (from a NoteChange), not TFile handles. */
 	isCrdtEligiblePath(path: string): boolean {
-		return path.endsWith(".md") || path.endsWith(".canvas");
+		return crdtEligiblePath(path);
 	}
 
 	/** True for a canvas note path. Canvas is CRDT but STRUCTURAL: its authoritative
@@ -2030,7 +2029,7 @@ export class SyncEngine {
 	 *  vestigial for canvas), so the pull path must converge it over the Yjs
 	 *  handshake, never by writing the seq-feed `content`. */
 	private isCanvasPath(path: string): boolean {
-		return path.endsWith(".canvas");
+		return canvasPath(path);
 	}
 
 	/** Check if a file should be synced (markdown, canvas, or binary attachment). */
@@ -6478,10 +6477,7 @@ export class SyncEngine {
 				else failed++;
 				continue;
 			}
-			const b64 = this.encodeGenesisFrame(
-				content,
-				file.extension === "canvas" ? "canvas" : "note",
-			);
+			const b64 = this.encodeGenesisFrame(content, docKindFor(file.path));
 			const size = b64.length;
 			// #245: snapshot the path now — TFile.path is live and a mid-request
 			// rename would otherwise desync result matching + the pushing set.

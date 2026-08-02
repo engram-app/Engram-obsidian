@@ -37,6 +37,7 @@ import { type CrdtOp, CrdtOpQueue } from "./crdt-op-queue";
 import { createDebugApi, installDebugApi, uninstallDebugApi } from "./debug-api";
 import { destroyDevLog, devLog, initDevLog } from "./dev-log";
 import { type FeatureFlags, resolveFlags } from "./feature-flags";
+import { isMarkdownPath } from "./file-kind";
 import { setLogSink } from "./has-logging";
 import { SyncRecorder } from "./sync-recorder";
 import { PromiseTracker, setActiveTracker } from "./track-promise";
@@ -44,6 +45,7 @@ import { PromiseTracker, setActiveTracker } from "./track-promise";
 /** Replaced by esbuild at build time (see esbuild.config.mjs `define`). */
 declare const DEV_MODE: boolean;
 
+import { sha256Hex } from "./content-hash";
 import { registerDiagnostics } from "./diagnostics";
 import { EmailCaptureModal } from "./email-capture-modal";
 import { errMsg } from "./error-util";
@@ -88,13 +90,7 @@ async function generateClientId(app: import("obsidian").App): Promise<string> {
 	const adapter = app.vault.adapter;
 	const basePath = adapter instanceof FileSystemAdapter ? adapter.getBasePath() : undefined;
 	const input = basePath || app.vault.getName();
-	const encoder = new TextEncoder();
-	const data = encoder.encode(input);
-	const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-	const hashArray = new Uint8Array(hashBuffer);
-	return Array.from(hashArray)
-		.map((b) => b.toString(16).padStart(2, "0"))
-		.join("");
+	return sha256Hex(input);
 }
 
 interface PluginData {
@@ -659,7 +655,7 @@ export default class EngramSyncPlugin extends Plugin {
 			this.app.workspace.on("active-leaf-change", () => {
 				if (this.syncEngine.isSyncBlocked()) return;
 				const file = this.app.workspace.getActiveFile();
-				if (file instanceof TFile && file.extension === "md") {
+				if (file instanceof TFile && isMarkdownPath(file.path)) {
 					// Resolve-or-mint: opening a brand-new never-synced note has no
 					// note_id yet, and enroll (Task 6) is keyed by id, not path.
 					// Minting here (same NoteIdMap instance pushFile mints into)
@@ -1503,7 +1499,7 @@ export default class EngramSyncPlugin extends Plugin {
 	 */
 	private handleFileOpen(file: TFile | null): void {
 		this.crdtLiveViews?.refresh();
-		if (file?.path.endsWith(".md")) {
+		if (file && isMarkdownPath(file.path)) {
 			void this.syncEngine.healNoteOnOpen(file.path);
 		}
 	}
@@ -1511,8 +1507,7 @@ export default class EngramSyncPlugin extends Plugin {
 	private createAuthProvider(): AuthProvider | null {
 		if (this.settings.refreshToken) {
 			const refreshFn: RefreshFn = async (token) => {
-				const base = this.settings.apiUrl.replace(/\/+$/, "");
-				const apiUrl = base.endsWith("/api") ? base : `${base}/api`;
+				const apiUrl = EngramApi.normalizeBaseUrl(this.settings.apiUrl);
 				// Bounded: getToken() serializes EVERY api call behind this refresh,
 				// so a wedged half-open refresh silences the whole plugin (no HTTP
 				// at all — the test_57 300s fullSync stall signature). A timeout

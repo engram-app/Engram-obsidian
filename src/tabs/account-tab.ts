@@ -1,5 +1,5 @@
 import { Notice, Setting } from "obsidian";
-import { applyApiUrlChange, cloudTabAction } from "../auth-state";
+import { applyApiUrlChange, cloudTabAction, pluginSwitchTarget } from "../auth-state";
 import { renderAuthSection, renderVaultSection } from "./self-hosted-tab";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL, ENGRAM_MARKETING_URL } from "./urls";
@@ -27,17 +27,8 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 					.setButtonText("Switch to Engram cloud")
 					.setWarning()
 					.onClick(async () => {
-						await applyApiUrlChange(
-							{
-								settings: plugin.settings,
-								api: plugin.api,
-								noteStream: plugin.noteStream,
-								resetAuthProvider: () => {
-									plugin.authProvider = null;
-								},
-							},
-							ENGRAM_CLOUD_URL,
-							() => plugin.saveSettings(),
+						await applyApiUrlChange(pluginSwitchTarget(plugin), ENGRAM_CLOUD_URL, () =>
+							plugin.saveSettings(),
 						);
 						new Notice("Switched to Engram cloud — sign in to continue.");
 						redisplay();
@@ -47,17 +38,8 @@ export async function renderAccountTab(ctx: TabContext): Promise<void> {
 	}
 
 	if (action === "auto-switch") {
-		await applyApiUrlChange(
-			{
-				settings: plugin.settings,
-				api: plugin.api,
-				noteStream: plugin.noteStream,
-				resetAuthProvider: () => {
-					plugin.authProvider = null;
-				},
-			},
-			ENGRAM_CLOUD_URL,
-			() => plugin.saveSettings(),
+		await applyApiUrlChange(pluginSwitchTarget(plugin), ENGRAM_CLOUD_URL, () =>
+			plugin.saveSettings(),
 		);
 	}
 

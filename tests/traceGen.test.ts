@@ -10,6 +10,4 @@ describe("traceGen", () => {
 	test("two contexts have distinct ids", () => {
 		expect(newTraceContext().traceId).not.toBe(newTraceContext().traceId);
 	});
-
-
 });

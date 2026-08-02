@@ -1,7 +1,10 @@
 import { type App, Modal } from "obsidian";
 import type { SyncLog } from "./sync-log";
+import type { SyncLogEntry } from "./types";
 
-const ACTION_ICONS: Record<string, string> = {
+/** Per-action glyphs, shared with the Sync Center activity feed so the two
+ *  log surfaces render the same entry identically. */
+export const ACTION_ICONS: Record<SyncLogEntry["action"], string> = {
 	push: "↑",
 	pull: "↓",
 	delete: "✕",

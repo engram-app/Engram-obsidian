@@ -1,3 +1,4 @@
+import { expBackoff } from "./backoff";
 /**
  * CRDT outbound op queue: a durable, bounded, in-memory hold-and-retry buffer
  * for CRDT socket ops (create / delete / msg).
@@ -222,8 +223,7 @@ export class CrdtOpQueue {
 
 	private backoffFor(attempts: number): number {
 		// attempts = number of failures so far (>=1): base, base*2, base*4, ...
-		const delay = this.opts.baseBackoffMs * 2 ** (attempts - 1);
-		return Math.min(delay, this.opts.maxBackoffMs);
+		return expBackoff(this.opts.baseBackoffMs, attempts - 1, this.opts.maxBackoffMs);
 	}
 
 	private async flush(): Promise<void> {

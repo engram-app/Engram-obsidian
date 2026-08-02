@@ -64,5 +64,4 @@ describe("SyncLog", () => {
 		expect(a).not.toBe(b);
 		expect(a).toEqual(b);
 	});
-
 });

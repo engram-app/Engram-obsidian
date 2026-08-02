@@ -1,3 +1,5 @@
+import { expBackoff } from "./backoff";
+import { statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import type { ParseReason, SyncIssue, SyncIssueCategory } from "./types";
 
@@ -129,10 +131,7 @@ export function categorizeError(err: unknown): CategorizedError {
 			upgradeUrl: err.upgradeUrl ?? undefined,
 		};
 	}
-	const status =
-		typeof err === "object" && err !== null
-			? ((err as { status?: number }).status ?? undefined)
-			: undefined;
+	const status = typeof err === "object" && err !== null ? statusOf(err) : undefined;
 	// Prefer the backend's structured error message (e.g. "failed to upload to
 	// storage backend") over the bare "Request failed, status N" — the server
 	// message is what makes a failure actionable in the Sync Center / a Notice.
@@ -315,7 +314,7 @@ const HEALTH_CHECK_MAX_MS = 60_000;
 /** Exponential backoff for the offline health-check probe: 5s, 10s, 20s, …
  *  capped at 60s. `failures` is the count of consecutive failed probes. */
 export function healthCheckDelay(failures: number): number {
-	return Math.min(HEALTH_CHECK_BASE_MS * 2 ** failures, HEALTH_CHECK_MAX_MS);
+	return expBackoff(HEALTH_CHECK_BASE_MS, failures, HEALTH_CHECK_MAX_MS);
 }
 
 function isPersistedIssue(value: unknown): value is SyncIssue {

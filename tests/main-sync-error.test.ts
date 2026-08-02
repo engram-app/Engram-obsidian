@@ -56,6 +56,8 @@ describe("handleSyncError", () => {
 	});
 
 	test("never throws (it IS the error boundary)", () => {
-		expect(() => plugin().handleSyncError("Manual sync", undefined, { notice: true })).not.toThrow();
+		expect(() =>
+			plugin().handleSyncError("Manual sync", undefined, { notice: true }),
+		).not.toThrow();
 	});
 });

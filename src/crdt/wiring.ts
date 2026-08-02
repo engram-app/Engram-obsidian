@@ -1,4 +1,5 @@
 import { errMsg } from "../error-util";
+import { docKindFor } from "../file-kind";
 import { rlog } from "../remote-log";
 import type { SyncEngine } from "../sync";
 import type { SyncRecorder } from "../sync-recorder";
@@ -374,7 +375,7 @@ export function createCrdtWiring(deps: CrdtWiringDeps): CrdtWiring {
 			}
 			void syncEngine.materializeEmptyDiscovered(path, noteId);
 		},
-		docKind: (noteId) => (noteIdMap.pathForId(noteId)?.endsWith(".canvas") ? "canvas" : "note"),
+		docKind: (noteId) => docKindFor(noteIdMap.pathForId(noteId) ?? ""),
 	});
 
 	// The one engine plays all three old roles.

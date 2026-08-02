@@ -841,9 +841,12 @@ describe("disconnect during in-flight open", () => {
 	test("disconnect() while the open awaits the token aborts the open (no zombie socket)", async () => {
 		let release: (v: string) => void = () => {};
 		const provider: AuthProvider = {
-			getToken: mock(() => new Promise<string>((res) => {
-				release = res;
-			})),
+			getToken: mock(
+				() =>
+					new Promise<string>((res) => {
+						release = res;
+					}),
+			),
 			getVaultId: mock(() => "7"),
 			isAuthenticated: mock(() => true),
 			signOut: mock(() => {}),

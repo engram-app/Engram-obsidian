@@ -50,7 +50,7 @@ export const RATE_LIMITED_JOIN_FLOOR_MS = 10_000;
  *  (getMe() preflight exhausted → no reconnect until plugin reload), while
  *  REST recovered on its own. */
 export function connectRetryDelayMs(attempt: number, baseMs = 2000): number {
-	return Math.min(baseMs * 2 ** attempt, RECONNECT_JITTER_MAX_MS);
+	return expBackoff(baseMs, attempt, RECONNECT_JITTER_MAX_MS);
 }
 
 export function clampReconnectJitter(raw: unknown): number | null {
@@ -89,6 +89,7 @@ export function topicUserIdIsStale(
  *  plenty of runway to catch a growing note/attachment before it gets close. */
 const LARGE_FRAME_WARN_BYTES = 1_000_000;
 
+import { expBackoff } from "./backoff";
 /**
  * Phoenix Channel client for Engram real-time sync.
  *
@@ -120,6 +121,13 @@ export function makeCrdtCatchupSender(
 		}
 		return channel.crdtCatchupSince(cursorSeq, limit, cursorId);
 	};
+}
+
+/** The WS origin for an API base: trailing slashes and the `/api` suffix
+ *  stripped (the socket lives at `<origin>/socket/websocket`, not under /api).
+ *  Distinct from EngramApi.normalizeBaseUrl, which APPENDS /api. */
+function wsOrigin(baseUrl: string): string {
+	return baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
 }
 
 export class NoteChannel {
@@ -269,7 +277,7 @@ export class NoteChannel {
 		vaultId: string | null = null,
 		deviceId: string | null = null,
 	) {
-		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+		this.baseUrl = wsOrigin(baseUrl);
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;
@@ -313,7 +321,7 @@ export class NoteChannel {
 		vaultId: string | null = null,
 		deviceId: string | null = this.deviceId,
 	): void {
-		this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, "");
+		this.baseUrl = wsOrigin(baseUrl);
 		this.apiKey = apiKey;
 		this.userId = userId;
 		this.vaultId = vaultId;

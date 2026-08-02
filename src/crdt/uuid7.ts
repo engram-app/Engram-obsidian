@@ -11,14 +11,15 @@
  * pure randomness (no monotonic counter), which is fine for a client_id nonce.
  * Swap for a battle-tested lib if strict per-ms monotonic ordering ever matters.
  */
+import { bytesToHex } from "../content-hash";
+
 export function uuid7(): string {
 	const tsHex = Date.now().toString(16).padStart(12, "0").slice(-12);
 	const rand = new Uint8Array(10);
 	crypto.getRandomValues(rand);
 	rand[0] = ((rand[0] ?? 0) & 0x0f) | 0x70; // version 7 nibble
 	rand[2] = ((rand[2] ?? 0) & 0x3f) | 0x80; // variant 10xx
-	const hex = (arr: Uint8Array) =>
-		Array.from(arr, (b) => b.toString(16).padStart(2, "0")).join("");
+	const hex = bytesToHex;
 	return [
 		tsHex.slice(0, 8),
 		tsHex.slice(8, 12),

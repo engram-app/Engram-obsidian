@@ -2,10 +2,12 @@
 // in Obsidian's Electron renderer. Clients own the trace id; the backend
 // generates each beacon span's own id, so we only ever mint a root here.
 
+import { bytesToHex } from "../content-hash";
+
 function hex(bytes: number): string {
 	const buf = new Uint8Array(bytes);
 	crypto.getRandomValues(buf);
-	return Array.from(buf, (b) => b.toString(16).padStart(2, "0")).join("");
+	return bytesToHex(buf);
 }
 
 export function newTraceContext(): { traceparent: string; traceId: string; spanId: string } {

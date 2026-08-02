@@ -76,7 +76,6 @@ export class BaseStore {
 		}
 	}
 
-	
 	async save(): Promise<void> {
 		const obj: Record<string, BaseEntry> = Object.fromEntries(this.entries);
 		await this.adapter.write(this.storagePath, JSON.stringify(obj));

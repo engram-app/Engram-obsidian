@@ -1,6 +1,6 @@
 import { type App, Modal } from "obsidian";
+import { optionBreakdown, pluralWord } from "./sync-plan-format";
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
-import { optionBreakdown } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncProgress } from "./types";
 
 /** Plain-language intro shown the instant the progress modal opens, before the
@@ -18,7 +18,7 @@ export function describePlannedWork(
 	if (b.pullCount > 0) parts.push(`downloading ${b.pullCount}`);
 	if (b.deleteLocalCount > 0) {
 		parts.push(
-			`deleting ${b.deleteLocalCount} local ${b.deleteLocalCount === 1 ? "file" : "files"}`,
+			`deleting ${b.deleteLocalCount} local ${pluralWord(b.deleteLocalCount, "file")}`,
 		);
 	}
 	if (b.deleteRemoteCount > 0) {
@@ -81,7 +81,7 @@ export function renderCompletionSummary(
 
 	if (summary.skipped > 0) {
 		const note = parent.createDiv({ cls: "engram-progress-plan-note" });
-		const noun = summary.skipped === 1 ? "attachment" : "attachments";
+		const noun = pluralWord(summary.skipped, "attachment");
 		note.createSpan({
 			text: `${summary.skipped} ${noun} need a paid plan to sync. See Sync Center. `,
 		});
@@ -486,7 +486,7 @@ export class SyncProgressModal extends Modal {
 
 /** Labels for a phase the engine reports that the plan did not predict (rare;
  *  keeps an unexpected phase from rendering its raw key). */
-const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
+export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting",
 	pushing: "Uploading",
 	pulling: "Downloading",

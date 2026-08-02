@@ -1,6 +1,11 @@
 import { Notice, Setting, setIcon } from "obsidian";
 import { EngramApi } from "../api";
-import { applyApiUrlChange, completeOrigin, type PreflightResult } from "../auth-state";
+import {
+	applyApiUrlChange,
+	completeOrigin,
+	type PreflightResult,
+	pluginSwitchTarget,
+} from "../auth-state";
 import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL } from "./urls";
@@ -119,14 +124,7 @@ export function renderEngramUrlSetting(ctx: TabContext): void {
 				.setCta()
 				.onClick(async () => {
 					const cleared = await applyApiUrlChange(
-						{
-							settings: plugin.settings,
-							api: plugin.api,
-							noteStream: plugin.noteStream,
-							resetAuthProvider: () => {
-								plugin.authProvider = null;
-							},
-						},
+						pluginSwitchTarget(plugin),
 						pendingUrl.trim(),
 						() => plugin.saveSettings(),
 					);

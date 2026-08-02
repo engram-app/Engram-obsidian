@@ -143,6 +143,24 @@ export function cloudTabAction(
  *  live note stream — then persist via `save`.
  *  Returns true when auth was cleared. Mutates `target.settings` in place so
  *  external references (SyncEngine, etc.) keep observing the same object. */
+/** The ApiUrlSwitchTarget for the live plugin instance. One construction site
+ *  — this literal was copy-pasted at three settings-tab call sites. */
+export function pluginSwitchTarget(plugin: {
+	settings: ApiUrlSwitchTarget["settings"];
+	api: ApiUrlSwitchTarget["api"];
+	noteStream: ApiUrlSwitchTarget["noteStream"];
+	authProvider: unknown;
+}): ApiUrlSwitchTarget {
+	return {
+		settings: plugin.settings,
+		api: plugin.api,
+		noteStream: plugin.noteStream,
+		resetAuthProvider: () => {
+			plugin.authProvider = null;
+		},
+	};
+}
+
 export async function applyApiUrlChange(
 	target: ApiUrlSwitchTarget,
 	newUrl: string,

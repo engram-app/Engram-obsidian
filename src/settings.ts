@@ -5,7 +5,7 @@ import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
 import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
-import { settingsBarCounts } from "./sync-progress-modal";
+import { PHASE_FALLBACK_LABEL, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
 import { renderAccountTab } from "./tabs/account-tab";
 import { renderAdvancedTab } from "./tabs/advanced-tab";
@@ -146,14 +146,7 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 				prevTotals.get(progress.phase) ?? 0,
 			);
 			prevTotals.set(progress.phase, total);
-			const phaseLabel =
-				progress.phase === "deleting"
-					? "Deleting local files"
-					: progress.phase === "pushing"
-						? "Pushing notes"
-						: progress.phase === "pulling"
-							? "Pulling notes"
-							: "Syncing attachments";
+			const phaseLabel = PHASE_FALLBACK_LABEL[progress.phase] ?? progress.phase;
 			const failedSuffix = progress.failed > 0 ? ` (${progress.failed} failed)` : "";
 			// total 0 = indeterminate (unknown-length incremental pull): show the
 			// running count as activity, no misleading "N / 0".

@@ -6,10 +6,11 @@
 import { type RequestUrlResponse, requestUrl } from "obsidian";
 import type { AuthProvider } from "./auth";
 import { interpretHealthProbe, type PreflightResult } from "./auth-state";
+import { isHttpStatus, statusOf } from "./error-util";
 import { LimitExceededError } from "./limit-error";
 import { BeaconBuffer } from "./observability/beacon";
 import { newTraceContext } from "./observability/traceGen";
-import { rlog } from "./remote-log";
+import { type RemoteLogEntry, rlog } from "./remote-log";
 import type {
 	AttachmentDetail,
 	AttachmentResponse,
@@ -154,8 +155,11 @@ export class EngramApi {
 		return token;
 	}
 
-	/** Strip trailing slashes and append /api if not already present. */
-	private static normalizeBaseUrl(url: string): string {
+	/** Strip trailing slashes and append /api if not already present. Public:
+	 *  the single normalizer for every surface that builds an API base
+	 *  (device flow, OAuth token refresh, channel WS URL) — 4 copies of this
+	 *  logic once lived inline at those sites. */
+	static normalizeBaseUrl(url: string): string {
 		const base = url.replace(/\/+$/, "");
 		return base.endsWith("/api") ? base : `${base}/api`;
 	}
@@ -201,7 +205,7 @@ export class EngramApi {
 		try {
 			return await this.sendRequest(method, path, body, extraHeaders);
 		} catch (e) {
-			const status = (e as { status?: number }).status;
+			const status = statusOf(e);
 			// 402 = tier limit exceeded. Convert to a typed error carrying the
 			// structured body (reason / limit_key / limit / current / upgrade_url)
 			// so callers can route on reason (toast handler, Sync Center) without
@@ -223,7 +227,7 @@ export class EngramApi {
 				try {
 					return await this.sendRequest(method, path, body, extraHeaders);
 				} catch (e2) {
-					const retryStatus = (e2 as { status?: number }).status;
+					const retryStatus = statusOf(e2);
 					if (retryStatus === 402) {
 						throw parseLimitExceededError(e2);
 					}
@@ -450,7 +454,7 @@ export class EngramApi {
 			await this.request("GET", "/folders");
 			return { ok: true };
 		} catch (e: unknown) {
-			const status = (e as { status?: number }).status;
+			const status = statusOf(e);
 			if (status === 401 || status === 403) {
 				return { ok: false, error: "Invalid API key" };
 			}
@@ -491,7 +495,7 @@ export class EngramApi {
 			const resp = await this.request("POST", "/notes", body);
 			return resp.json as NoteResponse;
 		} catch (e) {
-			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 409) {
+			if (isHttpStatus(e, 409)) {
 				const err = e as { json?: VersionConflictResponse; text?: string };
 				if (err.json) return err.json;
 				if (err.text) {
@@ -578,25 +582,17 @@ export class EngramApi {
 			const resp = await this.request("GET", `/sync/manifest${qs}`);
 			return resp.json as ManifestResponse;
 		} catch (e) {
-			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 404) {
+			if (isHttpStatus(e, 404)) {
 				return null;
 			}
 			throw e;
 		}
 	}
 
-	/** Push batched log entries to the server for remote debugging. */
-	async pushLogs(
-		entries: {
-			ts: string;
-			level: string;
-			category: string;
-			message: string;
-			stack?: string;
-			plugin_version: string;
-			platform: string;
-		}[],
-	): Promise<void> {
+	/** Push batched log entries to the server for remote debugging. Typed as
+	 *  the real wire shape — an inline copy of it here had already drifted
+	 *  (missing conn_id/device_id/vault_id/seq that ARE sent). */
+	async pushLogs(entries: RemoteLogEntry[]): Promise<void> {
 		await this.request("POST", "/logs", { logs: entries });
 	}
 

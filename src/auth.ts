@@ -1,3 +1,4 @@
+import { errMsg, statusOf } from "./error-util";
 import { rlog } from "./remote-log";
 /**
  * Auth providers for Engram plugin — abstracts API key vs OAuth token management.
@@ -183,11 +184,11 @@ export class OAuthAuth implements AuthProvider {
 			this.authenticated = false;
 			this.accessToken = null;
 			this.expiresAt = 0;
-			const status = (err as { status?: number })?.status;
+			const status = statusOf(err);
 			const definitive = status === 400 || status === 401 || status === 403 || status === 404;
 			rlog().error(
 				"auth",
-				`OAuth refresh failed (status=${status ?? "n/a"} definitive=${definitive}): ${err instanceof Error ? err.message : String(err)}`,
+				`OAuth refresh failed (status=${status ?? "n/a"} definitive=${definitive}): ${errMsg(err)}`,
 				err instanceof Error ? err.stack : undefined,
 			);
 			if (definitive && !this.authInvalidatedFired) {

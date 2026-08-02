@@ -1,4 +1,5 @@
 import { type App, Modal, setIcon } from "obsidian";
+import { statusOf } from "./error-util";
 import { toastFor } from "./limit-copy";
 import { LimitExceededError } from "./limit-error";
 import { isTextAttachment } from "./mime";
@@ -9,6 +10,7 @@ import {
 	isPlanEmpty,
 	type OptionBreakdown,
 	optionBreakdown,
+	pluralWord,
 } from "./sync-plan-format";
 import type { SyncChoice, SyncPlan, SyncPreviewContext, VaultInfo } from "./types";
 
@@ -148,7 +150,7 @@ export class SyncPreviewState {
  *  for testing. */
 export function describeCreateVaultError(e: unknown): string {
 	if (e instanceof LimitExceededError) return toastFor(e.reason);
-	const status = (e as { status?: number })?.status;
+	const status = statusOf(e);
 	if (status === 422) return "Couldn't create vault — the name may be invalid or already in use.";
 	return "Could not create the vault — check your connection and try again.";
 }
@@ -173,7 +175,7 @@ export function countSkippedAttachments(plan: SyncPlan, attachmentsTextOnly: boo
  *  there is nothing to say (n === 0). Pure for testing. */
 export function skippedAttachmentsLine(n: number): string | null {
 	if (n <= 0) return null;
-	const noun = n === 1 ? "attachment" : "attachments";
+	const noun = pluralWord(n, "attachment");
 	return `Free syncs notes only — ${n} ${noun} will be skipped.`;
 }
 
@@ -205,7 +207,7 @@ export function mergeHelperText(b: OptionBreakdown, context: SyncPreviewContext)
  *  net extras — otherwise a destructive button could show no deletion at all
  *  when the two sides already overlap. Pure for testing. */
 export function confirmActions(choice: SyncChoice, plan: SyncPlan): string[] {
-	const files = (n: number) => (n === 1 ? "file" : "files");
+	const files = (n: number) => pluralWord(n, "file");
 	const lines: string[] = [];
 	if (choice === "push-all-delete-remote") {
 		const del = plan.serverNoteCount + plan.serverAttachmentCount;
@@ -573,7 +575,7 @@ export class SyncPreviewModal extends Modal {
 			});
 			conflictRow.createSpan({
 				cls: "engram-sync-preview-conflicts-label",
-				text: ` conflict${conflicts === 1 ? "" : "s"} need resolution`,
+				text: ` ${pluralWord(conflicts, "conflict")} need resolution`,
 			});
 		}
 	}

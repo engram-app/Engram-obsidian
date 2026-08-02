@@ -8,10 +8,11 @@ import { Notice, normalizePath, Setting } from "obsidian";
 import { type IssueDisposition, issueDisposition, remediation } from "./issue-store";
 import type EngramSyncPlugin from "./main";
 import type { QueuedReason } from "./offline-queue";
+import { ACTION_ICONS } from "./sync-log-modal";
+import { plural } from "./sync-plan-format";
 import { SyncPreviewModal } from "./sync-preview-modal";
-import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
-
 import { DEFAULT_UPGRADE_URL } from "./tabs/urls";
+import type { SyncIssue, SyncIssueCategory, SyncLogEntry } from "./types";
 
 /** Build an Obsidian Setting heading inside `parent` so the section title
  *  matches the visual style of the Cloud / Self-hosted / Advanced tabs. */
@@ -386,7 +387,7 @@ function renderFileRow(
 	const parts: string[] = [];
 	if (issue.sizeBytes !== undefined) parts.push(formatBytes(issue.sizeBytes));
 	if (issue.status !== undefined) parts.push(`HTTP ${issue.status}`);
-	parts.push(`${issue.attempts} attempt${issue.attempts === 1 ? "" : "s"}`);
+	parts.push(plural(issue.attempts, "attempt"));
 	parts.push(formatRelative(issue.lastFailedAt));
 	meta.setText(parts.join(" · "));
 
@@ -487,15 +488,6 @@ async function restoreFile(
 
 const ACTIVITY_LIMIT = 50;
 
-const ACTION_ICON: Record<SyncLogEntry["action"], string> = {
-	push: "↑",
-	pull: "↓",
-	delete: "✕",
-	conflict: "⚡",
-	skip: "·",
-	error: "!",
-};
-
 const RESULT_CLASS: Record<SyncLogEntry["result"], string> = {
 	ok: "is-ok",
 	error: "is-error",
@@ -537,7 +529,7 @@ function renderActivityRow(parent: HTMLElement, entry: SyncLogEntry): void {
 	});
 	row.createSpan({
 		cls: "engram-sync-center-activity-icon",
-		text: ACTION_ICON[entry.action] ?? "?",
+		text: ACTION_ICONS[entry.action] ?? "?",
 	});
 	row.createSpan({ cls: "engram-sync-center-activity-action", text: entry.action });
 	row.createSpan({ cls: "engram-sync-center-activity-path", text: entry.path });

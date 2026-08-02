@@ -151,5 +151,4 @@ describe("BaseStore", () => {
 			expect(store.get("anything")).toBeUndefined();
 		});
 	});
-
 });
