@@ -404,7 +404,11 @@ export class EngramApi {
 	/** Get the current authenticated user (id + email). Used to determine channel topic. */
 	async getMe(): Promise<{ id: string; email: string }> {
 		const resp = await this.request("GET", "/me");
-		return (resp.json as { user: { id: string; email: string } }).user;
+		const user = (resp.json as { user?: { id: string; email: string } }).user;
+		// A shape mismatch (proxy error page, wrong server) must be a legible
+		// error, not an opaque TypeError on a nested dereference.
+		if (!user) throw new Error("Malformed /me response: missing user");
+		return user;
 	}
 
 	/** Register this vault with the backend. Returns existing vault if client_id matches.
@@ -423,7 +427,9 @@ export class EngramApi {
 	 *  on validation errors. */
 	async createVault(name: string): Promise<VaultInfo> {
 		const resp = await this.request("POST", "/vaults", { name });
-		return (resp.json as { vault: VaultInfo }).vault;
+		const vault = (resp.json as { vault?: VaultInfo }).vault;
+		if (!vault) throw new Error("Malformed /vaults response: missing vault");
+		return vault;
 	}
 
 	/** Fetch all vaults accessible by the current user. Throws the underlying
@@ -431,7 +437,11 @@ export class EngramApi {
 	 *  401/timeout/5xx distinctly from "successful empty list". */
 	async listVaults(): Promise<VaultInfo[]> {
 		const resp = await this.request("GET", "/vaults");
-		return (resp.json as { vaults: VaultInfo[] }).vaults;
+		const vaults = (resp.json as { vaults?: VaultInfo[] }).vaults;
+		// NOT `?? []`: a malformed 200 must stay distinct from a genuine empty
+		// list (see the doc comment above).
+		if (!Array.isArray(vaults)) throw new Error("Malformed /vaults response: missing vaults");
+		return vaults;
 	}
 
 	/** Authenticated ping — verifies both connectivity and API key. */
@@ -484,7 +494,16 @@ export class EngramApi {
 			if (typeof e === "object" && e !== null && (e as { status?: number }).status === 409) {
 				const err = e as { json?: VersionConflictResponse; text?: string };
 				if (err.json) return err.json;
-				if (err.text) return JSON.parse(err.text) as VersionConflictResponse;
+				if (err.text) {
+					// A mangled 409 body (proxy error page, truncation) must stay a
+					// classifiable conflict, not become a bare SyntaxError with no
+					// .status that callers misread as connection loss.
+					try {
+						return JSON.parse(err.text) as VersionConflictResponse;
+					} catch {
+						throw e;
+					}
+				}
 			}
 			throw e;
 		}
@@ -673,14 +692,17 @@ function encodePath(path: string): string {
 	return path.split("/").map(encodeURIComponent).join("/");
 }
 
-/** Convert an ArrayBuffer to a base64 string. */
+/** Convert an ArrayBuffer to a base64 string. Chunked fromCharCode instead of
+ *  per-byte string concatenation: attachments run to multi-MB on the main
+ *  thread (mobile included), where the O(n) rope-churn loop was measurable.
+ *  32k chunks stay safely under engine argument-count limits. */
 export function arrayBufferToBase64(buffer: ArrayBuffer): string {
 	const bytes = new Uint8Array(buffer);
-	let binary = "";
-	for (let i = 0; i < bytes.byteLength; i++) {
-		binary += String.fromCharCode(bytes[i]!);
+	const parts: string[] = [];
+	for (let i = 0; i < bytes.length; i += 0x8000) {
+		parts.push(String.fromCharCode(...bytes.subarray(i, i + 0x8000)));
 	}
-	return btoa(binary);
+	return btoa(parts.join(""));
 }
 
 /** Convert a base64 string to an ArrayBuffer. */

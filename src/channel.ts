@@ -480,11 +480,9 @@ export class NoteChannel {
 		}
 		// Reject any in-flight sendRequest calls so callers don't hang forever
 		// waiting for a reply that a dead socket will never deliver.
-		for (const [, p] of this.pendingReplies) {
-			window.clearTimeout(p.timer);
-			p.reject(new Error("channel disconnected"));
-		}
-		this.pendingReplies.clear();
+		this.rejectPendingReplies("channel disconnected");
+		// Per-doc warn throttle state belongs to the session that just ended.
+		this.lastRefusedWarnAt.clear();
 		// Always reset crdtJoined on intentional disconnect regardless of whether
 		// the sync topic was also joined (setConnected only resets it on transition).
 		this.crdtJoined = false;
@@ -558,6 +556,16 @@ export class NoteChannel {
 	/** Bumped by disconnect(). An openSocketInner that suspended on an await
 	 *  before the bump must abandon the open when it resumes (see disconnect). */
 	private connectEpoch = 0;
+
+	/** Reject + clear every in-flight sendRequest reply slot. Shared by
+	 *  disconnect() and the socket onclose handler. */
+	private rejectPendingReplies(reason: string): void {
+		for (const [, p] of this.pendingReplies) {
+			window.clearTimeout(p.timer);
+			p.reject(new Error(reason));
+		}
+		this.pendingReplies.clear();
+	}
 
 	private async openSocket(): Promise<void> {
 		// Single-flight: if a socket already exists (an external connect() won
@@ -703,12 +711,20 @@ export class NoteChannel {
 		};
 
 		this.ws.onerror = (e) => {
-			rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
+			// A DOM ErrorEvent stringifies to {}; log the fields that carry signal.
+			rlog().error(
+				"channel",
+				`WebSocket error: type=${e?.type ?? "unknown"} readyState=${this.ws?.readyState ?? "none"}`,
+			);
 		};
 
 		this.ws.onclose = (evt?: CloseEvent) => {
 			this.clearTimers();
 			this.ws = null;
+			// The socket these replies were riding is gone; without this, callers
+			// hang for the full per-request timeout on a provably dead connection
+			// (disconnect() already rejects — an unclean close must too).
+			this.rejectPendingReplies("socket closed");
 			// crdtJoined must not survive the socket: if the crdt: ack landed but
 			// the sync-topic ack never did, `connected` is still false and
 			// setConnected(false) is a transition-gated no-op — leaving a stale

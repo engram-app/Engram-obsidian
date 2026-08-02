@@ -1218,7 +1218,9 @@ var EngramApi = class _EngramApi {
   }
   /** Get the current authenticated user (id + email). Used to determine channel topic. */
   async getMe() {
-    return (await this.request("GET", "/me")).json.user;
+    let user = (await this.request("GET", "/me")).json.user;
+    if (!user) throw new Error("Malformed /me response: missing user");
+    return user;
   }
   /** Register this vault with the backend. Returns existing vault if client_id matches.
    *  Throws with status 402 if user has reached their vault limit (free tier). */
@@ -1233,13 +1235,17 @@ var EngramApi = class _EngramApi {
    *  Throws with status 402 if the user has reached their vault limit, or 422
    *  on validation errors. */
   async createVault(name) {
-    return (await this.request("POST", "/vaults", { name })).json.vault;
+    let vault = (await this.request("POST", "/vaults", { name })).json.vault;
+    if (!vault) throw new Error("Malformed /vaults response: missing vault");
+    return vault;
   }
   /** Fetch all vaults accessible by the current user. Throws the underlying
    *  request error (with `.status` for HTTP responses) so callers can render
    *  401/timeout/5xx distinctly from "successful empty list". */
   async listVaults() {
-    return (await this.request("GET", "/vaults")).json.vaults;
+    let vaults = (await this.request("GET", "/vaults")).json.vaults;
+    if (!Array.isArray(vaults)) throw new Error("Malformed /vaults response: missing vaults");
+    return vaults;
   }
   /** Authenticated ping — verifies both connectivity and API key. */
   async ping() {
@@ -1267,7 +1273,12 @@ var EngramApi = class _EngramApi {
       if (typeof e == "object" && e !== null && e.status === 409) {
         let err = e;
         if (err.json) return err.json;
-        if (err.text) return JSON.parse(err.text);
+        if (err.text)
+          try {
+            return JSON.parse(err.text);
+          } catch (e2) {
+            throw e;
+          }
       }
       throw e;
     }
@@ -1381,10 +1392,10 @@ function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
 }
 function arrayBufferToBase64(buffer) {
-  let bytes = new Uint8Array(buffer), binary2 = "";
-  for (let i = 0; i < bytes.byteLength; i++)
-    binary2 += String.fromCharCode(bytes[i]);
-  return btoa(binary2);
+  let bytes = new Uint8Array(buffer), parts = [];
+  for (let i = 0; i < bytes.length; i += 32768)
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + 32768)));
+  return btoa(parts.join(""));
 }
 function base64ToArrayBuffer(base64) {
   let binary2 = atob(base64), bytes = new Uint8Array(binary2.length);
@@ -1830,10 +1841,7 @@ var _NoteChannel = class _NoteChannel {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.connectEpoch++, this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
-    for (let [, p] of this.pendingReplies)
-      window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
-    this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
+    this.connectEpoch++, this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null), this.rejectPendingReplies("channel disconnected"), this.lastRefusedWarnAt.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
   }
   /** Call when the app returns to the foreground (mobile resume). Mobile OSes
    *  suspend the socket while backgrounded; readyState can still report OPEN on a
@@ -1870,6 +1878,13 @@ var _NoteChannel = class _NoteChannel {
   /** Current connection id (fresh per physical socket). Exposed for tests. */
   getConnId() {
     return this.connId;
+  }
+  /** Reject + clear every in-flight sendRequest reply slot. Shared by
+   *  disconnect() and the socket onclose handler. */
+  rejectPendingReplies(reason) {
+    for (let [, p] of this.pendingReplies)
+      window.clearTimeout(p.timer), p.reject(new Error(reason));
+    this.pendingReplies.clear();
   }
   async openSocket() {
     if (this.ws || this.opening) {
@@ -1952,10 +1967,14 @@ var _NoteChannel = class _NoteChannel {
     }, this.ws.onmessage = (evt) => {
       this.handleMessage(evt.data);
     }, this.ws.onerror = (e) => {
-      rlog().error("channel", `WebSocket error: ${JSON.stringify(e)}`);
+      var _a2, _b2, _c2;
+      rlog().error(
+        "channel",
+        `WebSocket error: type=${(_a2 = e == null ? void 0 : e.type) != null ? _a2 : "unknown"} readyState=${(_c2 = (_b2 = this.ws) == null ? void 0 : _b2.readyState) != null ? _c2 : "none"}`
+      );
     }, this.ws.onclose = (evt) => {
       var _a2, _b2, _c2, _d2;
-      this.clearTimers(), this.ws = null, this.crdtJoined = !1, this.setConnected(!1);
+      this.clearTimers(), this.ws = null, this.rejectPendingReplies("socket closed"), this.crdtJoined = !1, this.setConnected(!1);
       let closeInfo = `code=${(_a2 = evt == null ? void 0 : evt.code) != null ? _a2 : "unknown"} reason="${(_b2 = evt == null ? void 0 : evt.reason) != null ? _b2 : ""}" wasClean=${(_c2 = evt == null ? void 0 : evt.wasClean) != null ? _c2 : "unknown"}`, sinceOpen = Date.now() - openedAt, online = typeof navigator != "undefined" ? navigator.onLine : !0;
       if (rlog().info(
         "channel",
@@ -7429,10 +7448,11 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
   }
   async attach(view, path) {
     if (typeof view != "object" || view === null || this.observers.has(view)) return;
-    this.observers.set(view, () => {
-    }), this.attached.add(view);
+    let placeholder = () => {
+    };
+    this.observers.set(view, placeholder), this.attached.add(view);
     let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
-    if (!ytext) return;
+    if (!ytext || this.observers.get(view) !== placeholder) return;
     this.rendered.set(view, ytext.toJSON());
     let handler = () => {
       if (!this.deps.isReadingMode(view)) return;
@@ -7623,7 +7643,7 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
    *  (minting if needed) the note_id that actually keys the doc (Task 6). */
   async getYText(path) {
     let noteId = this.deps.resolveId(path);
-    return (await this.deps.manager.getDoc(noteId)).getText("content");
+    return (await this.deps.manager.getDoc(noteId)).getText(CONTENT_KEY);
   }
   /** Re-evaluate open markdown leaves: enroll each, and (re)attach the
    *  frontmatter + reading-mode hooks. The editor TEXT binding is handled
@@ -7656,8 +7676,8 @@ var SAVE_NUDGE_DEBOUNCE_MS = 300, ViewerRefcount = class {
     this.saveNudgeTimers.clear(), this.frontmatter.detachAll(), this.reading.detachAll();
     let flushes = [];
     for (let path of this.refcount.boundPaths()) {
-      let noteId = this.deps.resolveId(path);
-      if (!this.deps.manager.hasDoc(noteId)) continue;
+      let noteId = this.deps.resolveExistingId(path);
+      if (noteId === null || !this.deps.manager.hasDoc(noteId)) continue;
       let content = this.deps.manager.residentText(noteId).text.toJSON();
       flushes.push(
         Promise.resolve(this.deps.flushToDisk(path, content)).catch(
@@ -14347,10 +14367,8 @@ function upsertElements(map3, order, elements) {
   }
   for (let id2 of [...map3.keys()])
     ids.has(id2) || map3.delete(id2);
-  order.length > 0 && order.delete(0, order.length), elements.length > 0 && order.insert(
-    0,
-    elements.map((e) => e.id)
-  );
+  let nextOrder = elements.map((e) => e.id);
+  jsonEqual(order.toArray(), nextOrder) || (order.length > 0 && order.delete(0, order.length), nextOrder.length > 0 && order.insert(0, nextOrder));
 }
 function upsertMeta(map3, meta) {
   for (let [k, v] of Object.entries(meta))
@@ -14376,7 +14394,7 @@ function canvasIsEmpty(doc2) {
   return doc2.getMap(NODES_KEY).size === 0 && doc2.getMap(EDGES_KEY).size === 0;
 }
 function jsonEqual(a, b) {
-  return JSON.stringify(a) === JSON.stringify(b);
+  return canonicalJson(a) === canonicalJson(b);
 }
 
 // src/crdt/lca-merge.ts
@@ -15017,26 +15035,23 @@ function createCrdtWiring(deps) {
       strandHealTimer = null, drainStrandedFlushes();
     }, debounceMs));
   }
-  let unsentDocIds = /* @__PURE__ */ new Set(), registry = new ProviderRegistry({
+  let unsentDocIds = /* @__PURE__ */ new Set(), addUnsent = (docId) => {
+    if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
+      for (let oldest of unsentDocIds) {
+        unsentDocIds.delete(oldest);
+        break;
+      }
+    unsentDocIds.add(docId);
+  }, registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
     recorder: deps.recorder,
     lcaFor: deps.lcaFor,
     onDirtyMerge: deps.onDirtyMerge,
     send: (docId, frame, kind) => {
       if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId))
-        return unsentDocIds.add(docId), !1;
+        return addUnsent(docId), !1;
       let ok = deps.sendCrdt(docId, frame) !== !1;
-      if (ok)
-        unsentDocIds.delete(docId);
-      else {
-        if (!unsentDocIds.has(docId) && unsentDocIds.size >= MAX_UNSENT_DOCS)
-          for (let oldest of unsentDocIds) {
-            unsentDocIds.delete(oldest);
-            break;
-          }
-        unsentDocIds.add(docId);
-      }
-      return ok;
+      return ok ? unsentDocIds.delete(docId) : addUnsent(docId), ok;
     },
     onFlushToDisk: async (noteId, content) => {
       var _a2;
@@ -15185,14 +15200,14 @@ function makeCrdtOpSend(hooks) {
       } else if (op.kind === "delete")
         await ch.crdtDeleteAcked(op.docId);
       else
-        return "ok";
-      return "ok";
+        return limitSurfaced.delete(op.id), "ok";
+      return limitSurfaced.delete(op.id), "ok";
     } catch (err) {
       let reason = crdtOpFailureReason(err);
       if (reason && LIMIT_REASONS.has(reason))
         return limitSurfaced.has(op.id) || (limitSurfaced.add(op.id), (_c = hooks.onLimit) == null || _c.call(hooks, op, reason)), "error";
       if (reason && TERMINAL_REASONS.has(reason))
-        return hooks.onTerminal(op, reason), "ok";
+        return hooks.onTerminal(op, reason), limitSurfaced.delete(op.id), "ok";
       let msg = err instanceof Error ? err.message : String(err);
       return /timeout/i.test(msg) ? "timeout" : "error";
     }
@@ -15791,11 +15806,12 @@ function notifyLimitExceeded(err) {
 
 // src/plan-state.ts
 function parsePlanState(raw, now) {
-  var _a;
   if (typeof raw != "object" || raw === null) return null;
   let r = raw;
   return typeof r.tier != "string" ? null : {
-    tier: (_a = r.tier) != null ? _a : "free",
+    // Validate, don't cast: an unknown backend tier ("team", a typo) must
+    // degrade to the most restrictive plan, not launder through the union.
+    tier: r.tier === "starter" || r.tier === "pro" ? r.tier : "free",
     attachmentsTextOnly: r.attachments_text_only === !0,
     maxFileBytes: typeof r.max_file_bytes == "number" ? r.max_file_bytes : 0,
     attachmentBytesCap: typeof r.attachment_bytes_cap == "number" ? r.attachment_bytes_cap : null,
@@ -18673,7 +18689,9 @@ var OfflineQueue = class {
   schedulePersist() {
     this.persistTimer || (this.persistTimer = window.setTimeout(() => {
       var _a;
-      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all());
+      this.persistTimer = null, (_a = this.persistFn) == null || _a.call(this, this.all()).catch((e) => {
+        rlog().warn("queue", `debounced persist failed: ${errMsg(e)}`);
+      });
     }, this.persistDelayMs));
   }
   /** Persist immediately (cancels any pending debounced persist). */
@@ -23279,7 +23297,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       })
     ), registerDiagnostics(this), this.registerDomEvent(activeDocument, "visibilitychange", () => {
       var _a2, _b2;
-      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save()) : activeDocument.visibilityState === "visible" && ((_b2 = this.noteStream) == null || _b2.onResume());
+      activeDocument.visibilityState === "hidden" ? (rlog().flush(), this.savePluginData(this.syncEngine.getLastSync()), (_a2 = this.baseStore) == null || _a2.save().catch((e) => {
+        devLog().log("base-store", `save failed: ${errMsg(e)}`);
+      })) : activeDocument.visibilityState === "visible" && ((_b2 = this.noteStream) == null || _b2.onResume());
     }), this.addCommand({
       id: "sync-now",
       name: "Sync now",
@@ -23516,7 +23536,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   }
   onunload() {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.syncEngine && this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save().catch((e) => {
+      devLog().log("base-store", `save failed: ${errMsg(e)}`);
+    }), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;

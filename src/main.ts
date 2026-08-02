@@ -708,7 +708,11 @@ export default class EngramSyncPlugin extends Plugin {
 			if (activeDocument.visibilityState === "hidden") {
 				void rlog().flush();
 				void this.savePluginData(this.syncEngine.getLastSync());
-				void this.baseStore?.save();
+				// A silent sync-bases.json write failure degrades 3-way merge to
+				// 2-way after the next reload — leave a trace.
+				void this.baseStore?.save().catch((e) => {
+					devLog().log("base-store", `save failed: ${errMsg(e)}`);
+				});
 			} else if (activeDocument.visibilityState === "visible") {
 				this.noteStream?.onResume();
 			}
@@ -1118,10 +1122,16 @@ export default class EngramSyncPlugin extends Plugin {
 		// Flush any buffered obsidian.push spans before teardown. The buffer's
 		// own 2s timer would otherwise never fire post-unload.
 		this.api.beacon.flush();
-		// Best-effort save before teardown — hashes must be exported before destroy
-		void this.savePluginData(this.syncEngine.getLastSync());
+		// Best-effort save before teardown — hashes must be exported before
+		// destroy. Guarded: if onload threw before syncEngine was assigned, the
+		// `= null!` initializer is still a lie and this would throw mid-unload.
+		if (this.syncEngine) {
+			void this.savePluginData(this.syncEngine.getLastSync());
+		}
 		this.baseStore?.prune();
-		void this.baseStore?.save();
+		void this.baseStore?.save().catch((e) => {
+			devLog().log("base-store", `save failed: ${errMsg(e)}`);
+		});
 		this.crdtOpQueue?.dispose();
 		this.syncEngine?.destroy();
 		this.noteStream?.disconnect();
