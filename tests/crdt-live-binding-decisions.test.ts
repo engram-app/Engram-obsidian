@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { splitFrontmatter } from "../src/crdt/frontmatter-codec";
 import {
 	decideReconcile,
 	frontmatterPrefixLen,
@@ -29,9 +30,39 @@ describe("frontmatterPrefixLen", () => {
 		expect(frontmatterPrefixLen("text with --- in the middle\n---\n")).toBe(0);
 	});
 
-	it("handles CRLF line endings", () => {
+	// The editor prefix MUST agree with splitFrontmatter (which mirrors the
+	// backend Engram.Notes.Frontmatter byte-for-byte): the bound Y.Text holds
+	// exactly splitFrontmatter(raw).body, so any input where the two disagree
+	// shifts every mapped edit by the disagreement — silent offset corruption.
+	// The old regex diverged on two inputs, one in each direction:
+	//  - CRLF opening fence: regex matched, codec does not (backend is LF-only)
+	//  - trailing spaces on the closing fence: codec splits, regex did not
+	it("agrees with splitFrontmatter on a CRLF-opened file (treated as body, like the backend)", () => {
 		const text = "---\r\nfoo: bar\r\n---\r\nbody";
-		expect(text.slice(frontmatterPrefixLen(text))).toBe("body");
+		expect(splitFrontmatter(text).fmBlock).toBeNull(); // codec: not frontmatter
+		expect(frontmatterPrefixLen(text)).toBe(0); // editor must agree
+	});
+
+	it("agrees with splitFrontmatter on a closing fence with trailing spaces", () => {
+		const text = "---\nfoo: bar\n---  \nbody";
+		expect(text.slice(frontmatterPrefixLen(text))).toBe(splitFrontmatter(text).body);
+		expect(splitFrontmatter(text).body).toBe("body");
+	});
+
+	it("slices to exactly the codec body on every representative input", () => {
+		const inputs = [
+			"just body",
+			"",
+			"---\nfoo: bar\n---\nbody here",
+			"---\nfoo: bar\n---",
+			"---\n---\nempty block",
+			"--- not really\nfoo",
+			"---\r\nfoo: bar\r\n---\r\nbody",
+			"---\nfoo: bar\n--- \t\nbody",
+		];
+		for (const text of inputs) {
+			expect(text.slice(frontmatterPrefixLen(text))).toBe(splitFrontmatter(text).body);
+		}
 	});
 });
 

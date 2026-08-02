@@ -2,6 +2,7 @@
 // reconcile + re-attach logic is unit-testable without mounting a real CodeMirror
 // editor. The ViewPlugin (live-binding.ts) executes whatever these return.
 import { diff_match_patch } from "diff-match-patch";
+import { splitFrontmatter } from "../frontmatter-codec";
 import { type CmChangeSpec, textDiffToChangeSpec } from "./cm-yjs-bridge";
 
 /** A dedicated dmp instance for the 3-way merge, tuned MUCH stricter than the
@@ -13,21 +14,22 @@ const merger = new diff_match_patch();
 merger.Match_Threshold = 0.2;
 merger.Patch_DeleteThreshold = 0.2;
 
-/** Matches a leading YAML frontmatter block: `---` on line 1, closed by a line
- *  that is exactly `---`, through the closing delimiter's trailing newline (or
- *  end of doc). Non-greedy body so the FIRST closing `---` wins. */
-const FRONTMATTER_RE = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/;
-
 /** The number of leading characters of the EDITOR's CM document occupied by a
  *  frontmatter block, or 0 if none. The bound Y.Text is body-only; in Live Preview
  *  the CM document is body-only too (prefix 0, everything below is a no-op), but in
  *  Source mode (and Properties-in-document) the raw `---` block is IN the CM text,
  *  so the editor offsets are shifted by this prefix relative to the body Y.Text.
  *  Callers slice/offset by this to keep body edits mapping to the right Y.Text
- *  position instead of corrupting at prefix-length offsets. */
+ *  position instead of corrupting at prefix-length offsets.
+ *
+ *  Derived from splitFrontmatter (which mirrors the backend byte-for-byte) so
+ *  the editor prefix can never disagree with what the codec put in the Y.Text.
+ *  A private regex here once diverged on CRLF opening fences and on trailing
+ *  spaces before the closing fence — each disagreement IS the offset-corruption
+ *  class the doc above warns about. */
 export function frontmatterPrefixLen(editorText: string): number {
-	const m = FRONTMATTER_RE.exec(editorText);
-	return m ? m[0].length : 0;
+	const { fmBlock, body } = splitFrontmatter(editorText);
+	return fmBlock === null ? 0 : editorText.length - body.length;
 }
 
 /** True when the editor must detach from its current doc and re-attach. Catches
