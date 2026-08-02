@@ -468,6 +468,10 @@ export class NoteChannel {
 	}
 
 	disconnect(): void {
+		// Invalidate any openSocketInner suspended on its token fetch / auth
+		// probe: without this it resumes AFTER the teardown and opens a live
+		// socket (heartbeat, joins, reconnect loop) the plugin believes is dead.
+		this.connectEpoch++;
 		this.clearTimers();
 		if (this.ws) {
 			this.ws.onclose = null; // prevent reconnect on intentional close
@@ -551,6 +555,10 @@ export class NoteChannel {
 	/** Guards openSocket against re-entry across its async token fetch. */
 	private opening = false;
 
+	/** Bumped by disconnect(). An openSocketInner that suspended on an await
+	 *  before the bump must abandon the open when it resumes (see disconnect). */
+	private connectEpoch = 0;
+
 	private async openSocket(): Promise<void> {
 		// Single-flight: if a socket already exists (an external connect() won
 		// the race against a still-pending reconnect timer) or another
@@ -571,6 +579,7 @@ export class NoteChannel {
 	}
 
 	private async openSocketInner(): Promise<void> {
+		const epoch = this.connectEpoch;
 		let token: string;
 		let source: string;
 		try {
@@ -578,11 +587,20 @@ export class NoteChannel {
 			token = result.token;
 			source = result.source;
 		} catch (e) {
+			if (epoch !== this.connectEpoch) {
+				rlog().info("channel", "open aborted — disconnected during token fetch");
+				return;
+			}
 			rlog().warn(
 				"channel",
 				`getToken threw — deferring reconnect ${NO_AUTH_RECONNECT_MS}ms — providerType=${this.authProvider?.constructor.name ?? "none"} err=${errMsg(e)}`,
 			);
 			this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+			return;
+		}
+
+		if (epoch !== this.connectEpoch) {
+			rlog().info("channel", "open aborted — disconnected during token fetch");
 			return;
 		}
 
@@ -626,6 +644,13 @@ export class NoteChannel {
 					`reconnect identity probe failed, keeping userId: ${errMsg(e)}`,
 				);
 			}
+		}
+
+		// Second abort point: the identity-refresh probe above is another await a
+		// disconnect() can land inside.
+		if (epoch !== this.connectEpoch) {
+			rlog().info("channel", "open aborted — disconnected during identity probe");
+			return;
 		}
 
 		rlog().info(
