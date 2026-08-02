@@ -1,8 +1,9 @@
 /**
  * Settings tab for Engram Sync plugin.
  */
-import { type App, PluginSettingTab, type Setting } from "obsidian";
+import { type App, Notice, PluginSettingTab, type Setting } from "obsidian";
 import { DeviceFlowModal } from "./device-flow-modal";
+import { errMsg } from "./error-util";
 import type EngramSyncPlugin from "./main";
 import { SyncProgressModal, settingsBarCounts } from "./sync-progress-modal";
 import { renderAboutTab } from "./tabs/about-tab";
@@ -186,7 +187,13 @@ export class EngramSyncSettingTab extends PluginSettingTab {
 			if (!tab) return;
 			const btn = tabBar.querySelector<HTMLElement>(`[data-tab="${tab.id}"]`);
 			btn?.addClass("is-active");
-			void tab.render({ ...ctx, containerEl: contentEl });
+			// Tab renders are async (account tab awaits applyApiUrlChange /
+			// saveSettings); a rejection must surface, not vanish into `void`.
+			void Promise.resolve(tab.render({ ...ctx, containerEl: contentEl })).catch(
+				(e: unknown) => {
+					new Notice(`Engram: settings tab failed to render (${errMsg(e)})`);
+				},
+			);
 		};
 
 		const ctx: TabContext = {

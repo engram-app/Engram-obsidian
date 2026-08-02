@@ -1,6 +1,7 @@
 import { Notice, Setting, setIcon } from "obsidian";
 import { EngramApi } from "../api";
 import { applyApiUrlChange, completeOrigin, type PreflightResult } from "../auth-state";
+import { errMsg } from "../error-util";
 import type { TabContext } from "./types";
 import { ENGRAM_CLOUD_URL } from "./urls";
 
@@ -201,7 +202,9 @@ export function renderAuthSection(ctx: TabContext): void {
 					.onClick(async () => {
 						plugin.settings.apiKey = "";
 						await plugin.saveSettings();
-						void startDeviceFlow();
+						startDeviceFlow().catch((e) => {
+							new Notice(`Engram: sign-in failed (${errMsg(e)})`);
+						});
 					}),
 			);
 		return;
@@ -215,7 +218,13 @@ export function renderAuthSection(ctx: TabContext): void {
 			btn
 				.setButtonText("Sign in")
 				.setCta()
-				.onClick(() => startDeviceFlow()),
+				// A rejected device flow (saveOAuthTokens throwing) otherwise
+				// vanishes into the button handler with nothing on screen.
+				.onClick(() =>
+					startDeviceFlow().catch((e) => {
+						new Notice(`Engram: sign-in failed (${errMsg(e)})`);
+					}),
+				),
 		);
 
 	containerEl.createDiv({ cls: "engram-auth-divider", text: "or" });
@@ -275,18 +284,7 @@ export function renderVaultSection(ctx: TabContext): void {
 	// vaults..." flicker every time the user opens settings. The Change
 	// button fetches a fresh list on demand.
 	if (currentId && storedName) {
-		setting.settingEl.addClass("engram-setting-vault-name");
-		const nameEl = setting.controlEl.createSpan({
-			cls: "engram-vault-current-name",
-			text: storedName,
-		});
-		nameEl.setAttribute("title", `Vault id: ${currentId}`);
-
-		setting.addButton((btn) =>
-			btn.setButtonText("Change").onClick(() => {
-				void plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
-			}),
-		);
+		renderLockedVaultRow(setting, plugin, currentId, storedName);
 		return;
 	}
 
@@ -335,27 +333,46 @@ export function renderVaultSection(ctx: TabContext): void {
 
 			// Locked-in display path for legacy users who have a vaultId but
 			// never stored a remoteVaultName. Capture the name now so future
-			// renders use the fast path above.
-			plugin.settings.remoteVaultName = current.name;
-			void plugin.saveSettings();
+			// renders use the fast path above. Guarded so a re-render doesn't
+			// re-write settings when the value is already current.
+			if (plugin.settings.remoteVaultName !== current.name) {
+				plugin.settings.remoteVaultName = current.name;
+				void plugin.saveSettings();
+			}
 
-			setting.settingEl.addClass("engram-setting-vault-name");
-			const nameEl = setting.controlEl.createSpan({
-				cls: "engram-vault-current-name",
-				text: current.is_default ? `${current.name} (default)` : current.name,
-			});
-			nameEl.setAttribute("title", `Vault id: ${current.id}`);
-
-			setting.addButton((btn) =>
-				btn.setButtonText("Change").onClick(() => {
-					void plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
-				}),
+			renderLockedVaultRow(
+				setting,
+				plugin,
+				current.id,
+				current.is_default ? `${current.name} (default)` : current.name,
 			);
 		})
 		.catch((e: unknown) => {
 			placeholderEl.remove();
 			setting.controlEl.createSpan({ text: describeListVaultsError(e) });
 		});
+}
+
+/** The read-only "Vault selection: <name>" row + Change button, shared by the
+ *  saved-state fast path and the legacy fetch path. */
+function renderLockedVaultRow(
+	setting: Setting,
+	plugin: TabContext["plugin"],
+	vaultId: string,
+	displayName: string,
+): void {
+	setting.settingEl.addClass("engram-setting-vault-name");
+	const nameEl = setting.controlEl.createSpan({
+		cls: "engram-vault-current-name",
+		text: displayName,
+	});
+	nameEl.setAttribute("title", `Vault id: ${vaultId}`);
+
+	setting.addButton((btn) =>
+		btn.setButtonText("Change").onClick(() => {
+			void plugin.doSyncWithFirstSyncCheck({ startInVaultPicker: true });
+		}),
+	);
 }
 
 /** Render the GitHub Sponsors + Ko-fi support section. */
