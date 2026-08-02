@@ -1119,8 +1119,9 @@ var EngramApi = class _EngramApi {
   }
   /** Strip trailing slashes and append /api if not already present. Public:
    *  the single normalizer for every surface that builds an API base
-   *  (device flow, OAuth token refresh, channel WS URL) — 4 copies of this
-   *  logic once lived inline at those sites. */
+   *  (device flow, OAuth token refresh) — copies of this logic once lived
+   *  inline at those sites. The channel's WS origin is the inverse shape
+   *  (strips /api); see wsOrigin in channel.ts. */
   static normalizeBaseUrl(url) {
     let base = url.replace(/\/+$/, "");
     return base.endsWith("/api") ? base : `${base}/api`;
@@ -20100,7 +20101,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       this.seqHealLastAt = now, this.catchupViaSeqReplay();
       return;
     }
-    this.seqHealTimer === null && (this.seqHealTimer = window.setTimeout(() => {
+    this.seqHealTimer === null && (this.seqHealTimer = this.time.setTimeout(() => {
       this.seqHealTimer = null, this.seqHealLastAt = Date.now(), rlog().info("crdt", "gap-heal replay (trailing, throttled)"), this.catchupViaSeqReplay();
     }, _SyncEngine.SEQ_HEAL_COOLDOWN_MS - since));
   }
@@ -20267,6 +20268,12 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** The vault a queue entry belongs to: its own stamp, else the current
    *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
    *  path. */
+  /** Injected-clock sleep: tests advance time instead of spending it. The
+   *  inline window.setTimeout promise this replaces bypassed the injected
+   *  TimeProvider at three sites. */
+  sleep(ms) {
+    return new Promise((resolve) => this.time.setTimeout(resolve, ms));
+  }
   entryVaultId(entry) {
     var _a, _b;
     return (_b = (_a = entry.vaultId) != null ? _a : this.settings.vaultId) != null ? _b : void 0;
@@ -20360,7 +20367,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         this.goOnline(), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
         return;
       }
-      console.error("Engram Sync: failed to delete %s", file.path, e), await this.enqueueChange({
+      console.error("Engram Sync: failed to delete %s", file.path, e), rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`), await this.enqueueChange({
         path: file.path,
         action: "delete",
         kind: isBinary ? "attachment" : "note",
@@ -20382,7 +20389,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), rlog().error("push", `Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -20704,7 +20711,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Drain the batch failure tally for an aggregated, deduped Notice. Returns
    *  the count of generic failures since the last drain plus the first server
-   *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+   *  message seen, and resets the tally. Consumed by the in-class batch
+   *  toast (flushFailureSummaryToast); public for tests. */
   drainFailureSummary() {
     let count2 = this.failuresThisBatch, firstMessage = this.firstFailureMessageThisBatch;
     return this.failuresThisBatch = 0, this.firstFailureMessageThisBatch = void 0, { count: count2, firstMessage };
@@ -20786,8 +20794,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       new import_obsidian24.Notice(`Engram: plan upgraded \u2014 syncing ${skipped.length} attachment(s)\u2026`, 6e3);
     }
   }
-  /** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
-   *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+  /** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
+   *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
+   *  SyncedFileTable, #358); destroy() sweeps the same map. */
   markWithTtl(map3, path, ms) {
     let existing = map3.get(path);
     existing && this.time.clearTimeout(existing);
@@ -20904,7 +20913,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a, _b, _c, _d, _e, _f;
     let deadline = Date.now() + this.enumerateWaitMs;
     for (; (!this.crdtCatchupSince || !this.crdt || !((_b = (_a = this.crdtLive) == null ? void 0 : _a.call(this)) != null && _b)) && Date.now() < deadline; )
-      await new Promise((resolve) => window.setTimeout(resolve, 100));
+      await this.sleep(100);
     if (!this.crdtCatchupSince || !this.crdt || !((_d = (_c = this.crdtLive) == null ? void 0 : _c.call(this)) != null && _d))
       throw new Error("Sync preview needs the live socket (op-log enumeration)");
     let byId = /* @__PURE__ */ new Map(), attachments = /* @__PURE__ */ new Map(), cursor = 0, cursorId = null;
@@ -20959,7 +20968,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     for (let attempt = 0; attempt < 10; attempt++) {
       let res = await this.catchupViaSeqReplay(opts);
       if (res.ran) return res;
-      await new Promise((resolve) => window.setTimeout(resolve, 50));
+      await this.sleep(50);
     }
     return null;
   }
@@ -21161,7 +21170,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     devLog().log("crdt", `socket converge: cooldown skip for ${path} \u2014 arming trailing fire`);
-    let remaining = this.healCooldownMs - (now - last2), timer = window.setTimeout(() => {
+    let remaining = this.healCooldownMs - (now - last2), timer = this.time.setTimeout(() => {
       this.crdtHealTrailingTimers.delete(noteId), this.fireCrdtReHandshake(path, noteId);
     }, remaining);
     this.crdtHealTrailingTimers.set(noteId, timer);
@@ -21309,14 +21318,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the deferral only saves redundant echo traffic, it is not a correctness
    *  gate. The normal end-of-pull drain clears this timer. */
   schedulePostPullDrain() {
-    this.postPullDrainTimer === null && (this.postPullDrainTimer = window.setTimeout(() => {
+    this.postPullDrainTimer === null && (this.postPullDrainTimer = this.time.setTimeout(() => {
       this.postPullDrainTimer = null, this.flushPostPullPushes();
     }, this.postPullMaxDeferMs));
   }
   /** Push any files that were modified during pull. Echo suppression will
    *  naturally skip sync-engine writes; only real user edits get pushed. */
   async flushPostPullPushes() {
-    if (this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
+    if (this.postPullDrainTimer !== null && (this.time.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null), this.pendingPostPullPushes.size === 0) return;
     let paths = [...this.pendingPostPullPushes];
     this.pendingPostPullPushes.clear(), devLog().log("push", `flushing ${paths.length} post-pull pushes`), rlog().info("push", `Post-pull flush: ${paths.length} files`);
     for (let path of paths) {
@@ -21392,7 +21401,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             total,
             failed: deleteFailed,
             currentPath: file.path
-          }), (i + 1) % 20 === 0 && await new Promise((resolve) => window.setTimeout(resolve, 0));
+          }), (i + 1) % 20 === 0 && await this.sleep(0);
         }
         devLog().log(
           "pull",
@@ -21576,7 +21585,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           version: event.version
         }) : this.catchupViaSeqReplay();
       } catch (e) {
-        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
+        console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e), rlog().error(
+          "ws",
+          `Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+          e instanceof Error ? e.stack : void 0
+        );
       }
   }
   async moveIfIdRelocated(id2, newPath, eventTs) {
@@ -21588,7 +21601,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (lastTs !== void 0 && eventTs < lastTs) {
         rlog().info(
           "pull",
-          `Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ${id2} -> ${newPath}`
+          `Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ${id2} -> ${newPath}`
         );
         return;
       }
@@ -22368,7 +22381,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       firstFailedAt: now,
       lastFailedAt: now,
       attempts: 1
-    }), !wasDegraded && mapped.category === "frontmatter" && (this.pendingDegraded.add(path), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = window.setTimeout(
+    }), !wasDegraded && mapped.category === "frontmatter" && (this.pendingDegraded.add(path), this.degradedNoticeTimer && this.time.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = this.time.setTimeout(
       () => this.flushDegradedNotice(),
       DEGRADED_NOTICE_DEBOUNCE_MS
     ));
@@ -22783,7 +22796,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Transition back to online mode. */
   goOnline() {
     this.offline && (this.offline = !1, this.lastError = "", this.stopHealthCheck(), devLog().log("lifecycle", `went online \u2014 flushing queue (${this.queue.size} entries)`), rlog().info("lifecycle", `Went online \u2014 flushing queue (${this.queue.size} entries)`), this.emitStatus(), this.flushQueue().catch((e) => {
-      console.error("Engram Sync: queue flush failed", e);
+      console.error("Engram Sync: queue flush failed", e), rlog().error("queue", `Flush failed after reconnect: ${errMsg(e)}`);
     }));
   }
   /** Start health checks while offline, with exponential backoff (5s → 10s →
@@ -22792,7 +22805,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   startHealthCheck() {
     if (this.healthCheckTimer) return;
     let tick = () => {
-      this.healthCheckTimer = window.setTimeout(() => {
+      this.healthCheckTimer = this.time.setTimeout(() => {
         (async () => {
           try {
             if (await this.api.health()) {
@@ -22809,7 +22822,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   }
   /** Stop health checks and reset the backoff. */
   stopHealthCheck() {
-    this.healthCheckTimer && (window.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
+    this.healthCheckTimer && (this.time.clearTimeout(this.healthCheckTimer), this.healthCheckTimer = null), this.healthCheckFailures = 0;
   }
   /** Flush queued changes oldest-first. Stops on first failure. */
   /** Retry every transient (auto-retryable) failure now — including ones
@@ -22888,10 +22901,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (!base64) {
             let file = this.app.vault.getFileByPath(entry.path);
             if (!file) {
-              await this.queue.dequeue(
-                entry.path,
-                this.entryVaultId(entry)
-              ), this.issues.clear(entry.path), flushed++;
+              await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
               continue;
             }
             let buffer = await this.app.vault.readBinary(file);
@@ -22910,10 +22920,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           if (content === void 0) {
             let file = this.app.vault.getFileByPath(entry.path);
             if (!file) {
-              entry.crdt && entry.noteId && ((_c = this.crdtEnrollment) == null || _c.enroll(entry.noteId)), await this.queue.dequeue(
-                entry.path,
-                this.entryVaultId(entry)
-              ), this.issues.clear(entry.path), flushed++;
+              entry.crdt && entry.noteId && ((_c = this.crdtEnrollment) == null || _c.enroll(entry.noteId)), await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
               continue;
             }
             content = await this.app.vault.cachedRead(file), mtime = file.stat.mtime / 1e3;
@@ -22956,10 +22963,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             }), resp.note.version != null && ((_f = this.baseStore) == null || _f.set(np, content, resp.note.version)), resp.note.id && ((_g = this.noteIdMap) == null || _g.set(np, resp.note.id), this.refireEnrollmentOnFirstConfirm(resp.note.id, entry.path, content), this.confirmNoteId(resp.note.id));
           }
         }
-        await this.queue.dequeue(
-          entry.path,
-          this.entryVaultId(entry)
-        ), this.issues.clear(entry.path), flushed++;
+        await this.queue.dequeue(entry.path, this.entryVaultId(entry)), this.issues.clear(entry.path), flushed++;
       } catch (e) {
         if (await this.handleFlushFailure(entry, e) === "retry") break;
       }
@@ -22987,10 +22991,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.debounceTimers.clear(), this.files.destroy();
     for (let timer of this.recentlyDeleted.values())
       this.time.clearTimeout(timer);
-    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
+    this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (this.time.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (this.time.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
     for (let timer of this.crdtHealTrailingTimers.values())
-      window.clearTimeout(timer);
-    this.crdtHealTrailingTimers.clear(), this.pendingConvergence.clear(), this.crdtRehandshakeAttempts.clear(), this.crdtHealCooldown.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+      this.time.clearTimeout(timer);
+    this.crdtHealTrailingTimers.clear(), this.pendingConvergence.clear(), this.crdtRehandshakeAttempts.clear(), this.crdtHealCooldown.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && this.time.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;

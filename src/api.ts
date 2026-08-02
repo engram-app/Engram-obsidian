@@ -157,8 +157,9 @@ export class EngramApi {
 
 	/** Strip trailing slashes and append /api if not already present. Public:
 	 *  the single normalizer for every surface that builds an API base
-	 *  (device flow, OAuth token refresh, channel WS URL) — 4 copies of this
-	 *  logic once lived inline at those sites. */
+	 *  (device flow, OAuth token refresh) — copies of this logic once lived
+	 *  inline at those sites. The channel's WS origin is the inverse shape
+	 *  (strips /api); see wsOrigin in channel.ts. */
 	static normalizeBaseUrl(url: string): string {
 		const base = url.replace(/\/+$/, "");
 		return base.endsWith("/api") ? base : `${base}/api`;

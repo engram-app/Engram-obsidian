@@ -1,9 +1,9 @@
 /** Persistent set of paths the user has explicitly chosen to skip syncing.
  *
- *  Distinct from `EngramSyncSettings.ignorePatterns` — that's a regex
- *  textarea the user edits by hand. This is per-file state populated from
+ *  Distinct from `EngramSyncSettings.ignorePatterns` — that's a textarea of
+ *  literal path prefix/suffix rules the user edits by hand. This is per-file state populated from
  *  the Sync Center "Ignore" button, so users can quietly skip a single
- *  oversize PDF without writing a regex for it. Excluded from
+ *  oversize PDF without writing a pattern for it. Excluded from
  *  `isSyncable` and `computeSyncPlan` so the file disappears from "to push"
  *  counts and never reappears in Issues.
  */

@@ -7,7 +7,9 @@ export interface EngramSyncSettings {
 	apiUrl: string;
 	/** Bearer token for Engram (e.g. "engram_abc123...") */
 	apiKey: string;
-	/** Glob patterns to ignore (one per line). Defaults: .obsidian/, .trash/, .git/ */
+	/** Ignore rules, one per line — literal path prefixes ("folder/") or
+	 *  suffixes (".pdf"); neither glob nor regex (see SyncEngine.shouldIgnore).
+	 *  Defaults: .obsidian/, .trash/, .git/ */
 	ignorePatterns: string;
 	/** Debounce delay in ms for modify events */
 	debounceMs: number;

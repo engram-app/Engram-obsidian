@@ -1780,7 +1780,7 @@ export class SyncEngine {
 			return;
 		}
 		if (this.seqHealTimer !== null) return;
-		this.seqHealTimer = window.setTimeout(() => {
+		this.seqHealTimer = this.time.setTimeout(() => {
 			this.seqHealTimer = null;
 			this.seqHealLastAt = Date.now();
 			rlog().info("crdt", "gap-heal replay (trailing, throttled)");
@@ -2046,6 +2046,13 @@ export class SyncEngine {
 	/** The vault a queue entry belongs to: its own stamp, else the current
 	 *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
 	 *  path. */
+	/** Injected-clock sleep: tests advance time instead of spending it. The
+	 *  inline window.setTimeout promise this replaces bypassed the injected
+	 *  TimeProvider at three sites. */
+	private sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => this.time.setTimeout(resolve, ms));
+	}
+
 	private entryVaultId(entry: { vaultId?: string }): string | undefined {
 		return entry.vaultId ?? this.settings.vaultId ?? undefined;
 	}
@@ -2289,6 +2296,7 @@ export class SyncEngine {
 			}
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: failed to delete %s", file.path, e);
+			rlog().error("push", `Delete failed (queued): ${file.path} | ${errMsg(e)}`);
 			await this.enqueueChange({
 				path: file.path,
 				action: "delete",
@@ -2370,6 +2378,10 @@ export class SyncEngine {
 				} else {
 					// biome-ignore lint/suspicious/noConsole: error boundary
 					console.error("Engram Sync: failed to delete old path %s", oldPath, e);
+					rlog().error(
+						"push",
+						`Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`,
+					);
 					await this.enqueueChange({
 						path: oldPath,
 						action: "delete",
@@ -3201,7 +3213,8 @@ export class SyncEngine {
 
 	/** Drain the batch failure tally for an aggregated, deduped Notice. Returns
 	 *  the count of generic failures since the last drain plus the first server
-	 *  message seen, and resets the tally. Callers (main.ts) fire one Notice. */
+	 *  message seen, and resets the tally. Consumed by the in-class batch
+	 *  toast (flushFailureSummaryToast); public for tests. */
 	drainFailureSummary(): { count: number; firstMessage?: string } {
 		const count = this.failuresThisBatch;
 		const firstMessage = this.firstFailureMessageThisBatch;
@@ -3306,8 +3319,9 @@ export class SyncEngine {
 		new Notice(`Engram: plan upgraded — syncing ${skipped.length} attachment(s)…`, 6_000);
 	}
 
-	/** Mark `path` in a TTL map, resetting any pending expiry. Shared body of
-	 *  the three echo-suppression marks below; destroy() sweeps the same maps. */
+	/** Mark `path` in a TTL map, resetting any pending expiry. Sole remaining
+	 *  caller is markRecentlyDeleted (the other echo-suppression marks moved to
+	 *  SyncedFileTable, #358); destroy() sweeps the same map. */
 	private markWithTtl(map: Map<string, number>, path: string, ms: number): void {
 		const existing = map.get(path);
 		if (existing) this.time.clearTimeout(existing);
@@ -3512,7 +3526,7 @@ export class SyncEngine {
 			(!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) &&
 			Date.now() < deadline
 		) {
-			await new Promise((resolve) => window.setTimeout(resolve, 100));
+			await this.sleep(100);
 		}
 		if (!this.crdtCatchupSince || !this.crdt || !(this.crdtLive?.() ?? false)) {
 			throw new Error("Sync preview needs the live socket (op-log enumeration)");
@@ -3615,7 +3629,7 @@ export class SyncEngine {
 		for (let attempt = 0; attempt < 10; attempt++) {
 			const res = await this.catchupViaSeqReplay(opts);
 			if (res.ran) return res;
-			await new Promise((resolve) => window.setTimeout(resolve, 50));
+			await this.sleep(50);
 		}
 		return null;
 	}
@@ -4046,7 +4060,7 @@ export class SyncEngine {
 		}
 		devLog().log("crdt", `socket converge: cooldown skip for ${path} — arming trailing fire`);
 		const remaining = this.healCooldownMs - (now - last);
-		const timer = window.setTimeout(() => {
+		const timer = this.time.setTimeout(() => {
 			this.crdtHealTrailingTimers.delete(noteId);
 			this.fireCrdtReHandshake(path, noteId);
 		}, remaining);
@@ -4258,7 +4272,7 @@ export class SyncEngine {
 	 *  gate. The normal end-of-pull drain clears this timer. */
 	private schedulePostPullDrain(): void {
 		if (this.postPullDrainTimer !== null) return;
-		this.postPullDrainTimer = window.setTimeout(() => {
+		this.postPullDrainTimer = this.time.setTimeout(() => {
 			this.postPullDrainTimer = null;
 			void this.flushPostPullPushes();
 		}, this.postPullMaxDeferMs);
@@ -4268,7 +4282,7 @@ export class SyncEngine {
 	 *  naturally skip sync-engine writes; only real user edits get pushed. */
 	private async flushPostPullPushes(): Promise<void> {
 		if (this.postPullDrainTimer !== null) {
-			window.clearTimeout(this.postPullDrainTimer);
+			this.time.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
 		if (this.pendingPostPullPushes.size === 0) return;
@@ -4391,7 +4405,7 @@ export class SyncEngine {
 					});
 					// Yield to UI thread periodically so progress modal can repaint
 					if ((i + 1) % 20 === 0) {
-						await new Promise((resolve) => window.setTimeout(resolve, 0));
+						await this.sleep(0);
 					}
 				}
 				devLog().log(
@@ -4847,6 +4861,12 @@ export class SyncEngine {
 			} catch (e) {
 				// biome-ignore lint/suspicious/noConsole: error boundary
 				console.error("Engram Sync: failed to apply WebSocket event %s", event.path, e);
+				// Sync-critical failure — must reach Loki, not just the local console.
+				rlog().error(
+					"ws",
+					`Apply failed: ${event.event_type} ${event.path} | ${errMsg(e)}`,
+					e instanceof Error ? e.stack : undefined,
+				);
 			}
 		}
 	}
@@ -4911,7 +4931,7 @@ export class SyncEngine {
 			if (lastTs !== undefined && eventTs < lastTs) {
 				rlog().info(
 					"pull",
-					`Id-keyed move IGNORED (stale event ts=${eventTs} <= last-applied ts=${lastTs}): ` +
+					`Id-keyed move IGNORED (stale event ts=${eventTs} < last-applied ts=${lastTs}): ` +
 						`${id} -> ${newPath}`,
 				);
 				return;
@@ -6570,8 +6590,8 @@ export class SyncEngine {
 		});
 		if (!wasDegraded && mapped.category === "frontmatter") {
 			this.pendingDegraded.add(path);
-			if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
-			this.degradedNoticeTimer = window.setTimeout(
+			if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
+			this.degradedNoticeTimer = this.time.setTimeout(
 				() => this.flushDegradedNotice(),
 				DEGRADED_NOTICE_DEBOUNCE_MS,
 			);
@@ -7279,6 +7299,7 @@ export class SyncEngine {
 		this.flushQueue().catch((e) => {
 			// biome-ignore lint/suspicious/noConsole: error boundary
 			console.error("Engram Sync: queue flush failed", e);
+			rlog().error("queue", `Flush failed after reconnect: ${errMsg(e)}`);
 		});
 	}
 
@@ -7288,7 +7309,7 @@ export class SyncEngine {
 	private startHealthCheck(): void {
 		if (this.healthCheckTimer) return;
 		const tick = () => {
-			this.healthCheckTimer = window.setTimeout(() => {
+			this.healthCheckTimer = this.time.setTimeout(() => {
 				void (async () => {
 					try {
 						if (await this.api.health()) {
@@ -7309,7 +7330,7 @@ export class SyncEngine {
 	/** Stop health checks and reset the backoff. */
 	private stopHealthCheck(): void {
 		if (this.healthCheckTimer) {
-			window.clearTimeout(this.healthCheckTimer);
+			this.time.clearTimeout(this.healthCheckTimer);
 			this.healthCheckTimer = null;
 		}
 		this.healthCheckFailures = 0;
@@ -7603,15 +7624,15 @@ export class SyncEngine {
 		this.recentlyDeleted.clear();
 		this.pendingPostPullPushes.clear();
 		if (this.seqHealTimer !== null) {
-			window.clearTimeout(this.seqHealTimer);
+			this.time.clearTimeout(this.seqHealTimer);
 			this.seqHealTimer = null;
 		}
 		if (this.postPullDrainTimer !== null) {
-			window.clearTimeout(this.postPullDrainTimer);
+			this.time.clearTimeout(this.postPullDrainTimer);
 			this.postPullDrainTimer = null;
 		}
 		for (const timer of this.crdtHealTrailingTimers.values()) {
-			window.clearTimeout(timer);
+			this.time.clearTimeout(timer);
 		}
 		this.crdtHealTrailingTimers.clear();
 		// Per-note CRDT bookkeeping that holds no timers, so nothing leaks if it
@@ -7625,7 +7646,7 @@ export class SyncEngine {
 		this.crdtRehandshakeAttempts.clear();
 		this.crdtHealCooldown.clear();
 		this.pendingQueueDeliveries.clear();
-		if (this.degradedNoticeTimer) window.clearTimeout(this.degradedNoticeTimer);
+		if (this.degradedNoticeTimer) this.time.clearTimeout(this.degradedNoticeTimer);
 		this.degradedNoticeTimer = null;
 		this.pendingDegraded.clear();
 		this.stopHealthCheck();
