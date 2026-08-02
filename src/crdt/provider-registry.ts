@@ -618,6 +618,11 @@ export class ProviderRegistry {
 	}
 
 	private async destroy(noteId: string, clearData: boolean): Promise<void> {
+		// A destroyed doc has no room: clearing here (the choke point) upholds
+		// removed-implies-not-enrolled without every caller pairing removeDoc
+		// with reset() by hand — one missed pair left a tombstoned id enrolled
+		// forever (invariant WARN every sweep, lying e2e `enrolled` probe).
+		this.enrolledIds.delete(noteId);
 		const e = this.entries.get(noteId);
 		// End BEFORE any await so in-flight ops are abandoned, not merely checked.
 		if (e) e.lifetime.end(new NoteDestroyedError(noteId));
@@ -640,5 +645,8 @@ export class ProviderRegistry {
 	async destroyAll(): Promise<void> {
 		for (const noteId of [...this.entries.keys()]) await this.destroy(noteId, false);
 		this.removed.clear(); // fresh stack — tombstones do not outlive a teardown
+		// Enrollments for never-materialized docs (enroll raced a teardown) have
+		// no entries key above; a fresh stack starts with none either way.
+		this.enrolledIds.clear();
 	}
 }
