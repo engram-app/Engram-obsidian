@@ -36,9 +36,6 @@ export interface FlagSchemaEntry {
 export interface FeatureFlags {
 	/** Capture an ordered timeline of CRDT sync events for replay (#356). */
 	crdtRecording: boolean;
-	/** Merge disk changes against the persisted LCA instead of diffing against
-	 *  current doc state (#357). */
-	crdtLcaMerge: boolean;
 }
 
 export const FLAG_SCHEMA: { [K in keyof FeatureFlags]: FlagSchemaEntry } = {
@@ -48,13 +45,6 @@ export const FLAG_SCHEMA: { [K in keyof FeatureFlags]: FlagSchemaEntry } = {
 		title: "Record CRDT sync timeline",
 		description:
 			"Capture an ordered event timeline for each synced note so a sync failure can be replayed offline. Metadata and note content stay local.",
-	},
-	crdtLcaMerge: {
-		default: false,
-		category: "danger",
-		title: "Three-way merge against the last common ancestor",
-		description:
-			"Merge disk edits against the last synced content instead of the current document state. Changes how concurrent edits are resolved.",
 	},
 };
 

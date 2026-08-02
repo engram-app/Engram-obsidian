@@ -6,18 +6,16 @@ const settle = () => new Promise<void>((r) => setTimeout(r, 20));
 
 interface Opts {
 	lca: string | null;
-	enabled?: boolean;
 	dbPrefix: string;
 }
 
-function registryWith({ lca, enabled = true, dbPrefix }: Opts) {
+function registryWith({ lca, dbPrefix }: Opts) {
 	const dirty: string[] = [];
 	const registry = new ProviderRegistry({
 		dbPrefix,
 		send: () => true,
 		onFlushToDisk: () => true,
 		lcaFor: () => lca,
-		lcaMergeEnabled: () => enabled,
 		onDirtyMerge: (id) => dirty.push(id),
 	});
 	return { registry, dirty };
@@ -51,18 +49,15 @@ describe("applyLocalEdit with an LCA", () => {
 		await registry.destroyAll();
 	});
 
-	test("falls back to the pre-LCA path when the flag is off", async () => {
-		const { registry } = registryWith({
-			lca: "line one\n",
-			enabled: false,
-			dbPrefix: "lca3",
-		});
+	test("falls back to the lossy two-way path when there is no base", async () => {
+		const { registry } = registryWith({ lca: null, dbPrefix: "lca3" });
 		await registry.applyLocalEdit("n3", "line one\nremote\n");
 		await settle();
 
-		// Flag off: the two-way diff forces the doc to equal the disk snapshot, so
-		// the remote line is lost. Pinned deliberately — this is the behaviour the
-		// flag exists to replace, and it must stay reachable while the flag is off.
+		// No base: the two-way diff forces the doc to equal the disk snapshot, so
+		// the remote line is lost. Pinned deliberately — LCA is the default path
+		// now, but this one stays reachable for never-synced notes, canvases and
+		// dirty merges, and its lossiness is why those cases still carry guards.
 		await registry.applyLocalEdit("n3", "line one\nlocal\n");
 
 		expect(await registry.projectedText("n3")).not.toContain("remote");
@@ -90,7 +85,6 @@ describe("applyLocalEdit with an LCA", () => {
 			send: () => true,
 			onFlushToDisk: () => true,
 			lcaFor: () => "same content\n",
-			lcaMergeEnabled: () => true,
 			isUnchangedSynced: () => true,
 		});
 

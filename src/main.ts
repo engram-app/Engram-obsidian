@@ -2080,7 +2080,6 @@ export default class EngramSyncPlugin extends Plugin {
 								const path = this.noteIdMap.pathForId(noteId);
 								return path ? (this.baseStore?.get(path)?.content ?? null) : null;
 							},
-							lcaMergeEnabled: () => this.flags.crdtLcaMerge,
 							onDirtyMerge: (noteId) =>
 								rlog().warn(
 									"crdt",

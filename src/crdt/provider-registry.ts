@@ -81,9 +81,6 @@ export interface ProviderRegistryOpts {
 	 *  ancestor for 3-way merge". Null when none is recorded (a note that has
 	 *  never completed a sync), which falls back to the pre-LCA path. */
 	lcaFor?: (noteId: string) => string | null;
-	/** `crdtLcaMerge` flag. Read per call so a toggle takes effect without a
-	 *  stack rebuild. */
-	lcaMergeEnabled?: () => boolean;
 	/** Called when a merge could not apply every hunk. The content is still
 	 *  written, but the caller may want to record an issue — a dirty merge is the
 	 *  honest conflict signal that the two-way diff never produced. */
@@ -324,10 +321,7 @@ export class ProviderRegistry {
 		// projection, which for a fresh doc is empty — and the caller records
 		// fnv1a(returned) as the last-synced baseline, so an empty return poisons
 		// isUnchangedSynced for a note that actually has content (#846 doubling).
-		const base =
-			this.opts.lcaMergeEnabled?.() && (hasLca ?? docHasHistory(e.doc, e.kind))
-				? this.opts.lcaFor?.(noteId)
-				: null;
+		const base = (hasLca ?? docHasHistory(e.doc, e.kind)) ? this.opts.lcaFor?.(noteId) : null;
 		if (base !== null && base !== undefined && e.kind === "note") {
 			const merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
 			if (merged.clean) {
@@ -350,8 +344,8 @@ export class ProviderRegistry {
 		// Stale-snapshot revert guard (e2e test_83): diskContent was read before
 		// this resolved; a remote merge in that window is absent from it, and
 		// diffing would DELETE the remote ops. Re-read across a doc-stable window.
-		// Still the path when the LCA flag is off, no base is recorded yet, the doc
-		// is a canvas, or the merge came back dirty.
+		// Still the path when no base is recorded yet, the doc is a canvas, or the
+		// merge came back dirty.
 		if (reread) {
 			let stable = false;
 			for (let attempt = 0; attempt < 3 && !stable; attempt++) {
