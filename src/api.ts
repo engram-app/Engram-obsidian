@@ -124,8 +124,8 @@ export class EngramApi {
 
 	setAuthProvider(provider: AuthProvider | null): void {
 		this.authProvider = provider;
-		// The cached beacon token belongs to the old credential source; keep it
-		// and a pending beacon batch would post it under the new identity.
+		// The cached beacon token belongs to the old credential source; keeping
+		// it would let a pending beacon batch post it under the new identity.
 		this.lastToken = "";
 	}
 

@@ -1671,8 +1671,9 @@ var _NoteChannel = class _NoteChannel {
     this.ws = null;
     this.ref = 0;
     /** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
-     *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
-     *  `disconnect()` — the one await-reply path the channel has. */
+     *  ref. Resolved/rejected by the matching `phx_reply`, timeout,
+     *  `disconnect()`, or an unclean socket close — the one await-reply path
+     *  the channel has. */
     this.pendingReplies = /* @__PURE__ */ new Map();
     this.joinRef = "1";
     this.userJoinRef = "2";
@@ -1982,7 +1983,7 @@ var _NoteChannel = class _NoteChannel {
       token = result.token, source = result.source;
     } catch (e) {
       if (epoch !== this.connectEpoch) {
-        rlog().info("channel", "open aborted \u2014 disconnected during token fetch");
+        rlog().warn("channel", "open aborted \u2014 disconnected during token fetch");
         return;
       }
       rlog().warn(
@@ -1992,7 +1993,7 @@ var _NoteChannel = class _NoteChannel {
       return;
     }
     if (epoch !== this.connectEpoch) {
-      rlog().info("channel", "open aborted \u2014 disconnected during token fetch");
+      rlog().warn("channel", "open aborted \u2014 disconnected during token fetch");
       return;
     }
     if (!token) {
@@ -2018,7 +2019,7 @@ var _NoteChannel = class _NoteChannel {
       }
     }
     if (epoch !== this.connectEpoch) {
-      rlog().info("channel", "open aborted \u2014 disconnected during identity probe");
+      rlog().warn("channel", "open aborted \u2014 disconnected during identity probe");
       return;
     }
     rlog().info(
@@ -7518,7 +7519,7 @@ var READING_EDIT_ORIGIN = { source: "crdt-reading-view" }, CrdtReadingView = cla
     let placeholder = () => {
     };
     this.observers.set(view, placeholder), this.attached.add(view);
-    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.delete(view), this.attached.delete(view), null));
+    let ytext = await this.deps.getYText(path).catch((err) => (rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`), this.observers.get(view) === placeholder && (this.observers.delete(view), this.attached.delete(view)), null));
     if (!ytext || this.observers.get(view) !== placeholder) return;
     this.rendered.set(view, ytext.toJSON());
     let handler = () => {
@@ -22441,13 +22442,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     var _a;
     (_a = this.onSyncProgress) == null || _a.call(this, { phase: "pushing", current, total, failed, currentPath });
   }
-  /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
-   *  genuinely-modified tracked files and never-before-synced local-only
-   *  notes (always included regardless of mtime). A brand-new note's first
-   *  push routes through pushFile's socket-native genesis (crdt_create) when
-   *  wired. Public: also called directly by the connect path (onLayoutReady,
-   *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
-   *  needs this push leg to create/upload local-only notes on (re)connect. */
   /** Shared push pipeline: split notes/attachments, bulk-create genesis
    *  notes over crdt_create_batch, then per-file push in batches of
    *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
@@ -22480,6 +22474,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     return { pushed, failed };
   }
+  /** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
+   *  genuinely-modified tracked files and never-before-synced local-only
+   *  notes (always included regardless of mtime). A brand-new note's first
+   *  push routes through pushFile's socket-native genesis (crdt_create) when
+   *  wired. Public: also called directly by the connect path (onLayoutReady,
+   *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
+   *  needs this push leg to create/upload local-only notes on (re)connect. */
   async pushModifiedFiles(sinceTimestamp) {
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);

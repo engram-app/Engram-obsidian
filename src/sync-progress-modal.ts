@@ -484,8 +484,10 @@ export class SyncProgressModal extends Modal {
 	}
 }
 
-/** Labels for a phase the engine reports that the plan did not predict (rare;
- *  keeps an unexpected phase from rendering its raw key). */
+/** The per-phase display copy. Primary label source for the settings-pane
+ *  progress bar (every phase), and the modal's fallback for a phase the plan
+ *  did not predict — the two surfaces deliberately share one map so they can
+ *  never disagree on wording again. */
 export const PHASE_FALLBACK_LABEL: Record<SyncProgress["phase"], string> = {
 	deleting: "Deleting",
 	pushing: "Uploading",

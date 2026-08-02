@@ -2950,8 +2950,10 @@ export class SyncEngine {
 								});
 								// The seed transmitted content, so the create's own broadcast
 								// comes back at us: open the echo-cooldown window exactly like
-								// the CRDT-op branch. (The seed-declined and post-create-throw
-								// exits transmitted nothing and correctly leave this false.)
+								// the CRDT-op branch. (The seed-declined exit transmitted
+								// nothing; the post-create-throw exit may have transmitted but
+								// conservatively leaves the window closed — an unsuppressed
+								// self-echo there is absorbed by the hash-skip dedupe.)
 								success = true;
 							} else {
 								// ponytail: near-unreachable — a fresh in-cap note seedOnce's
@@ -6640,13 +6642,6 @@ export class SyncEngine {
 		this.onSyncProgress?.({ phase: "pushing", current, total, failed, currentPath });
 	}
 
-	/** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
-	 *  genuinely-modified tracked files and never-before-synced local-only
-	 *  notes (always included regardless of mtime). A brand-new note's first
-	 *  push routes through pushFile's socket-native genesis (crdt_create) when
-	 *  wired. Public: also called directly by the connect path (onLayoutReady,
-	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
-	 *  needs this push leg to create/upload local-only notes on (re)connect. */
 	/** Shared push pipeline: split notes/attachments, bulk-create genesis
 	 *  notes over crdt_create_batch, then per-file push in batches of
 	 *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
@@ -6700,6 +6695,13 @@ export class SyncEngine {
 		return { pushed, failed };
 	}
 
+	/** Push files modified since `sinceTimestamp` (default: `lastSync`) — both
+	 *  genuinely-modified tracked files and never-before-synced local-only
+	 *  notes (always included regardless of mtime). A brand-new note's first
+	 *  push routes through pushFile's socket-native genesis (crdt_create) when
+	 *  wired. Public: also called directly by the connect path (onLayoutReady,
+	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
+	 *  needs this push leg to create/upload local-only notes on (re)connect. */
 	async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -6710,7 +6712,6 @@ export class SyncEngine {
 		const files = this.app.vault.getFiles();
 		let pushed = 0;
 
-		// Batch in groups of 10
 		const toSync = files.filter((f: TFile) => {
 			if (!this.isSyncable(f) || this.shouldIgnore(f.path)) return false;
 			if (!this.syncState.has(f.path)) return true;

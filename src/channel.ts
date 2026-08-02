@@ -163,8 +163,9 @@ export class NoteChannel {
 	private ws: WebSocket | null = null;
 	private ref = 0;
 	/** In-flight requests sent via `sendRequest`, keyed by the outbound frame's
-	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout, or
-	 *  `disconnect()` — the one await-reply path the channel has. */
+	 *  ref. Resolved/rejected by the matching `phx_reply`, timeout,
+	 *  `disconnect()`, or an unclean socket close — the one await-reply path
+	 *  the channel has. */
 	private readonly pendingReplies = new Map<
 		string,
 		{
@@ -646,7 +647,7 @@ export class NoteChannel {
 			source = result.source;
 		} catch (e) {
 			if (epoch !== this.connectEpoch) {
-				rlog().info("channel", "open aborted — disconnected during token fetch");
+				rlog().warn("channel", "open aborted — disconnected during token fetch");
 				return;
 			}
 			rlog().warn(
@@ -658,7 +659,7 @@ export class NoteChannel {
 		}
 
 		if (epoch !== this.connectEpoch) {
-			rlog().info("channel", "open aborted — disconnected during token fetch");
+			rlog().warn("channel", "open aborted — disconnected during token fetch");
 			return;
 		}
 
@@ -707,7 +708,7 @@ export class NoteChannel {
 		// Second abort point: the identity-refresh probe above is another await a
 		// disconnect() can land inside.
 		if (epoch !== this.connectEpoch) {
-			rlog().info("channel", "open aborted — disconnected during identity probe");
+			rlog().warn("channel", "open aborted — disconnected during identity probe");
 			return;
 		}
 

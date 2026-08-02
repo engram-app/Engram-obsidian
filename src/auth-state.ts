@@ -136,13 +136,6 @@ export function cloudTabAction(
 	return "prompt-switch";
 }
 
-/** Update `target.settings.apiUrl` and, if the new URL points at a different
- *  backend origin, wipe backend-scoped auth state, null out the API auth
- *  provider, reset the live in-memory auth provider (so a stale old-backend
- *  access token can't be replayed against the new origin), and disconnect the
- *  live note stream — then persist via `save`.
- *  Returns true when auth was cleared. Mutates `target.settings` in place so
- *  external references (SyncEngine, etc.) keep observing the same object. */
 /** The ApiUrlSwitchTarget for the live plugin instance. One construction site
  *  — this literal was copy-pasted at three settings-tab call sites. */
 export function pluginSwitchTarget(plugin: {
@@ -161,6 +154,13 @@ export function pluginSwitchTarget(plugin: {
 	};
 }
 
+/** Update `target.settings.apiUrl` and, if the new URL points at a different
+ *  backend origin, wipe backend-scoped auth state, null out the API auth
+ *  provider, reset the live in-memory auth provider (so a stale old-backend
+ *  access token can't be replayed against the new origin), and disconnect the
+ *  live note stream — then persist via `save`.
+ *  Returns true when auth was cleared. Mutates `target.settings` in place so
+ *  external references (SyncEngine, etc.) keep observing the same object. */
 export async function applyApiUrlChange(
 	target: ApiUrlSwitchTarget,
 	newUrl: string,

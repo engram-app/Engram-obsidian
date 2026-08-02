@@ -51,8 +51,13 @@ export class CrdtReadingView {
 		this.attached.add(view);
 		const ytext = await this.deps.getYText(path).catch((err: unknown) => {
 			rlog().error("crdt-reading-view", `getYText failed for ${path}: ${String(err)}`);
-			this.observers.delete(view); // allow retry on next refresh
-			this.attached.delete(view);
+			// Same identity rule as the success path: a detach + re-attach during
+			// the await means these slots belong to the NEWER attach — a late
+			// rejection must not cancel its reservation.
+			if (this.observers.get(view) === placeholder) {
+				this.observers.delete(view); // allow retry on next refresh
+				this.attached.delete(view);
+			}
 			return null;
 		});
 		if (!ytext) return;

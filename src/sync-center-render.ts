@@ -207,9 +207,6 @@ function renderPlanSkips(parent: HTMLElement, plugin: EngramSyncPlugin, refresh:
 	}
 }
 
-/** A calm (info-styled) plan-skip card: remediation copy, file list, and a
- *  single Upgrade button. No Dismiss/Retry — the fact stands until the plan
- *  changes. */
 /** Shared card chrome for the plan-skip and needs-attention sections: head
  *  (icon + title-with-count), hint line, an actions strip filled by the
  *  caller, and the collapsed "Show files (N)" list. The two card renderers
@@ -253,6 +250,9 @@ function renderIssueCard(
 	}
 }
 
+/** A calm (info-styled) plan-skip card: remediation copy, file list, and a
+ *  single Upgrade button. No Dismiss/Retry — the fact stands until the plan
+ *  changes. */
 function renderPlanCard(
 	parent: HTMLElement,
 	plugin: EngramSyncPlugin,
