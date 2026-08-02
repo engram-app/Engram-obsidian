@@ -38,63 +38,63 @@ var __publicField = (obj, key, value) => __defNormalProp(obj, typeof key != "sym
 // node_modules/diff-match-patch/index.js
 var require_diff_match_patch = __commonJS({
   "node_modules/diff-match-patch/index.js"(exports, module2) {
-    var diff_match_patch4 = function() {
+    var diff_match_patch5 = function() {
       this.Diff_Timeout = 1, this.Diff_EditCost = 4, this.Match_Threshold = 0.5, this.Match_Distance = 1e3, this.Patch_DeleteThreshold = 0.5, this.Patch_Margin = 4, this.Match_MaxBits = 32;
     }, DIFF_DELETE = -1, DIFF_INSERT = 1, DIFF_EQUAL = 0;
-    diff_match_patch4.Diff = function(op, text2) {
+    diff_match_patch5.Diff = function(op, text2) {
       return [op, text2];
     };
-    diff_match_patch4.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
+    diff_match_patch5.prototype.diff_main = function(text1, text2, opt_checklines, opt_deadline) {
       typeof opt_deadline == "undefined" && (this.Diff_Timeout <= 0 ? opt_deadline = Number.MAX_VALUE : opt_deadline = (/* @__PURE__ */ new Date()).getTime() + this.Diff_Timeout * 1e3);
       var deadline = opt_deadline;
       if (text1 == null || text2 == null)
         throw new Error("Null input. (diff_main)");
       if (text1 == text2)
-        return text1 ? [new diff_match_patch4.Diff(DIFF_EQUAL, text1)] : [];
+        return text1 ? [new diff_match_patch5.Diff(DIFF_EQUAL, text1)] : [];
       typeof opt_checklines == "undefined" && (opt_checklines = !0);
       var checklines = opt_checklines, commonlength = this.diff_commonPrefix(text1, text2), commonprefix = text1.substring(0, commonlength);
       text1 = text1.substring(commonlength), text2 = text2.substring(commonlength), commonlength = this.diff_commonSuffix(text1, text2);
       var commonsuffix = text1.substring(text1.length - commonlength);
       text1 = text1.substring(0, text1.length - commonlength), text2 = text2.substring(0, text2.length - commonlength);
       var diffs = this.diff_compute_(text1, text2, checklines, deadline);
-      return commonprefix && diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
+      return commonprefix && diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, commonprefix)), commonsuffix && diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, commonsuffix)), this.diff_cleanupMerge(diffs), diffs;
     };
-    diff_match_patch4.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
+    diff_match_patch5.prototype.diff_compute_ = function(text1, text2, checklines, deadline) {
       var diffs;
       if (!text1)
-        return [new diff_match_patch4.Diff(DIFF_INSERT, text2)];
+        return [new diff_match_patch5.Diff(DIFF_INSERT, text2)];
       if (!text2)
-        return [new diff_match_patch4.Diff(DIFF_DELETE, text1)];
+        return [new diff_match_patch5.Diff(DIFF_DELETE, text1)];
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1, i = longtext.indexOf(shorttext);
       if (i != -1)
         return diffs = [
-          new diff_match_patch4.Diff(DIFF_INSERT, longtext.substring(0, i)),
-          new diff_match_patch4.Diff(DIFF_EQUAL, shorttext),
-          new diff_match_patch4.Diff(
+          new diff_match_patch5.Diff(DIFF_INSERT, longtext.substring(0, i)),
+          new diff_match_patch5.Diff(DIFF_EQUAL, shorttext),
+          new diff_match_patch5.Diff(
             DIFF_INSERT,
             longtext.substring(i + shorttext.length)
           )
         ], text1.length > text2.length && (diffs[0][0] = diffs[2][0] = DIFF_DELETE), diffs;
       if (shorttext.length == 1)
         return [
-          new diff_match_patch4.Diff(DIFF_DELETE, text1),
-          new diff_match_patch4.Diff(DIFF_INSERT, text2)
+          new diff_match_patch5.Diff(DIFF_DELETE, text1),
+          new diff_match_patch5.Diff(DIFF_INSERT, text2)
         ];
       var hm = this.diff_halfMatch_(text1, text2);
       if (hm) {
         var text1_a = hm[0], text1_b = hm[1], text2_a = hm[2], text2_b = hm[3], mid_common = hm[4], diffs_a = this.diff_main(text1_a, text2_a, checklines, deadline), diffs_b = this.diff_main(text1_b, text2_b, checklines, deadline);
         return diffs_a.concat(
-          [new diff_match_patch4.Diff(DIFF_EQUAL, mid_common)],
+          [new diff_match_patch5.Diff(DIFF_EQUAL, mid_common)],
           diffs_b
         );
       }
       return checklines && text1.length > 100 && text2.length > 100 ? this.diff_lineMode_(text1, text2, deadline) : this.diff_bisect_(text1, text2, deadline);
     };
-    diff_match_patch4.prototype.diff_lineMode_ = function(text1, text2, deadline) {
+    diff_match_patch5.prototype.diff_lineMode_ = function(text1, text2, deadline) {
       var a = this.diff_linesToChars_(text1, text2);
       text1 = a.chars1, text2 = a.chars2;
       var linearray = a.lineArray, diffs = this.diff_main(text1, text2, !1, deadline);
-      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+      this.diff_charsToLines_(diffs, linearray), this.diff_cleanupSemantic(diffs), diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = ""; pointer < diffs.length; ) {
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -120,7 +120,7 @@ var require_diff_match_patch = __commonJS({
       }
       return diffs.pop(), diffs;
     };
-    diff_match_patch4.prototype.diff_bisect_ = function(text1, text2, deadline) {
+    diff_match_patch5.prototype.diff_bisect_ = function(text1, text2, deadline) {
       for (var text1_length = text1.length, text2_length = text2.length, max_d = Math.ceil((text1_length + text2_length) / 2), v_offset = max_d, v_length = 2 * max_d, v1 = new Array(v_length), v2 = new Array(v_length), x = 0; x < v_length; x++)
         v1[x] = -1, v2[x] = -1;
       v1[v_offset + 1] = 0, v2[v_offset + 1] = 0;
@@ -163,15 +163,15 @@ var require_diff_match_patch = __commonJS({
         }
       }
       return [
-        new diff_match_patch4.Diff(DIFF_DELETE, text1),
-        new diff_match_patch4.Diff(DIFF_INSERT, text2)
+        new diff_match_patch5.Diff(DIFF_DELETE, text1),
+        new diff_match_patch5.Diff(DIFF_INSERT, text2)
       ];
     };
-    diff_match_patch4.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
+    diff_match_patch5.prototype.diff_bisectSplit_ = function(text1, text2, x, y, deadline) {
       var text1a = text1.substring(0, x), text2a = text2.substring(0, y), text1b = text1.substring(x), text2b = text2.substring(y), diffs = this.diff_main(text1a, text2a, !1, deadline), diffsb = this.diff_main(text1b, text2b, !1, deadline);
       return diffs.concat(diffsb);
     };
-    diff_match_patch4.prototype.diff_linesToChars_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_linesToChars_ = function(text1, text2) {
       var lineArray = [], lineHash = {};
       lineArray[0] = "";
       function diff_linesToCharsMunge_(text3) {
@@ -188,28 +188,28 @@ var require_diff_match_patch = __commonJS({
       var chars2 = diff_linesToCharsMunge_(text2);
       return { chars1, chars2, lineArray };
     };
-    diff_match_patch4.prototype.diff_charsToLines_ = function(diffs, lineArray) {
+    diff_match_patch5.prototype.diff_charsToLines_ = function(diffs, lineArray) {
       for (var i = 0; i < diffs.length; i++) {
         for (var chars = diffs[i][1], text2 = [], j = 0; j < chars.length; j++)
           text2[j] = lineArray[chars.charCodeAt(j)];
         diffs[i][1] = text2.join("");
       }
     };
-    diff_match_patch4.prototype.diff_commonPrefix = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonPrefix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(0) != text2.charAt(0))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerstart = 0; pointermin < pointermid; )
         text1.substring(pointerstart, pointermid) == text2.substring(pointerstart, pointermid) ? (pointermin = pointermid, pointerstart = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonSuffix = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonSuffix = function(text1, text2) {
       if (!text1 || !text2 || text1.charAt(text1.length - 1) != text2.charAt(text2.length - 1))
         return 0;
       for (var pointermin = 0, pointermax = Math.min(text1.length, text2.length), pointermid = pointermax, pointerend = 0; pointermin < pointermid; )
         text1.substring(text1.length - pointermid, text1.length - pointerend) == text2.substring(text2.length - pointermid, text2.length - pointerend) ? (pointermin = pointermid, pointerend = pointermin) : pointermax = pointermid, pointermid = Math.floor((pointermax - pointermin) / 2 + pointermin);
       return pointermid;
     };
-    diff_match_patch4.prototype.diff_commonOverlap_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_commonOverlap_ = function(text1, text2) {
       var text1_length = text1.length, text2_length = text2.length;
       if (text1_length == 0 || text2_length == 0)
         return 0;
@@ -224,7 +224,7 @@ var require_diff_match_patch = __commonJS({
         length2 += found, (found == 0 || text1.substring(text_length - length2) == text2.substring(0, length2)) && (best = length2, length2++);
       }
     };
-    diff_match_patch4.prototype.diff_halfMatch_ = function(text1, text2) {
+    diff_match_patch5.prototype.diff_halfMatch_ = function(text1, text2) {
       if (this.Diff_Timeout <= 0)
         return null;
       var longtext = text1.length > text2.length ? text1 : text2, shorttext = text1.length > text2.length ? text2 : text1;
@@ -267,7 +267,7 @@ var require_diff_match_patch = __commonJS({
       var mid_common = hm[4];
       return [text1_a, text1_b, text2_a, text2_b, mid_common];
     };
-    diff_match_patch4.prototype.diff_cleanupSemantic = function(diffs) {
+    diff_match_patch5.prototype.diff_cleanupSemantic = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (equalities[equalitiesLength++] = pointer, length_insertions1 = length_insertions2, length_deletions1 = length_deletions2, length_insertions2 = 0, length_deletions2 = 0, lastEquality = diffs[pointer][1]) : (diffs[pointer][0] == DIFF_INSERT ? length_insertions2 += diffs[pointer][1].length : length_deletions2 += diffs[pointer][1].length, lastEquality && lastEquality.length <= Math.max(length_insertions1, length_deletions1) && lastEquality.length <= Math.max(
           length_insertions2,
@@ -275,15 +275,15 @@ var require_diff_match_patch = __commonJS({
         ) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch5.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, length_insertions1 = 0, length_deletions1 = 0, length_insertions2 = 0, length_deletions2 = 0, lastEquality = null, changes = !0)), pointer++;
       for (changes && this.diff_cleanupMerge(diffs), this.diff_cleanupSemanticLossless(diffs), pointer = 1; pointer < diffs.length; ) {
         if (diffs[pointer - 1][0] == DIFF_DELETE && diffs[pointer][0] == DIFF_INSERT) {
           var deletion = diffs[pointer - 1][1], insertion = diffs[pointer][1], overlap_length1 = this.diff_commonOverlap_(deletion, insertion), overlap_length2 = this.diff_commonOverlap_(insertion, deletion);
-          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          overlap_length1 >= overlap_length2 ? (overlap_length1 >= deletion.length / 2 || overlap_length1 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch5.Diff(
             DIFF_EQUAL,
             insertion.substring(0, overlap_length1)
-          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch4.Diff(
+          )), diffs[pointer - 1][1] = deletion.substring(0, deletion.length - overlap_length1), diffs[pointer + 1][1] = insertion.substring(overlap_length1), pointer++) : (overlap_length2 >= deletion.length / 2 || overlap_length2 >= insertion.length / 2) && (diffs.splice(pointer, 0, new diff_match_patch5.Diff(
             DIFF_EQUAL,
             deletion.substring(0, overlap_length2)
           )), diffs[pointer - 1][0] = DIFF_INSERT, diffs[pointer - 1][1] = insertion.substring(0, insertion.length - overlap_length2), diffs[pointer + 1][0] = DIFF_DELETE, diffs[pointer + 1][1] = deletion.substring(overlap_length2), pointer++), pointer++;
@@ -291,11 +291,11 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.prototype.diff_cleanupSemanticLossless = function(diffs) {
+    diff_match_patch5.prototype.diff_cleanupSemanticLossless = function(diffs) {
       function diff_cleanupSemanticScore_(one, two) {
         if (!one || !two)
           return 6;
-        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch4.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch4.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch4.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch4.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch4.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch4.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch4.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch4.blanklineStartRegex_);
+        var char1 = one.charAt(one.length - 1), char2 = two.charAt(0), nonAlphaNumeric1 = char1.match(diff_match_patch5.nonAlphaNumericRegex_), nonAlphaNumeric2 = char2.match(diff_match_patch5.nonAlphaNumericRegex_), whitespace1 = nonAlphaNumeric1 && char1.match(diff_match_patch5.whitespaceRegex_), whitespace2 = nonAlphaNumeric2 && char2.match(diff_match_patch5.whitespaceRegex_), lineBreak1 = whitespace1 && char1.match(diff_match_patch5.linebreakRegex_), lineBreak2 = whitespace2 && char2.match(diff_match_patch5.linebreakRegex_), blankLine1 = lineBreak1 && one.match(diff_match_patch5.blanklineEndRegex_), blankLine2 = lineBreak2 && two.match(diff_match_patch5.blanklineStartRegex_);
         return blankLine1 || blankLine2 ? 5 : lineBreak1 || lineBreak2 ? 4 : nonAlphaNumeric1 && !whitespace1 && whitespace2 ? 3 : whitespace1 || whitespace2 ? 2 : nonAlphaNumeric1 || nonAlphaNumeric2 ? 1 : 0;
       }
       for (var pointer = 1; pointer < diffs.length - 1; ) {
@@ -315,22 +315,22 @@ var require_diff_match_patch = __commonJS({
         pointer++;
       }
     };
-    diff_match_patch4.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
-    diff_match_patch4.whitespaceRegex_ = /\s/;
-    diff_match_patch4.linebreakRegex_ = /[\r\n]/;
-    diff_match_patch4.blanklineEndRegex_ = /\n\r?\n$/;
-    diff_match_patch4.blanklineStartRegex_ = /^\r?\n\r?\n/;
-    diff_match_patch4.prototype.diff_cleanupEfficiency = function(diffs) {
+    diff_match_patch5.nonAlphaNumericRegex_ = /[^a-zA-Z0-9]/;
+    diff_match_patch5.whitespaceRegex_ = /\s/;
+    diff_match_patch5.linebreakRegex_ = /[\r\n]/;
+    diff_match_patch5.blanklineEndRegex_ = /\n\r?\n$/;
+    diff_match_patch5.blanklineStartRegex_ = /^\r?\n\r?\n/;
+    diff_match_patch5.prototype.diff_cleanupEfficiency = function(diffs) {
       for (var changes = !1, equalities = [], equalitiesLength = 0, lastEquality = null, pointer = 0, pre_ins = !1, pre_del = !1, post_ins = !1, post_del = !1; pointer < diffs.length; )
         diffs[pointer][0] == DIFF_EQUAL ? (diffs[pointer][1].length < this.Diff_EditCost && (post_ins || post_del) ? (equalities[equalitiesLength++] = pointer, pre_ins = post_ins, pre_del = post_del, lastEquality = diffs[pointer][1]) : (equalitiesLength = 0, lastEquality = null), post_ins = post_del = !1) : (diffs[pointer][0] == DIFF_DELETE ? post_del = !0 : post_ins = !0, lastEquality && (pre_ins && pre_del && post_ins && post_del || lastEquality.length < this.Diff_EditCost / 2 && pre_ins + pre_del + post_ins + post_del == 3) && (diffs.splice(
           equalities[equalitiesLength - 1],
           0,
-          new diff_match_patch4.Diff(DIFF_DELETE, lastEquality)
+          new diff_match_patch5.Diff(DIFF_DELETE, lastEquality)
         ), diffs[equalities[equalitiesLength - 1] + 1][0] = DIFF_INSERT, equalitiesLength--, lastEquality = null, pre_ins && pre_del ? (post_ins = post_del = !0, equalitiesLength = 0) : (equalitiesLength--, pointer = equalitiesLength > 0 ? equalities[equalitiesLength - 1] : -1, post_ins = post_del = !1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_cleanupMerge = function(diffs) {
-      diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, ""));
+    diff_match_patch5.prototype.diff_cleanupMerge = function(diffs) {
+      diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, ""));
       for (var pointer = 0, count_delete = 0, count_insert = 0, text_delete = "", text_insert = "", commonlength; pointer < diffs.length; )
         switch (diffs[pointer][0]) {
           case DIFF_INSERT:
@@ -340,17 +340,17 @@ var require_diff_match_patch = __commonJS({
             count_delete++, text_delete += diffs[pointer][1], pointer++;
             break;
           case DIFF_EQUAL:
-            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch4.Diff(
+            count_delete + count_insert > 1 ? (count_delete !== 0 && count_insert !== 0 && (commonlength = this.diff_commonPrefix(text_insert, text_delete), commonlength !== 0 && (pointer - count_delete - count_insert > 0 && diffs[pointer - count_delete - count_insert - 1][0] == DIFF_EQUAL ? diffs[pointer - count_delete - count_insert - 1][1] += text_insert.substring(0, commonlength) : (diffs.splice(0, 0, new diff_match_patch5.Diff(
               DIFF_EQUAL,
               text_insert.substring(0, commonlength)
             )), pointer++), text_insert = text_insert.substring(commonlength), text_delete = text_delete.substring(commonlength)), commonlength = this.diff_commonSuffix(text_insert, text_delete), commonlength !== 0 && (diffs[pointer][1] = text_insert.substring(text_insert.length - commonlength) + diffs[pointer][1], text_insert = text_insert.substring(0, text_insert.length - commonlength), text_delete = text_delete.substring(0, text_delete.length - commonlength))), pointer -= count_delete + count_insert, diffs.splice(pointer, count_delete + count_insert), text_delete.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_DELETE, text_delete)
+              new diff_match_patch5.Diff(DIFF_DELETE, text_delete)
             ), pointer++), text_insert.length && (diffs.splice(
               pointer,
               0,
-              new diff_match_patch4.Diff(DIFF_INSERT, text_insert)
+              new diff_match_patch5.Diff(DIFF_INSERT, text_insert)
             ), pointer++), pointer++) : pointer !== 0 && diffs[pointer - 1][0] == DIFF_EQUAL ? (diffs[pointer - 1][1] += diffs[pointer][1], diffs.splice(pointer, 1)) : pointer++, count_insert = 0, count_delete = 0, text_delete = "", text_insert = "";
             break;
         }
@@ -360,13 +360,13 @@ var require_diff_match_patch = __commonJS({
         diffs[pointer - 1][0] == DIFF_EQUAL && diffs[pointer + 1][0] == DIFF_EQUAL && (diffs[pointer][1].substring(diffs[pointer][1].length - diffs[pointer - 1][1].length) == diffs[pointer - 1][1] ? (diffs[pointer][1] = diffs[pointer - 1][1] + diffs[pointer][1].substring(0, diffs[pointer][1].length - diffs[pointer - 1][1].length), diffs[pointer + 1][1] = diffs[pointer - 1][1] + diffs[pointer + 1][1], diffs.splice(pointer - 1, 1), changes = !0) : diffs[pointer][1].substring(0, diffs[pointer + 1][1].length) == diffs[pointer + 1][1] && (diffs[pointer - 1][1] += diffs[pointer + 1][1], diffs[pointer][1] = diffs[pointer][1].substring(diffs[pointer + 1][1].length) + diffs[pointer + 1][1], diffs.splice(pointer + 1, 1), changes = !0)), pointer++;
       changes && this.diff_cleanupMerge(diffs);
     };
-    diff_match_patch4.prototype.diff_xIndex = function(diffs, loc) {
+    diff_match_patch5.prototype.diff_xIndex = function(diffs, loc) {
       var chars1 = 0, chars2 = 0, last_chars1 = 0, last_chars2 = 0, x;
       for (x = 0; x < diffs.length && (diffs[x][0] !== DIFF_INSERT && (chars1 += diffs[x][1].length), diffs[x][0] !== DIFF_DELETE && (chars2 += diffs[x][1].length), !(chars1 > loc)); x++)
         last_chars1 = chars1, last_chars2 = chars2;
       return diffs.length != x && diffs[x][0] === DIFF_DELETE ? last_chars2 : last_chars2 + (loc - last_chars1);
     };
-    diff_match_patch4.prototype.diff_prettyHtml = function(diffs) {
+    diff_match_patch5.prototype.diff_prettyHtml = function(diffs) {
       for (var html = [], pattern_amp = /&/g, pattern_lt = /</g, pattern_gt = />/g, pattern_para = /\n/g, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1], text2 = data.replace(pattern_amp, "&amp;").replace(pattern_lt, "&lt;").replace(pattern_gt, "&gt;").replace(pattern_para, "&para;<br>");
         switch (op) {
@@ -383,17 +383,17 @@ var require_diff_match_patch = __commonJS({
       }
       return html.join("");
     };
-    diff_match_patch4.prototype.diff_text1 = function(diffs) {
+    diff_match_patch5.prototype.diff_text1 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_INSERT && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_text2 = function(diffs) {
+    diff_match_patch5.prototype.diff_text2 = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         diffs[x][0] !== DIFF_DELETE && (text2[x] = diffs[x][1]);
       return text2.join("");
     };
-    diff_match_patch4.prototype.diff_levenshtein = function(diffs) {
+    diff_match_patch5.prototype.diff_levenshtein = function(diffs) {
       for (var levenshtein = 0, insertions = 0, deletions = 0, x = 0; x < diffs.length; x++) {
         var op = diffs[x][0], data = diffs[x][1];
         switch (op) {
@@ -410,7 +410,7 @@ var require_diff_match_patch = __commonJS({
       }
       return levenshtein += Math.max(insertions, deletions), levenshtein;
     };
-    diff_match_patch4.prototype.diff_toDelta = function(diffs) {
+    diff_match_patch5.prototype.diff_toDelta = function(diffs) {
       for (var text2 = [], x = 0; x < diffs.length; x++)
         switch (diffs[x][0]) {
           case DIFF_INSERT:
@@ -425,13 +425,13 @@ var require_diff_match_patch = __commonJS({
         }
       return text2.join("	").replace(/%20/g, " ");
     };
-    diff_match_patch4.prototype.diff_fromDelta = function(text1, delta) {
+    diff_match_patch5.prototype.diff_fromDelta = function(text1, delta) {
       for (var diffs = [], diffsLength = 0, pointer = 0, tokens = delta.split(/\t/g), x = 0; x < tokens.length; x++) {
         var param = tokens[x].substring(1);
         switch (tokens[x].charAt(0)) {
           case "+":
             try {
-              diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_INSERT, decodeURI(param));
+              diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_INSERT, decodeURI(param));
             } catch (ex) {
               throw new Error("Illegal escape in diff_fromDelta: " + param);
             }
@@ -443,7 +443,7 @@ var require_diff_match_patch = __commonJS({
             if (isNaN(n) || n < 0)
               throw new Error("Invalid number in diff_fromDelta: " + param);
             var text2 = text1.substring(pointer, pointer += n);
-            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch4.Diff(DIFF_DELETE, text2);
+            tokens[x].charAt(0) == "=" ? diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_EQUAL, text2) : diffs[diffsLength++] = new diff_match_patch5.Diff(DIFF_DELETE, text2);
             break;
           default:
             if (tokens[x])
@@ -454,12 +454,12 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Delta length (" + pointer + ") does not equal source text length (" + text1.length + ").");
       return diffs;
     };
-    diff_match_patch4.prototype.match_main = function(text2, pattern, loc) {
+    diff_match_patch5.prototype.match_main = function(text2, pattern, loc) {
       if (text2 == null || pattern == null || loc == null)
         throw new Error("Null input. (match_main)");
       return loc = Math.max(0, Math.min(loc, text2.length)), text2 == pattern ? 0 : text2.length ? text2.substring(loc, loc + pattern.length) == pattern ? loc : this.match_bitap_(text2, pattern, loc) : -1;
     };
-    diff_match_patch4.prototype.match_bitap_ = function(text2, pattern, loc) {
+    diff_match_patch5.prototype.match_bitap_ = function(text2, pattern, loc) {
       if (pattern.length > this.Match_MaxBits)
         throw new Error("Pattern too long for this browser.");
       var s = this.match_alphabet_(pattern), dmp3 = this;
@@ -494,14 +494,14 @@ var require_diff_match_patch = __commonJS({
       }
       return best_loc;
     };
-    diff_match_patch4.prototype.match_alphabet_ = function(pattern) {
+    diff_match_patch5.prototype.match_alphabet_ = function(pattern) {
       for (var s = {}, i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] = 0;
       for (var i = 0; i < pattern.length; i++)
         s[pattern.charAt(i)] |= 1 << pattern.length - i - 1;
       return s;
     };
-    diff_match_patch4.prototype.patch_addContext_ = function(patch, text2) {
+    diff_match_patch5.prototype.patch_addContext_ = function(patch, text2) {
       if (text2.length != 0) {
         if (patch.start2 === null)
           throw Error("patch not initialized");
@@ -512,15 +512,15 @@ var require_diff_match_patch = __commonJS({
           );
         padding += this.Patch_Margin;
         var prefix = text2.substring(patch.start2 - padding, patch.start2);
-        prefix && patch.diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, prefix));
+        prefix && patch.diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, prefix));
         var suffix = text2.substring(
           patch.start2 + patch.length1,
           patch.start2 + patch.length1 + padding
         );
-        suffix && patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
+        suffix && patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, suffix)), patch.start1 -= prefix.length, patch.start2 -= prefix.length, patch.length1 += prefix.length + suffix.length, patch.length2 += prefix.length + suffix.length;
       }
     };
-    diff_match_patch4.prototype.patch_make = function(a, opt_b, opt_c) {
+    diff_match_patch5.prototype.patch_make = function(a, opt_b, opt_c) {
       var text1, diffs;
       if (typeof a == "string" && typeof opt_b == "string" && typeof opt_c == "undefined")
         text1 = /** @type {string} */
@@ -545,7 +545,7 @@ var require_diff_match_patch = __commonJS({
         throw new Error("Unknown call format to patch_make.");
       if (diffs.length === 0)
         return [];
-      for (var patches = [], patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
+      for (var patches = [], patch = new diff_match_patch5.patch_obj(), patchDiffLength = 0, char_count1 = 0, char_count2 = 0, prepatch_text = text1, postpatch_text = text1, x = 0; x < diffs.length; x++) {
         var diff_type = diffs[x][0], diff_text = diffs[x][1];
         switch (!patchDiffLength && diff_type !== DIFF_EQUAL && (patch.start1 = char_count1, patch.start2 = char_count2), diff_type) {
           case DIFF_INSERT:
@@ -555,24 +555,24 @@ var require_diff_match_patch = __commonJS({
             patch.length1 += diff_text.length, patch.diffs[patchDiffLength++] = diffs[x], postpatch_text = postpatch_text.substring(0, char_count2) + postpatch_text.substring(char_count2 + diff_text.length);
             break;
           case DIFF_EQUAL:
-            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch4.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
+            diff_text.length <= 2 * this.Patch_Margin && patchDiffLength && diffs.length != x + 1 ? (patch.diffs[patchDiffLength++] = diffs[x], patch.length1 += diff_text.length, patch.length2 += diff_text.length) : diff_text.length >= 2 * this.Patch_Margin && patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch), patch = new diff_match_patch5.patch_obj(), patchDiffLength = 0, prepatch_text = postpatch_text, char_count1 = char_count2);
             break;
         }
         diff_type !== DIFF_INSERT && (char_count1 += diff_text.length), diff_type !== DIFF_DELETE && (char_count2 += diff_text.length);
       }
       return patchDiffLength && (this.patch_addContext_(patch, prepatch_text), patches.push(patch)), patches;
     };
-    diff_match_patch4.prototype.patch_deepCopy = function(patches) {
+    diff_match_patch5.prototype.patch_deepCopy = function(patches) {
       for (var patchesCopy = [], x = 0; x < patches.length; x++) {
-        var patch = patches[x], patchCopy = new diff_match_patch4.patch_obj();
+        var patch = patches[x], patchCopy = new diff_match_patch5.patch_obj();
         patchCopy.diffs = [];
         for (var y = 0; y < patch.diffs.length; y++)
-          patchCopy.diffs[y] = new diff_match_patch4.Diff(patch.diffs[y][0], patch.diffs[y][1]);
+          patchCopy.diffs[y] = new diff_match_patch5.Diff(patch.diffs[y][0], patch.diffs[y][1]);
         patchCopy.start1 = patch.start1, patchCopy.start2 = patch.start2, patchCopy.length1 = patch.length1, patchCopy.length2 = patch.length2, patchesCopy[x] = patchCopy;
       }
       return patchesCopy;
     };
-    diff_match_patch4.prototype.patch_apply = function(patches, text2) {
+    diff_match_patch5.prototype.patch_apply = function(patches, text2) {
       if (patches.length == 0)
         return [text2, []];
       patches = this.patch_deepCopy(patches);
@@ -614,52 +614,52 @@ var require_diff_match_patch = __commonJS({
       }
       return text2 = text2.substring(nullPadding.length, text2.length - nullPadding.length), [text2, results];
     };
-    diff_match_patch4.prototype.patch_addPadding = function(patches) {
+    diff_match_patch5.prototype.patch_addPadding = function(patches) {
       for (var paddingLength = this.Patch_Margin, nullPadding = "", x = 1; x <= paddingLength; x++)
         nullPadding += String.fromCharCode(x);
       for (var x = 0; x < patches.length; x++)
         patches[x].start1 += paddingLength, patches[x].start2 += paddingLength;
       var patch = patches[0], diffs = patch.diffs;
       if (diffs.length == 0 || diffs[0][0] != DIFF_EQUAL)
-        diffs.unshift(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.unshift(new diff_match_patch5.Diff(DIFF_EQUAL, nullPadding)), patch.start1 -= paddingLength, patch.start2 -= paddingLength, patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[0][1].length) {
         var extraLength = paddingLength - diffs[0][1].length;
         diffs[0][1] = nullPadding.substring(diffs[0][1].length) + diffs[0][1], patch.start1 -= extraLength, patch.start2 -= extraLength, patch.length1 += extraLength, patch.length2 += extraLength;
       }
       if (patch = patches[patches.length - 1], diffs = patch.diffs, diffs.length == 0 || diffs[diffs.length - 1][0] != DIFF_EQUAL)
-        diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
+        diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, nullPadding)), patch.length1 += paddingLength, patch.length2 += paddingLength;
       else if (paddingLength > diffs[diffs.length - 1][1].length) {
         var extraLength = paddingLength - diffs[diffs.length - 1][1].length;
         diffs[diffs.length - 1][1] += nullPadding.substring(0, extraLength), patch.length1 += extraLength, patch.length2 += extraLength;
       }
       return nullPadding;
     };
-    diff_match_patch4.prototype.patch_splitMax = function(patches) {
+    diff_match_patch5.prototype.patch_splitMax = function(patches) {
       for (var patch_size = this.Match_MaxBits, x = 0; x < patches.length; x++)
         if (!(patches[x].length1 <= patch_size)) {
           var bigpatch = patches[x];
           patches.splice(x--, 1);
           for (var start1 = bigpatch.start1, start2 = bigpatch.start2, precontext = ""; bigpatch.diffs.length !== 0; ) {
-            var patch = new diff_match_patch4.patch_obj(), empty = !0;
-            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
+            var patch = new diff_match_patch5.patch_obj(), empty = !0;
+            for (patch.start1 = start1 - precontext.length, patch.start2 = start2 - precontext.length, precontext !== "" && (patch.length1 = patch.length2 = precontext.length, patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, precontext))); bigpatch.diffs.length !== 0 && patch.length1 < patch_size - this.Patch_Margin; ) {
               var diff_type = bigpatch.diffs[0][0], diff_text = bigpatch.diffs[0][1];
-              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
+              diff_type === DIFF_INSERT ? (patch.length2 += diff_text.length, start2 += diff_text.length, patch.diffs.push(bigpatch.diffs.shift()), empty = !1) : diff_type === DIFF_DELETE && patch.diffs.length == 1 && patch.diffs[0][0] == DIFF_EQUAL && diff_text.length > 2 * patch_size ? (patch.length1 += diff_text.length, start1 += diff_text.length, empty = !1, patch.diffs.push(new diff_match_patch5.Diff(diff_type, diff_text)), bigpatch.diffs.shift()) : (diff_text = diff_text.substring(
                 0,
                 patch_size - patch.length1 - this.Patch_Margin
-              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch4.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
+              ), patch.length1 += diff_text.length, start1 += diff_text.length, diff_type === DIFF_EQUAL ? (patch.length2 += diff_text.length, start2 += diff_text.length) : empty = !1, patch.diffs.push(new diff_match_patch5.Diff(diff_type, diff_text)), diff_text == bigpatch.diffs[0][1] ? bigpatch.diffs.shift() : bigpatch.diffs[0][1] = bigpatch.diffs[0][1].substring(diff_text.length));
             }
             precontext = this.diff_text2(patch.diffs), precontext = precontext.substring(precontext.length - this.Patch_Margin);
             var postcontext = this.diff_text1(bigpatch.diffs).substring(0, this.Patch_Margin);
-            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
+            postcontext !== "" && (patch.length1 += postcontext.length, patch.length2 += postcontext.length, patch.diffs.length !== 0 && patch.diffs[patch.diffs.length - 1][0] === DIFF_EQUAL ? patch.diffs[patch.diffs.length - 1][1] += postcontext : patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, postcontext))), empty || patches.splice(++x, 0, patch);
           }
         }
     };
-    diff_match_patch4.prototype.patch_toText = function(patches) {
+    diff_match_patch5.prototype.patch_toText = function(patches) {
       for (var text2 = [], x = 0; x < patches.length; x++)
         text2[x] = patches[x];
       return text2.join("");
     };
-    diff_match_patch4.prototype.patch_fromText = function(textline) {
+    diff_match_patch5.prototype.patch_fromText = function(textline) {
       var patches = [];
       if (!textline)
         return patches;
@@ -668,7 +668,7 @@ var require_diff_match_patch = __commonJS({
         var m = text2[textPointer].match(patchHeader);
         if (!m)
           throw new Error("Invalid patch string: " + text2[textPointer]);
-        var patch = new diff_match_patch4.patch_obj();
+        var patch = new diff_match_patch5.patch_obj();
         for (patches.push(patch), patch.start1 = parseInt(m[1], 10), m[2] === "" ? (patch.start1--, patch.length1 = 1) : m[2] == "0" ? patch.length1 = 0 : (patch.start1--, patch.length1 = parseInt(m[2], 10)), patch.start2 = parseInt(m[3], 10), m[4] === "" ? (patch.start2--, patch.length2 = 1) : m[4] == "0" ? patch.length2 = 0 : (patch.start2--, patch.length2 = parseInt(m[4], 10)), textPointer++; textPointer < text2.length; ) {
           var sign = text2[textPointer].charAt(0);
           try {
@@ -677,11 +677,11 @@ var require_diff_match_patch = __commonJS({
             throw new Error("Illegal escape in patch_fromText: " + line);
           }
           if (sign == "-")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_DELETE, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_DELETE, line));
           else if (sign == "+")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_INSERT, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_INSERT, line));
           else if (sign == " ")
-            patch.diffs.push(new diff_match_patch4.Diff(DIFF_EQUAL, line));
+            patch.diffs.push(new diff_match_patch5.Diff(DIFF_EQUAL, line));
           else {
             if (sign == "@")
               break;
@@ -693,10 +693,10 @@ var require_diff_match_patch = __commonJS({
       }
       return patches;
     };
-    diff_match_patch4.patch_obj = function() {
+    diff_match_patch5.patch_obj = function() {
       this.diffs = [], this.start1 = null, this.start2 = null, this.length1 = 0, this.length2 = 0;
     };
-    diff_match_patch4.patch_obj.prototype.toString = function() {
+    diff_match_patch5.patch_obj.prototype.toString = function() {
       var coords1, coords2;
       this.length1 === 0 ? coords1 = this.start1 + ",0" : this.length1 == 1 ? coords1 = this.start1 + 1 : coords1 = this.start1 + 1 + "," + this.length1, this.length2 === 0 ? coords2 = this.start2 + ",0" : this.length2 == 1 ? coords2 = this.start2 + 1 : coords2 = this.start2 + 1 + "," + this.length2;
       for (var text2 = ["@@ -" + coords1 + " +" + coords2 + ` @@
@@ -717,8 +717,8 @@ var require_diff_match_patch = __commonJS({
       }
       return text2.join("").replace(/%20/g, " ");
     };
-    module2.exports = diff_match_patch4;
-    module2.exports.diff_match_patch = diff_match_patch4;
+    module2.exports = diff_match_patch5;
+    module2.exports.diff_match_patch = diff_match_patch5;
     module2.exports.DIFF_DELETE = DIFF_DELETE;
     module2.exports.DIFF_INSERT = DIFF_INSERT;
     module2.exports.DIFF_EQUAL = DIFF_EQUAL;
@@ -1050,7 +1050,7 @@ var EngramApi = class _EngramApi {
     this.deviceId = id2 && id2.length > 0 ? id2 : null;
   }
   setAuthProvider(provider) {
-    this.authProvider = provider;
+    this.authProvider = provider, this.lastToken = "";
   }
   getActiveVaultId() {
     return this.authProvider ? this.authProvider.getVaultId() : this.vaultId;
@@ -1099,21 +1099,31 @@ var EngramApi = class _EngramApi {
     }
   }
   updateConfig(baseUrl, apiKey) {
-    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey;
+    this.baseUrl = _EngramApi.normalizeBaseUrl(baseUrl), this.apiKey = apiKey, this.lastToken = "";
   }
   async request(method, path, body, extraHeaders) {
-    var _a, _b;
+    var _a, _b, _c;
     try {
       return await this.sendRequest(method, path, body, extraHeaders);
     } catch (e) {
       let status = e.status;
       if (status === 402)
         throw parseLimitExceededError(e);
-      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken))
-        return this.authProvider.invalidateAccessToken(), this.sendRequest(method, path, body, extraHeaders);
+      if (status === 401 && ((_a = this.authProvider) != null && _a.invalidateAccessToken)) {
+        this.authProvider.invalidateAccessToken();
+        try {
+          return await this.sendRequest(method, path, body, extraHeaders);
+        } catch (e2) {
+          let retryStatus = e2.status;
+          throw retryStatus === 402 ? parseLimitExceededError(e2) : (rlog().warn(
+            "api",
+            `${method} ${path} failed after 401 retry \u2014 status=${retryStatus != null ? retryStatus : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+          ), e2);
+        }
+      }
       throw rlog().warn(
         "api",
-        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_b = this.vaultId) != null ? _b : "none"}`
+        `${method} ${path} failed \u2014 status=${status != null ? status : "none"} vault=${(_c = this.vaultId) != null ? _c : "none"}`
       ), e;
     }
   }
@@ -1352,11 +1362,20 @@ function parseLimitExceededError(e) {
   let pick = (key) => body[key] !== void 0 ? body[key] : null;
   return new LimitExceededError(
     typeof body.reason == "string" ? body.reason : "unknown",
-    pick("upgrade_url"),
+    sanitizeUpgradeUrl(body.upgrade_url),
     pick("limit_key"),
     pick("limit"),
     pick("current")
   );
+}
+function sanitizeUpgradeUrl(v) {
+  if (typeof v != "string") return null;
+  try {
+    let u = new URL(v);
+    return u.protocol === "http:" || u.protocol === "https:" ? v : null;
+  } catch (e) {
+    return null;
+  }
 }
 function encodePath(path) {
   return path.split("/").map(encodeURIComponent).join("/");
@@ -1702,6 +1721,9 @@ var _NoteChannel = class _NoteChannel {
     // ---------------------------------------------------------------------------
     /** Guards openSocket against re-entry across its async token fetch. */
     this.opening = !1;
+    /** Bumped by disconnect(). An openSocketInner that suspended on an await
+     *  before the bump must abandon the open when it resumes (see disconnect). */
+    this.connectEpoch = 0;
     this.baseUrl = baseUrl.replace(/\/+$/, "").replace(/\/api$/, ""), this.apiKey = apiKey, this.userId = userId, this.vaultId = vaultId, this.deviceId = deviceId, rlog().info(
       "channel",
       `NoteChannel ctor \u2014 userId=${userId} vaultId=${vaultId != null ? vaultId : "null"} apiKeyLen=${apiKey.length} baseUrl=${this.baseUrl}`
@@ -1808,7 +1830,7 @@ var _NoteChannel = class _NoteChannel {
     this.ws || (this.reconnectMs = 1e3, this.joinFailureBackoffMs = 1e3, await this.openSocket());
   }
   disconnect() {
-    this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
+    this.connectEpoch++, this.clearTimers(), this.ws && (this.ws.onclose = null, this.ws.close(), this.ws = null);
     for (let [, p] of this.pendingReplies)
       window.clearTimeout(p.timer), p.reject(new Error("channel disconnected"));
     this.pendingReplies.clear(), this.crdtJoined = !1, this.setConnected(!1), this.connId = null, rlog().setConnId(null), this.reconnectJitterMaxMs = null, this.crdtJoinFailedReason = null, this.joinFailureBackoffMs = 1e3, rlog().info("channel", "Channel disconnected");
@@ -1863,15 +1885,23 @@ var _NoteChannel = class _NoteChannel {
   }
   async openSocketInner() {
     var _a, _b, _c, _d, _e;
-    let token, source;
+    let epoch = this.connectEpoch, token, source;
     try {
       let result = await this.getAuthToken();
       token = result.token, source = result.source;
     } catch (e) {
+      if (epoch !== this.connectEpoch) {
+        rlog().info("channel", "open aborted \u2014 disconnected during token fetch");
+        return;
+      }
       rlog().warn(
         "channel",
         `getToken threw \u2014 deferring reconnect ${NO_AUTH_RECONNECT_MS}ms \u2014 providerType=${(_b = (_a = this.authProvider) == null ? void 0 : _a.constructor.name) != null ? _b : "none"} err=${errMsg(e)}`
       ), this.scheduleReconnect(NO_AUTH_RECONNECT_MS);
+      return;
+    }
+    if (epoch !== this.connectEpoch) {
+      rlog().info("channel", "open aborted \u2014 disconnected during token fetch");
       return;
     }
     if (!token) {
@@ -1895,6 +1925,10 @@ var _NoteChannel = class _NoteChannel {
           `reconnect identity probe failed, keeping userId: ${errMsg(e)}`
         );
       }
+    }
+    if (epoch !== this.connectEpoch) {
+      rlog().info("channel", "open aborted \u2014 disconnected during identity probe");
+      return;
     }
     rlog().info(
       "channel",
@@ -9414,6 +9448,14 @@ var IndexeddbPersistence = class extends Observable {
   }
 };
 
+// src/content-hash.ts
+function fnv1a(s) {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++)
+    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
+  return h >>> 0;
+}
+
 // src/lifetime.ts
 var asError = (e) => e instanceof Error ? e : new Error(String(e)), Lifetime = class {
   constructor() {
@@ -14336,6 +14378,15 @@ ${block}${FENCE}
 ${body}`;
 }
 
+// src/crdt/lca-merge.ts
+var import_diff_match_patch4 = __toESM(require_diff_match_patch(), 1);
+function mergeDiskOntoDoc(base, disk, current) {
+  if (base === disk) return { text: current, clean: !0 };
+  if (base === current) return { text: disk, clean: !0 };
+  let dmp3 = new import_diff_match_patch4.diff_match_patch(), patches = dmp3.patch_make(base, disk), [merged, applied] = dmp3.patch_apply(patches, current);
+  return { text: merged, clean: applied.every(Boolean) };
+}
+
 // node_modules/y-protocols/sync.js
 var messageYjsSyncStep1 = 0, messageYjsSyncStep2 = 1, messageYjsUpdate = 2, writeSyncStep1 = (encoder, doc2) => {
   writeVarUint(encoder, messageYjsSyncStep1);
@@ -14603,7 +14654,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       // production runs and what tests/crdt/wiring.test.ts pins. A duplicate
       // here could silently drift from the shipped one (it did: the suite
       // exercised only the duplicate, so #1130 could regress green).
-      send: (frame, kind2) => this.opts.send(noteId, frame, kind2),
+      send: (frame, kind2) => {
+        var _a2;
+        let accepted = this.opts.send(noteId, frame, kind2);
+        return (_a2 = this.opts.recorder) == null || _a2.record("send", noteId, { kind: kind2, accepted }), accepted;
+      },
       onSynced: () => {
         var _a2, _b2, _c2, _d;
         (_b2 = (_a2 = this.opts).onSynced) == null || _b2.call(_a2, noteId), text2.length === 0 && ((_d = (_c2 = this.opts).onEmptyStep2) == null || _d.call(_c2, noteId));
@@ -14625,11 +14680,16 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       lifetime: new Lifetime()
     };
     return doc2.on("update", (_u, origin) => {
+      var _a2;
       if (!entry.lifetime.active || origin !== provider && origin !== REMOTE) return;
       entry.remoteSeq += 1;
-      let flush = Promise.resolve(
-        this.opts.onFlushToDisk(noteId, this.project(entry))
-      ).then((ok) => {
+      let projected = this.project(entry);
+      (_a2 = this.opts.recorder) == null || _a2.record("flush", noteId, {
+        hash: fnv1a(projected).toString(16),
+        length: projected.length,
+        remoteSeq: entry.remoteSeq
+      });
+      let flush = Promise.resolve(this.opts.onFlushToDisk(noteId, projected)).then((ok) => {
         if (ok === !1) throw new Error(`flushFromCrdt write failure for ${noteId}`);
       });
       entry.pendingFlush = flush, flush.catch(() => {
@@ -14673,11 +14733,23 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  Ports CrdtManager.applyLocalEdit: stale-snapshot guard + adopt-first gate +
    *  the shared seedContentInto codec. */
   async applyLocalEdit(noteId, diskContent, hasLca, reread) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.removed.has(noteId)) return null;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return null;
-    let content = diskContent;
+    let content = diskContent, base = (hasLca != null ? hasLca : docHasHistory(e.doc, e.kind)) ? (_b = (_a = this.opts).lcaFor) == null ? void 0 : _b.call(_a, noteId) : null;
+    if (base != null && e.kind === "note") {
+      let merged = mergeDiskOntoDoc(base, diskContent, this.project(e));
+      if (merged.clean)
+        return (_c = this.opts.recorder) == null || _c.record("localEdit", noteId, {
+          hash: fnv1a(merged.text).toString(16),
+          length: merged.text.length,
+          lca: !0,
+          merged: !0,
+          kind: e.kind
+        }), seedContentInto(e.doc, e.text, merged.text, docHasHistory(e.doc, e.kind)), merged.text;
+      (_e = (_d = this.opts).onDirtyMerge) == null || _e.call(_d, noteId);
+    }
     if (reread) {
       let stable = !1;
       for (let attempt = 0; attempt < 3 && !stable; attempt++) {
@@ -14698,15 +14770,21 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
       if (!stable) return null;
     }
     let lca = hasLca != null ? hasLca : docHasHistory(e.doc, e.kind);
-    return !lca && ((_b = (_a = this.opts).isUnchangedSynced) != null && _b.call(_a, noteId, content)) ? content : e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content);
+    return !lca && ((_g = (_f = this.opts).isUnchangedSynced) != null && _g.call(_f, noteId, content)) ? content : ((_h = this.opts.recorder) == null || _h.record("localEdit", noteId, {
+      hash: fnv1a(content).toString(16),
+      length: content.length,
+      lca,
+      kind: e.kind
+    }), e.kind === "canvas" ? seedCanvasInto(e.doc, content) ? content : null : (seedContentInto(e.doc, e.text, content, lca), content));
   }
   /** Apply a raw Yjs update (vault-channel fan-out) as a remote merge, awaiting
    *  its disk flush so a write failure can be surfaced (#235). */
   async applyRemoteUpdate(noteId, update) {
+    var _a;
     if (this.removed.has(noteId)) return;
     let e = await this.entry(noteId);
     if (!e.lifetime.active) return;
-    applyUpdate(e.doc, update, e.provider);
+    (_a = this.opts.recorder) == null || _a.record("remoteUpdate", noteId, { bytes: update.byteLength }), applyUpdate(e.doc, update, e.provider);
     let flush = e.pendingFlush;
     flush && (e.pendingFlush = null, await flush);
   }
@@ -14741,14 +14819,16 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
   /** Route an inbound wire frame to its provider (creating it if a fan-out
    *  announced a note this device hasn't opened). */
   async receive(noteId, frameB64) {
-    (await this.entry(noteId)).provider.receive(frameB64);
+    var _a;
+    (_a = this.opts.recorder) == null || _a.record("receive", noteId, { frame: frameB64 }), (await this.entry(noteId)).provider.receive(frameB64);
   }
   /** Enroll: OPEN a room for this note — advertise syncStep1 (the down-sync
    *  pull) now and on every reconnect. Only open/live-bound notes call this; a
    *  cold SEND or fan-out RECEIVE stays room-free. (CrdtChannel.startSync +
    *  CrdtEnrollment.enroll collapse to this.) */
   async startSync(noteId) {
-    this.assertAlive(noteId), this.enrolledIds.add(noteId);
+    var _a;
+    this.assertAlive(noteId), this.enrolledIds.add(noteId), (_a = this.opts.recorder) == null || _a.record("enroll", noteId, {});
     let e = await this.entry(noteId);
     e.provider.setAdvertised(!0), this.connected && e.provider.setConnected(!0);
   }
@@ -14761,7 +14841,8 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  ops still work (the note converges over the fan-out); the server room idles
    *  out. reset+enroll = a fresh re-handshake. */
   reset(noteId) {
-    this.enrolledIds.delete(noteId);
+    var _a;
+    this.enrolledIds.delete(noteId), (_a = this.opts.recorder) == null || _a.record("reset", noteId, {});
     let e = this.entries.get(noteId);
     e && (e.provider.setAdvertised(!1), e.provider.synced = !1);
   }
@@ -14775,7 +14856,11 @@ var REMOTE = /* @__PURE__ */ Symbol("remote"), ProviderRegistry = class {
    *  connect each re-advertises via syncStep1 — the reason the doc layer
    *  outlives the socket. */
   setConnected(connected) {
-    this.connected = connected;
+    var _a;
+    this.connected = connected, (_a = this.opts.recorder) == null || _a.record("connection", null, {
+      connected,
+      resident: this.entries.size
+    });
     for (let e of this.entries.values()) e.provider.setConnected(connected);
   }
   // --- Synced bookkeeping -----------------------------------------------------
@@ -14932,6 +15017,9 @@ function createCrdtWiring(deps) {
   }
   let unsentDocIds = /* @__PURE__ */ new Set(), registry = new ProviderRegistry({
     dbPrefix: deps.dbPrefix,
+    recorder: deps.recorder,
+    lcaFor: deps.lcaFor,
+    onDirtyMerge: deps.onDirtyMerge,
     send: (docId, frame, kind) => {
       if (kind === "op" && deps.canSendLive && !deps.canSendLive(docId))
         return unsentDocIds.add(docId), !1;
@@ -15245,6 +15333,197 @@ var DEFAULT_OPTIONS = {
     }
   }
 };
+
+// src/debug-snapshot.ts
+var hashOf = (content) => fnv1a(content).toString(16);
+function describe(err) {
+  return err instanceof Error ? err.message : String(err);
+}
+function resolveKey(key, deps) {
+  let idFromPath = deps.idForPath(key);
+  if (idFromPath) return { path: key, noteId: idFromPath };
+  let pathFromId = deps.pathForId(key);
+  return pathFromId ? { path: pathFromId, noteId: key } : { path: key, noteId: null };
+}
+async function buildNoteSnapshot(key, deps, opts = {}) {
+  let errors = [], { path, noteId } = resolveKey(key, deps), idForPath = path ? deps.idForPath(path) : null, pathForId = noteId ? deps.pathForId(noteId) : null, removed = noteId ? deps.registry.removedIds.has(noteId) : !1, resident = noteId ? deps.registry.hasDoc(noteId) : !1, doc2 = null, docContent = null;
+  if (noteId && resident)
+    try {
+      let content = await deps.registry.projectedText(noteId);
+      docContent = content, doc2 = {
+        length: content.length,
+        hash: hashOf(content),
+        hasHistory: await deps.registry.hasHistory(noteId),
+        stateVectorBytes: (await deps.registry.encodeStateVector(noteId)).byteLength,
+        ...opts.includeContent ? { content } : {}
+      };
+    } catch (e) {
+      errors.push(`doc: ${describe(e)}`);
+    }
+  let disk = null, diskContent = null;
+  if (path)
+    try {
+      let read = await deps.readDisk(path);
+      read && (diskContent = read.content, disk = {
+        length: read.length,
+        hash: hashOf(read.content),
+        mtime: read.mtime,
+        ...opts.includeContent ? { content: read.content } : {}
+      });
+    } catch (e) {
+      errors.push(`disk: ${describe(e)}`);
+    }
+  let pendingGap = !1;
+  if (noteId && resident)
+    try {
+      pendingGap = await deps.registry.hasPendingGap(noteId);
+    } catch (e) {
+      errors.push(`room: ${describe(e)}`);
+    }
+  let state = path ? deps.syncStateFor(path) : void 0;
+  return {
+    path,
+    noteId,
+    idmap: {
+      idForPath,
+      pathForId,
+      // Both directions present and agreeing = healthy. Neither present =
+      // nothing to disagree about (an unmapped path is reported elsewhere).
+      // Exactly ONE present = the two directions have drifted apart, which is
+      // the half-mapped state that strands flushes — it must not read as
+      // healthy just because nothing contradicts it.
+      bijective: idForPath && pathForId ? pathForId === path : !idForPath && !pathForId
+    },
+    doc: doc2,
+    disk,
+    server: state ? {
+      crdtHead: state.crdtHead,
+      serverHash: state.serverHash,
+      version: state.version,
+      seq: state.seq,
+      syncedHash: state.hash
+    } : null,
+    room: {
+      resident,
+      enrolled: noteId ? deps.registry.enrolled.has(noteId) : !1,
+      synced: noteId ? deps.registry.isSynced(noteId) : !1,
+      pendingGap,
+      undelivered: noteId ? deps.registry.hasUndeliveredOps(noteId) : !1,
+      removed,
+      liveBound: path ? deps.isLiveBound(path) : !1
+    },
+    docMatchesDisk: docContent !== null && diskContent !== null ? docContent === diskContent : null,
+    hasServerNote: (state == null ? void 0 : state.crdtHead) != null,
+    errors
+  };
+}
+function buildVaultSnapshot(deps) {
+  return {
+    rooms: {
+      resident: deps.registry.residentIds().length,
+      enrolled: deps.registry.enrolled.size,
+      removed: deps.registry.removedIds.size
+    },
+    // Oldest first: a wedged operation is the one worth seeing, and it is the
+    // one that has been outstanding longest.
+    pending: [...deps.pendingPromises()].sort((a, b) => b.ageMs - a.ageMs)
+  };
+}
+
+// src/sync-recorder.ts
+var DEFAULT_CAPACITY = 5e3, SyncRecorder = class {
+  constructor(opts) {
+    this.events = [];
+    this.nextSeq = 0;
+    var _a;
+    this.enabled = opts.enabled, this.capacity = (_a = opts.capacity) != null ? _a : DEFAULT_CAPACITY;
+  }
+  /**
+   * Append one event.
+   *
+   * When recording is off this is a bare predicate call and a return — cheap
+   * enough to sit on the hot receive path. `nextSeq` deliberately does NOT
+   * advance for a suppressed event: a timeline captured across a mid-session
+   * toggle would otherwise show numbering gaps that read as dropped frames.
+   */
+  record(kind, noteId, data) {
+    this.enabled() && (this.events.push({ seq: this.nextSeq++, kind, noteId, data }), this.events.length > this.capacity && this.events.splice(0, this.events.length - this.capacity));
+  }
+  /** Recorded events in causal order, optionally narrowed to one note. The
+   *  retained window keeps its original seq numbers, so a truncated timeline
+   *  still reports how much preceded it. */
+  timeline(noteId) {
+    let all2 = [...this.events];
+    return noteId ? all2.filter((e) => e.noteId === noteId) : all2;
+  }
+  /** Drop buffered events. The seq counter keeps going: restarting numbering
+   *  would make two timelines from one session look like the same events. */
+  clear() {
+    this.events.length = 0;
+  }
+};
+function serializeTimeline(events) {
+  return JSON.stringify(events);
+}
+
+// src/debug-api.ts
+var GLOBAL_KEY = "__engramDebug";
+function createDebugApi(host) {
+  let deps = host;
+  return {
+    note: (key, includeContent = !1) => buildNoteSnapshot(key, deps, { includeContent }),
+    vault: () => buildVaultSnapshot(deps),
+    // Accepts a path as well as an id, matching `note()` — an investigation
+    // starts from whichever the evidence contained.
+    timeline: (noteId) => serializeTimeline(host.recorder.timeline(noteId ? resolveId(host, noteId) : void 0)),
+    clearTimeline: () => host.recorder.clear()
+  };
+}
+function resolveId(host, key) {
+  var _a;
+  return (_a = host.idForPath(key)) != null ? _a : key;
+}
+function installDebugApi(api) {
+  window[GLOBAL_KEY] = api;
+}
+function uninstallDebugApi() {
+  delete window[GLOBAL_KEY];
+}
+
+// src/feature-flags.ts
+var FLAG_SCHEMA = {
+  crdtRecording: {
+    default: !1,
+    category: "debugging",
+    title: "Record CRDT sync timeline",
+    description: "Capture an ordered event timeline for each synced note so a sync failure can be replayed offline. Metadata and note content stay local."
+  }
+}, FLAG_KEYS = Object.keys(FLAG_SCHEMA);
+function resolveFlags(stored) {
+  let out = {};
+  for (let key of FLAG_KEYS) {
+    let value = stored == null ? void 0 : stored[key];
+    out[key] = typeof value == "boolean" ? value : FLAG_SCHEMA[key].default;
+  }
+  return out;
+}
+function visibleFlags(diagnosticsEnabled) {
+  return FLAG_KEYS.filter(
+    (key) => diagnosticsEnabled || FLAG_SCHEMA[key].category === "labs"
+  ).map((key) => [key, FLAG_SCHEMA[key]]);
+}
+
+// src/has-logging.ts
+var sink = null;
+function setLogSink(next) {
+  sink = next;
+}
+
+// src/track-promise.ts
+var active = null;
+function setActiveTracker(tracker) {
+  active = tracker;
+}
 
 // src/diagnostics.ts
 var import_obsidian4 = require("obsidian");
@@ -17203,6 +17482,12 @@ function groupedByCategory(issues, dispositions) {
   }
   return CATEGORY_ORDER.filter((c) => groups.has(c)).map((c) => [c, groups.get(c)]);
 }
+var QUEUED_REASON_TEXT = {
+  offline: "waiting for a connection",
+  "sync-blocked": "sync is paused",
+  "in-progress": "syncing now",
+  waiting: "waiting to retry"
+};
 function renderHeader(parent, plugin) {
   let header = parent.createDiv({ cls: "engram-sync-center-header" }), status = plugin.syncEngine.getStatus(), all2 = plugin.syncEngine.issues.all(), planSkipCount = all2.filter(
     (i) => issueDisposition(i.category, i.parseReason) === "informational"
@@ -17212,6 +17497,8 @@ function renderHeader(parent, plugin) {
     (i) => issueDisposition(i.category, i.parseReason) === "transient"
   ).length, ignoredCount = plugin.syncEngine.ignoredFiles.size();
   header.createSpan({ cls: `engram-sync-center-dot is-${status.state}` }).setText("\u25CF"), header.createSpan({ cls: "engram-sync-center-title" }).setText(`Engram Sync \u2014 ${status.state}`), planSkipCount > 0 && header.createSpan({ cls: "engram-sync-center-plan-badge" }).setText(`${planSkipCount} not on your plan`), attentionCount > 0 && header.createSpan({ cls: "engram-sync-center-issue-badge" }).setText(`${attentionCount} need${attentionCount === 1 ? "s" : ""} attention`), retryingCount > 0 && header.createSpan({ cls: "engram-sync-center-retrying-badge" }).setText(`${retryingCount} retrying`), ignoredCount > 0 && header.createSpan({ cls: "engram-sync-center-ignored-badge" }).setText(`${ignoredCount} ignored`);
+  let reason = plugin.syncEngine.queuedReason();
+  reason && header.createSpan({ cls: "engram-sync-center-queued-badge" }).setText(`${status.queued} queued \u2014 ${QUEUED_REASON_TEXT[reason]}`);
 }
 function renderActions(parent, plugin, refresh) {
   let strip = parent.createDiv({ cls: "engram-sync-center-actions" });
@@ -17947,7 +18234,8 @@ async function renderAccountTab(ctx) {
 }
 
 // src/tabs/advanced-tab.ts
-var import_obsidian21 = require("obsidian"), PROBLEMATIC_DIRS = [
+var import_obsidian21 = require("obsidian");
+var PROBLEMATIC_DIRS = [
   { pattern: "node_modules/", label: "node_modules", desc: "Node.js dependencies" },
   { pattern: ".venv/", label: ".venv", desc: "Python virtual environment" },
   { pattern: "venv/", label: "venv", desc: "Python virtual environment" },
@@ -17994,7 +18282,7 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     }).setValue(plugin.settings.remoteLogLevel).onChange(async (value) => {
       plugin.settings.remoteLogLevel = value, await plugin.saveSettings();
     })
-  ), new import_obsidian21.Setting(containerEl).setName("About").setHeading();
+  ), renderFeatureFlags(ctx), new import_obsidian21.Setting(containerEl).setName("About").setHeading();
   let aboutList = containerEl.createEl("ul", { cls: "engram-about-list" }), versionItem = aboutList.createEl("li");
   versionItem.createSpan({ text: "Version: " }), versionItem.createSpan({ text: plugin.manifest.version });
   let repoItem = aboutList.createEl("li");
@@ -18002,6 +18290,23 @@ secret.md`).setValue(plugin.settings.ignorePatterns).onChange(async (value) => {
     text: "github.com/engram-app/Engram-obsidian",
     href: "https://github.com/engram-app/Engram-obsidian"
   }), aboutList.createEl("li").createSpan({ text: "License: MIT" });
+}
+function renderFeatureFlags(ctx) {
+  let { containerEl, plugin } = ctx, visible = visibleFlags(plugin.settings.diagnosticsEnabled);
+  if (visible.length !== 0) {
+    new import_obsidian21.Setting(containerEl).setName("Feature flags").setHeading();
+    for (let [key, schema4] of visible) {
+      let setting = new import_obsidian21.Setting(containerEl).setName(schema4.title).setDesc(schema4.description).addToggle(
+        (toggle) => toggle.setValue(plugin.flags[key]).onChange(async (value) => {
+          plugin.settings.featureFlags = {
+            ...plugin.settings.featureFlags,
+            [key]: value
+          }, await plugin.saveSettings();
+        })
+      );
+      schema4.category === "danger" && setting.settingEl.addClass("engram-status-warning");
+    }
+  }
 }
 function renderIgnoreWarnings(containerEl, app, plugin, redisplay) {
   let currentIgnores = plugin.settings.ignorePatterns, detected = [];
@@ -18257,6 +18562,17 @@ var IgnoredFiles = class {
 };
 
 // src/offline-queue.ts
+var QueuePriority = {
+  /** The note the user currently has open. */
+  OpenNote: 0,
+  /** Ordinary edit-driven sync. The default. */
+  Normal: 10,
+  /** Bulk work: initial import, full push, resync sweeps. */
+  Background: 20
+};
+function queuedReason(state) {
+  return state.queued === 0 ? null : state.offline ? "offline" : state.syncBlocked ? "sync-blocked" : state.inFlight > 0 ? "in-progress" : "waiting";
+}
 function dedupKey(pathOrEntry, vaultId) {
   return typeof pathOrEntry == "object" ? pathOrEntry.vaultId ? `${pathOrEntry.vaultId}:${pathOrEntry.path}` : pathOrEntry.path : vaultId ? `${vaultId}:${pathOrEntry}` : pathOrEntry;
 }
@@ -18291,9 +18607,25 @@ var OfflineQueue = class {
     var _a;
     return ((_a = this.entries.get(dedupKey(path, vaultId))) == null ? void 0 : _a.action) === "delete";
   }
-  /** Get all entries sorted by timestamp (oldest first). */
+  /** Remove a path's queued work immediately, without waiting on a persist
+   *  round trip. `dequeue` awaits persistence, which is right after a
+   *  successful sync but wrong for a rename or a vault switch: the caller needs
+   *  the entry gone before the flush loop can pick up work for a path that no
+   *  longer exists. Returns whether anything was removed. */
+  cancel(path, vaultId) {
+    let removed = this.entries.delete(dedupKey(path, vaultId));
+    return removed && this.schedulePersist(), removed;
+  }
+  /** Get all entries in flush order: priority first, then oldest-first within
+   *  a priority. An entry with no `priority` (persisted before the field
+   *  existed) counts as Normal, so an upgrade never demotes pending work. */
   all() {
-    return Array.from(this.entries.values()).sort((a, b) => a.timestamp - b.timestamp);
+    return Array.from(this.entries.values()).sort(
+      (a, b) => {
+        var _a, _b;
+        return ((_a = a.priority) != null ? _a : QueuePriority.Normal) - ((_b = b.priority) != null ? _b : QueuePriority.Normal) || a.timestamp - b.timestamp;
+      }
+    );
   }
   /** Number of queued entries. */
   get size() {
@@ -18318,6 +18650,68 @@ var OfflineQueue = class {
   async persistNow() {
     var _a;
     this.persistTimer && (window.clearTimeout(this.persistTimer), this.persistTimer = null), await ((_a = this.persistFn) == null ? void 0 : _a.call(this, this.all()));
+  }
+};
+
+// src/synced-file.ts
+var SyncedFile = class {
+  constructor() {
+    /** Marker → pending expiry timer id. */
+    this.markers = /* @__PURE__ */ new Map();
+  }
+  get empty() {
+    return this.markers.size === 0;
+  }
+}, SyncedFileTable = class {
+  constructor(clock) {
+    this.clock = clock;
+    this.files = /* @__PURE__ */ new Map();
+  }
+  get size() {
+    return this.files.size;
+  }
+  /** Set `marker` on `path` for `ms`. Re-marking REPLACES the pending timer
+   *  rather than stacking a second one — two live timers for one marker means
+   *  the first expiry closes a window the second call had just extended. */
+  mark(path, marker, ms) {
+    var _a;
+    let file = (_a = this.files.get(path)) != null ? _a : new SyncedFile();
+    this.files.set(path, file);
+    let existing = file.markers.get(marker);
+    existing !== void 0 && this.clock.clearTimeout(existing), file.markers.set(
+      marker,
+      this.clock.setTimeout(() => {
+        file.markers.delete(marker), file.empty && this.files.get(path) === file && this.files.delete(path);
+      }, ms)
+    );
+  }
+  has(path, marker) {
+    var _a, _b;
+    return (_b = (_a = this.files.get(path)) == null ? void 0 : _a.markers.has(marker)) != null ? _b : !1;
+  }
+  /** Drop `marker` now and cancel its pending expiry. */
+  clearMarker(path, marker) {
+    let file = this.files.get(path), timer = file == null ? void 0 : file.markers.get(marker);
+    !file || timer === void 0 || (this.clock.clearTimeout(timer), file.markers.delete(marker), file.empty && this.files.delete(path));
+  }
+  /** Move a path's state. Any state already at `newPath` is discarded, with its
+   *  timers cancelled — orphaning them would fire callbacks against an entry
+   *  no longer in the table. */
+  rename(oldPath, newPath) {
+    let file = this.files.get(oldPath);
+    file && (this.forget(newPath), this.files.delete(oldPath), this.files.set(newPath, file));
+  }
+  /** Drop a path entirely, cancelling its timers. */
+  forget(path) {
+    let file = this.files.get(path);
+    if (file) {
+      for (let timer of file.markers.values()) this.clock.clearTimeout(timer);
+      this.files.delete(path);
+    }
+  }
+  /** Cancel every outstanding timer. Call on teardown. */
+  destroy() {
+    for (let path of [...this.files.keys()]) this.forget(path);
   }
 };
 
@@ -18403,12 +18797,6 @@ function countFolders(paths) {
   return set2.size;
 }
 var ECHO_COOLDOWN_MS = 5e3, RECENT_DELETE_COOLDOWN_MS = 6e4, DEGRADED_NOTICE_DEBOUNCE_MS = 1500, DEGRADED_NOTICE_DURATION_MS = 1e4, ALWAYS_IGNORED = [".trash/", ".git/"];
-function fnv1a(s) {
-  let h = 2166136261;
-  for (let i = 0; i < s.length; i++)
-    h ^= s.charCodeAt(i), h = Math.imul(h, 16777619);
-  return h >>> 0;
-}
 var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   "png",
   "jpg",
@@ -18460,21 +18848,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.degradedNoticeTimer = null;
     this.ignorePatterns = [];
     this.pushing = /* @__PURE__ */ new Set();
-    this.recentlyPushed = /* @__PURE__ */ new Map();
-    /** Paths whose local trash APPLIED a remote change (WS delete, pull
-     *  tombstone, relocation/orphan cleanup). The vault 'delete' event that
-     *  trash fires must not push a DELETE back to the server: the server
-     *  already knows, and the path-keyed CAS-less delete would kill a note
-     *  recreated at the same path in between (wipe→re-push, delete→recreate).
-     *  Found by test_86's settle assert: B's echo-push landed after A's
-     *  replace-remote re-upload and tombstoned the fresh note. */
-    this.remotelyDeleted = /* @__PURE__ */ new Map();
-    /** Paths just written to disk by flushFromCrdt (remote CRDT update → disk).
-     *  Distinct from recentlyPushed (WS echo suppression after a push): only the
-     *  CRDT disk-write echo must be swallowed by handleModify. Folding this into
-     *  recentlyPushed would make handleModify drop REAL user edits within the
-     *  post-push cooldown — silently losing edits and breaking conflict detection. */
-    this.recentlyFlushed = /* @__PURE__ */ new Map();
+    /** Per-path echo-suppression markers (#358). Replaces three parallel
+     *  path-keyed TTL maps — `recentlyPushed`, `remotelyDeleted`,
+     *  `recentlyFlushed` — with one object per file. See synced-file.ts for the
+     *  meaning of each marker and why `flushed` must stay distinct from `pushed`.
+     *  Unlike the maps it replaces, its timers are cancelled on destroy(). */
+    this.files = new SyncedFileTable({
+      setTimeout: (cb, ms) => this.time.setTimeout(cb, ms),
+      clearTimeout: (id2) => this.time.clearTimeout(id2)
+    });
     /** note_ids THIS device recently deleted. Both CRDT convergence paths
      *  (the op-log replay's `applyOp` and `applyPushedNoteUpdate`'s fan-out)
      *  refuse to resurrect an id in here for RECENT_DELETE_COOLDOWN_MS. A stale
@@ -18501,6 +18883,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     this.syncBlocked = !1;
     this.activePushCount = 0;
     this.maxConcurrentPushes = 5;
+    /** >0 while a bulk sweep (pushAll / fullSync) is running. Queue entries it
+     *  produces get Background priority — see priorityForPath. */
+    this.bulkDepth = 0;
     this.pushWaiters = [];
     this.queue = new OfflineQueue();
     /** Per-file sync metadata (content hash + server version).
@@ -19783,7 +20168,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return;
     }
     let crdtManaged = !!this.crdt && this.isCrdtEligible(file);
-    if (!crdtManaged && this.recentlyFlushed.has(file.path)) {
+    if (!crdtManaged && this.files.has(file.path, "flushed")) {
       rlog().info("sync", `Modify echo skip (recently flushed from CRDT): ${file.path}`);
       return;
     }
@@ -19809,8 +20194,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian23.normalizePath)(file.path)), this.remotelyDeleted.has(file.path)) {
-      this.remotelyDeleted.delete(file.path), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
+    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian23.normalizePath)(file.path)), this.files.has(file.path, "remotelyDeleted")) {
+      this.files.clearMarker(file.path, "remotelyDeleted"), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && (await ((_d = this.crdt) == null ? void 0 : _d.removeDoc(crdtNoteId)), (_e = this.crdtEnrollment) == null || _e.reset(crdtNoteId));
       return;
     }
     try {
@@ -20262,22 +20647,22 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  handleDelete — every sync-applied deletion must route through here, or
    *  its echo-push can tombstone a note recreated at the path since. */
   async trashRemotelyDeleted(file) {
-    this.markWithTtl(this.remotelyDeleted, file.path, ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
+    this.files.mark(file.path, "remotelyDeleted", ECHO_COOLDOWN_MS), await this.app.fileManager.trashFile(file);
   }
   /** Suppress WebSocket echoes for a path for ECHO_COOLDOWN_MS after push. */
   markRecentlyPushed(path) {
-    this.markWithTtl(this.recentlyPushed, path, ECHO_COOLDOWN_MS);
+    this.files.mark(path, "pushed", ECHO_COOLDOWN_MS);
   }
   /** Check if a path was recently pushed (for echo suppression). */
   // biome-ignore lint/correctness/noUnusedPrivateClassMembers: read by tests/sync.test.ts via (engine as any)
   isRecentlyPushed(path) {
-    return this.recentlyPushed.has(path);
+    return this.files.has(path, "pushed");
   }
   /** Suppress the handleModify echo of a flushFromCrdt disk write for
    *  ECHO_COOLDOWN_MS. Separate from recentlyPushed so a post-push cooldown
    *  never swallows a genuine local edit. */
   markRecentlyFlushed(path) {
-    this.markWithTtl(this.recentlyFlushed, path, ECHO_COOLDOWN_MS);
+    this.files.mark(path, "flushed", ECHO_COOLDOWN_MS);
   }
   /** Record a note_id THIS device just deleted so neither CRDT convergence
    *  path resurrects it during the delete-wins window (backend #970). */
@@ -20302,7 +20687,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  ponytail: recentlyFlushed's 5s cooldown is the guard's window — a push
    *  delayed past it escapes; debounce is 500ms, fine. */
   shouldDeferMint(path) {
-    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.recentlyFlushed.has((0, import_obsidian23.normalizePath)(path));
+    return !!this.noteIdMap && !this.noteIdMap.get(path) && this.files.has((0, import_obsidian23.normalizePath)(path), "flushed");
   }
   // --- Pull: Engram → local vault ---
   /** Free `noteId`'s Y.Doc after a remote update has been applied and its head
@@ -20920,7 +21305,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         rlog().info("ws", `Echo skip (pushing): ${event.path}`);
         return;
       }
-      if (this.recentlyPushed.has(event.path)) {
+      if (this.files.has(event.path, "pushed")) {
         rlog().info("ws", `Echo skip (recently pushed): ${event.path}`);
         return;
       }
@@ -21610,6 +21995,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   // --- Full sync (startup) ---
   /** Full bidirectional sync: pull remote changes, then push local changes. */
   async fullSync() {
+    return this.inBulkSweep(() => this.fullSyncInner());
+  }
+  async fullSyncInner() {
     var _a;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "fullSync short-circuited \u2014 gate closed"), { pulled: 0, pushed: 0 };
@@ -21979,6 +22367,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     );
   }
   async pushAll(opts = {}) {
+    return this.inBulkSweep(() => this.pushAllInner(opts));
+  }
+  async pushAllInner(opts = {}) {
     var _a, _b, _c, _d, _e, _f, _g, _h;
     if (this.syncBlocked)
       return devLog().log("sync-blocked", "pushAll short-circuited \u2014 gate closed"), 0;
@@ -22143,9 +22534,50 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     ), { missing, diverged, extraOnServer };
   }
   // --- Offline queue ---
-  /** Queue a change for retry and go offline. */
+  /** Flush priority for a path.
+   *
+   *  A live-bound path is one the user has open in an editor — the single case
+   *  where queue latency is directly visible — so it outranks everything even
+   *  during a bulk sweep. Otherwise, work generated inside a bulk sweep sinks
+   *  to Background so an interactive edit made mid-import is not stuck behind
+   *  thousands of retries. */
+  priorityForPath(path) {
+    var _a;
+    return (_a = this.isLiveBound) != null && _a.call(this, path) ? QueuePriority.OpenNote : this.bulkDepth > 0 ? QueuePriority.Background : QueuePriority.Normal;
+  }
+  /** Run `fn` with queue entries it produces marked as bulk work. A counter
+   *  rather than a boolean because fullSync calls pushAll — a boolean would be
+   *  cleared by the inner call while the outer sweep was still running. */
+  async inBulkSweep(fn) {
+    this.bulkDepth += 1;
+    try {
+      return await fn();
+    } finally {
+      this.bulkDepth -= 1;
+    }
+  }
+  /** Why the queue is not draining, or null when nothing is queued. Surfaced
+   *  in the Sync Center so a held queue reads as a reason instead of a
+   *  spinner. */
+  queuedReason() {
+    return queuedReason({
+      queued: this.queue.size,
+      inFlight: this.pushing.size,
+      offline: this.offline,
+      syncBlocked: this.syncBlocked
+    });
+  }
+  /** Queue a change for retry and go offline.
+   *
+   *  Assigns a flush priority when the caller did not: the note the user has
+   *  open jumps ahead of everything else, so a bulk import cannot make the file
+   *  being edited wait behind thousands of background entries. */
   async enqueueChange(entry) {
-    await this.queue.enqueue(entry), this.emitStatus();
+    var _a;
+    await this.queue.enqueue({
+      ...entry,
+      priority: (_a = entry.priority) != null ? _a : this.priorityForPath(entry.path)
+    }), this.emitStatus();
   }
   /** Record a terminal (non-retryable) flush failure in the Sync Center and
    *  dequeue the entry so it doesn't retry forever. Reached only from the legacy
@@ -22395,22 +22827,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   destroy() {
     for (let timer of this.debounceTimers.values())
       this.time.clearTimeout(timer);
-    this.debounceTimers.clear();
-    for (let timer of this.recentlyPushed.values())
-      this.time.clearTimeout(timer);
-    this.recentlyPushed.clear();
-    for (let timer of this.recentlyFlushed.values())
-      this.time.clearTimeout(timer);
-    this.recentlyFlushed.clear();
-    for (let timer of this.remotelyDeleted.values())
-      this.time.clearTimeout(timer);
-    this.remotelyDeleted.clear();
+    this.debounceTimers.clear(), this.files.destroy();
     for (let timer of this.recentlyDeleted.values())
       this.time.clearTimeout(timer);
     this.recentlyDeleted.clear(), this.pendingPostPullPushes.clear(), this.seqHealTimer !== null && (window.clearTimeout(this.seqHealTimer), this.seqHealTimer = null), this.postPullDrainTimer !== null && (window.clearTimeout(this.postPullDrainTimer), this.postPullDrainTimer = null);
     for (let timer of this.crdtHealTrailingTimers.values())
       window.clearTimeout(timer);
-    this.crdtHealTrailingTimers.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
+    this.crdtHealTrailingTimers.clear(), this.pendingConvergence.clear(), this.crdtRehandshakeAttempts.clear(), this.crdtHealCooldown.clear(), this.pendingQueueDeliveries.clear(), this.degradedNoticeTimer && window.clearTimeout(this.degradedNoticeTimer), this.degradedNoticeTimer = null, this.pendingDegraded.clear(), this.stopHealthCheck(), this.queue.destroy();
   }
 };
 _SyncEngine.MANIFEST_OWNERS_TTL_MS = 3e4, _SyncEngine.SEQ_HEAL_COOLDOWN_MS = 4e3;
@@ -22545,6 +22968,17 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
     super(...arguments);
     this.settings = DEFAULT_SETTINGS;
     this.api = new EngramApi("", "");
+    /** Dev-build only: registry of outstanding async work, exposed through the
+     *  debug snapshot so a wedged sync shows up as a long-lived pending entry
+     *  instead of having to be inferred from logs. Null in production. */
+    this.promiseTracker = null;
+    /** Timeline capture for the CRDT seams (#356). Constructed once and kept for
+     *  the plugin's lifetime — it reads the flag on every record call, so
+     *  toggling recording never needs the CRDT stack rebuilt. Its buffer is
+     *  bounded, and it costs one predicate call per seam while off. */
+    this.syncRecorder = new SyncRecorder({
+      enabled: () => this.flags.crdtRecording
+    });
     /** Persist the user's chosen search mode as the new default. Passed to the
      *  search view + modal so a mode switch in either surface sticks. */
     this.persistSearchMode = (mode) => {
@@ -22653,6 +23087,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
      *  double-toast the user. */
     this.dataRecoveryNotified = !1;
   }
+  /** Resolved feature flags (stored overrides applied over schema defaults).
+   *  Recomputed on every read so a settings toggle takes effect without a
+   *  reload — these are cheap (a fixed-size object literal), and caching one
+   *  would just add an invalidation bug. */
+  get flags() {
+    return resolveFlags(this.settings.featureFlags);
+  }
   /** Whether the WebSocket channel is currently connected (for settings UI). */
   isLiveConnected() {
     return this.liveConnected;
@@ -22688,7 +23129,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
   }
   async onload() {
     var _a, _b, _c;
-    initDevLog(), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), shouldShowWaitlistPrompt(this.settings) && this.app.workspace.onLayoutReady(() => {
+    initDevLog(), setLogSink((level, category, message) => {
+      devLog().log(category, message), level === "error" ? rlog().error(category, message) : level === "warn" ? rlog().warn(category, message) : level === "info" && rlog().info(category, message);
+    }), devLog().log("lifecycle", "plugin loading"), rlog().info("lifecycle", `onload start \u2014 v${this.manifest.version}`), activeDocument.body.classList.add("engram-vault-sync-active"), await this.loadSettings(), shouldShowWaitlistPrompt(this.settings) && this.app.workspace.onLayoutReady(() => {
       new EmailCaptureModal(this.app, () => {
         this.settings.waitlistPromptSeen = !0, this.saveSettings();
       }).open();
@@ -22806,9 +23249,13 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       id: "sync-now",
       name: "Sync now",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: syncing...");
-        let { pulled, pushed } = await this.syncEngine.fullSync();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        try {
+          new import_obsidian26.Notice("Engram sync: syncing...");
+          let { pulled, pushed } = await this.syncEngine.fullSync();
+          new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+        } catch (e) {
+          this.handleSyncError("Manual sync", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "disconnect",
@@ -22820,36 +23267,48 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       id: "push-all",
       name: "Push entire vault",
       callback: async () => {
-        let count2 = await this.syncEngine.pushAll();
-        new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
+        try {
+          let count2 = await this.syncEngine.pushAll();
+          new import_obsidian26.Notice(`Engram Sync: pushed ${count2} files`);
+        } catch (e) {
+          this.handleSyncError("Push all", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "check-sync",
       name: "Check sync status",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: checking...");
-        let result = await this.syncEngine.reconcile();
-        if (!result) {
-          new import_obsidian26.Notice(
-            "Engram sync: server does not support reconciliation (update backend)"
-          );
-          return;
-        }
-        let { missing, diverged, extraOnServer } = result;
-        if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
-          new import_obsidian26.Notice("Engram sync: everything in sync");
-        else {
-          let parts = [];
-          missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
+        try {
+          new import_obsidian26.Notice("Engram sync: checking...");
+          let result = await this.syncEngine.reconcile();
+          if (!result) {
+            new import_obsidian26.Notice(
+              "Engram sync: server does not support reconciliation (update backend)"
+            );
+            return;
+          }
+          let { missing, diverged, extraOnServer } = result;
+          if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0)
+            new import_obsidian26.Notice("Engram sync: everything in sync");
+          else {
+            let parts = [];
+            missing.length > 0 && parts.push(`${missing.length} missing on server`), diverged.length > 0 && parts.push(`${diverged.length} diverged`), extraOnServer.length > 0 && parts.push(`${extraOnServer.length} only on server`), new import_obsidian26.Notice(`Engram Sync: ${parts.join(", ")}`);
+          }
+        } catch (e) {
+          this.handleSyncError("Sync check", e, { notice: !0 });
         }
       }
     }), this.addCommand({
       id: "pull-all",
       name: "Pull all from server (force overwrite)",
       callback: async () => {
-        new import_obsidian26.Notice("Engram sync: pulling all from server...");
-        let count2 = await this.syncEngine.pullAll();
-        new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
+        try {
+          new import_obsidian26.Notice("Engram sync: pulling all from server...");
+          let count2 = await this.syncEngine.pullAll();
+          new import_obsidian26.Notice(`Engram Sync: pulled ${count2} files from server`);
+        } catch (e) {
+          this.handleSyncError("Pull all", e, { notice: !0 });
+        }
       }
     }), this.addCommand({
       id: "show-sync-log",
@@ -22910,20 +23369,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         }
         new import_obsidian26.Notice("Engram sync: syncing..."), this.syncEngine.fullSync().then(({ pulled, pushed }) => {
           new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
-        }).catch((e) => {
-          if (e instanceof LimitExceededError) {
-            notifyLimitExceeded(e), rlog().info(
-              "lifecycle",
-              `Manual sync blocked \u2014 limit reached (${e.reason})`
-            );
-            return;
-          }
-          console.error("Engram Sync: manual sync failed", e), rlog().error(
-            "lifecycle",
-            `Manual sync failed: ${errMsg(e)}`,
-            e instanceof Error ? e.stack : void 0
-          ), new import_obsidian26.Notice("Engram sync: sync failed");
-        });
+        }).catch((e) => this.handleSyncError("Manual sync", e, { notice: !0 }));
       }
     }), this.registerEditorExtension([liveBindingPlugin]), this.registerEvent(this.app.workspace.on("file-open", (file) => this.handleFileOpen(file))), this.registerEvent(
       this.app.workspace.on("active-leaf-change", () => {
@@ -23009,23 +23455,33 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             let pushed = await this.syncEngine.pushModifiedFiles();
             pushed > 0 && new import_obsidian26.Notice(`Engram Sync: pushed ${pushed}`);
           } catch (e) {
-            if (e instanceof LimitExceededError) {
-              notifyLimitExceeded(e), rlog().info(
-                "lifecycle",
-                `Startup sync blocked \u2014 limit reached (${e.reason})`
-              );
-              return;
-            }
-            console.error("Engram Sync: startup sync failed", e), rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+            this.handleSyncError("Startup sync", e);
           }
         else
           await this.doSyncWithFirstSyncCheck();
       }
     });
   }
+  /** Shared error boundary for user-initiated sync entry points (palette
+   *  commands, status-bar click, startup sync, sync after settings change).
+   *  A limit hit always gets the upgrade toast; anything else lands in
+   *  console + rlog, plus a failure Notice only when the user explicitly
+   *  asked for the sync (`notice: true`) — background syncs must not toast
+   *  every offline launch. */
+  handleSyncError(context, e, opts) {
+    if (e instanceof LimitExceededError) {
+      notifyLimitExceeded(e), rlog().info("lifecycle", `${context} blocked \u2014 limit reached (${e.reason})`);
+      return;
+    }
+    console.error(`Engram Sync: ${context} failed`, e), rlog().error(
+      "lifecycle",
+      `${context} failed: ${errMsg(e)}`,
+      e instanceof Error ? e.stack : void 0
+    ), opts != null && opts.notice && new import_obsidian26.Notice("Engram sync: sync failed");
+  }
   onunload() {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
-    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), destroyDevLog(), window["__ $YJS$ __"] = void 0;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    (_a = this.crdtWiring) == null || _a.dispose(), devLog().log("lifecycle", "plugin unloading"), rlog().info("lifecycle", "Plugin unloading"), activeDocument.body.classList.remove("engram-vault-sync-active"), this.api.beacon.flush(), this.savePluginData(this.syncEngine.getLastSync()), (_b = this.baseStore) == null || _b.prune(), (_c = this.baseStore) == null || _c.save(), (_d = this.crdtOpQueue) == null || _d.dispose(), (_e = this.syncEngine) == null || _e.destroy(), (_f = this.noteStream) == null || _f.disconnect(), setLiveBindingCoordinator(null), (_g = this.crdtLiveViews) == null || _g.destroy(), this.crdtLiveViews = null, (_h = this.crdtManager) == null || _h.destroyAll(), this.syncInterval && (window.clearInterval(this.syncInterval), this.syncInterval = null), destroyRemoteLog(), uninstallDebugApi(), setLogSink(null), setActiveTracker(null), (_i = this.promiseTracker) == null || _i.destroy(), this.promiseTracker = null, destroyDevLog(), window["__ $YJS$ __"] = void 0;
   }
   async loadSettings() {
     var _a, _b;
@@ -23048,8 +23504,58 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       deviceId: this.deviceId
     });
   }
+  /**
+   * Install or remove `window.__engramDebug` to match the diagnostics setting.
+   *
+   * Called from saveSettings (the user toggled diagnostics) and after the CRDT
+   * stack is rebuilt (the registry it closes over was replaced). Cheap and
+   * idempotent, so both callers can fire it unconditionally.
+   */
+  refreshDebugApi() {
+    let registry = this.crdtManager;
+    if (!this.settings.diagnosticsEnabled || !registry) {
+      uninstallDebugApi();
+      return;
+    }
+    installDebugApi(
+      createDebugApi({
+        registry: {
+          hasDoc: (id2) => registry.hasDoc(id2),
+          projectedText: (id2) => registry.projectedText(id2),
+          hasHistory: (id2) => registry.hasHistory(id2),
+          encodeStateVector: (id2) => registry.encodeStateVector(id2),
+          isSynced: (id2) => registry.isSynced(id2),
+          hasPendingGap: (id2) => registry.hasPendingGap(id2),
+          hasUndeliveredOps: (id2) => registry.hasUndeliveredOps(id2),
+          enrolled: registry.enrolled,
+          removedIds: registry.removedIds,
+          residentIds: () => [...registry.docs.keys()]
+        },
+        idForPath: (path) => this.noteIdMap.get(path),
+        pathForId: (id2) => this.noteIdMap.pathForId(id2),
+        readDisk: async (path) => {
+          let file = this.app.vault.getAbstractFileByPath((0, import_obsidian26.normalizePath)(path));
+          if (!(file instanceof import_obsidian26.TFile)) return null;
+          let content = await this.app.vault.read(file);
+          return { length: content.length, mtime: file.stat.mtime, content };
+        },
+        // exportSyncState() copies the whole map per call. Acceptable: this
+        // runs only when a human invokes the console API, never on a sync path.
+        syncStateFor: (path) => this.syncEngine.exportSyncState()[(0, import_obsidian26.normalizePath)(path)],
+        isLiveBound: (path) => {
+          var _a, _b;
+          return (_b = (_a = this.crdtLiveViews) == null ? void 0 : _a.isBound(path)) != null ? _b : !1;
+        },
+        pendingPromises: () => {
+          var _a, _b;
+          return (_b = (_a = this.promiseTracker) == null ? void 0 : _a.pending()) != null ? _b : [];
+        },
+        recorder: this.syncRecorder
+      })
+    );
+  }
   async saveSettings() {
-    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setLevelThreshold(this.settings.remoteLogLevel), rlog().setEnabled(this.settings.diagnosticsEnabled), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
+    this.api.updateConfig(this.settings.apiUrl, this.settings.apiKey), this.api.setVaultId(this.settings.vaultId), this.api.setTracingEnabled(this.settings.diagnosticsEnabled), this.syncEngine.updateSettings(this.settings), rlog().setLevelThreshold(this.settings.remoteLogLevel), rlog().setEnabled(this.settings.diagnosticsEnabled), this.refreshDebugApi(), this.startSyncInterval(), this.setupNoteStream(), await this.savePluginData(this.syncEngine.getLastSync()), this.hasAuthConfigured() ? this.registerVault().then(async (registered) => {
       if (!registered) {
         await this.applySyncGate();
         return;
@@ -23060,21 +23566,9 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
         let { pulled, pushed } = await this.syncEngine.fullSync();
         (pulled > 0 || pushed > 0) && new import_obsidian26.Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
       } catch (e) {
-        if (e instanceof LimitExceededError) {
-          notifyLimitExceeded(e), rlog().info(
-            "lifecycle",
-            `Sync after settings change blocked \u2014 limit reached (${e.reason})`
-          );
-          return;
-        }
-        console.error("Engram Sync: sync after settings change failed", e), rlog().error(
-          "lifecycle",
-          `Sync after settings change failed: ${errMsg(e)}`
-        );
+        this.handleSyncError("Sync after settings change", e);
       }
-    }).catch((e) => {
-      console.error("Engram Sync: sync after settings change failed", e), rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
-    }) : (this.syncEngine.setSyncBlocked(!0), rlog().setEnabled(!1));
+    }).catch((e) => this.handleSyncError("Sync after settings change", e)) : (this.syncEngine.setSyncBlocked(!0), rlog().setEnabled(!1));
   }
   /** Register this vault with the backend. Must be called before sync starts.
    *  Returns true if registration succeeded (or vault was already registered).
@@ -23398,6 +23892,20 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
           let wiring2 = createCrdtWiring({
             noteIdMap: this.noteIdMap,
             syncEngine: this.syncEngine,
+            recorder: this.syncRecorder,
+            // BaseStore is keyed by vault path and already holds exactly the
+            // last-synced content its own docstring calls "the common
+            // ancestor for 3-way merge"; the registry is keyed by note_id,
+            // so resolve through the id map.
+            lcaFor: (noteId) => {
+              var _a3, _b2, _c2;
+              let path = this.noteIdMap.pathForId(noteId);
+              return path && (_c2 = (_b2 = (_a3 = this.baseStore) == null ? void 0 : _a3.get(path)) == null ? void 0 : _b2.content) != null ? _c2 : null;
+            },
+            onDirtyMerge: (noteId) => rlog().warn(
+              "crdt",
+              `LCA merge left unapplied hunks for ${noteId} \u2014 fell back to the two-way path`
+            ),
             // `?? false`: a null socket (mid-reconnect) must read as REFUSED so
             // the frame is held in unsentDocIds and flushed on rejoin — never
             // silently dropped as if sent.
@@ -23446,7 +23954,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
             }
           ), this.crdtStackKey = channelConnectionKey(this.settings);
         }
-        (_a2 = this.crdtLiveViews) == null || _a2.refresh();
+        (_a2 = this.crdtLiveViews) == null || _a2.refresh(), this.refreshDebugApi();
         let wiring = this.crdtWiring;
         wiring && (channel.onCrdtMessage = wiring.onCrdtMessage, channel.onCrdtDocReady = wiring.onCrdtDocReady, channel.onCrdtNoteNotFound = wiring.onCrdtNoteNotFound, channel.onNoteYjsUpdate = wiring.onNoteYjsUpdate), channel.onCrdtJoined = () => {
           var _a3;

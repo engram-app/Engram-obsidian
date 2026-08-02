@@ -719,9 +719,13 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "sync-now",
 			name: "Sync now",
 			callback: async () => {
-				new Notice("Engram sync: syncing...");
-				const { pulled, pushed } = await this.syncEngine.fullSync();
-				new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				try {
+					new Notice("Engram sync: syncing...");
+					const { pulled, pushed } = await this.syncEngine.fullSync();
+					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
+				} catch (e) {
+					this.handleSyncError("Manual sync", e, { notice: true });
+				}
 			},
 		});
 
@@ -738,8 +742,12 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "push-all",
 			name: "Push entire vault",
 			callback: async () => {
-				const count = await this.syncEngine.pushAll();
-				new Notice(`Engram Sync: pushed ${count} files`);
+				try {
+					const count = await this.syncEngine.pushAll();
+					new Notice(`Engram Sync: pushed ${count} files`);
+				} catch (e) {
+					this.handleSyncError("Push all", e, { notice: true });
+				}
 			},
 		});
 
@@ -747,24 +755,32 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "check-sync",
 			name: "Check sync status",
 			callback: async () => {
-				new Notice("Engram sync: checking...");
-				const result = await this.syncEngine.reconcile();
-				if (!result) {
-					new Notice(
-						"Engram sync: server does not support reconciliation (update backend)",
-					);
-					return;
-				}
-				const { missing, diverged, extraOnServer } = result;
-				if (missing.length === 0 && diverged.length === 0 && extraOnServer.length === 0) {
-					new Notice("Engram sync: everything in sync");
-				} else {
-					const parts: string[] = [];
-					if (missing.length > 0) parts.push(`${missing.length} missing on server`);
-					if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
-					if (extraOnServer.length > 0)
-						parts.push(`${extraOnServer.length} only on server`);
-					new Notice(`Engram Sync: ${parts.join(", ")}`);
+				try {
+					new Notice("Engram sync: checking...");
+					const result = await this.syncEngine.reconcile();
+					if (!result) {
+						new Notice(
+							"Engram sync: server does not support reconciliation (update backend)",
+						);
+						return;
+					}
+					const { missing, diverged, extraOnServer } = result;
+					if (
+						missing.length === 0 &&
+						diverged.length === 0 &&
+						extraOnServer.length === 0
+					) {
+						new Notice("Engram sync: everything in sync");
+					} else {
+						const parts: string[] = [];
+						if (missing.length > 0) parts.push(`${missing.length} missing on server`);
+						if (diverged.length > 0) parts.push(`${diverged.length} diverged`);
+						if (extraOnServer.length > 0)
+							parts.push(`${extraOnServer.length} only on server`);
+						new Notice(`Engram Sync: ${parts.join(", ")}`);
+					}
+				} catch (e) {
+					this.handleSyncError("Sync check", e, { notice: true });
 				}
 			},
 		});
@@ -773,9 +789,13 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "pull-all",
 			name: "Pull all from server (force overwrite)",
 			callback: async () => {
-				new Notice("Engram sync: pulling all from server...");
-				const count = await this.syncEngine.pullAll();
-				new Notice(`Engram Sync: pulled ${count} files from server`);
+				try {
+					new Notice("Engram sync: pulling all from server...");
+					const count = await this.syncEngine.pullAll();
+					new Notice(`Engram Sync: pulled ${count} files from server`);
+				} catch (e) {
+					this.handleSyncError("Pull all", e, { notice: true });
+				}
 			},
 		});
 
@@ -875,24 +895,7 @@ export default class EngramSyncPlugin extends Plugin {
 				.then(({ pulled, pushed }) => {
 					new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 				})
-				.catch((e) => {
-					if (e instanceof LimitExceededError) {
-						notifyLimitExceeded(e);
-						rlog().info(
-							"lifecycle",
-							`Manual sync blocked — limit reached (${e.reason})`,
-						);
-						return;
-					}
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: manual sync failed", e);
-					rlog().error(
-						"lifecycle",
-						`Manual sync failed: ${errMsg(e)}`,
-						e instanceof Error ? e.stack : undefined,
-					);
-					new Notice("Engram sync: sync failed");
-				});
+				.catch((e) => this.handleSyncError("Manual sync", e, { notice: true }));
 		});
 
 		// The live editor<->Y.Text binding, registered ONCE for the plugin's
@@ -1074,23 +1077,37 @@ export default class EngramSyncPlugin extends Plugin {
 						new Notice(`Engram Sync: pushed ${pushed}`);
 					}
 				} catch (e) {
-					if (e instanceof LimitExceededError) {
-						notifyLimitExceeded(e);
-						rlog().info(
-							"lifecycle",
-							`Startup sync blocked — limit reached (${e.reason})`,
-						);
-						return;
-					}
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: startup sync failed", e);
-					rlog().error("lifecycle", `Startup sync failed: ${errMsg(e)}`);
+					this.handleSyncError("Startup sync", e);
 				}
 			} else {
 				// Gate closed — show the preview modal so user picks a direction.
 				await this.doSyncWithFirstSyncCheck();
 			}
 		});
+	}
+
+	/** Shared error boundary for user-initiated sync entry points (palette
+	 *  commands, status-bar click, startup sync, sync after settings change).
+	 *  A limit hit always gets the upgrade toast; anything else lands in
+	 *  console + rlog, plus a failure Notice only when the user explicitly
+	 *  asked for the sync (`notice: true`) — background syncs must not toast
+	 *  every offline launch. */
+	private handleSyncError(context: string, e: unknown, opts?: { notice?: boolean }): void {
+		if (e instanceof LimitExceededError) {
+			notifyLimitExceeded(e);
+			rlog().info("lifecycle", `${context} blocked — limit reached (${e.reason})`);
+			return;
+		}
+		// biome-ignore lint/suspicious/noConsole: error boundary
+		console.error(`Engram Sync: ${context} failed`, e);
+		rlog().error(
+			"lifecycle",
+			`${context} failed: ${errMsg(e)}`,
+			e instanceof Error ? e.stack : undefined,
+		);
+		if (opts?.notice) {
+			new Notice("Engram sync: sync failed");
+		}
 	}
 
 	onunload(): void {
@@ -1283,27 +1300,10 @@ export default class EngramSyncPlugin extends Plugin {
 							new Notice(`Engram Sync: pulled ${pulled}, pushed ${pushed}`);
 						}
 					} catch (e) {
-						if (e instanceof LimitExceededError) {
-							notifyLimitExceeded(e);
-							rlog().info(
-								"lifecycle",
-								`Sync after settings change blocked — limit reached (${e.reason})`,
-							);
-							return;
-						}
-						// biome-ignore lint/suspicious/noConsole: error boundary
-						console.error("Engram Sync: sync after settings change failed", e);
-						rlog().error(
-							"lifecycle",
-							`Sync after settings change failed: ${errMsg(e)}`,
-						);
+						this.handleSyncError("Sync after settings change", e);
 					}
 				})
-				.catch((e) => {
-					// biome-ignore lint/suspicious/noConsole: error boundary
-					console.error("Engram Sync: sync after settings change failed", e);
-					rlog().error("lifecycle", `Sync after settings change failed: ${errMsg(e)}`);
-				});
+				.catch((e) => this.handleSyncError("Sync after settings change", e));
 		} else {
 			// No auth (signed out / API key cleared): quiesce outbound sync.
 			// setupNoteStream above already dropped the WS/CRDT stack; block the
