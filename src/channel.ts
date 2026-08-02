@@ -123,6 +123,35 @@ export function makeCrdtCatchupSender(
 	};
 }
 
+/** Map a raw payload's note fields into a NoteStreamEvent. Shared by the
+ *  note_changed handler and the notes.batch digest loop — the two had
+ *  hand-copied field-cast lists, so a field added to one was silently absent
+ *  from the other (a partial event, not an error). `content`/`device_id` are
+ *  only carried by note_changed; batch digests are metadata-only and simply
+ *  don't have them in the payload. */
+function toStreamEvent(
+	p: Record<string, unknown>,
+	overrides: Partial<NoteStreamEvent> = {},
+): NoteStreamEvent {
+	return {
+		event_type: p.event_type as "upsert" | "delete",
+		path: p.path as string,
+		timestamp: Date.now(),
+		kind: (p.kind as "note" | "attachment") ?? "note",
+		id: p.id as string | undefined,
+		device_id: p.device_id as string | undefined,
+		content: p.content as string | undefined,
+		content_hash: p.content_hash as string | undefined,
+		title: p.title as string | undefined,
+		folder: p.folder as string | undefined,
+		tags: p.tags as string[] | undefined,
+		mtime: p.mtime as number | undefined,
+		updated_at: p.updated_at as string | undefined,
+		version: p.version as number | undefined,
+		...overrides,
+	};
+}
+
 /** The WS origin for an API base: trailing slashes and the `/api` suffix
  *  stripped (the socket lives at `<origin>/socket/websocket`, not under /api).
  *  Distinct from EngramApi.normalizeBaseUrl, which APPENDS /api. */
@@ -575,6 +604,14 @@ export class NoteChannel {
 		this.pendingReplies.clear();
 	}
 
+	/** Replace-never-stack: arm the reconnect timer, clearing any pending one
+	 *  first. The raw assignments this replaces were safe only because their
+	 *  callers had just run clearTimers(); this makes the invariant local. */
+	private setReconnectTimer(delayMs: number): void {
+		if (this.reconnectTimer !== null) window.clearTimeout(this.reconnectTimer);
+		this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delayMs);
+	}
+
 	private async openSocket(): Promise<void> {
 		// Single-flight: if a socket already exists (an external connect() won
 		// the race against a still-pending reconnect timer) or another
@@ -795,7 +832,7 @@ export class NoteChannel {
 					"channel",
 					`crdt: join rejected (${this.crdtJoinFailedReason}) — backing off reconnect ${Math.round(delay)}ms - ${closeInfo}`,
 				);
-				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+				this.setReconnectTimer(delay);
 			} else if (opened) {
 				// A live connection dropped (graceful drain or a mid-session network
 				// drop). Full-jitter the FIRST reconnect across random(0, window) so a
@@ -810,7 +847,7 @@ export class NoteChannel {
 					"channel",
 					`Channel dropped after live connection — jittered reconnect in ${Math.round(delay)}ms (window ${jitterWindow}ms) - ${closeInfo}`,
 				);
-				this.reconnectTimer = window.setTimeout(() => void this.openSocket(), delay);
+				this.setReconnectTimer(delay);
 			} else {
 				rlog().info(
 					"channel",
@@ -1082,25 +1119,11 @@ export class NoteChannel {
 		}
 
 		if (event === "note_changed" && payload) {
-			const p = payload;
-			const streamEvent: NoteStreamEvent = {
-				event_type: p.event_type as "upsert" | "delete",
-				path: p.path as string,
-				timestamp: Date.now(),
-				kind: (p.kind as "note" | "attachment") ?? "note",
-				id: p.id as string | undefined,
-				device_id: p.device_id as string | undefined,
-				content: p.content as string | undefined,
-				content_hash: p.content_hash as string | undefined,
-				title: p.title as string | undefined,
-				folder: p.folder as string | undefined,
-				tags: p.tags as string[] | undefined,
-				mtime: p.mtime as number | undefined,
-				updated_at: p.updated_at as string | undefined,
-				version: p.version as number | undefined,
-			};
+			const streamEvent = toStreamEvent(payload);
 			rlog().info("channel", `Event: ${streamEvent.event_type} ${streamEvent.path}`);
 			this.onEvent?.(streamEvent);
+			// Mirror every other branch: nothing below applies to this event.
+			return;
 		}
 
 		// Protocol rev: bulk pushes broadcast ONE notes.batch digest
@@ -1111,21 +1134,7 @@ export class NoteChannel {
 			const notes = (payload.notes as Array<Record<string, unknown>> | undefined) ?? [];
 			rlog().info("channel", `Batch digest: ${notes.length} notes`);
 			for (const n of notes) {
-				const streamEvent: NoteStreamEvent = {
-					event_type: "upsert",
-					path: n.path as string,
-					timestamp: Date.now(),
-					kind: "note",
-					id: n.id as string | undefined,
-					content_hash: n.content_hash as string | undefined,
-					title: n.title as string | undefined,
-					folder: n.folder as string | undefined,
-					tags: n.tags as string[] | undefined,
-					mtime: n.mtime as number | undefined,
-					updated_at: n.updated_at as string | undefined,
-					version: n.version as number | undefined,
-				};
-				this.onEvent?.(streamEvent);
+				this.onEvent?.(toStreamEvent(n, { event_type: "upsert", kind: "note" }));
 			}
 		}
 	}

@@ -835,30 +835,12 @@ export default class EngramSyncPlugin extends Plugin {
 			id: "open-search-sidebar",
 			name: "Open search sidebar",
 			callback: async () => {
-				const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-				if (existing[0]) {
-					void this.app.workspace.revealLeaf(existing[0]);
-					return;
-				}
-				const leaf = this.app.workspace.getRightLeaf(false);
-				if (leaf) {
-					await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
-					void this.app.workspace.revealLeaf(leaf);
-				}
+				await this.revealSearchSidebar();
 			},
 		});
 
 		this.addRibbonIcon("brain-circuit", "Engram search", async () => {
-			const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
-			if (existing[0]) {
-				void this.app.workspace.revealLeaf(existing[0]);
-				return;
-			}
-			const leaf = this.app.workspace.getRightLeaf(false);
-			if (leaf) {
-				await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
-				void this.app.workspace.revealLeaf(leaf);
-			}
+			await this.revealSearchSidebar();
 		});
 
 		this.addCommand({
@@ -1619,16 +1601,7 @@ export default class EngramSyncPlugin extends Plugin {
 		// this path has no second setupNoteStream, so shouldReuseLiveStream can't
 		// recover the doomed channel — see tests/main-stream-reuse.test.ts.)
 		this.authProvider = this.createAuthProvider();
-		if (this.authProvider) {
-			this.api.setAuthProvider(this.authProvider);
-		}
-
-		await this.saveSettings();
-
-		if (this.authProvider && this.noteStream) {
-			this.noteStream.setAuthProvider(this.authProvider);
-			this.noteStream.setAuthProbe(() => this.api.getMe());
-		}
+		await this.commitAuthProviderSwap();
 	}
 
 	async clearOAuthTokens(): Promise<void> {
@@ -1651,6 +1624,32 @@ export default class EngramSyncPlugin extends Plugin {
 		this.authProvider = this.settings.apiKey
 			? new ApiKeyAuth(this.settings.apiKey, this.settings.vaultId)
 			: null;
+		await this.commitAuthProviderSwap();
+	}
+
+	/** Shared tail of saveOAuthTokens/clearOAuthTokens: wire the (already
+	 *  swapped) provider onto the api BEFORE saveSettings() rebuilds the note
+	 *  channel — the rebuild freezes the channel topic's userId from
+	 *  api.getMe() at construction, so a stale provider mints a doomed
+	 *  crdt:<oldUser>:<vault> topic the backend rejects "unauthorized" and
+	 *  live sync stays dead until reload. Then persist and hand the provider
+	 *  to the live stream. */
+	/** Reveal the search sidebar, creating its leaf on first use. Shared by the
+	 *  palette command and the ribbon icon (previously byte-identical copies). */
+	private async revealSearchSidebar(): Promise<void> {
+		const existing = this.app.workspace.getLeavesOfType(SEARCH_VIEW_TYPE);
+		if (existing[0]) {
+			void this.app.workspace.revealLeaf(existing[0]);
+			return;
+		}
+		const leaf = this.app.workspace.getRightLeaf(false);
+		if (leaf) {
+			await leaf.setViewState({ type: SEARCH_VIEW_TYPE, active: true });
+			void this.app.workspace.revealLeaf(leaf);
+		}
+	}
+
+	private async commitAuthProviderSwap(): Promise<void> {
 		if (this.authProvider) {
 			this.api.setAuthProvider(this.authProvider);
 		}

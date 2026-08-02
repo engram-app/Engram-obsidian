@@ -423,18 +423,7 @@ export class SyncPreviewModal extends Modal {
 
 		this.renderAdvancedOptions(options);
 
-		const footer = contentEl.createDiv({ cls: "engram-sync-preview-footer" });
-		const dismissBtn = footer.createEl("button", {
-			text: empty ? "Close" : "Cancel",
-			cls: empty ? "mod-cta" : undefined,
-		});
-		dismissBtn.addEventListener("click", () => this.state.cancel());
-		if (this.opts.showChangeVault) {
-			const changeBtn = footer.createEl("button", { text: "Change vault" });
-			changeBtn.addEventListener("click", () => {
-				void this.openVaultPicker();
-			});
-		}
+		this.renderFooter(contentEl, empty ? "Close" : "Cancel", empty);
 	}
 
 	/** Instant-open loading state: the modal is on screen while computeSyncPlan
@@ -453,9 +442,21 @@ export class SyncPreviewModal extends Modal {
 			body.createSpan({ text: "Comparing your vault with the cloud…" });
 		}
 
+		this.renderFooter(parent, "Cancel", false);
+	}
+
+	/** The loaded plan. Only reached from render paths that run after the plan
+	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
+	 *  against a future caller skipping the loading gate. */
+	/** Dismiss + optional "Change vault" footer, shared by the loaded preview
+	 *  and the loading state (previously identical blocks). */
+	private renderFooter(parent: HTMLElement, dismissLabel: string, dismissCta: boolean): void {
 		const footer = parent.createDiv({ cls: "engram-sync-preview-footer" });
-		const cancelBtn = footer.createEl("button", { text: "Cancel" });
-		cancelBtn.addEventListener("click", () => this.state.cancel());
+		const dismissBtn = footer.createEl("button", {
+			text: dismissLabel,
+			cls: dismissCta ? "mod-cta" : undefined,
+		});
+		dismissBtn.addEventListener("click", () => this.state.cancel());
 		if (this.opts.showChangeVault) {
 			const changeBtn = footer.createEl("button", { text: "Change vault" });
 			changeBtn.addEventListener("click", () => {
@@ -464,9 +465,6 @@ export class SyncPreviewModal extends Modal {
 		}
 	}
 
-	/** The loaded plan. Only reached from render paths that run after the plan
-	 *  has arrived (renderPreview gates on it); throws otherwise as a guard
-	 *  against a future caller skipping the loading gate. */
 	private requirePlan(): SyncPlan {
 		const p = this.state.plan;
 		if (!p) throw new Error("SyncPreviewModal: plan accessed before it loaded");

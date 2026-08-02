@@ -22,7 +22,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 	test("installs the new auth provider on this.api BEFORE saveSettings()", async () => {
 		const order: string[] = [];
 		const newProvider = { tag: "new-oauth-provider" };
-		const fakeThis = {
+		const fakeThis = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 			settings: {} as Record<string, unknown>,
 			createAuthProvider() {
 				return newProvider;
@@ -53,7 +53,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 					order.push("bumpAuthGeneration");
 				},
 			},
-		};
+		});
 
 		await EngramSyncPlugin.prototype.saveOAuthTokens.call(
 			fakeThis as never,
@@ -90,7 +90,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 		// the outgoing OAuth user's id into the topic while the socket then
 		// authenticates as the apiKey identity.
 		const order: string[] = [];
-		const fakeThis = {
+		const fakeThis = Object.assign(Object.create(EngramSyncPlugin.prototype), {
 			settings: {
 				apiKey: "ak-123",
 				vaultId: "v1",
@@ -121,7 +121,7 @@ describe("saveOAuthTokens auth-provider ordering", () => {
 					order.push("bumpAuthGeneration");
 				},
 			},
-		};
+		});
 
 		await EngramSyncPlugin.prototype.clearOAuthTokens.call(fakeThis as never);
 

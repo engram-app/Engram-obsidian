@@ -2011,6 +2011,55 @@ export class SyncEngine {
 		return file instanceof TFile && file.extension === "md";
 	}
 
+	/** Stage the convergence episode a socket re-handshake must commit, then
+	 *  fire the re-handshake. The {stage, converge} pair was written out
+	 *  five times; a field added to one copy and not another silently forked
+	 *  the commit contract. */
+	private stageAndConverge(
+		noteId: string,
+		path: string,
+		serverHash: string,
+		content: string | null,
+		version?: number,
+		seq?: number,
+	): void {
+		this.pendingConvergence.set(noteId, { path, serverHash, content, version, seq });
+		this.socketConverge(path, noteId);
+	}
+
+	/** The full local cleanup for a remotely-deleted file: trash it (marked so
+	 *  this device's own vault-delete event is echo-suppressed), prune any
+	 *  now-empty parent folders, and drop its sync/merge-base state. This
+	 *  four-line block existed verbatim at three sites plus partial variants.
+	 *  `dropBase` is false only for attachments, which have no merge base. */
+	private async applyRemoteRemoval(
+		file: TAbstractFile,
+		opts?: { dropBase?: boolean },
+	): Promise<void> {
+		const normalized = normalizePath(file.path);
+		await this.trashRemotelyDeleted(file);
+		await this.removeEmptyFolders(normalized);
+		this.syncState.delete(normalized);
+		if (opts?.dropBase !== false) this.baseStore?.delete(normalized);
+	}
+
+	/** The vault a queue entry belongs to: its own stamp, else the current
+	 *  vault (pre-stamp entries), else undefined. Was inlined 5x in the flush
+	 *  path. */
+	private entryVaultId(entry: { vaultId?: string }): string | undefined {
+		return entry.vaultId ?? this.settings.vaultId ?? undefined;
+	}
+
+	/** Close a note's CRDT room: destroy the doc (the registry clears its
+	 *  enrollment at the destroy choke point) and reset the enrollment port,
+	 *  which is a separate object only in test harnesses. This pair was
+	 *  hand-written at 6 call sites; a missed pair left a tombstoned id
+	 *  enrolled forever. */
+	private async teardownCrdtDoc(noteId: string): Promise<void> {
+		await this.crdt?.removeDoc(noteId);
+		this.crdtEnrollment?.reset(noteId);
+	}
+
 	/** CRDT-eligible = markdown OR canvas: both sync over the Yjs transport
 	 *  (the manager's docKind picks the per-type schema). Binary/attachment
 	 *  types are NOT eligible and stay on the REST/attachment path. */
@@ -2192,8 +2241,7 @@ export class SyncEngine {
 			this.files.clearMarker(file.path, "remotelyDeleted");
 			rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`);
 			if (this.isCrdtEligible(file) && crdtNoteId) {
-				await this.crdt?.removeDoc(crdtNoteId);
-				this.crdtEnrollment?.reset(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId);
 			}
 			return;
 		}
@@ -2228,16 +2276,14 @@ export class SyncEngine {
 			// attachments never hit removeDoc. Also gate on a known id — nothing to
 			// tear down if this note never had a CRDT room.
 			if (this.isCrdtEligible(file) && crdtNoteId) {
-				await this.crdt?.removeDoc(crdtNoteId);
-				this.crdtEnrollment?.reset(crdtNoteId);
+				await this.teardownCrdtDoc(crdtNoteId);
 			}
 		} catch (e) {
 			// 404 means already deleted — treat as success; still tear down CRDT.
 			if (isHttpStatus(e, 404)) {
 				this.goOnline();
 				if (this.isCrdtEligible(file) && crdtNoteId) {
-					await this.crdt?.removeDoc(crdtNoteId);
-					this.crdtEnrollment?.reset(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return;
 			}
@@ -2844,8 +2890,7 @@ export class SyncEngine {
 								// between the projectedText read above and this removeDoc are
 								// dropped. Microtask-scale; accepted.
 								this.crdtEditorRebind?.(pushedPath);
-								await this.crdt.removeDoc(noteId);
-								this.crdtEnrollment?.reset(noteId);
+								await this.teardownCrdtDoc(noteId);
 							} else {
 								if (serverId && serverId !== noteId) {
 									this.noteIdMap?.set(normalizePath(pushedPath), serverId);
@@ -4553,10 +4598,7 @@ export class SyncEngine {
 				// so the bytes are preserved at the new path — no drift keep-both copy.
 				const existing = this.app.vault.getFileByPath(normalized);
 				if (existing) {
-					await this.trashRemotelyDeleted(existing);
-					await this.removeEmptyFolders(normalized);
-					this.syncState.delete(normalized);
-					this.baseStore?.delete(normalized);
+					await this.applyRemoteRemoval(existing);
 				}
 				// Only clear a stale old-path→id mapping if one still points at the
 				// relocated room; leave the id's room mapping (new path) intact.
@@ -4603,10 +4645,7 @@ export class SyncEngine {
 				// trashRemotelyDeleted marks remotelyDeleted, so this device's own
 				// vault-delete event is echo-suppressed and never re-pushed (the
 				// 2026-07-08 wipe-echo invariant, test_86).
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
-				this.baseStore?.delete(normalized);
+				await this.applyRemoteRemoval(existing);
 			}
 			// Tear down the CRDT doc for md paths regardless of whether the file
 			// existed locally. The ghost lineage in IDB/memory must be cleared so a
@@ -4619,8 +4658,7 @@ export class SyncEngine {
 				this.noteIdMap?.delete(normalized);
 				const roomId = targetId ?? currentId;
 				if (roomId) {
-					await this.crdt?.removeDoc(roomId);
-					this.crdtEnrollment?.reset(roomId);
+					await this.teardownCrdtDoc(roomId);
 				}
 			}
 			return;
@@ -5293,13 +5331,12 @@ export class SyncEngine {
 					// uncomputable client-side), so this stage cannot be
 					// content-verified; commitCrdtConvergence keeps the pre-wave-5
 					// best-effort behavior for it (commit on the next non-empty frame).
-					this.pendingConvergence.set(noteId, {
-						path,
-						serverHash: entry.content_hash,
-						content: null,
-					});
+					this.stageAndConverge(noteId, path, entry.content_hash, null);
+				} else {
+					// No hash to stage: still fire the re-handshake (pre-extraction
+					// behavior — the stage was conditional, the converge was not).
+					this.socketConverge(path, noteId);
 				}
-				this.socketConverge(path, noteId);
 				poked++;
 			} catch (e) {
 				rlog().warn("crdt", `live-bound heal failed for ${path}: ${errMsg(e)}`);
@@ -5426,10 +5463,7 @@ export class SyncEngine {
 					}
 					// fall through to trash below
 				}
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
-				this.baseStore?.delete(normalized);
+				await this.applyRemoteRemoval(existing);
 				rlog().info("pull", `Deleted: ${change.path}`);
 				// Tear the CRDT room down so a note recreated at this path starts
 				// fresh (no ghost lineage). Gated on note_id + .md — a legacy note
@@ -5438,8 +5472,7 @@ export class SyncEngine {
 				// applySyncChange's deferred clear).
 				if (crdtNoteId && this.isCrdtEligiblePath(normalized)) {
 					this.noteIdMap?.delete(normalized);
-					await this.crdt?.removeDoc(crdtNoteId);
-					this.crdtEnrollment?.reset(crdtNoteId);
+					await this.teardownCrdtDoc(crdtNoteId);
 				}
 				return true;
 			}
@@ -5671,14 +5704,14 @@ export class SyncEngine {
 							// content: the row's own plaintext (fix wave 5) — lets
 							// commitCrdtConvergence content-verify the commit instead of
 							// trusting that the next onSynced fire is FOR this row.
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
 								content,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+								change.version,
+								change.seq,
+							);
 						}
 					} else {
 						// Backfill is ONLY a catch-up for a CLEAN local file. If the
@@ -5723,14 +5756,14 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: baseline-content row (echo/lagged), socket re-handshake ${change.path}`,
 							);
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
-								content: null,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
+								null,
+								change.version,
+								change.seq,
+							);
 							return false;
 						}
 						const localDiverged =
@@ -5775,14 +5808,14 @@ export class SyncEngine {
 								`Engram: sync conflict on ${normalized} — your local edit was saved as ${copy}`,
 							);
 							if (noteId) {
-								this.pendingConvergence.set(noteId, {
-									path: normalized,
-									serverHash: change.content_hash,
+								this.stageAndConverge(
+									noteId,
+									normalized,
+									change.content_hash,
 									content,
-									version: change.version,
-									seq: change.seq,
-								});
-								this.socketConverge(normalized, noteId);
+									change.version,
+									change.seq,
+								);
 							}
 							return false;
 						}
@@ -5834,14 +5867,14 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: diverged cold note, socket re-handshake ${change.path}`,
 							);
-							this.pendingConvergence.set(noteId, {
-								path: normalized,
-								serverHash: change.content_hash,
+							this.stageAndConverge(
+								noteId,
+								normalized,
+								change.content_hash,
 								content,
-								version: change.version,
-								seq: change.seq,
-							});
-							this.socketConverge(normalized, noteId);
+								change.version,
+								change.seq,
+							);
 						} else {
 							// No note_id (legacy GET /notes/changes path — no id to pull
 							// a CRDT delta for): fall back to the content-snapshot
@@ -5961,9 +5994,7 @@ export class SyncEngine {
 		if (change.deleted) {
 			const existing = this.app.vault.getFileByPath(normalized);
 			if (existing) {
-				await this.trashRemotelyDeleted(existing);
-				await this.removeEmptyFolders(normalized);
-				this.syncState.delete(normalized);
+				await this.applyRemoteRemoval(existing, { dropBase: false });
 				rlog().info("pull", `Attachment deleted: ${change.path}`);
 				return true;
 			}
@@ -7182,7 +7213,7 @@ export class SyncEngine {
 			this.failuresThisBatch += 1;
 			this.firstFailureMessageThisBatch ??= classified.message;
 		}
-		await this.queue.dequeue(entry.path, entry.vaultId ?? this.settings.vaultId ?? undefined);
+		await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 	}
 
 	/** Decide the fate of a queue entry whose flush just failed, and act on it.
@@ -7383,10 +7414,7 @@ export class SyncEngine {
 					if (!base64) {
 						const file = this.app.vault.getFileByPath(entry.path);
 						if (!file) {
-							await this.queue.dequeue(
-								entry.path,
-								entry.vaultId ?? this.settings.vaultId ?? undefined,
-							);
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -7422,7 +7450,7 @@ export class SyncEngine {
 						if (this.crdt && (this.crdtLive?.() ?? false)) {
 							this.pendingQueueDeliveries.set(entry.noteId, {
 								path: entry.path,
-								vaultId: entry.vaultId ?? this.settings.vaultId ?? undefined,
+								vaultId: this.entryVaultId(entry),
 							});
 							this.socketConverge(normalizePath(entry.path), entry.noteId);
 						}
@@ -7442,10 +7470,7 @@ export class SyncEngine {
 							// non-crdt entry has nothing left to send.
 							if (entry.crdt && entry.noteId)
 								this.crdtEnrollment?.enroll(entry.noteId);
-							await this.queue.dequeue(
-								entry.path,
-								entry.vaultId ?? this.settings.vaultId ?? undefined,
-							);
+							await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 							this.issues.clear(entry.path);
 							flushed++;
 							continue;
@@ -7531,10 +7556,7 @@ export class SyncEngine {
 						}
 					}
 				}
-				await this.queue.dequeue(
-					entry.path,
-					entry.vaultId ?? this.settings.vaultId ?? undefined,
-				);
+				await this.queue.dequeue(entry.path, this.entryVaultId(entry));
 				this.issues.clear(entry.path);
 				flushed++;
 			} catch (e) {
