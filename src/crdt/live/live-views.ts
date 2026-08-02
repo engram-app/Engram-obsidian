@@ -4,6 +4,7 @@ import type * as Y from "yjs";
 import { devLog } from "../../dev-log";
 import { errMsg } from "../../error-util";
 import { isDestroyedError } from "../destroyed-error";
+import { CONTENT_KEY } from "../frontmatter-codec";
 import type { ProviderRegistry } from "../provider-registry";
 import { CrdtFrontmatterHook } from "./frontmatter-hook";
 import type { LiveBindingCoordinator } from "./live-binding";
@@ -238,7 +239,7 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 	 *  (minting if needed) the note_id that actually keys the doc (Task 6). */
 	async getYText(path: string): Promise<Y.Text> {
 		const noteId = this.deps.resolveId(path);
-		return (await this.deps.manager.getDoc(noteId)).getText("content");
+		return (await this.deps.manager.getDoc(noteId)).getText(CONTENT_KEY);
 	}
 
 	/** Re-evaluate open markdown leaves: enroll each, and (re)attach the
@@ -289,7 +290,10 @@ export class CrdtLiveViews implements LiveBindingCoordinator {
 		this.reading.detachAll();
 		const flushes: Array<Promise<void>> = [];
 		for (const path of this.refcount.boundPaths()) {
-			const noteId = this.deps.resolveId(path);
+			// Teardown path: same NEVER-mint rule as onLastViewerRelease — minting
+			// resurrects a deleted note under a fresh, untombstoned id (2026-07-28).
+			const noteId = this.deps.resolveExistingId(path);
+			if (noteId === null) continue;
 			// Only a resident doc can be flushed. Guard so we never materialize a fresh
 			// EMPTY doc for a torn-down path and clobber its file with "".
 			if (!this.deps.manager.hasDoc(noteId)) continue;
