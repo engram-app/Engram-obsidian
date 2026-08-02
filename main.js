@@ -18957,7 +18957,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   webm: "video/webm",
   zip: "application/zip",
   canvas: "application/json"
-}, _SyncEngine = class _SyncEngine {
+}, PUSH_BATCH_SIZE = 10, _SyncEngine = class _SyncEngine {
   constructor(app, api, settings, saveData, time = new DefaultTimeProvider()) {
     this.app = app;
     this.api = api;
@@ -20389,7 +20389,10 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       try {
         isBinary ? (await this.api.deleteAttachment(oldPath), this.goOnline()) : this.isCrdtEligible(file) || (await this.api.deleteNote(oldPath), this.goOnline());
       } catch (e) {
-        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), rlog().error("push", `Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`), await this.enqueueChange({
+        isHttpStatus(e, 404) ? this.goOnline() : (console.error("Engram Sync: failed to delete old path %s", oldPath, e), rlog().error(
+          "push",
+          `Rename old-leg delete failed (queued): ${oldPath} | ${errMsg(e)}`
+        ), await this.enqueueChange({
           path: oldPath,
           action: "delete",
           kind: isBinary ? "attachment" : "note",
@@ -22422,21 +22425,45 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  wired. Public: also called directly by the connect path (onLayoutReady,
    *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
    *  needs this push leg to create/upload local-only notes on (re)connect. */
+  /** Shared push pipeline: split notes/attachments, bulk-create genesis
+   *  notes over crdt_create_batch, then per-file push in batches of
+   *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
+   *  incremental copy reported failed=0 to the progress UI even when the
+   *  genesis batch failed files.
+   *
+   *  mode "force" (pushAll): pushFile(force), per-file failures caught,
+   *  counted and written to the sync log — a full push must survive bad
+   *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
+   *  entries, and a per-file throw propagates to the caller's error
+   *  boundary, exactly as before the extraction. */
+  async pushPartitioned(toSync, mode) {
+    var _a;
+    let total = toSync.length, noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+      this.emitPushing(pushedSoFar, total, failedSoFar);
+    }), pushed = genesisOutcome.pushed, failed = genesisOutcome.failed, perFile = [...known, ...attachFiles];
+    for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
+      let batch = perFile.slice(i, i + PUSH_BATCH_SIZE), results = await Promise.all(
+        batch.map(async (f) => {
+          if (mode === "incremental") return this.pushFile(f);
+          try {
+            let ok = await this.pushFile(f, !0);
+            return ok ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok;
+          } catch (e) {
+            return failed++, this.logEntry("push", f.path, "error", errMsg(e)), !1;
+          }
+        })
+      );
+      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, (_a = batch[batch.length - 1]) == null ? void 0 : _a.path);
+    }
+    return { pushed, failed };
+  }
   async pushModifiedFiles(sinceTimestamp) {
     let since = sinceTimestamp != null ? sinceTimestamp : this.lastSync, sinceMs = since ? new Date(since).getTime() : 0, files = this.app.vault.getFiles(), pushed = 0, toSync = files.filter((f) => !this.isSyncable(f) || this.shouldIgnore(f.path) ? !1 : this.syncState.has(f.path) ? f.stat.mtime > sinceMs : !0);
     devLog().log("push", `pushModifiedFiles: ${toSync.length} files modified since ${since}`), rlog().info("push", `PushModified: ${toSync.length} files modified since ${since}`);
     let total = toSync.length;
     total > 0 && this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    });
-    pushed += genesisOutcome.pushed;
-    let perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += 10) {
-      let batch = perFile.slice(i, i + 10), results = await Promise.all(batch.map((f) => this.pushFile(f)));
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, 0);
-    }
-    return this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
+    let outcome = await this.pushPartitioned(toSync, "incremental");
+    return pushed += outcome.pushed, this.flushAttachmentLimitedToast(), this.flushFailureSummaryToast(), pushed;
   }
   /** Compute what a sync would do without executing it (dry-run preview).
    *
@@ -22580,27 +22607,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     let pushed = 0, failed = 0, total = toSync.length;
     devLog().log("push", `pushAll: ${total} files`), rlog().info("push", `PushAll started \u2014 ${total} files`), this.emitPushing(0, total, 0);
-    let noteFiles = toSync.filter((f) => !this.isBinaryFile(f)), attachFiles = toSync.filter((f) => this.isBinaryFile(f)), { genesis, known } = this.partitionGenesis(noteFiles), genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-      this.emitPushing(pushedSoFar, total, failedSoFar);
-    });
-    pushed += genesisOutcome.pushed, failed += genesisOutcome.failed;
-    let perFile = [...known, ...attachFiles];
-    for (let i = 0; i < perFile.length; i += 10) {
-      let batch = perFile.slice(i, i + 10), results = await Promise.all(
-        batch.map(async (f) => {
-          try {
-            let ok2 = await this.pushFile(f, !0);
-            return ok2 ? this.logEntry("push", f.path, "ok") : this.logEntry("skip", f.path, "skipped", void 0, "unchanged"), ok2;
-          } catch (e) {
-            failed++;
-            let msg = errMsg(e);
-            return this.logEntry("push", f.path, "error", msg), !1;
-          }
-        })
-      );
-      pushed += results.filter(Boolean).length, this.emitPushing(pushed, total, failed, batch[batch.length - 1].path);
-    }
-    if (replaceExtras) {
+    let outcome = await this.pushPartitioned(toSync, "force");
+    if (pushed += outcome.pushed, failed += outcome.failed, replaceExtras) {
       let delTotal = replaceExtras.ids.length + replaceExtras.attachments.length, delDone = 0;
       (_d = this.onSyncProgress) == null || _d.call(this, { phase: "deleting", current: 0, total: delTotal, failed: 0 });
       for (let id2 of replaceExtras.ids) {

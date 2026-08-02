@@ -300,6 +300,10 @@ const MIME_TYPES: Record<string, string> = {
 	canvas: "application/json",
 };
 
+/** Per-batch concurrency for the per-file push loop (both the incremental and
+ *  the force pipeline). Was a magic 10 in two places. */
+const PUSH_BATCH_SIZE = 10;
+
 export class SyncEngine {
 	private debounceTimers: Map<string, number> = new Map();
 	/** Paths that newly degraded (ok/none -> frontmatter issue) since the last
@@ -6643,6 +6647,59 @@ export class SyncEngine {
 	 *  wired. Public: also called directly by the connect path (onLayoutReady,
 	 *  Plan B1 Task 6), which no longer runs fullSync's REST pull leg but still
 	 *  needs this push leg to create/upload local-only notes on (re)connect. */
+	/** Shared push pipeline: split notes/attachments, bulk-create genesis
+	 *  notes over crdt_create_batch, then per-file push in batches of
+	 *  PUSH_BATCH_SIZE with progress. The two callers had drifted: the
+	 *  incremental copy reported failed=0 to the progress UI even when the
+	 *  genesis batch failed files.
+	 *
+	 *  mode "force" (pushAll): pushFile(force), per-file failures caught,
+	 *  counted and written to the sync log — a full push must survive bad
+	 *  files. mode "incremental" (pushModifiedFiles): unforced, no sync-log
+	 *  entries, and a per-file throw propagates to the caller's error
+	 *  boundary, exactly as before the extraction. */
+	private async pushPartitioned(
+		toSync: TFile[],
+		mode: "incremental" | "force",
+	): Promise<{ pushed: number; failed: number }> {
+		const total = toSync.length;
+		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
+		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
+		const { genesis, known } = this.partitionGenesis(noteFiles);
+
+		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
+			this.emitPushing(pushedSoFar, total, failedSoFar);
+		});
+		let pushed = genesisOutcome.pushed;
+		let failed = genesisOutcome.failed;
+
+		const perFile = [...known, ...attachFiles];
+		for (let i = 0; i < perFile.length; i += PUSH_BATCH_SIZE) {
+			const batch = perFile.slice(i, i + PUSH_BATCH_SIZE);
+			const results = await Promise.all(
+				batch.map(async (f: TFile) => {
+					if (mode === "incremental") return this.pushFile(f);
+					try {
+						const ok = await this.pushFile(f, true);
+						if (ok) {
+							this.logEntry("push", f.path, "ok");
+						} else {
+							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
+						}
+						return ok;
+					} catch (e) {
+						failed++;
+						this.logEntry("push", f.path, "error", errMsg(e));
+						return false;
+					}
+				}),
+			);
+			pushed += results.filter(Boolean).length;
+			this.emitPushing(pushed, total, failed, batch[batch.length - 1]?.path);
+		}
+		return { pushed, failed };
+	}
+
 	async pushModifiedFiles(sinceTimestamp?: string): Promise<number> {
 		// Use ?? not || so an empty-string prePullSync (first connect, never
 		// synced) is preserved and maps to epoch below — || would discard "" and
@@ -6669,26 +6726,8 @@ export class SyncEngine {
 			this.emitPushing(0, total, 0);
 		}
 
-		// Single write path: genesis (never-server-known) notes bulk-create with
-		// content via crdt_create_batch; server-known notes + attachments keep the
-		// per-file pushFile path (its CRDT-op / REST convergence). When the batch
-		// op is unwired, partitionGenesis puts every note on the per-file side.
-		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
-		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
-		const { genesis, known } = this.partitionGenesis(noteFiles);
-
-		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-			this.emitPushing(pushedSoFar, total, failedSoFar);
-		});
-		pushed += genesisOutcome.pushed;
-
-		const perFile = [...known, ...attachFiles];
-		for (let i = 0; i < perFile.length; i += 10) {
-			const batch = perFile.slice(i, i + 10);
-			const results = await Promise.all(batch.map((f: TFile) => this.pushFile(f)));
-			pushed += results.filter(Boolean).length;
-			this.emitPushing(pushed, total, 0);
-		}
+		const outcome = await this.pushPartitioned(toSync, "incremental");
+		pushed += outcome.pushed;
 
 		this.flushAttachmentLimitedToast();
 		this.flushFailureSummaryToast();
@@ -6949,44 +6988,9 @@ export class SyncEngine {
 
 		this.emitPushing(0, total, 0);
 
-		// Single write path: genesis (never-server-known) notes bulk-create with
-		// content via crdt_create_batch (≤100 per request); server-known notes +
-		// attachments keep the per-file force-push path. When the batch op is
-		// unwired, partitionGenesis puts every note on the per-file side.
-		const noteFiles = toSync.filter((f: TFile) => !this.isBinaryFile(f));
-		const attachFiles = toSync.filter((f: TFile) => this.isBinaryFile(f));
-		const { genesis, known } = this.partitionGenesis(noteFiles);
-
-		const genesisOutcome = await this.pushGenesisBatch(genesis, (pushedSoFar, failedSoFar) => {
-			this.emitPushing(pushedSoFar, total, failedSoFar);
-		});
-		pushed += genesisOutcome.pushed;
-		failed += genesisOutcome.failed;
-
-		const perFile = [...known, ...attachFiles];
-		for (let i = 0; i < perFile.length; i += 10) {
-			const batch = perFile.slice(i, i + 10);
-			const results = await Promise.all(
-				batch.map(async (f: TFile) => {
-					try {
-						const ok = await this.pushFile(f, true);
-						if (ok) {
-							this.logEntry("push", f.path, "ok");
-						} else {
-							this.logEntry("skip", f.path, "skipped", undefined, "unchanged");
-						}
-						return ok;
-					} catch (e) {
-						failed++;
-						const msg = errMsg(e);
-						this.logEntry("push", f.path, "error", msg);
-						return false;
-					}
-				}),
-			);
-			pushed += results.filter(Boolean).length;
-			this.emitPushing(pushed, total, failed, batch[batch.length - 1]!.path);
-		}
+		const outcome = await this.pushPartitioned(toSync, "force");
+		pushed += outcome.pushed;
+		failed += outcome.failed;
 
 		// Replace mode: every local file is now (re)pushed, so delete the
 		// server-ONLY extras enumerated above. Note-ids go over the durable CRDT
