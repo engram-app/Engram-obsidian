@@ -2888,6 +2888,11 @@ export class SyncEngine {
 									hash: fnv1a(consumed),
 									crdtHead: CRDT_HEAD_CREATED,
 								});
+								// The seed transmitted content, so the create's own broadcast
+								// comes back at us: open the echo-cooldown window exactly like
+								// the CRDT-op branch. (The seed-declined and post-create-throw
+								// exits transmitted nothing and correctly leave this false.)
+								success = true;
 							} else {
 								// ponytail: near-unreachable — a fresh in-cap note seedOnce's
 								// its body (non-null). If a live remote storm made the seed
@@ -4769,7 +4774,11 @@ export class SyncEngine {
 						) {
 							await this.applyOp(this.eventToOp(event, event.content, noteId));
 						} else {
-							void this.materializeRelocated(event.path, noteId);
+							// Awaited: the exists-check below otherwise races the
+							// materialize it's checking for and fires a whole seq-replay
+							// for a file about to appear (idempotent, but a wasted
+							// round-trip on every relocation).
+							await this.materializeRelocated(event.path, noteId);
 							if (!this.app.vault.getAbstractFileByPath(np)) {
 								void this.catchupViaSeqReplay();
 							}
