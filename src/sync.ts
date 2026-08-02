@@ -6351,9 +6351,12 @@ export class SyncEngine {
 				const { results } = await this.crdtCreateBatch!(
 					sent.map((e) => ({ doc_id: e.noteId, path: e.pushedPath, b64: e.b64 })),
 				);
-				// Match by INDEX, not id: the backend preserves the `creates` order
-				// (Enum.map_reduce), and an id_conflict result echoes the EXISTING
-				// note's id, not the one we sent — so an id lookup would miss it.
+				// Match by INDEX, not id: the backend guarantees `results` is
+				// index-aligned with `creates` (ordered Task.async_stream phases
+				// since engram#1194, pinned by a backend channel test with a
+				// mid-batch conflict), and an id_conflict result echoes the
+				// EXISTING note's id, not the one we sent — an id lookup would
+				// miss it.
 				for (let i = 0; i < sent.length; i++) {
 					const e = sent[i]!;
 					const r = results[i];
