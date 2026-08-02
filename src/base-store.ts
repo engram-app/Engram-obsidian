@@ -76,11 +76,7 @@ export class BaseStore {
 		}
 	}
 
-	/** Approximate total byte size of all entries. */
-	estimateBytes(): number {
-		return this.bytes;
-	}
-
+	
 	async save(): Promise<void> {
 		const obj: Record<string, BaseEntry> = Object.fromEntries(this.entries);
 		await this.adapter.write(this.storagePath, JSON.stringify(obj));

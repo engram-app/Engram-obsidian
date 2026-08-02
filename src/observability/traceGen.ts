@@ -13,8 +13,3 @@ export function newTraceContext(): { traceparent: string; traceId: string; spanI
 	const spanId = hex(8);
 	return { traceparent: `00-${traceId}-${spanId}-01`, traceId, spanId };
 }
-
-export function parseTraceparent(tp: string): { traceId: string; parentSpanId: string } | null {
-	const m = /^00-([0-9a-f]{32})-([0-9a-f]{16})-[0-9a-f]{2}$/.exec(tp);
-	return m ? { traceId: m[1]!, parentSpanId: m[2]! } : null;
-}

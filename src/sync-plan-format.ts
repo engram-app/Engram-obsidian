@@ -18,31 +18,6 @@ export function isPlanEmpty(plan: SyncPlan): boolean {
 	);
 }
 
-/** Single-string newline-joined summary. Kept for testability and future use. */
-export function formatPlanSummary(plan: SyncPlan): string {
-	const lines: string[] = [];
-	lines.push(`Vault: ${plan.vaultName}`);
-	lines.push(`Server: ${plan.serverNoteCount} notes · Local: ${plan.localNoteCount} notes`);
-	lines.push("");
-	lines.push(`↑  ${plural(plan.toPush.notes.length, "note")} to push`);
-	lines.push(`↓  ${plural(plan.toPull.notes.length, "note")} to pull`);
-	lines.push(`⚡  ${plural(plan.conflicts.length, "conflict")}`);
-	const totalDeletes = plan.toDeleteLocal.length + plan.toDeleteRemote.length;
-	lines.push(`✕  ${plural(totalDeletes, "deletion")}`);
-
-	if (plan.toPush.attachments.length > 0 || plan.toPull.attachments.length > 0) {
-		lines.push("");
-		if (plan.toPush.attachments.length > 0) {
-			lines.push(`↑  ${plural(plan.toPush.attachments.length, "attachment")} to push`);
-		}
-		if (plan.toPull.attachments.length > 0) {
-			lines.push(`↓  ${plural(plan.toPull.attachments.length, "attachment")} to pull`);
-		}
-	}
-
-	return lines.join("\n");
-}
-
 /** Returns 0–100. |local ∩ remote| / |local ∪ remote| over note paths only.
  *  Empty-empty is defined as 100 (vacuously a perfect match). */
 export function computeMatchPercent(plan: SyncPlan): number {
@@ -55,11 +30,6 @@ export function computeMatchPercent(plan: SyncPlan): number {
 	const union = local + Math.max(0, remote - intersection);
 	if (union === 0) return 100;
 	return Math.round((intersection / union) * 100);
-}
-
-/** First `limit` entries — useful for "sample of paths about to be deleted". */
-export function samplePaths(paths: string[], limit: number): string[] {
-	return paths.slice(0, limit);
 }
 
 export type DeletionTreeRow =
@@ -138,8 +108,6 @@ export interface OptionBreakdown {
 	deleteLocalCount: number;
 	/** Remote files that will be deleted as a side effect. */
 	deleteRemoteCount: number;
-	/** First 5 paths from the relevant bucket — for the "Sample paths" disclosure. */
-	samplePaths: string[];
 }
 
 /** Per-option preview math. Derives action counts and a sample path list from
@@ -158,7 +126,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: plan.conflicts.length,
 				deleteLocalCount: 0,
 				deleteRemoteCount: 0,
-				samplePaths: samplePaths(plan.conflicts, 5),
 			};
 
 		case "pull-all-delete-local": {
@@ -169,7 +136,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: 0,
 				deleteLocalCount: localOnly.length,
 				deleteRemoteCount: 0,
-				samplePaths: samplePaths(localOnly, 5),
 			};
 		}
 
@@ -180,7 +146,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: 0,
 				deleteLocalCount: 0,
 				deleteRemoteCount: 0,
-				samplePaths: samplePaths([...plan.toPull.notes, ...plan.toPull.attachments], 5),
 			};
 
 		case "push-all-delete-remote": {
@@ -191,7 +156,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: 0,
 				deleteLocalCount: 0,
 				deleteRemoteCount: remoteOnly.length,
-				samplePaths: samplePaths(remoteOnly, 5),
 			};
 		}
 
@@ -202,7 +166,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: 0,
 				deleteLocalCount: 0,
 				deleteRemoteCount: 0,
-				samplePaths: samplePaths([...plan.toPush.notes, ...plan.toPush.attachments], 5),
 			};
 
 		case "cancel":
@@ -213,7 +176,6 @@ export function optionBreakdown(plan: SyncPlan, choice: SyncChoice): OptionBreak
 				conflictCount: 0,
 				deleteLocalCount: 0,
 				deleteRemoteCount: 0,
-				samplePaths: [],
 			};
 	}
 }

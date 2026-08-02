@@ -2,11 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
 	buildDeletionTree,
 	computeMatchPercent,
-	formatPlanSummary,
 	isDestructiveChoice,
 	isPlanEmpty,
 	optionBreakdown,
-	samplePaths,
 } from "../src/sync-plan-format";
 import type { SyncPlan } from "../src/types";
 
@@ -42,20 +40,6 @@ describe("isPlanEmpty", () => {
 	});
 });
 
-describe("formatPlanSummary", () => {
-	test("shows vault name + server/local counts", () => {
-		const lines = formatPlanSummary(makePlan());
-		expect(lines).toContain("Vault: Personal Notes");
-		expect(lines).toContain("Server: 198 notes · Local: 234 notes");
-	});
-	test("pluralizes correctly", () => {
-		const one = makePlan({ toPush: { notes: ["a.md"], attachments: [] } });
-		const many = makePlan({ toPush: { notes: ["a.md", "b.md"], attachments: [] } });
-		expect(formatPlanSummary(one)).toContain("1 note to push");
-		expect(formatPlanSummary(many)).toContain("2 notes to push");
-	});
-});
-
 describe("computeMatchPercent", () => {
 	test("returns 100 when local and remote are empty", () => {
 		expect(computeMatchPercent(makePlan({ localNoteCount: 0, serverNoteCount: 0 }))).toBe(100);
@@ -82,19 +66,6 @@ describe("computeMatchPercent", () => {
 			toPull: { notes: ["only-remote-a.md", "only-remote-b.md"], attachments: [] },
 		});
 		expect(computeMatchPercent(plan)).toBe(25);
-	});
-});
-
-describe("samplePaths", () => {
-	test("returns first N paths", () => {
-		const paths = ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md", "g.md"];
-		expect(samplePaths(paths, 3)).toEqual(["a.md", "b.md", "c.md"]);
-	});
-	test("returns all paths when fewer than N", () => {
-		expect(samplePaths(["a.md", "b.md"], 5)).toEqual(["a.md", "b.md"]);
-	});
-	test("returns empty array for empty input", () => {
-		expect(samplePaths([], 5)).toEqual([]);
 	});
 });
 
@@ -167,25 +138,13 @@ describe("optionBreakdown", () => {
 		expect(b.pullCount).toBe(0);
 	});
 
-	test("includes sample paths for the destructive bucket", () => {
-		const big = makePlan({
-			toPush: {
-				notes: ["a.md", "b.md", "c.md", "d.md", "e.md", "f.md", "g.md"],
-				attachments: [],
-			},
-		});
-		const b = optionBreakdown(big, "pull-all-delete-local");
-		expect(b.samplePaths).toEqual(["a.md", "b.md", "c.md", "d.md", "e.md"]);
-	});
-
-	test("change-vault: all-zero breakdown with empty samplePaths", () => {
+	test("change-vault: all-zero breakdown", () => {
 		const b = optionBreakdown(plan, "change-vault");
 		expect(b.pullCount).toBe(0);
 		expect(b.pushCount).toBe(0);
 		expect(b.conflictCount).toBe(0);
 		expect(b.deleteLocalCount).toBe(0);
 		expect(b.deleteRemoteCount).toBe(0);
-		expect(b.samplePaths).toEqual([]);
 	});
 });
 

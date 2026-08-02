@@ -289,13 +289,6 @@ export interface QueueEntry {
 	priority?: number;
 }
 
-/** Request body for POST /search */
-export interface SearchRequest {
-	query: string;
-	limit?: number;
-	tags?: string[];
-	folder?: string;
-}
 
 /** A single search result from Engram's `POST /api/search`.
  *  The grouped/web-card response uses `path` + `snippet`; older/raw-chunk

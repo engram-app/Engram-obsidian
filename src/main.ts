@@ -462,7 +462,6 @@ export default class EngramSyncPlugin extends Plugin {
 			await this.savePluginData(this.syncEngine.getLastSync());
 		});
 
-		this.syncLog = new SyncLog();
 		this.syncEngine.syncLog = this.syncLog;
 
 		// Level-triggered CRDT-liveness check for the push path. setCrdtManager is

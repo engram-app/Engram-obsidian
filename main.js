@@ -1545,10 +1545,6 @@ var BaseStore = class {
       this.bytes -= this.entryBytes(path, entry), this.entries.delete(path);
     }
   }
-  /** Approximate total byte size of all entries. */
-  estimateBytes() {
-    return this.bytes;
-  }
   async save() {
     let obj = Object.fromEntries(this.entries);
     await this.adapter.write(this.storagePath, JSON.stringify(obj));
@@ -16628,9 +16624,6 @@ function computeMatchPercent(plan) {
   let localOnly = plan.toPush.notes.length, intersection = Math.max(0, local - localOnly), union = local + Math.max(0, remote - intersection);
   return union === 0 ? 100 : Math.round(intersection / union * 100);
 }
-function samplePaths(paths, limit) {
-  return paths.slice(0, limit);
-}
 function folderPrefixesOf(paths) {
   var _a;
   let set2 = /* @__PURE__ */ new Set();
@@ -16669,8 +16662,7 @@ function optionBreakdown(plan, choice) {
         pushCount: plan.toPush.notes.length + plan.toPush.attachments.length,
         conflictCount: plan.conflicts.length,
         deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(plan.conflicts, 5)
+        deleteRemoteCount: 0
       };
     case "pull-all-delete-local": {
       let localOnly = [...plan.toPush.notes, ...plan.toPush.attachments];
@@ -16679,8 +16671,7 @@ function optionBreakdown(plan, choice) {
         pushCount: 0,
         conflictCount: 0,
         deleteLocalCount: localOnly.length,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths(localOnly, 5)
+        deleteRemoteCount: 0
       };
     }
     case "pull-all-keep-local":
@@ -16689,8 +16680,7 @@ function optionBreakdown(plan, choice) {
         pushCount: 0,
         conflictCount: 0,
         deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPull.notes, ...plan.toPull.attachments], 5)
+        deleteRemoteCount: 0
       };
     case "push-all-delete-remote": {
       let remoteOnly = [...plan.toPull.notes, ...plan.toPull.attachments];
@@ -16699,8 +16689,7 @@ function optionBreakdown(plan, choice) {
         pushCount: plan.localNoteCount + plan.localAttachmentCount,
         conflictCount: 0,
         deleteLocalCount: 0,
-        deleteRemoteCount: remoteOnly.length,
-        samplePaths: samplePaths(remoteOnly, 5)
+        deleteRemoteCount: remoteOnly.length
       };
     }
     case "push-all-keep-remote":
@@ -16709,8 +16698,7 @@ function optionBreakdown(plan, choice) {
         pushCount: plan.localNoteCount + plan.localAttachmentCount,
         conflictCount: 0,
         deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: samplePaths([...plan.toPush.notes, ...plan.toPush.attachments], 5)
+        deleteRemoteCount: 0
       };
     case "cancel":
     case "change-vault":
@@ -16719,8 +16707,7 @@ function optionBreakdown(plan, choice) {
         pushCount: 0,
         conflictCount: 0,
         deleteLocalCount: 0,
-        deleteRemoteCount: 0,
-        samplePaths: []
+        deleteRemoteCount: 0
       };
   }
 }
@@ -18498,7 +18485,6 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
       plugin: this.plugin,
       redisplay: () => this.rerender(),
       startDeviceFlow: () => this.startDeviceFlow(),
-      openProgressModal: () => this.openProgressModal(),
       switchToTab: (id2) => activateTab(id2)
     };
     for (let tab of tabs) {
@@ -18533,13 +18519,6 @@ var EngramSyncSettingTab = class extends import_obsidian22.PluginSettingTab {
   uninstallProgressBar() {
     let wrapper = this.installedProgressCb;
     wrapper && (this.installedProgressCb = null, this.plugin.syncEngine.onSyncProgress === wrapper && (this.plugin.syncEngine.onSyncProgress = this.prevProgressCb));
-  }
-  /** Open a progress modal and wire it to the sync engine's progress callback. */
-  async openProgressModal() {
-    let modal = new SyncProgressModal(this.app), prevCallback = this.plugin.syncEngine.onSyncProgress;
-    return this.plugin.syncEngine.onSyncProgress = (progress) => {
-      modal.update(progress), prevCallback == null || prevCallback(progress);
-    }, modal.open(), await new Promise((resolve) => window.requestAnimationFrame(resolve)), modal;
   }
   async startDeviceFlow() {
     let result = await new DeviceFlowModal(this.app, this.plugin).waitForResult();
@@ -22929,11 +22908,10 @@ async function computeSyncFingerprint(settings) {
 var SyncLog = class {
   constructor(capacity = 500) {
     this.buffer = [];
-    this.subscribers = /* @__PURE__ */ new Set();
     this.capacity = capacity;
   }
   append(entry) {
-    this.buffer.push(entry), this.buffer.length > this.capacity && this.buffer.splice(0, this.buffer.length - this.capacity), this.notify();
+    this.buffer.push(entry), this.buffer.length > this.capacity && this.buffer.splice(0, this.buffer.length - this.capacity);
   }
   entries() {
     return [...this.buffer];
@@ -22942,17 +22920,7 @@ var SyncLog = class {
     return this.buffer.filter((e) => e.result === "error").length;
   }
   clear() {
-    this.buffer.length = 0, this.notify();
-  }
-  /** Subscribe to append/clear events. Returns an unsubscribe handle.
-   *  Used by the Sync Center pane to live-render the Activity feed. */
-  subscribe(fn) {
-    return this.subscribers.add(fn), () => {
-      this.subscribers.delete(fn);
-    };
-  }
-  notify() {
-    for (let fn of this.subscribers) fn();
+    this.buffer.length = 0;
   }
 };
 
@@ -23222,7 +23190,7 @@ var _EngramSyncPlugin = class _EngramSyncPlugin extends import_obsidian26.Plugin
       `Plugin loading | v${this.manifest.version} | ${import_obsidian26.Platform.isMobile ? "mobile" : "desktop"}`
     ), this.syncEngine = new SyncEngine(this.app, this.api, this.settings, async (data) => {
       data.lastSync !== void 0 && this.syncEngine.setLastSync(data.lastSync), data.catchupSeq !== void 0 && this.syncEngine.setCatchupSeq(data.catchupSeq), data.catchupId !== void 0 && this.syncEngine.setCatchupId(data.catchupId), data.manifestSeq !== void 0 && this.syncEngine.setManifestSeq(data.manifestSeq), await this.savePluginData(this.syncEngine.getLastSync());
-    }), this.syncLog = new SyncLog(), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
+    }), this.syncEngine.syncLog = this.syncLog, this.syncEngine.setCrdtLiveCheck(() => {
       var _a2, _b2;
       return (_b2 = (_a2 = this.noteStream) == null ? void 0 : _a2.isCrdtConnected()) != null ? _b2 : !1;
     }), this.syncEngine.setNoteIdMap(this.noteIdMap), this.syncEngine.setDeviceId(this.deviceId), this.syncEngine.setCrdtBoundBufferText(

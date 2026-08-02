@@ -65,44 +65,4 @@ describe("SyncLog", () => {
 		expect(a).toEqual(b);
 	});
 
-	test("subscribe fires on append", () => {
-		let calls = 0;
-		log.subscribe(() => {
-			calls++;
-		});
-		log.append(makeEntry({ path: "a.md" }));
-		log.append(makeEntry({ path: "b.md" }));
-		expect(calls).toBe(2);
-	});
-
-	test("subscribe fires on clear", () => {
-		let calls = 0;
-		log.append(makeEntry());
-		log.subscribe(() => {
-			calls++;
-		});
-		log.clear();
-		expect(calls).toBe(1);
-	});
-
-	test("subscribe returns unsubscribe handle", () => {
-		let calls = 0;
-		const off = log.subscribe(() => {
-			calls++;
-		});
-		log.append(makeEntry({ path: "a.md" }));
-		off();
-		log.append(makeEntry({ path: "b.md" }));
-		expect(calls).toBe(1);
-	});
-
-	test("multiple subscribers all fire", () => {
-		let a = 0;
-		let b = 0;
-		log.subscribe(() => a++);
-		log.subscribe(() => b++);
-		log.append(makeEntry());
-		expect(a).toBe(1);
-		expect(b).toBe(1);
-	});
 });

@@ -1,11 +1,10 @@
 import type { SyncLogEntry } from "./types";
 
-type Subscriber = () => void;
-
+// Consumers (Sync Center Activity feed, SyncLogModal) read entries() on
+// render; there is no live-subscription surface.
 export class SyncLog {
 	private buffer: SyncLogEntry[] = [];
 	private capacity: number;
-	private subscribers: Set<Subscriber> = new Set();
 
 	constructor(capacity = 500) {
 		this.capacity = capacity;
@@ -16,7 +15,6 @@ export class SyncLog {
 		if (this.buffer.length > this.capacity) {
 			this.buffer.splice(0, this.buffer.length - this.capacity);
 		}
-		this.notify();
 	}
 
 	entries(): SyncLogEntry[] {
@@ -29,19 +27,5 @@ export class SyncLog {
 
 	clear(): void {
 		this.buffer.length = 0;
-		this.notify();
-	}
-
-	/** Subscribe to append/clear events. Returns an unsubscribe handle.
-	 *  Used by the Sync Center pane to live-render the Activity feed. */
-	subscribe(fn: Subscriber): () => void {
-		this.subscribers.add(fn);
-		return () => {
-			this.subscribers.delete(fn);
-		};
-	}
-
-	private notify(): void {
-		for (const fn of this.subscribers) fn();
 	}
 }
