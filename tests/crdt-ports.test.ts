@@ -59,6 +59,15 @@ describe("setCrdtPorts", () => {
 		expect(e.isLiveBound("a.md")).toBe(true);
 		expect(e.isLiveBound("b.md")).toBe(false);
 	});
+
+	test("nulling liveBound restores the default instead of clearing it", () => {
+		const e = makeEngine();
+		e.setCrdtPorts({ liveBound: () => true });
+		// isLiveBound is called unconditionally on the push path, so this port
+		// must never be left empty — clearing it means "nothing is bound".
+		e.setCrdtPorts({ liveBound: null });
+		expect(e.isLiveBound("a.md")).toBe(false);
+	});
 });
 
 describe("legacy setters are shims over setCrdtPorts", () => {

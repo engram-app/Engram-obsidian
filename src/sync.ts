@@ -340,7 +340,10 @@ export interface CrdtPorts {
 	delete?: ((docId: string) => Promise<{ doc_id: string }>) | null;
 	enqueue?: ((op: { kind: "create" | "delete"; docId: string; path: string }) => void) | null;
 	live?: (() => boolean) | null;
-	liveBound?: (path: string) => boolean;
+	/** Nulling this restores the default never-bound check rather than leaving
+	 *  the port empty — `isLiveBound` is called unconditionally on the push
+	 *  path, so it is the one port with no null state to fall into. */
+	liveBound?: ((path: string) => boolean) | null;
 	catchupSince?: CrdtCatchupSinceFn | null;
 }
 
@@ -476,7 +479,7 @@ export class SyncEngine {
 		if ("delete" in ports) this.crdtDelete = ports.delete ?? null;
 		if ("enqueue" in ports) this.crdtEnqueue = ports.enqueue ?? null;
 		if ("live" in ports) this.crdtLive = ports.live ?? null;
-		if (ports.liveBound) this.isLiveBound = ports.liveBound;
+		if ("liveBound" in ports) this.isLiveBound = ports.liveBound ?? (() => false);
 		if ("catchupSince" in ports) this.crdtCatchupSince = ports.catchupSince ?? null;
 	}
 
