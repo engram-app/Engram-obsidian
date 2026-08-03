@@ -52,6 +52,11 @@ function traceEngine(): { engine: AnyEngine; order: string[] } {
 		order.push("baseline");
 		recordCrdtBaseline(np, content, opts);
 	};
+	const setCrdtHead = engine.setCrdtHead.bind(engine);
+	engine.setCrdtHead = (path: string, head: string) => {
+		order.push("oracle");
+		setCrdtHead(path, head);
+	};
 	engine.flushHeldEditsOnCreateAck = async (id: string) => {
 		order.push(`flush:${id}`);
 	};
@@ -66,7 +71,7 @@ describe("adoptCreateAck", () => {
 
 		expect(engine.noteIdMap.get("Notes/a.md")).toBe("server-1");
 		expect(engine.syncState.get("Notes/a.md")?.crdtHead).toBe(CRDT_HEAD_CREATED);
-		expect(order).toEqual(["confirm:server-1", "baseline", "flush:server-1"]);
+		expect(order).toEqual(["oracle", "confirm:server-1", "baseline", "flush:server-1"]);
 	});
 
 	test("stamps the echo baseline BEFORE awaiting the held-edit flush", async () => {
@@ -77,11 +82,16 @@ describe("adoptCreateAck", () => {
 		expect(order.indexOf("baseline")).toBeLessThan(order.indexOf("flush:server-1"));
 	});
 
-	test("confirms the id BEFORE flushing — the flush rides the canSendLive gate", async () => {
+	test("flips the hasServerNote oracle BEFORE flushing — that IS the canSendLive gate", async () => {
 		const { engine, order } = traceEngine();
 
 		await engine.adoptCreateAck("server-1", "Notes/a.md", "hello");
 
+		// main.ts wires `canSendLive: (id) => hasServerNote(id)`, so the sentinel
+		// crdtHead is what opens the gate — NOT confirmNoteId, which is
+		// session-scoped and dies on reconnect. Flushing before the flip would
+		// ship into a still-closed gate.
+		expect(order.indexOf("oracle")).toBeLessThan(order.indexOf("flush:server-1"));
 		expect(order.indexOf("confirm:server-1")).toBeLessThan(order.indexOf("flush:server-1"));
 	});
 
@@ -94,7 +104,7 @@ describe("adoptCreateAck", () => {
 
 		expect(engine.noteIdMap.get("Notes/a.md")).toBe("server-1");
 		expect(engine.syncState.get("Notes/a.md")?.crdtHead).toBe(CRDT_HEAD_CREATED);
-		expect(order).toEqual(["confirm:server-1", "flush:server-1"]);
+		expect(order).toEqual(["oracle", "confirm:server-1", "flush:server-1"]);
 		// patchSyncedRow's default for a missing row — no content hash was stamped.
 		expect(engine.syncState.get("Notes/a.md")?.hash).toBe(0);
 	});
@@ -106,7 +116,7 @@ describe("adoptCreateAck", () => {
 			flushHeld: false,
 		});
 
-		expect(order).toEqual(["confirm:server-1", "baseline"]);
+		expect(order).toEqual(["oracle", "confirm:server-1", "baseline"]);
 		expect(engine.syncState.get("Notes/a.md")?.crdtHead).toBe(CRDT_HEAD_CREATED);
 	});
 

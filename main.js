@@ -19631,8 +19631,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  minted a local doc.
    *
    *  Order is load-bearing:
-   *   - `confirmNoteId` BEFORE the flush — the confirm is what opens Task 1's
-   *     `canSendLive` gate, so the flush is what finally ships the held edits.
+   *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
+   *     and THAT is what Task 1's `canSendLive` gate reads (main.ts wires
+   *     `canSendLive: (id) => hasServerNote(id)` — deliberately NOT
+   *     `isNoteConfirmed`, which is session-scoped and dies on reconnect; see
+   *     `isNoteConfirmed`'s doc). So the oracle flip is what opens the gate and
+   *     lets the flush actually ship the held edits. `confirmNoteId` rides
+   *     along before the flush too, but it only feeds in-session bookkeeping.
    *   - the baseline BEFORE the awaited flush. Stamping after leaves a window
    *     where the create's own broadcast returns before the baseline that
    *     suppresses it exists. The queued path already had this order; the live
