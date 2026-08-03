@@ -19618,6 +19618,40 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   confirmNoteId(noteId) {
     noteId && this.confirmedNoteIds.add(noteId);
   }
+  /** The bookkeeping every "the server acked our `crdt_create`" path runs once
+   *  the authoritative id is known. THREE callers reach it — pushFile's live
+   *  genesis branch, the durable queued ack (`applyCrdtCreateAck`), and the
+   *  batch path (`recordCrdtGenesisPushed`) — and a step going missing from one
+   *  of them is exactly the drift this exists to end (the queued path once
+   *  leaked the mint-retire the live path did).
+   *
+   *  The ADOPT half (transfer a live mint buffer, retire the orphaned mint doc)
+   *  stays with each caller: it legitimately differs by path — a live editor
+   *  buffer, a queued disk seed, or nothing at all for a batch note that never
+   *  minted a local doc.
+   *
+   *  Order is load-bearing:
+   *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
+   *     and THAT is what Task 1's `canSendLive` gate reads (main.ts wires
+   *     `canSendLive: (id) => hasServerNote(id)` — deliberately NOT
+   *     `isNoteConfirmed`, which is session-scoped and dies on reconnect; see
+   *     `isNoteConfirmed`'s doc). So the oracle flip is what opens the gate and
+   *     lets the flush actually ship the held edits. `confirmNoteId` rides
+   *     along before the flush too, but it only feeds in-session bookkeeping.
+   *   - the baseline BEFORE the awaited flush. Stamping after leaves a window
+   *     where the create's own broadcast returns before the baseline that
+   *     suppresses it exists. The queued path already had this order; the live
+   *     path did not (see #377).
+   *
+   *  `consumed` is what the manager actually took (null = nothing was
+   *  transmitted, so there is no echo to suppress and no baseline is stamped —
+   *  the seed-declined and post-create-throw exits). `flushHeld: false` is the
+   *  batch path only: it seeds no local doc, so it has no held edits. */
+  async adoptCreateAck(effectiveId, path, consumed, opts) {
+    var _a;
+    let normalized = (0, import_obsidian24.normalizePath)(path);
+    (_a = this.noteIdMap) == null || _a.set(normalized, effectiveId), this.setCrdtHead(path, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), consumed !== null && this.recordCrdtBaseline(normalized, consumed, { markCreated: !0 }), (opts == null ? void 0 : opts.flushHeld) !== !1 && await this.flushHeldEditsOnCreateAck(effectiveId, path);
+  }
   /** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
    *  (no row yet → note_not_found) and the once-per-session enrollment guard
    *  never re-fires it, leaving the note deaf to live sync until a later
@@ -19692,15 +19726,15 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the server, so REMOTE_ORIGIN suppression is untouched. */
   async applyCrdtCreateAck(localId, serverId, path) {
     var _a, _b, _c;
-    let normalized = (0, import_obsidian24.normalizePath)(path), effectiveId = localId, transferredLiveContent = !1;
+    let normalized = (0, import_obsidian24.normalizePath)(path), effectiveId = localId, consumed = null, transferredLiveContent = !1;
     if (serverId && serverId !== localId) {
       if ((_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
         "crdt",
         `crdt_create (queued) ADOPT: remapped ${path} ${localId} -> ${serverId}`
       ), this.crdt && this.isLiveBound(normalized))
         try {
-          let mintText = await this.crdt.projectedText(localId), consumed = await this.crdt.applyLocalEdit(serverId, mintText);
-          transferredLiveContent = !0, consumed !== null && this.recordCrdtBaseline(normalized, consumed, { markCreated: !0 });
+          let mintText = await this.crdt.projectedText(localId);
+          consumed = await this.crdt.applyLocalEdit(serverId, mintText), transferredLiveContent = !0;
         } catch (e) {
           rlog().warn(
             "crdt",
@@ -19720,7 +19754,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let file = this.crdt && !transferredLiveContent ? this.app.vault.getAbstractFileByPath(normalized) : null;
     if (this.crdt && file instanceof import_obsidian24.TFile && this.isCrdtEligible(file))
       try {
-        let consumed = await routeModify(
+        consumed = await routeModify(
           {
             crdtEligible: !0,
             noteId: effectiveId,
@@ -19729,14 +19763,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         );
-        consumed !== null && this.recordCrdtBaseline(normalized, consumed, { markCreated: !0 });
       } catch (e) {
         rlog().warn(
           "crdt",
           `crdt_create (queued) body seed failed for ${path}: ${errMsg(e)}`
         );
       }
-    this.setCrdtHead(path, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, path);
+    await this.adoptCreateAck(effectiveId, path, consumed);
   }
   setCrdtLiveCheck(fn) {
     this.setCrdtPorts({ live: fn });
@@ -20645,9 +20678,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? (this.recordCrdtBaseline((0, import_obsidian24.normalizePath)(pushedPath), consumed, {
-                markCreated: !0
-              }), success = !0) : rlog().warn(
+              return await this.adoptCreateAck(effectiveId, pushedPath, consumed), consumed !== null ? success = !0 : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
               ), this.isLiveBound((0, import_obsidian24.normalizePath)(pushedPath)) && ((_o = this.crdtEnrollment) == null || _o.enroll(effectiveId)), devLog().log(
@@ -20661,7 +20692,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
               return rlog().warn(
                 "crdt",
                 `crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`
-              ), this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), !0;
+              ), await this.adoptCreateAck(effectiveId, pushedPath, null), !0;
             }
           } catch (err) {
             return rlog().warn(
@@ -22289,11 +22320,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  doubling (#846) since the device never seeds its own real doc from this
    *  content (it adopts the server lineage on the first handshake). Only ever
    *  reached for a genuinely history-LESS note: the batch caller routes any note
-   *  that already carries a local CRDT lineage to `pushFile` instead. */
-  recordCrdtGenesisPushed(file, content, serverId) {
-    var _a;
-    let np = (0, import_obsidian24.normalizePath)(file.path);
-    (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED), this.recordCrdtBaseline(np, content, { markCreated: !0 }), this.issues.clear(file.path);
+   *  that already carries a local CRDT lineage to `pushFile` instead.
+   *
+   *  `flushHeld: false` is the one way this path differs from the other two
+   *  create-ack callers: a batched note never minted a local doc (the content
+   *  shipped inline in the batch frame), so there are no gated updates to
+   *  flush. */
+  async recordCrdtGenesisPushed(file, content, serverId) {
+    await this.adoptCreateAck(serverId, file.path, content, { flushHeld: !1 }), this.issues.clear(file.path);
   }
   /** Bulk-create genesis notes (never-server-known) through ONE
    *  `crdt_create_batch` round-trip, carrying each note's initial content inline
@@ -22330,7 +22364,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         for (let i = 0; i < sent.length; i++) {
           let e = sent[i], r = results[i];
           if ((r == null ? void 0 : r.status) === "ok")
-            this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id), pushed++, this.logEntry("push", e.pushedPath, "ok");
+            await this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id), pushed++, this.logEntry("push", e.pushedPath, "ok");
           else if ((r == null ? void 0 : r.reason) === "recently_deleted")
             rlog().info(
               "push",

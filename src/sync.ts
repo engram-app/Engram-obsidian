@@ -884,6 +884,56 @@ export class SyncEngine {
 		if (noteId) this.confirmedNoteIds.add(noteId);
 	}
 
+	/** The bookkeeping every "the server acked our `crdt_create`" path runs once
+	 *  the authoritative id is known. THREE callers reach it — pushFile's live
+	 *  genesis branch, the durable queued ack (`applyCrdtCreateAck`), and the
+	 *  batch path (`recordCrdtGenesisPushed`) — and a step going missing from one
+	 *  of them is exactly the drift this exists to end (the queued path once
+	 *  leaked the mint-retire the live path did).
+	 *
+	 *  The ADOPT half (transfer a live mint buffer, retire the orphaned mint doc)
+	 *  stays with each caller: it legitimately differs by path — a live editor
+	 *  buffer, a queued disk seed, or nothing at all for a batch note that never
+	 *  minted a local doc.
+	 *
+	 *  Order is load-bearing:
+	 *   - `setCrdtHead` BEFORE the flush. The sentinel flips `hasServerNote`,
+	 *     and THAT is what Task 1's `canSendLive` gate reads (main.ts wires
+	 *     `canSendLive: (id) => hasServerNote(id)` — deliberately NOT
+	 *     `isNoteConfirmed`, which is session-scoped and dies on reconnect; see
+	 *     `isNoteConfirmed`'s doc). So the oracle flip is what opens the gate and
+	 *     lets the flush actually ship the held edits. `confirmNoteId` rides
+	 *     along before the flush too, but it only feeds in-session bookkeeping.
+	 *   - the baseline BEFORE the awaited flush. Stamping after leaves a window
+	 *     where the create's own broadcast returns before the baseline that
+	 *     suppresses it exists. The queued path already had this order; the live
+	 *     path did not (see #377).
+	 *
+	 *  `consumed` is what the manager actually took (null = nothing was
+	 *  transmitted, so there is no echo to suppress and no baseline is stamped —
+	 *  the seed-declined and post-create-throw exits). `flushHeld: false` is the
+	 *  batch path only: it seeds no local doc, so it has no held edits. */
+	private async adoptCreateAck(
+		effectiveId: string,
+		path: string,
+		consumed: string | null,
+		opts?: { flushHeld?: boolean },
+	): Promise<void> {
+		const normalized = normalizePath(path);
+		this.noteIdMap?.set(normalized, effectiveId);
+		// Oracle flip: the server row exists, so hasServerNote must be true for
+		// this id immediately. The first convergence overwrites the sentinel with
+		// the authoritative head.
+		this.setCrdtHead(path, CRDT_HEAD_CREATED);
+		this.confirmNoteId(effectiveId);
+		if (consumed !== null) {
+			this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
+		}
+		if (opts?.flushHeld !== false) {
+			await this.flushHeldEditsOnCreateAck(effectiveId, path);
+		}
+	}
+
 	/** A6 (issue #201): a fresh note's pre-push STEP1 is dropped server-side
 	 *  (no row yet → note_not_found) and the once-per-session enrollment guard
 	 *  never re-fires it, leaving the note deaf to live sync until a later
@@ -1037,11 +1087,18 @@ export class SyncEngine {
 	async applyCrdtCreateAck(localId: string, serverId: string, path: string): Promise<void> {
 		const normalized = normalizePath(path);
 		let effectiveId = localId;
+		// What the manager actually took, from whichever of the two seed routes
+		// below ran (they are mutually exclusive). Handed to adoptCreateAck as the
+		// echo baseline; stays null if neither transmitted anything.
+		let consumed: string | null = null;
 		// Set when we transferred the LIVE mint content into serverId below, so the
 		// disk-seed further down is skipped (re-diffing lagged disk would clobber the
 		// just-transferred in-flight keystrokes).
 		let transferredLiveContent = false;
 		if (serverId && serverId !== localId) {
+			// Remapped up front, not left to adoptCreateAck's own set below: the
+			// ViewPlugin re-resolves path -> id on its next update, which can land
+			// during the awaited transfer/retire that follow.
 			this.noteIdMap?.set(normalized, serverId);
 			effectiveId = serverId;
 			rlog().info(
@@ -1056,11 +1113,8 @@ export class SyncEngine {
 			if (this.crdt && this.isLiveBound(normalized)) {
 				try {
 					const mintText = await this.crdt.projectedText(localId);
-					const consumed = await this.crdt.applyLocalEdit(serverId, mintText);
+					consumed = await this.crdt.applyLocalEdit(serverId, mintText);
 					transferredLiveContent = true;
-					if (consumed !== null) {
-						this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
-					}
 				} catch (e) {
 					rlog().warn(
 						"crdt",
@@ -1088,7 +1142,9 @@ export class SyncEngine {
 				: null;
 		if (this.crdt && file instanceof TFile && this.isCrdtEligible(file)) {
 			try {
-				const consumed = await routeModify(
+				// The echo baseline comes off what the manager CONSUMED (adoptCreateAck
+				// stamps it) so a later revert to this content isn't hash-skipped.
+				consumed = await routeModify(
 					{
 						crdtEligible: true,
 						noteId: effectiveId,
@@ -1097,11 +1153,6 @@ export class SyncEngine {
 					this.crdt,
 					MAX_CRDT_NOTE_BYTES,
 				);
-				if (consumed !== null) {
-					// Echo baseline from what the manager CONSUMED so a later revert to
-					// this content isn't hash-skipped (mirrors the live seed).
-					this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
-				}
 			} catch (e) {
 				// The row exists (crdt_create already acked); a failed body seed
 				// self-heals on the note's next edit. Never fall back to REST.
@@ -1111,13 +1162,9 @@ export class SyncEngine {
 				);
 			}
 		}
-		this.setCrdtHead(path, CRDT_HEAD_CREATED);
 		// Task 1's canSendLive gate held effectiveId's live update(s) (including
-		// the disk-content seed above) until this exact moment — confirm it, then
-		// flush the now-current full Y.Doc state as ONE crdt_msg. Mirrors
-		// pushFile's inline create-ack (sync.ts, crdtCreate success arm).
-		this.confirmNoteId(effectiveId);
-		await this.flushHeldEditsOnCreateAck(effectiveId, path);
+		// the disk-content seed above) until this exact moment.
+		await this.adoptCreateAck(effectiveId, path, consumed);
 	}
 
 	/** Optional level-triggered check: is the `crdt:` topic JOINED right now?
@@ -3012,22 +3059,11 @@ export class SyncEngine {
 									MAX_CRDT_NOTE_BYTES,
 								);
 							}
-							// Oracle flip: record a sentinel crdtHead so hasServerNote is
-							// immediately true for this id (the server row now exists). The
-							// first convergence overwrites it with the authoritative head.
-							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
 							// Task 1's canSendLive gate held effectiveId's live update(s)
-							// (including the seed above) until this exact moment — confirm
-							// it, then flush the now-current full Y.Doc state as ONE crdt_msg
-							// so nothing typed during the crdtCreate await stays stranded.
-							this.confirmNoteId(effectiveId);
-							await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath);
+							// (including the seed above) until this exact moment, so nothing
+							// typed during the crdtCreate await stays stranded.
+							await this.adoptCreateAck(effectiveId, pushedPath, consumed);
 							if (consumed !== null) {
-								// Echo baseline from what the manager CONSUMED (mirrors the
-								// CRDT-op branch above) so a later revert isn't hash-skipped.
-								this.recordCrdtBaseline(normalizePath(pushedPath), consumed, {
-									markCreated: true,
-								});
 								// The seed transmitted content, so the create's own broadcast
 								// comes back at us: open the echo-cooldown window exactly like
 								// the CRDT-op branch. (The seed-declined exit transmitted
@@ -3074,9 +3110,10 @@ export class SyncEngine {
 								"crdt",
 								`crdt_create ok but post-create step threw (row exists, self-heals on next edit): ${pushedPath} | ${String(seedErr)}`,
 							);
-							this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED);
-							this.confirmNoteId(effectiveId);
-							await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath);
+							// Baseline deliberately null: this exit may have transmitted, but
+							// leaves the echo-cooldown window closed conservatively (an
+							// unsuppressed self-echo is absorbed by the hash-skip dedupe).
+							await this.adoptCreateAck(effectiveId, pushedPath, null);
 							return true;
 						}
 					} catch (err) {
@@ -6405,13 +6442,18 @@ export class SyncEngine {
 	 *  doubling (#846) since the device never seeds its own real doc from this
 	 *  content (it adopts the server lineage on the first handshake). Only ever
 	 *  reached for a genuinely history-LESS note: the batch caller routes any note
-	 *  that already carries a local CRDT lineage to `pushFile` instead. */
-	private recordCrdtGenesisPushed(file: TFile, content: string, serverId: string): void {
-		const np = normalizePath(file.path);
-		this.noteIdMap?.set(np, serverId);
-		this.confirmNoteId(serverId);
-		this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
-		this.recordCrdtBaseline(np, content, { markCreated: true });
+	 *  that already carries a local CRDT lineage to `pushFile` instead.
+	 *
+	 *  `flushHeld: false` is the one way this path differs from the other two
+	 *  create-ack callers: a batched note never minted a local doc (the content
+	 *  shipped inline in the batch frame), so there are no gated updates to
+	 *  flush. */
+	private async recordCrdtGenesisPushed(
+		file: TFile,
+		content: string,
+		serverId: string,
+	): Promise<void> {
+		await this.adoptCreateAck(serverId, file.path, content, { flushHeld: false });
 		this.issues.clear(file.path);
 	}
 
@@ -6480,7 +6522,7 @@ export class SyncEngine {
 					const r = results[i];
 					if (r?.status === "ok") {
 						// Clean create: the server echoes the sent id (no create-race).
-						this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id);
+						await this.recordCrdtGenesisPushed(e.file, e.content, r.doc_id);
 						pushed++;
 						this.logEntry("push", e.pushedPath, "ok");
 					} else if (r?.reason === "recently_deleted") {
