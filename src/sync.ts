@@ -583,8 +583,7 @@ export class SyncEngine {
 			if (this.noteIdMap?.get(p)) continue; // locally claimed again
 			const file = this.app.vault.getFileByPath(p);
 			if (!file) continue;
-			this.syncState.delete(p);
-			this.baseStore?.delete(p);
+			this.dropPath(p);
 			await this.trashRemotelyDeleted(file);
 			rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`);
 		}
@@ -1009,11 +1008,7 @@ export class SyncEngine {
 					const consumed = await this.crdt.applyLocalEdit(serverId, mintText);
 					transferredLiveContent = true;
 					if (consumed !== null) {
-						this.syncState.set(normalized, {
-							...(this.syncState.get(normalized) ?? { hash: 0 }),
-							hash: fnv1a(consumed),
-							crdtHead: CRDT_HEAD_CREATED,
-						});
+						this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
 					}
 				} catch (e) {
 					rlog().warn(
@@ -1054,11 +1049,7 @@ export class SyncEngine {
 				if (consumed !== null) {
 					// Echo baseline from what the manager CONSUMED so a later revert to
 					// this content isn't hash-skipped (mirrors the live seed).
-					this.syncState.set(normalized, {
-						...(this.syncState.get(normalized) ?? { hash: 0 }),
-						hash: fnv1a(consumed),
-						crdtHead: CRDT_HEAD_CREATED,
-					});
+					this.recordCrdtBaseline(normalized, consumed, { markCreated: true });
 				}
 			} catch (e) {
 				// The row exists (crdt_create already acked); a failed body seed
@@ -1244,12 +1235,51 @@ export class SyncEngine {
 		}
 	}
 
-	/** Seed the last-synced baseline from freshly-delivered CRDT content. Merges
-	 *  onto any existing entry so a prior REST sync's version/serverHash survive;
-	 *  only the content hash is refreshed to what we just wrote to disk. */
-	private recordCrdtBaseline(normalized: string, content: string): void {
-		const prev = this.syncState.get(normalized);
-		this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+	// ── syncState mutators (#376 prerequisite) ──────────────────────────────
+	// Every `syncState` write routes through one of these, so each site's merge
+	// semantics are named and greppable instead of re-derived per callsite.
+	// Two policies exist on purpose — replace vs merge — and the choice at each
+	// site is deliberate; do not "unify" them without re-auditing the sites.
+
+	/** REPLACE `path`'s row wholesale: this event (re)establishes the path's
+	 *  server lineage, and prior bookkeeping (crdtHead, seq, version…) is
+	 *  deliberately dropped with the old row. Callers pass the exact key they
+	 *  track (already-normalized paths stay untouched here). */
+	private stampSyncedRow(path: string, state: FileSyncState): void {
+		this.syncState.set(path, state);
+	}
+
+	/** MERGE onto `path`'s row as read at stamp time: refresh the named fields,
+	 *  preserve everything else already recorded. A missing row starts at
+	 *  `hash: 0` (the historical `?? { hash: 0 }` default). */
+	private patchSyncedRow(path: string, patch: Partial<FileSyncState>): void {
+		this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+	}
+
+	/** Drop `path`'s sync bookkeeping — and its CAS merge base unless
+	 *  `dropBase: false` (attachments have no base; the rename/echo-skip sites
+	 *  manage the base separately, e.g. baseStore.rename). */
+	private dropPath(path: string, opts?: { dropBase?: boolean }): void {
+		this.syncState.delete(path);
+		if (opts?.dropBase !== false) this.baseStore?.delete(path);
+	}
+
+	/** Seed the last-synced baseline from content that just entered the local
+	 *  Y.Doc (a CRDT-driven disk write, or a pushed/transferred seed). Merges
+	 *  onto any existing entry so a prior sync's version/serverHash survive;
+	 *  only the content hash is refreshed. `markCreated` additionally flips the
+	 *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
+	 *  create-ack adopt sites); the first convergence overwrites the sentinel
+	 *  with the authoritative head. */
+	private recordCrdtBaseline(
+		normalized: string,
+		content: string,
+		opts?: { markCreated?: boolean },
+	): void {
+		this.patchSyncedRow(normalized, {
+			hash: fnv1a(content),
+			...(opts?.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}),
+		});
 	}
 
 	/** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
@@ -1458,7 +1488,7 @@ export class SyncEngine {
 		const base = normalized.replace(/\.(md|canvas)$/, "");
 		const conflictPath = `${base} (conflict ${stamp}).${ext}`;
 		await this.createFileWithFolders(conflictPath, localDisk);
-		this.syncState.set(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
+		this.stampSyncedRow(normalizePath(conflictPath), { hash: fnv1a(localDisk) });
 		return conflictPath;
 	}
 
@@ -1760,7 +1790,7 @@ export class SyncEngine {
 			const path = this.noteIdMap?.pathForId(noteId);
 			const st = path ? this.syncState.get(path) : undefined;
 			if (path && st && (st.seq === undefined || (seq as number) > st.seq)) {
-				this.syncState.set(path, { ...st, seq: seq as number });
+				this.patchSyncedRow(path, { seq: seq as number });
 			}
 		}
 		if (!Number.isInteger(seq) || (seq as number) <= this.catchupSeq) {
@@ -1897,7 +1927,7 @@ export class SyncEngine {
 	/** Import sync state from persisted data. */
 	importSyncState(data: Record<string, FileSyncState>): void {
 		for (const [path, state] of Object.entries(data)) {
-			this.syncState.set(path, state);
+			this.stampSyncedRow(path, state);
 		}
 	}
 
@@ -1906,9 +1936,7 @@ export class SyncEngine {
 	}
 
 	private setCrdtHead(path: string, head: string): void {
-		const key = normalizePath(path);
-		const existing = this.syncState.get(key);
-		this.syncState.set(key, { ...(existing ?? { hash: 0 }), crdtHead: head });
+		this.patchSyncedRow(normalizePath(path), { crdtHead: head });
 	}
 
 	/** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
@@ -1934,7 +1962,7 @@ export class SyncEngine {
 	/** Import legacy hash-only format (migration from old plugin versions). */
 	importHashes(data: Record<string, number>): void {
 		for (const [path, hash] of Object.entries(data)) {
-			this.syncState.set(path, { hash });
+			this.stampSyncedRow(path, { hash });
 		}
 	}
 
@@ -2043,8 +2071,7 @@ export class SyncEngine {
 		const normalized = normalizePath(file.path);
 		await this.trashRemotelyDeleted(file);
 		await this.removeEmptyFolders(normalized);
-		this.syncState.delete(normalized);
-		if (opts?.dropBase !== false) this.baseStore?.delete(normalized);
+		this.dropPath(normalized, opts);
 	}
 
 	/** Injected-clock sleep: tests advance time instead of spending it. The
@@ -2240,7 +2267,9 @@ export class SyncEngine {
 		// recorded content hash is now stale, and left behind it echo-suppresses
 		// a later create at the same path whose content hashes the same, so the
 		// recreated file's push is skipped and it never reaches the server.
-		this.syncState.delete(normalizePath(file.path));
+		// (dropBase:false — the local-delete path never dropped the merge base
+		// here; base cleanup belongs to the remote-removal path.)
+		this.dropPath(normalizePath(file.path), { dropBase: false });
 
 		// This trash APPLIED a remote change (trashRemotelyDeleted marked it):
 		// the server already knows. Never push the DELETE back — path-keyed and
@@ -2407,7 +2436,9 @@ export class SyncEngine {
 			// (rename a note away, then make a new note with identical content at
 			// the old path — the new note's push is skipped and it never syncs).
 			// The new-path push below re-establishes sync-state under file.path.
-			this.syncState.delete(normalizePath(oldPath));
+			// (dropBase:false — the base moved with the note via baseStore.rename
+			// above; deleting it here would erase the just-renamed entry.)
+			this.dropPath(normalizePath(oldPath), { dropBase: false });
 			// Un-confirm the id so pushFile below takes the `crdt_create` genesis
 			// branch (not the crdt_msg edit branch, which carries no path and
 			// can't move the row): the create for a LIVE id at the new path IS
@@ -2630,7 +2661,7 @@ export class SyncEngine {
 				}
 				const mimeType = this.getMimeType(file);
 				await this.api.pushAttachment(file.path, base64, mimeType, mtime);
-				this.syncState.set(normalizePath(file.path), { hash });
+				this.stampSyncedRow(normalizePath(file.path), { hash });
 			} else {
 				const content = await this.app.vault.cachedRead(file);
 
@@ -2734,16 +2765,16 @@ export class SyncEngine {
 						// (discovery/pull) instead of the last-TRANSMITTED content: an
 						// edit followed by an undo back to that stale baseline hash-
 						// matches and is echo-skipped, so the revert never reaches the
-						// Y.Doc. Merges onto any existing entry (mirrors recordCrdtBaseline)
-						// so version/serverHash survive. Hash what the manager actually
-						// CONSUMED, not this function's pre-guard disk read — with a
-						// live reread those differ whenever a remote merge landed
-						// mid-guard, and stamping the stale hash would echo-skip a later
-						// revert back to that exact content (review sync.ts:2113).
-						this.syncState.set(normalizePath(file.path), {
-							...existing,
-							hash: fnv1a(consumed),
-						});
+						// Y.Doc. Merges onto the entry as read at stamp time so
+						// version/serverHash survive — including ones a concurrent
+						// converged stamp wrote during the awaited routeModify (the old
+						// pre-await `existing` spread silently dropped those). Hash what
+						// the manager actually CONSUMED, not this function's pre-guard
+						// disk read — with a live reread those differ whenever a remote
+						// merge landed mid-guard, and stamping the stale hash would
+						// echo-skip a later revert back to that exact content (review
+						// sync.ts:2113).
+						this.recordCrdtBaseline(normalizePath(file.path), consumed);
 						// Register the doc with the server even when applyLocalEdit produced
 						// NO Yjs update — a brand-new EMPTY note seeds "" into Y.Text, which
 						// is a no-op, so nothing is transmitted and the note would never reach
@@ -2943,10 +2974,8 @@ export class SyncEngine {
 							if (consumed !== null) {
 								// Echo baseline from what the manager CONSUMED (mirrors the
 								// CRDT-op branch above) so a later revert isn't hash-skipped.
-								this.syncState.set(normalizePath(pushedPath), {
-									...existing,
-									hash: fnv1a(consumed),
-									crdtHead: CRDT_HEAD_CREATED,
+								this.recordCrdtBaseline(normalizePath(pushedPath), consumed, {
+									markCreated: true,
 								});
 								// The seed transmitted content, so the create's own broadcast
 								// comes back at us: open the echo-cooldown window exactly like
@@ -3063,12 +3092,14 @@ export class SyncEngine {
 							`Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`,
 						);
 					}
-					this.syncState.delete(normalizePath(pushedPath));
-					this.syncState.set(normalizePath(serverPath), { hash });
+					// (dropBase:false — legacy REST rename; the base entry, if any,
+					// was never dropped here.)
+					this.dropPath(normalizePath(pushedPath), { dropBase: false });
+					this.stampSyncedRow(normalizePath(serverPath), { hash });
 					this.noteIdMap?.delete(normalizePath(pushedPath));
 					this.noteIdMap?.set(normalizePath(serverPath), resp.note.id);
 				} else {
-					this.syncState.set(normalizePath(file.path), { hash });
+					this.stampSyncedRow(normalizePath(file.path), { hash });
 					this.noteIdMap?.set(normalizePath(file.path), resp.note.id);
 				}
 				if (file.path === pushedPath) {
@@ -4184,8 +4215,7 @@ export class SyncEngine {
 			const stored = this.syncState.get(path);
 			const localHash =
 				stored?.hash ?? (boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0);
-			this.syncState.set(path, {
-				...(this.syncState.get(path) ?? {}),
+			this.patchSyncedRow(path, {
 				hash: localHash,
 				serverHash: staged.serverHash,
 				version: staged.version,
@@ -4563,10 +4593,7 @@ export class SyncEngine {
 			const stored = this.syncState.get(normalizePath(event.path));
 			if (stored?.serverHash === event.content_hash) {
 				if (event.version != null && event.version !== stored.version) {
-					this.syncState.set(normalizePath(event.path), {
-						...stored,
-						version: event.version,
-					});
+					this.patchSyncedRow(normalizePath(event.path), { version: event.version });
 				}
 				rlog().info("ws", `Hash skip: ${event.path}`);
 				return;
@@ -4780,7 +4807,7 @@ export class SyncEngine {
 						const priorState = this.syncState.get(np);
 						if (event.content_hash !== undefined) {
 							if (priorState?.serverHash === undefined) {
-								this.syncState.set(np, {
+								this.stampSyncedRow(np, {
 									hash: priorState?.hash ?? fnv1a(""),
 									version: event.version ?? priorState?.version,
 									serverHash: event.content_hash,
@@ -4975,8 +5002,7 @@ export class SyncEngine {
 		this.noteIdMap?.rename(priorPath, newPath);
 		// Drop the old path's stale caches so a later create there isn't
 		// echo-suppressed and no diverged base survives the move.
-		this.syncState.delete(normalizePath(priorPath));
-		this.baseStore?.delete(normalizePath(priorPath));
+		this.dropPath(normalizePath(priorPath));
 		// normalizePath for the vault lookup (map keys arrive normalized from the
 		// server feed, but a non-normalized key would silently miss the trash and
 		// leave the duplicate this fix exists to remove). rename() above keeps the
@@ -5223,8 +5249,7 @@ export class SyncEngine {
 				// In baseline but gone from the server → server-deleted while away.
 				try {
 					await this.trashRemotelyDeleted(file);
-					this.syncState.delete(np);
-					this.baseStore?.delete(np);
+					this.dropPath(np);
 					rlog().info("pull", `Reconcile: server-deleted → trashed ${file.path}`);
 				} catch (e) {
 					rlog().error(
@@ -5305,7 +5330,7 @@ export class SyncEngine {
 				// carries a DIFFERENT content_hash, so this can never fence out unseen
 				// content — only a genuine hash mismatch is re-served.
 				if (stored?.serverHash !== undefined && stored.serverHash === entry.content_hash) {
-					this.syncState.set(path, { ...stored, seq });
+					this.patchSyncedRow(path, { seq });
 					continue;
 				}
 				behind++;
@@ -5873,8 +5898,7 @@ export class SyncEngine {
 								"pull",
 								`CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`,
 							);
-							this.syncState.set(normalized, {
-								...(this.syncState.get(normalized) ?? {}),
+							this.patchSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
@@ -5910,7 +5934,7 @@ export class SyncEngine {
 								`CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`,
 							);
 							await this.flushFromCrdt(normalized, content);
-							this.syncState.set(normalized, {
+							this.stampSyncedRow(normalized, {
 								hash: fnv1a(content),
 								version: change.version,
 								serverHash: change.content_hash,
@@ -5939,7 +5963,7 @@ export class SyncEngine {
 			if (localContent === content) {
 				// Content identical — nothing to do
 				devLog().log("pull", `applyChange SKIP (identical): ${change.path}`);
-				this.syncState.set(normalized, {
+				this.stampSyncedRow(normalized, {
 					hash: localHash,
 					version: change.version,
 					serverHash: change.content_hash,
@@ -5961,7 +5985,7 @@ export class SyncEngine {
 			// Apply remote change (no conflict, or keep-remote chosen)
 			devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`);
 			await this.modifyFile(existing, content);
-			this.syncState.set(normalized, {
+			this.stampSyncedRow(normalized, {
 				hash: fnv1a(content),
 				version: change.version,
 				serverHash: change.content_hash,
@@ -5992,7 +6016,7 @@ export class SyncEngine {
 			);
 			throw createErr;
 		}
-		this.syncState.set(normalized, {
+		this.stampSyncedRow(normalized, {
 			hash: fnv1a(content),
 			version: change.version,
 			serverHash: change.content_hash,
@@ -6041,7 +6065,7 @@ export class SyncEngine {
 			if (existing.stat.size === buffer.byteLength) {
 				const localBuffer = await this.app.vault.readBinary(existing);
 				if (this.arrayBuffersEqual(localBuffer, buffer)) {
-					this.syncState.set(normalized, { hash });
+					this.stampSyncedRow(normalized, { hash });
 					rlog().info(
 						"pull",
 						`Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`,
@@ -6050,12 +6074,12 @@ export class SyncEngine {
 				}
 			}
 			await this.app.vault.modifyBinary(existing, buffer);
-			this.syncState.set(normalized, { hash });
+			this.stampSyncedRow(normalized, { hash });
 			rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`);
 			return true;
 		}
 		await this.createBinaryFileWithFolders(normalized, buffer);
-		this.syncState.set(normalized, { hash });
+		this.stampSyncedRow(normalized, { hash });
 		rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`);
 		return true;
 	}
@@ -6358,12 +6382,7 @@ export class SyncEngine {
 		this.noteIdMap?.set(np, serverId);
 		this.confirmNoteId(serverId);
 		this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
-		const existing = this.syncState.get(np) ?? { hash: 0 };
-		this.syncState.set(np, {
-			...existing,
-			hash: fnv1a(content),
-			crdtHead: CRDT_HEAD_CREATED,
-		});
+		this.recordCrdtBaseline(np, content, { markCreated: true });
 		this.issues.clear(file.path);
 	}
 
@@ -7567,7 +7586,7 @@ export class SyncEngine {
 					// serverHash (hash-skip dedupe misses the echo).
 					if (!("conflict" in resp) && content !== undefined) {
 						const np = normalizePath(entry.path);
-						this.syncState.set(np, {
+						this.stampSyncedRow(np, {
 							hash: fnv1a(content),
 							version: resp.note.version,
 							serverHash: resp.note.content_hash,

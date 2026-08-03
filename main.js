@@ -19509,11 +19509,11 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  rename after all: the path is absent from the (fresh) manifest and no
    *  local id claims it — a duplicate old copy nothing else will clean. */
   async sweepPendingOrphans() {
-    var _a, _b, _c;
+    var _a, _b;
     for (let p of [...this.pendingOrphanSweep]) {
       if (this.pendingOrphanSweep.delete(p), (_a = this.manifestPathOwners) != null && _a.has(p) || (_b = this.noteIdMap) != null && _b.get(p)) continue;
       let file = this.app.vault.getFileByPath(p);
-      file && (this.syncState.delete(p), (_c = this.baseStore) == null || _c.delete(p), await this.trashRemotelyDeleted(file), rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`));
+      file && (this.dropPath(p), await this.trashRemotelyDeleted(file), rlog().info("pull", `Orphan sweep: trashed renamed-away duplicate ${p}`));
     }
   }
   async reconcileNoteIdMapFromManifest() {
@@ -19684,7 +19684,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  the seed is the note's own local disk content, not anything received from
    *  the server, so REMOTE_ORIGIN suppression is untouched. */
   async applyCrdtCreateAck(localId, serverId, path) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c;
     let normalized = (0, import_obsidian24.normalizePath)(path), effectiveId = localId, transferredLiveContent = !1;
     if (serverId && serverId !== localId) {
       if ((_a = this.noteIdMap) == null || _a.set(normalized, serverId), effectiveId = serverId, rlog().info(
@@ -19693,11 +19693,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), this.crdt && this.isLiveBound(normalized))
         try {
           let mintText = await this.crdt.projectedText(localId), consumed = await this.crdt.applyLocalEdit(serverId, mintText);
-          transferredLiveContent = !0, consumed !== null && this.syncState.set(normalized, {
-            ...(_b = this.syncState.get(normalized)) != null ? _b : { hash: 0 },
-            hash: fnv1a(consumed),
-            crdtHead: CRDT_HEAD_CREATED
-          });
+          transferredLiveContent = !0, consumed !== null && this.recordCrdtBaseline(normalized, consumed, { markCreated: !0 });
         } catch (e) {
           rlog().warn(
             "crdt",
@@ -19705,14 +19701,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           );
         }
       try {
-        await ((_c = this.crdt) == null ? void 0 : _c.removeDoc(localId));
+        await ((_b = this.crdt) == null ? void 0 : _b.removeDoc(localId));
       } catch (e) {
         rlog().warn(
           "crdt",
           `crdt_create (queued) adopt: mint removeDoc failed for ${localId}: ${errMsg(e)}`
         );
       }
-      (_d = this.crdtEnrollment) == null || _d.reset(localId);
+      (_c = this.crdtEnrollment) == null || _c.reset(localId);
     }
     let file = this.crdt && !transferredLiveContent ? this.app.vault.getAbstractFileByPath(normalized) : null;
     if (this.crdt && file instanceof import_obsidian24.TFile && this.isCrdtEligible(file))
@@ -19726,11 +19722,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           this.crdt,
           MAX_CRDT_NOTE_BYTES
         );
-        consumed !== null && this.syncState.set(normalized, {
-          ...(_e = this.syncState.get(normalized)) != null ? _e : { hash: 0 },
-          hash: fnv1a(consumed),
-          crdtHead: CRDT_HEAD_CREATED
-        });
+        consumed !== null && this.recordCrdtBaseline(normalized, consumed, { markCreated: !0 });
       } catch (e) {
         rlog().warn(
           "crdt",
@@ -19823,12 +19815,43 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       return rlog().error("crdt", `flushFromCrdt: write failed for ${path}: ${errMsg(e)}`), !1;
     }
   }
-  /** Seed the last-synced baseline from freshly-delivered CRDT content. Merges
-   *  onto any existing entry so a prior REST sync's version/serverHash survive;
-   *  only the content hash is refreshed to what we just wrote to disk. */
-  recordCrdtBaseline(normalized, content) {
-    let prev = this.syncState.get(normalized);
-    this.syncState.set(normalized, { ...prev, hash: fnv1a(content) });
+  // ── syncState mutators (#376 prerequisite) ──────────────────────────────
+  // Every `syncState` write routes through one of these, so each site's merge
+  // semantics are named and greppable instead of re-derived per callsite.
+  // Two policies exist on purpose — replace vs merge — and the choice at each
+  // site is deliberate; do not "unify" them without re-auditing the sites.
+  /** REPLACE `path`'s row wholesale: this event (re)establishes the path's
+   *  server lineage, and prior bookkeeping (crdtHead, seq, version…) is
+   *  deliberately dropped with the old row. Callers pass the exact key they
+   *  track (already-normalized paths stay untouched here). */
+  stampSyncedRow(path, state) {
+    this.syncState.set(path, state);
+  }
+  /** MERGE onto `path`'s row as read at stamp time: refresh the named fields,
+   *  preserve everything else already recorded. A missing row starts at
+   *  `hash: 0` (the historical `?? { hash: 0 }` default). */
+  patchSyncedRow(path, patch) {
+    this.syncState.set(path, { hash: 0, ...this.syncState.get(path), ...patch });
+  }
+  /** Drop `path`'s sync bookkeeping — and its CAS merge base unless
+   *  `dropBase: false` (attachments have no base; the rename/echo-skip sites
+   *  manage the base separately, e.g. baseStore.rename). */
+  dropPath(path, opts) {
+    var _a;
+    this.syncState.delete(path), (opts == null ? void 0 : opts.dropBase) !== !1 && ((_a = this.baseStore) == null || _a.delete(path));
+  }
+  /** Seed the last-synced baseline from content that just entered the local
+   *  Y.Doc (a CRDT-driven disk write, or a pushed/transferred seed). Merges
+   *  onto any existing entry so a prior sync's version/serverHash survive;
+   *  only the content hash is refreshed. `markCreated` additionally flips the
+   *  `hasServerNote` oracle via the CRDT_HEAD_CREATED sentinel (genesis /
+   *  create-ack adopt sites); the first convergence overwrites the sentinel
+   *  with the authoritative head. */
+  recordCrdtBaseline(normalized, content, opts) {
+    this.patchSyncedRow(normalized, {
+      hash: fnv1a(content),
+      ...opts != null && opts.markCreated ? { crdtHead: CRDT_HEAD_CREATED } : {}
+    });
   }
   /** Refresh a LIVE-BOUND note's baseline from the autosave that just landed.
    *  Fire-and-forget from handleModify's editor-owns-the-file gate (which is
@@ -19957,7 +19980,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  conflict path written. */
   async writeDriftConflictCopy(normalized, localDisk) {
     let stamp = (/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-"), ext = isCanvasPath(normalized) ? "canvas" : "md", conflictPath = `${normalized.replace(/\.(md|canvas)$/, "")} (conflict ${stamp}).${ext}`;
-    return await this.createFileWithFolders(conflictPath, localDisk), this.syncState.set((0, import_obsidian24.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
+    return await this.createFileWithFolders(conflictPath, localDisk), this.stampSyncedRow((0, import_obsidian24.normalizePath)(conflictPath), { hash: fnv1a(localDisk) }), conflictPath;
   }
   /** Materialize an EMPTY note whose emptiness the server has just confirmed.
    *
@@ -20111,7 +20134,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let landed = await apply();
     if (landed === "applied" && Number.isInteger(seq2)) {
       let path = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(noteId), st = path ? this.syncState.get(path) : void 0;
-      path && st && (st.seq === void 0 || seq2 > st.seq) && this.syncState.set(path, { ...st, seq: seq2 });
+      path && st && (st.seq === void 0 || seq2 > st.seq) && this.patchSyncedRow(path, { seq: seq2 });
     }
     return !Number.isInteger(seq2) || seq2 <= this.catchupSeq ? landed === "applied" ? "applied" : "deferred" : (rlog().info("crdt", `gap-heal fired: note=${noteId} seq=${seq2} cursor=${this.catchupSeq}`), this.scheduleSeqHeal(), "healing");
   }
@@ -20196,15 +20219,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Import sync state from persisted data. */
   importSyncState(data) {
     for (let [path, state] of Object.entries(data))
-      this.syncState.set(path, state);
+      this.stampSyncedRow(path, state);
   }
   getCrdtHead(path) {
     var _a;
     return (_a = this.syncState.get((0, import_obsidian24.normalizePath)(path))) == null ? void 0 : _a.crdtHead;
   }
   setCrdtHead(path, head) {
-    let key = (0, import_obsidian24.normalizePath)(path), existing = this.syncState.get(key);
-    this.syncState.set(key, { ...existing != null ? existing : { hash: 0 }, crdtHead: head });
+    this.patchSyncedRow((0, import_obsidian24.normalizePath)(path), { crdtHead: head });
   }
   /** Public: consumed as `CrdtManagerOptions.canSendLive` by the wiring in
    *  main.ts (`createCrdtWiring({ canSendLive: (id) => this.syncEngine.hasServerNote(id) })`)
@@ -20228,7 +20250,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
   /** Import legacy hash-only format (migration from old plugin versions). */
   importHashes(data) {
     for (let [path, hash] of Object.entries(data))
-      this.syncState.set(path, { hash });
+      this.stampSyncedRow(path, { hash });
   }
   /** Get current sync status snapshot. */
   getStatus() {
@@ -20285,9 +20307,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  four-line block existed verbatim at three sites plus partial variants.
    *  `dropBase` is false only for attachments, which have no merge base. */
   async applyRemoteRemoval(file, opts) {
-    var _a;
     let normalized = (0, import_obsidian24.normalizePath)(file.path);
-    await this.trashRemotelyDeleted(file), await this.removeEmptyFolders(normalized), this.syncState.delete(normalized), (opts == null ? void 0 : opts.dropBase) !== !1 && ((_a = this.baseStore) == null || _a.delete(normalized));
+    await this.trashRemotelyDeleted(file), await this.removeEmptyFolders(normalized), this.dropPath(normalized, opts);
   }
   /** Injected-clock sleep: tests advance time instead of spending it. The
    *  inline window.setTimeout promise this replaces bypassed the injected
@@ -20380,7 +20401,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let isBinary = this.isBinaryFile(file), existing = this.debounceTimers.get(file.path);
     existing && (this.time.clearTimeout(existing), this.debounceTimers.delete(file.path));
     let crdtNoteId = isBinary ? null : (_b = (_a = this.noteIdMap) == null ? void 0 : _a.get(file.path)) != null ? _b : null;
-    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.syncState.delete((0, import_obsidian24.normalizePath)(file.path)), this.files.has(file.path, "remotelyDeleted")) {
+    if (crdtNoteId && this.markRecentlyDeleted(crdtNoteId), isBinary || (_c = this.noteIdMap) == null || _c.delete(file.path), this.dropPath((0, import_obsidian24.normalizePath)(file.path), { dropBase: !1 }), this.files.has(file.path, "remotelyDeleted")) {
       this.files.clearMarker(file.path, "remotelyDeleted"), rlog().info("vault", `Delete echo skip (remote-applied): ${file.path}`), this.isCrdtEligible(file) && crdtNoteId && await this.teardownCrdtDoc(crdtNoteId);
       return;
     }
@@ -20424,7 +20445,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           vaultId: (_b = this.settings.vaultId) != null ? _b : void 0
         }), this.maybeGoOffline(e));
       }
-    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian24.normalizePath)(oldPath), (0, import_obsidian24.normalizePath)(file.path)), this.syncState.delete((0, import_obsidian24.normalizePath)(oldPath)), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
+    isBinary || ((_c = this.baseStore) == null || _c.rename((0, import_obsidian24.normalizePath)(oldPath), (0, import_obsidian24.normalizePath)(file.path)), this.dropPath((0, import_obsidian24.normalizePath)(oldPath), { dropBase: !1 }), this.unconfirmNoteId((_e = (_d = this.noteIdMap) == null ? void 0 : _d.get(file.path)) != null ? _e : null)), this.shouldIgnore(file.path) || await this.pushFile(file);
   }
   /** Push a folder-create from the vault to the server's explicit-folder
    *  table. Idempotent client-side (skips folders already in the set) and
@@ -20551,7 +20572,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         if (!force && existing !== void 0 && hash === existing.hash)
           return devLog().log("push", `skip (echo): ${file.path}`), rlog().info("push", `Echo skip (attachment): ${file.path} | hash=${hash}`), !1;
         let mimeType = this.getMimeType(file);
-        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.syncState.set((0, import_obsidian24.normalizePath)(file.path), { hash });
+        await this.api.pushAttachment(file.path, base64, mimeType, mtime), this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash });
       } else {
         let content = await this.app.vault.cachedRead(file), hash = fnv1a(content), existing = this.syncState.get((0, import_obsidian24.normalizePath)(file.path));
         if (!force && existing !== void 0 && hash === existing.hash)
@@ -20581,10 +20602,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             this.crdt,
             MAX_CRDT_NOTE_BYTES
           );
-          return consumed !== null ? (this.syncState.set((0, import_obsidian24.normalizePath)(file.path), {
-            ...existing,
-            hash: fnv1a(consumed)
-          }), this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
+          return consumed !== null ? (this.recordCrdtBaseline((0, import_obsidian24.normalizePath)(file.path), consumed), this.isLiveBound((0, import_obsidian24.normalizePath)(file.path)) && ((_f = this.crdtEnrollment) == null || _f.enroll(noteId)), success = !0, ((_h = (_g = this.crdtLive) == null ? void 0 : _g.call(this)) != null ? _h : !0) ? (devLog().log("push", `crdt ok: ${file.path}`), rlog().info("push", `CRDT push ok: ${file.path}`), !0) : (await this.enqueueCrdtEdit(file, noteId), this.flushQueue(), devLog().log(
             "push",
             `crdt edit queued durably (channel down): ${file.path}`
           ), rlog().info(
@@ -20620,10 +20638,8 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
                   this.crdt,
                   MAX_CRDT_NOTE_BYTES
                 );
-              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? (this.syncState.set((0, import_obsidian24.normalizePath)(pushedPath), {
-                ...existing,
-                hash: fnv1a(consumed),
-                crdtHead: CRDT_HEAD_CREATED
+              return this.setCrdtHead(pushedPath, CRDT_HEAD_CREATED), this.confirmNoteId(effectiveId), await this.flushHeldEditsOnCreateAck(effectiveId, pushedPath), consumed !== null ? (this.recordCrdtBaseline((0, import_obsidian24.normalizePath)(pushedPath), consumed, {
+                markCreated: !0
               }), success = !0) : rlog().warn(
                 "crdt",
                 `crdt_create ok but body seed declined (will deliver on next edit): ${pushedPath}`
@@ -20661,9 +20677,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let localFile = this.app.vault.getFileByPath(pushedPath);
           localFile && (await this.app.vault.rename(localFile, serverPath), new import_obsidian24.Notice(
             `Engram Sync: renamed "${pushedPath.split("/").pop()}" (unsupported characters)`
-          )), this.syncState.delete((0, import_obsidian24.normalizePath)(pushedPath)), this.syncState.set((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
+          )), this.dropPath((0, import_obsidian24.normalizePath)(pushedPath), { dropBase: !1 }), this.stampSyncedRow((0, import_obsidian24.normalizePath)(serverPath), { hash }), (_p = this.noteIdMap) == null || _p.delete((0, import_obsidian24.normalizePath)(pushedPath)), (_q = this.noteIdMap) == null || _q.set((0, import_obsidian24.normalizePath)(serverPath), resp.note.id);
         } else
-          this.syncState.set((0, import_obsidian24.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
+          this.stampSyncedRow((0, import_obsidian24.normalizePath)(file.path), { hash }), (_r = this.noteIdMap) == null || _r.set((0, import_obsidian24.normalizePath)(file.path), resp.note.id);
         file.path === pushedPath && (pushedNoteParse = {
           path: (_s = resp.note.path) != null ? _s : pushedPath,
           parseStatus: resp.note.parse_status,
@@ -21240,7 +21256,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  can't write syncState at a stale/dead path — no separate teardown hook
    *  needed. Never throws into the CRDT manager's synchronous callback. */
   async commitCrdtConvergence(noteId) {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g;
     let queued = this.pendingQueueDeliveries.get(noteId);
     if (queued) {
       this.pendingQueueDeliveries.delete(noteId);
@@ -21276,8 +21292,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     }
     try {
       let boundFile = this.app.vault.getFileByPath(path), stored = this.syncState.get(path), localHash = (_g = stored == null ? void 0 : stored.hash) != null ? _g : boundFile ? fnv1a(await this.app.vault.cachedRead(boundFile)) : 0;
-      this.syncState.set(path, {
-        ...(_h = this.syncState.get(path)) != null ? _h : {},
+      this.patchSyncedRow(path, {
         hash: localHash,
         serverHash: staged.serverHash,
         version: staged.version,
@@ -21507,10 +21522,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     if (event.event_type === "upsert" && !isAttachment && event.content_hash !== void 0) {
       let stored = this.syncState.get((0, import_obsidian24.normalizePath)(event.path));
       if ((stored == null ? void 0 : stored.serverHash) === event.content_hash) {
-        event.version != null && event.version !== stored.version && this.syncState.set((0, import_obsidian24.normalizePath)(event.path), {
-          ...stored,
-          version: event.version
-        }), rlog().info("ws", `Hash skip: ${event.path}`);
+        event.version != null && event.version !== stored.version && this.patchSyncedRow((0, import_obsidian24.normalizePath)(event.path), { version: event.version }), rlog().info("ws", `Hash skip: ${event.path}`);
         return;
       }
     }
@@ -21587,7 +21599,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           else {
             (_q = this.noteIdMap) == null || _q.set(event.path, noteId), this.confirmNoteId(noteId), (this.isCanvasPath((0, import_obsidian24.normalizePath)(event.path)) || this.isLiveBound((0, import_obsidian24.normalizePath)(event.path))) && ((_r = this.crdtEnrollment) == null || _r.enroll(noteId));
             let np = (0, import_obsidian24.normalizePath)(event.path), priorState = this.syncState.get(np);
-            event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.syncState.set(np, {
+            event.content_hash !== void 0 && (priorState == null ? void 0 : priorState.serverHash) === void 0 && this.stampSyncedRow(np, {
               hash: (_s = priorState == null ? void 0 : priorState.hash) != null ? _s : fnv1a(""),
               version: (_t2 = event.version) != null ? _t2 : priorState == null ? void 0 : priorState.version,
               serverHash: event.content_hash
@@ -21620,7 +21632,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       }
   }
   async moveIfIdRelocated(id2, newPath, eventTs) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     let priorPath = (_b = (_a = this.noteIdMap) == null ? void 0 : _a.pathForId(id2)) != null ? _b : null;
     if (!priorPath || (0, import_obsidian24.normalizePath)(priorPath) === (0, import_obsidian24.normalizePath)(newPath)) return;
     if (eventTs !== void 0) {
@@ -21642,7 +21654,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       ), (_c = this.noteIdMap) == null || _c.set(newPath, id2), this.pendingOrphanSweep.add((0, import_obsidian24.normalizePath)(priorPath));
       return;
     }
-    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.syncState.delete((0, import_obsidian24.normalizePath)(priorPath)), (_e = this.baseStore) == null || _e.delete((0, import_obsidian24.normalizePath)(priorPath));
+    (_d = this.noteIdMap) == null || _d.rename(priorPath, newPath), this.dropPath((0, import_obsidian24.normalizePath)(priorPath));
     let oldFile = this.app.vault.getFileByPath((0, import_obsidian24.normalizePath)(priorPath));
     if (oldFile)
       try {
@@ -21747,7 +21759,6 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  a no-op. `manifest` may be passed pre-fetched (catchUp shares one across
    *  its reconcile + live-bound-heal steps); omit it and it fetches its own. */
   async reconcileFromManifest(manifest, authGenAtFetch) {
-    var _a;
     let authGen = authGenAtFetch != null ? authGenAtFetch : this.authGeneration, m = manifest === void 0 ? await this.api.getManifest() : manifest;
     if (m) {
       if (this.authGeneration === authGen) {
@@ -21760,7 +21771,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           let np = (0, import_obsidian24.normalizePath)(file.path);
           if (!serverPaths.has(np) && this.syncState.has(np))
             try {
-              await this.trashRemotelyDeleted(file), this.syncState.delete(np), (_a = this.baseStore) == null || _a.delete(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
+              await this.trashRemotelyDeleted(file), this.dropPath(np), rlog().info("pull", `Reconcile: server-deleted \u2192 trashed ${file.path}`);
             } catch (e) {
               rlog().error(
                 "pull",
@@ -21822,7 +21833,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       let path = (0, import_obsidian24.normalizePath)(entry.path), stored = this.syncState.get(path), recorded = stored ? (_b = stored.seq) != null ? _b : Number.POSITIVE_INFINITY : -1;
       if (seq2 > recorded) {
         if ((stored == null ? void 0 : stored.serverHash) !== void 0 && stored.serverHash === entry.content_hash) {
-          this.syncState.set(path, { ...stored, seq: seq2 });
+          this.patchSyncedRow(path, { seq: seq2 });
           continue;
         }
         behind++, seq2 < minBehind && (minBehind = seq2);
@@ -21862,7 +21873,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  Returns true when a file was actually created, modified, or trashed.
    *  When forceOverwrite is true, bypass the anti-stale version guard. */
   async applyChange(change, forceOverwrite = !1) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u, _v;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t2, _u;
     if (this.shouldIgnore(change.path))
       return devLog().log("pull", `applyChange SKIP (ignored): ${change.path}`), !1;
     !change.deleted && change.content === "" && change.content_hash && (this.emptyContentHash = change.content_hash);
@@ -22007,8 +22018,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             noteId && (stored == null ? void 0 : stored.serverHash) === void 0 && localNow !== null && localNow === content ? (rlog().info(
               "pull",
               `CRDT catch-up: no-CAS-base quiet record (disk==row) ${change.path}`
-            ), this.syncState.set(normalized, {
-              ...(_q = this.syncState.get(normalized)) != null ? _q : {},
+            ), this.patchSyncedRow(normalized, {
               hash: fnv1a(content),
               version: change.version,
               serverHash: change.content_hash
@@ -22025,7 +22035,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
             )) : (rlog().warn(
               "pull",
               `CRDT catch-up: pull backfilling diverged note (no note_id) ${change.path}`
-            ), await this.flushFromCrdt(normalized, content), this.syncState.set(normalized, {
+            ), await this.flushFromCrdt(normalized, content), this.stampSyncedRow(normalized, {
               hash: fnv1a(content),
               version: change.version,
               serverHash: change.content_hash,
@@ -22040,21 +22050,21 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
     let existing = this.app.vault.getFileByPath(normalized);
     if (existing) {
       let localContent = await this.app.vault.cachedRead(existing), localHash = fnv1a(localContent);
-      return localContent === content ? (devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.syncState.set(normalized, {
+      return localContent === content ? (devLog().log("pull", `applyChange SKIP (identical): ${change.path}`), this.stampSyncedRow(normalized, {
         hash: localHash,
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): record the row's seq so the manifest validator can
         // integer-diff this path (a legacy change without one keeps the
         // prior value rather than erasing it).
-        seq: typeof change.seq == "number" ? change.seq : (_r = this.syncState.get(normalized)) == null ? void 0 : _r.seq
-      }), change.version != null && ((_s = this.baseStore) == null || _s.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.syncState.set(normalized, {
+        seq: typeof change.seq == "number" ? change.seq : (_q = this.syncState.get(normalized)) == null ? void 0 : _q.seq
+      }), change.version != null && ((_r = this.baseStore) == null || _r.set(normalized, content, change.version)), rlog().info("pull", `Unchanged: ${change.path}`), !1) : (devLog().log("pull", `applyChange OVERWRITE: ${change.path} (len=${content.length})`), await this.modifyFile(existing, content), this.stampSyncedRow(normalized, {
         hash: fnv1a(content),
         version: change.version,
         serverHash: change.content_hash,
         // E1 (#1065): seq recorded for the manifest validator's integer diff.
-        seq: typeof change.seq == "number" ? change.seq : (_t2 = this.syncState.get(normalized)) == null ? void 0 : _t2.seq
-      }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info(
+        seq: typeof change.seq == "number" ? change.seq : (_s = this.syncState.get(normalized)) == null ? void 0 : _s.seq
+      }), change.version != null && ((_t2 = this.baseStore) == null || _t2.set(normalized, content, change.version)), rlog().info(
         "pull",
         `Applied: ${change.path} | localLen=${localContent.length} | remoteLen=${content.length}`
       ), !0);
@@ -22069,13 +22079,13 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
         createErr instanceof Error ? createErr.stack : void 0
       ), createErr;
     }
-    return this.syncState.set(normalized, {
+    return this.stampSyncedRow(normalized, {
       hash: fnv1a(content),
       version: change.version,
       serverHash: change.content_hash,
       // E1 (#1065): seq recorded for the manifest validator's integer diff.
       seq: typeof change.seq == "number" ? change.seq : void 0
-    }), change.version != null && ((_v = this.baseStore) == null || _v.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
+    }), change.version != null && ((_u = this.baseStore) == null || _u.set(normalized, content, change.version)), rlog().info("pull", `Created: ${change.path} | len=${content.length}`), !0;
   }
   /** Apply a remote attachment change to the vault.
    *  If contentBase64 is provided (from WebSocket), use it directly. Otherwise fetch it.
@@ -22092,14 +22102,14 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
       if (existing.stat.size === buffer.byteLength) {
         let localBuffer = await this.app.vault.readBinary(existing);
         if (this.arrayBuffersEqual(localBuffer, buffer))
-          return this.syncState.set(normalized, { hash }), rlog().info(
+          return this.stampSyncedRow(normalized, { hash }), rlog().info(
             "pull",
             `Attachment unchanged: ${change.path} | bytes=${buffer.byteLength}`
           ), !1;
       }
-      return await this.app.vault.modifyBinary(existing, buffer), this.syncState.set(normalized, { hash }), rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`), !0;
+      return await this.app.vault.modifyBinary(existing, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info("pull", `Attachment applied: ${change.path} | bytes=${buffer.byteLength}`), !0;
     }
-    return await this.createBinaryFileWithFolders(normalized, buffer), this.syncState.set(normalized, { hash }), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
+    return await this.createBinaryFileWithFolders(normalized, buffer), this.stampSyncedRow(normalized, { hash }), rlog().info("pull", `Attachment created: ${change.path} | bytes=${buffer.byteLength}`), !0;
   }
   /** Create a text file, ensuring parent folders exist. */
   /** Modify a file using vault.process() when available (scroll-safe),
@@ -22274,15 +22284,9 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
    *  reached for a genuinely history-LESS note: the batch caller routes any note
    *  that already carries a local CRDT lineage to `pushFile` instead. */
   recordCrdtGenesisPushed(file, content, serverId) {
-    var _a, _b;
+    var _a;
     let np = (0, import_obsidian24.normalizePath)(file.path);
-    (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED);
-    let existing = (_b = this.syncState.get(np)) != null ? _b : { hash: 0 };
-    this.syncState.set(np, {
-      ...existing,
-      hash: fnv1a(content),
-      crdtHead: CRDT_HEAD_CREATED
-    }), this.issues.clear(file.path);
+    (_a = this.noteIdMap) == null || _a.set(np, serverId), this.confirmNoteId(serverId), this.setCrdtHead(file.path, CRDT_HEAD_CREATED), this.recordCrdtBaseline(np, content, { markCreated: !0 }), this.issues.clear(file.path);
   }
   /** Bulk-create genesis notes (never-server-known) through ONE
    *  `crdt_create_batch` round-trip, carrying each note's initial content inline
@@ -22988,7 +22992,7 @@ var BINARY_EXTENSIONS = /* @__PURE__ */ new Set([
           }
           if (!("conflict" in resp) && content !== void 0) {
             let np = (0, import_obsidian24.normalizePath)(entry.path);
-            this.syncState.set(np, {
+            this.stampSyncedRow(np, {
               hash: fnv1a(content),
               version: resp.note.version,
               serverHash: resp.note.content_hash
