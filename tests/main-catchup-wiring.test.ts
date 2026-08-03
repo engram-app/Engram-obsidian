@@ -111,16 +111,10 @@ function makeFakeThis(catchup: () => Promise<void>, pull: () => Promise<number>,
 			handleStreamEvent: () => Promise.resolve(),
 			isUnchangedSynced: () => false,
 			isSyncBlocked: () => false,
-			// Wired unconditionally by connectChannel; the fake must accept them to
-			// reach a clean, error-free assignment.
-			setCrdtCreate: () => {},
-			setCrdtCreateBatch: () => {},
-			setCrdtDelete: () => {},
-			setCrdtEnqueue: () => {},
-			setCrdtCatchupSince: () => {},
-			setCrdtEnrollment: () => {},
-			setLiveBoundCheck: () => {},
-			setCrdtManager: () => {},
+			// Wired unconditionally by connectChannel; the fake must accept it to
+			// reach a clean, error-free assignment. One port patch per lifecycle
+			// stage now, so this stub no longer tracks a setter-per-port list.
+			setCrdtPorts: () => {},
 		},
 		updateStatusBar: () => {},
 	});
